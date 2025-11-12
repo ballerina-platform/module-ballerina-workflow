@@ -54,14 +54,14 @@ import static io.ballerina.stdlib.workflow.compiler.Constants.WORKFLOW;
  */
 public class WorkflowCompilerPluginUtil {
     public static ServiceDeclarationNode getServiceDeclarationNode(SyntaxNodeAnalysisContext context) {
-        if (!(context.node() instanceof ServiceDeclarationNode serviceDeclarationNode)) {
+        if (context.node().kind() != SyntaxKind.SERVICE_DECLARATION) {
             return null;
         }
-        return getServiceDeclarationNode(serviceDeclarationNode, context.semanticModel());
+        return getServiceDeclarationNode(context.node(), context.semanticModel());
     }
 
     public static ServiceDeclarationNode getServiceDeclarationNode(Node node, SemanticModel semanticModel) {
-        if (!(node instanceof ServiceDeclarationNode serviceDeclarationNode)) {
+        if (node.kind() != SyntaxKind.SERVICE_DECLARATION) {
             return null;
         }
 
@@ -72,7 +72,7 @@ public class WorkflowCompilerPluginUtil {
                 return null;
             }
         }
-        return serviceDeclarationNode;
+        return (ServiceDeclarationNode) node;
     }
 
     private static boolean isListenerBelongsToWorkflowModule(TypeSymbol listenerType) {

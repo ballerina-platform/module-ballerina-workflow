@@ -20,7 +20,7 @@ package io.ballerina.stdlib.workflow.compiler;
 
 import io.ballerina.projects.plugins.CompilerPlugin;
 import io.ballerina.projects.plugins.CompilerPluginContext;
-import io.ballerina.stdlib.workflow.compiler.analyzer.WorkflowServiceAnalyzer;
+import io.ballerina.stdlib.workflow.compiler.analyzer.WorkflowAnalyzer;
 
 /**
  * Workflow compiler plugin for Ballerina.
@@ -30,6 +30,6 @@ import io.ballerina.stdlib.workflow.compiler.analyzer.WorkflowServiceAnalyzer;
 public class WorkflowCompilerPlugin extends CompilerPlugin {
     @Override
     public void init(CompilerPluginContext compilerPluginContext) {
-        compilerPluginContext.addCodeAnalyzer(new WorkflowServiceAnalyzer());
+        compilerPluginContext.addCodeAnalyzer(new WorkflowAnalyzer());
     }
 }

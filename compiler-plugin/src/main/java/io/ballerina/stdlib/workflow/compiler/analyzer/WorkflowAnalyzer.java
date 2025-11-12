@@ -18,10 +18,20 @@
 
 package io.ballerina.stdlib.workflow.compiler.analyzer;
 
+import io.ballerina.compiler.syntax.tree.SyntaxKind;
+import io.ballerina.projects.plugins.CodeAnalysisContext;
+import io.ballerina.projects.plugins.CodeAnalyzer;
+
 /**
  * Workflow code analyzer for validating workflow definitions.
+ *
+ * @since 0.1.0
  */
-public class WorkflowAnalyzer {
-
-    // TODO: Implement workflow analysis
+public class WorkflowAnalyzer extends CodeAnalyzer {
+    @Override
+    public void init(CodeAnalysisContext codeAnalysisContext) {
+        codeAnalysisContext.addSyntaxNodeAnalysisTask(new WorkflowServiceAnalysisTask(),
+                SyntaxKind.SERVICE_DECLARATION);
+        codeAnalysisContext.addSyntaxNodeAnalysisTask(new WorkflowServiceAnalysisTask(), SyntaxKind.OBJECT_CONSTRUCTOR);
+    }
 }

@@ -152,7 +152,7 @@ public class WorkflowServiceAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
     }
 
     private static boolean isRemoteMethod(FunctionDefinitionNode functionNode) {
-         return functionNode.qualifierList().stream().anyMatch(token -> token.kind() == SyntaxKind.REMOTE_KEYWORD);
+        return functionNode.qualifierList().stream().anyMatch(token -> token.kind() == SyntaxKind.REMOTE_KEYWORD);
     }
 
     private static void reportResourceMethodNotAllowed(SyntaxNodeAnalysisContext ctx, Node resourceNode) {

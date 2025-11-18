@@ -27,11 +27,14 @@ import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.api.symbols.UnionTypeSymbol;
 import io.ballerina.compiler.syntax.tree.AnnotationNode;
+import io.ballerina.compiler.syntax.tree.IdentifierToken;
 import io.ballerina.compiler.syntax.tree.Node;
+import io.ballerina.compiler.syntax.tree.NodeFactory;
 import io.ballerina.compiler.syntax.tree.NodeList;
 import io.ballerina.compiler.syntax.tree.QualifiedNameReferenceNode;
 import io.ballerina.compiler.syntax.tree.ServiceDeclarationNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
+import io.ballerina.compiler.syntax.tree.Token;
 import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
 import io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic;
 import io.ballerina.tools.diagnostics.DiagnosticFactory;
@@ -42,6 +45,8 @@ import org.wso2.ballerinalang.compiler.diagnostic.BLangDiagnosticLocation;
 import java.util.List;
 import java.util.Optional;
 
+import static io.ballerina.compiler.syntax.tree.AbstractNodeFactory.createIdentifierToken;
+import static io.ballerina.compiler.syntax.tree.AbstractNodeFactory.createToken;
 import static io.ballerina.stdlib.workflow.compiler.Constants.BALLERINA;
 import static io.ballerina.stdlib.workflow.compiler.Constants.QUERY;
 import static io.ballerina.stdlib.workflow.compiler.Constants.SIGNAL;
@@ -53,6 +58,12 @@ import static io.ballerina.stdlib.workflow.compiler.Constants.WORKFLOW;
  * @since 0.1.0
  */
 public class WorkflowCompilerPluginUtil {
+    /**
+     * Get the service declaration node if the service is a workflow service.
+     *
+     * @param context Syntax node analysis context
+     * @return ServiceDeclarationNode if the service is a workflow service, else null
+     */
     public static ServiceDeclarationNode getServiceDeclarationNode(SyntaxNodeAnalysisContext context) {
         if (context.node().kind() != SyntaxKind.SERVICE_DECLARATION) {
             return null;
@@ -60,6 +71,13 @@ public class WorkflowCompilerPluginUtil {
         return getServiceDeclarationNode(context.node(), context.semanticModel());
     }
 
+    /**
+     * Get the service declaration node if the service is a workflow service.
+     *
+     * @param node          Node to be checked
+     * @param semanticModel Semantic model of the current context
+     * @return ServiceDeclarationNode if the service is a workflow service, else null
+     */
     public static ServiceDeclarationNode getServiceDeclarationNode(Node node, SemanticModel semanticModel) {
         if (node.kind() != SyntaxKind.SERVICE_DECLARATION) {
             return null;
@@ -138,5 +156,15 @@ public class WorkflowCompilerPluginUtil {
             return annotationNode.modulePrefix().text().equals(WORKFLOW) &&
                     (annotationNode.identifier().text().equals(QUERY));
         });
+    }
+
+    public static IdentifierToken createIdentifierTokenWithWS(String text) {
+        return createIdentifierToken(text, NodeFactory.createMinutiaeList(),
+                NodeFactory.createMinutiaeList(NodeFactory.createWhitespaceMinutiae(" ")));
+    }
+
+    public static Token createTokenWithWS(SyntaxKind kind) {
+        return createToken(kind, NodeFactory.createMinutiaeList(),
+                NodeFactory.createMinutiaeList(NodeFactory.createWhitespaceMinutiae(" ")));
     }
 }

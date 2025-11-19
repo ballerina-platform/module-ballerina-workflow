@@ -135,7 +135,8 @@ public class WorkflowModifierTask implements ModifierTask<SourceModifierContext>
         return createImportDeclarationNode(
                 createTokenWithWS(SyntaxKind.IMPORT_KEYWORD),
                 createImportOrgNameNode(createIdentifierToken(BALLERINA), createToken(SyntaxKind.SLASH_TOKEN)),
-                createSeparatedNodeList(createIdentifierToken(WORKFLOW), createIdentifierTokenWithWS(INTERNAL)),
+                createSeparatedNodeList(createIdentifierToken(WORKFLOW), createToken(SyntaxKind.DOT_TOKEN),
+                        createIdentifierTokenWithWS(INTERNAL)),
                 createImportPrefixNode(createTokenWithWS(SyntaxKind.AS_KEYWORD),
                         createIdentifierToken(WORKFLOW_INTERNAL)),
                 createToken(SyntaxKind.SEMICOLON_TOKEN)

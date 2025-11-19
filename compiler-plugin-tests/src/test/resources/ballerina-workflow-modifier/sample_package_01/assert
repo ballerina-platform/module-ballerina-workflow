@@ -16,7 +16,7 @@
 
 import ballerina/workflow;
 import sample_package_01.m1;
-import ballerina/workflowinternal as wfl;
+import ballerina/workflow.internal as wfl;
 workflow:PersistentProvider persistentProvider = object {
     public isolated function registerWorkflowModel(workflow:WorkflowModel svc, string workflowName) returns error? {
     }

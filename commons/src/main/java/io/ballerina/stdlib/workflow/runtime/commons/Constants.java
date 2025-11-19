@@ -15,20 +15,23 @@
  *  specific language governing permissions and limitations
  *  under the License.
  */
-package io.ballerina.stdlib.workflow.commons;
+package io.ballerina.stdlib.workflow.runtime.commons;
 
-import java.time.Duration;
-import java.util.function.Supplier;
 
-public interface WorkflowOperations {
+/**
+ * Constants used in Workflow module.
+ *
+ * @since 0.1.0
+ */
+public interface Constants {
 
-    boolean awaitUntil(Duration duration, Supplier<Boolean> unblockCondition);
+    String WORKFLOW_PERSISTENT_PROVIDER = "WORKFLOW_PERSISTENT_PROVIDER";
 
-    void await(Supplier<Boolean> unblockCondition);
+    String QUERY_ANNOTATION = "Query";
+    String SIGNAL_ANNOTATION = "Signal";
 
-    void sleep(Duration duration);
-
-    long currentTimeMillis();
-
-    boolean isReplaying();
+    // Package related constants
+    String WORKFLOW_PACKAGE_ORG = "ballerina";
+    String WORKFLOW_PACKAGE_NAME = "workflow";
+    String COLON = ":";
 }

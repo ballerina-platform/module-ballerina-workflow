@@ -14,14 +14,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-# Annotation to specify the workflow activities attached to a workflow service
-#
-# # Deprecated
-# Usage of this annotation is discouraged. This is an internal annotation.
-@deprecated
-public annotation WorkflowActivitiesMap __WorkflowActivities on service, type;
+import ballerina/jballerina.java;
 
+function init() {
+    setModule();
+}
 
-public type WorkflowActivitiesMap record {|
-    function...;
-|};
+function setModule() = @java:Method {
+    'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.ModuleUtils"
+} external;

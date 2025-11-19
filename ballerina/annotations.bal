@@ -15,28 +15,28 @@
 // under the License.
 
 # Workflow activity function
-# 
+#
 # An annotation to mark a function as a workflow activity.
 public annotation Activity on function;
 
 # Workflow start event function
-# 
+#
 # An annotation to mark a remote function as a workflow start event.
 public annotation StartEvent on service remote function;
 
 # Workflow signal function
-# 
+#
 # An annotation to mark a remote function as a workflow signal.
 public annotation Signal on service remote function;
 
 # Workflow query function
-# 
+#
 # An annotation to mark a remote function as a workflow query.
 public annotation Query on service remote function;
 
 // TODO: Add UpdateEvent in future.
 
 # Correlation parameter
-# 
+#
 # An annotation to mark a parameter as a correlation parameter.
 public annotation Correlation on parameter;

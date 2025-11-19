@@ -16,6 +16,8 @@
  * under the License.
  */
 
-module io.ballerina.stdlib.workflow.commons {
-    exports io.ballerina.stdlib.workflow.commons;
+module io.ballerina.stdlib.workflow.runtime.commons {
+    requires io.ballerina.runtime;
+    exports io.ballerina.stdlib.workflow.runtime.commons;
+    exports io.ballerina.stdlib.workflow.runtime.commons.model;
 }

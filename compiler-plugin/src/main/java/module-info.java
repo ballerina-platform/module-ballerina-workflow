@@ -17,7 +17,6 @@
  */
 
 module io.ballerina.stdlib.workflow.compiler {
-    requires io.ballerina.stdlib.workflow.commons;
     requires io.ballerina.lang;
     requires io.ballerina.parser;
     requires io.ballerina.tools.api;

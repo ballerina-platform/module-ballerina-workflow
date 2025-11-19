@@ -15,12 +15,13 @@
  *  specific language governing permissions and limitations
  *  under the License.
  */
-package io.ballerina.stdlib.workflow.commons;
+package io.ballerina.stdlib.workflow.runtime.commons.model;
 
-public interface WorkflowProvider<T extends WorkflowServiceListener, R extends WorkflowOperations> {
-
-    T getWorkflowServiceListener();
-
-    R getWorkflowOperations();
-
+/**
+ * Represents an activity function in the workflow runtime.
+ * This class is a placeholder for future activity function implementation.
+ *
+ * @since 0.1.0
+ */
+public class ActivityFunction {
 }

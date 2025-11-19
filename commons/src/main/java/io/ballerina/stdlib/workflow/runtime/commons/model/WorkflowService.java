@@ -15,15 +15,21 @@
  *  specific language governing permissions and limitations
  *  under the License.
  */
-package io.ballerina.stdlib.workflow.commons;
+package io.ballerina.stdlib.workflow.runtime.commons.model;
 
-public interface WorkflowServiceListener {
+import io.ballerina.runtime.api.values.BObject;
 
-    void register(String serviceName);
+import java.util.Map;
 
-    void unregister(String serviceName);
-
-    void start();
-
-    void stop();
+/**
+ * Represents a workflow service with its execute, signal, and query methods.
+ *
+ * @param serviceObject the Ballerina service object
+ * @param executeMethod the execute method of the workflow
+ * @param signalMethods map of signal methods by name
+ * @param queryMethods map of query methods by name
+ * @since 0.1.0
+ */
+public record WorkflowService(BObject serviceObject, ExecuteMethod executeMethod,
+                              Map<String, SignalMethod> signalMethods, Map<String, QueryMethod> queryMethods) {
 }

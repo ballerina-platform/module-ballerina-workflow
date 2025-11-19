@@ -31,7 +31,51 @@ public type Duration record {
 };
 
 # Represents a workflow execution.
+#
+# + id - The unique identifier of the workflow execution
 public type Execution record {|
-    # The unique identifier of the workflow execution.
     string id;
 |};
+
+# Represents workflow model data containing workflow definition and associated methods.
+#
+# + workflowName - The name of the workflow
+# + execute - The execute method definition
+# + signals - Map of signal method definitions
+# + queries - Map of query method definitions
+# + activities - Map of activity functions
+public type WorkflowModelData record {|
+    string workflowName;
+    WorkflowAction execute;
+    map<WorkflowAction> signals;
+    map<WorkflowAction> queries;
+    Activities activities;
+|};
+
+# Represents a workflow action (execute, signal, or query method).
+#
+# + name - The name of the action
+# + parameters - Map of parameter names to their types
+# + returnType - The return type descriptor of the action
+public type WorkflowAction record {|
+    string name;
+    Parameters parameters;
+    typedesc returnType;
+|};
+
+# Represents the parameters of a workflow action as a map of parameter names to type descriptors.
+public type Parameters map<typedesc>;
+
+# Represents workflow methods including execute, signal, and query methods.
+#
+# + execute - The execute method definition
+# + signals - Map of signal method definitions
+# + queries - Map of query method definitions
+public type WorkflowMethods record {|
+    WorkflowAction execute;
+    map<WorkflowAction> signals;
+    map<WorkflowAction> queries;
+|};
+
+# Represents a collection of activity functions that can be executed within a workflow.
+public type Activities map<function>;

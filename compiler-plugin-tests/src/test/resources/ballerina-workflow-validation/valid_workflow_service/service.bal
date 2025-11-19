@@ -17,7 +17,7 @@
 import ballerina/workflow;
 
 workflow:PersistentProvider persistentProvider = object {
-    public isolated function registerWorkflowModel(workflow:WorkflowModel svc, string workflowName) returns error? {
+    public isolated function registerWorkflowModel(workflow:WorkflowModel svc, workflow:WorkflowModelData data) returns error? {
     }
     public isolated function unregisterWorkflowModel(workflow:WorkflowModel svc) returns error? {
     }
@@ -29,9 +29,6 @@ workflow:PersistentProvider persistentProvider = object {
         return error("not implemented");
     }
     public isolated function getWorkflowOperators() returns workflow:WorkflowOperators|error {
-        return error("not implemented");
-    }
-    public isolated function getWorkflowInternalOperators() returns workflow:WorkflowInternalOperators|error {
         return error("not implemented");
     }
 };

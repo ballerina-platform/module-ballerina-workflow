@@ -6,7 +6,7 @@ authors = ["Ballerina"]
 keywords = ["workflow"]
 repository = "https://github.com/ballerina-platform/module-ballerina-workflow"
 license = ["Apache-2.0"]
-distribution = "2201.12.10"
+distribution = "2201.13.0"
 
 [platform.java21]
 graalvmCompatible = false

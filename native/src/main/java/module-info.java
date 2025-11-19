@@ -17,10 +17,10 @@
  */
 
 module io.ballerina.stdlib.workflow.runtime {
-    requires io.ballerina.stdlib.workflow.commons;
+    requires io.ballerina.stdlib.workflow.runtime.commons;
     requires java.sql;
     requires java.logging;
     requires io.ballerina.runtime;
 
-    exports io.ballerina.stdlib.workflow.runtime;
+    exports io.ballerina.stdlib.workflow.runtime.nativeimpl;
 }

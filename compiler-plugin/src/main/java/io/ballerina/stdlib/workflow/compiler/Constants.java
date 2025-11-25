@@ -33,7 +33,7 @@ public final class Constants {
     public static final String QUERY = "Query";
     public static final String INTERNAL = "internal";
     public static final String WORKFLOW_INTERNAL = "wfl";
-    public static final String INVOKE_ACTIVITY = "invokeActivity";
+    public static final String INVOKE_ACTIVITY = "__invokeActivity";
     public static final String WORKFLOW_ACTIVITIES = "__WorkflowActivities";
     public static final String ACTIVITY = "Activity";
 }

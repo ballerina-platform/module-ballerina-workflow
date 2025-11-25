@@ -58,6 +58,7 @@ public class WorkflowModifierTest {
         Package currentPackage = pro.currentPackage();
         CodeModifierResult codeModifierResult = currentPackage.runCodeModifierPlugins();
         Assert.assertEquals(codeModifierResult.reportedDiagnostics().errorCount(), 0);
+        Assert.assertEquals(pro.currentPackage().getCompilation().diagnosticResult().errorCount(), 0);
 
         Path filePath = RESOURCE_DIRECTORY.resolve("sample_package_01/service.bal");
         DocumentId documentId = pro.documentId(filePath);

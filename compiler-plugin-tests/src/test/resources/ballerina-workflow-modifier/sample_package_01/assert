@@ -17,8 +17,13 @@
 import ballerina/workflow;
 import sample_package_01.m1;
 import ballerina/workflow.internal as wfl;
+type Person record {|
+    string name;
+    int age;
+|};
+
 workflow:PersistentProvider persistentProvider = object {
-    public isolated function registerWorkflowModel(workflow:WorkflowModel svc, string workflowName) returns error? {
+    public isolated function registerWorkflowModel(workflow:WorkflowModel svc, workflow:WorkflowModelData data) returns error? {
     }
     public isolated function unregisterWorkflowModel(workflow:WorkflowModel svc) returns error? {
     }
@@ -27,34 +32,31 @@ workflow:PersistentProvider persistentProvider = object {
     public isolated function stop() returns error? {
     }
     public isolated function getClient() returns workflow:WorkflowEngineClient|error {
-        return error("not implemented");
+        return error("Not implemented");
     }
     public isolated function getWorkflowOperators() returns workflow:WorkflowOperators|error {
-        return error("not implemented");
-    }
-    public isolated function getWorkflowInternalOperators() returns workflow:WorkflowInternalOperators|error {
-        return error("not implemented");
+        return error("Not implemented");
     }
 };
-@wfl:__WorkflowActivities{"performActivity1":performActivity1,"performActivity2":performActivity2,"m1:performActivity":m1:performActivity}
+@wfl:__WorkflowActivities{"performActivity1":performActivity1,"activityReturnsUserDefinedType":activityReturnsUserDefinedType,"m1:performActivity":m1:performActivity}
 service "workflow" on new workflow:WorkflowEventListener(persistentProvider) {
     isolated remote function execute() {
-        var a = wfl:invokeActivity("performActivity1");
-        var b = wfl:invokeActivity("performActivity2",5,"john");
+        record { string name; } a = <record {|string name; anydata...;|}>wfl:__invokeActivity("performActivity1");
+        Person b = <Person>wfl:__invokeActivity("activityReturnsUserDefinedType",5,"john");
         var c = foo(3, "doe");
-        var d = wfl:invokeActivity("m1:performActivity",7,"smith");
+        int d = <int>wfl:__invokeActivity("m1:performActivity",7,"smith");
         var e = {"a": "a"};
     }
 }
 
 @workflow:Activity
-isolated function performActivity1() returns int {
-    return 10;
+isolated function performActivity1() returns record { string name; } {
+    return { name: "John" };
 }
 
 @workflow:Activity
-isolated function performActivity2(int a, string name) returns int {
-    return a;
+isolated function activityReturnsUserDefinedType(int a, string name) returns Person {
+    return { name, age: a };
 }
 
 @workflow:Activity

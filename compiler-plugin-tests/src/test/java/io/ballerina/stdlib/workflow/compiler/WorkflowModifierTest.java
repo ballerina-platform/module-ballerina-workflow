@@ -70,7 +70,7 @@ public class WorkflowModifierTest {
         } catch (IOException e) {
             Assert.fail("Failed to read the expected BIR file: typedesc_bir");
         }
-        Assert.assertEquals(syntaxTree.toSourceCode().trim(), expected);
+        Assert.assertEquals(normalizeLineEndings(syntaxTree.toSourceCode().trim()), normalizeLineEndings(expected));
     }
 
     private String readFile() throws IOException {
@@ -85,5 +85,9 @@ public class WorkflowModifierTest {
         }
         Assert.fail("Expected Assert file not found for workflow modifier test");
         return null;
+    }
+
+    private String normalizeLineEndings(String content) {
+        return content.replaceAll("\\r\\n?", "\n");
     }
 }

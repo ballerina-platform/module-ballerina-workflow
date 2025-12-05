@@ -23,15 +23,15 @@
  # Invoke an activity by name with the given arguments.
  #
  # + activity - name of the activity to invoke
- # + activityId - identifier of the activity to invoke
  # + args - arguments to pass to the activity
+ # + T - dependently typed parameter representing the return type of the activity
  #
  # + return - returns the result of the activity invocation or an error if the invocation fails
  # # Deprecated
  # Usage of this function is discouraged. This is an internal function.
  # Writing workflow logic based on this may affect the determinism of the workflow. Hence, this function is marked as deprecated.
  @deprecated
- public isolated function __invokeActivity(string activity, anydata... args) returns anydata = external;
+public isolated function __invokeActivity(string activity, anydata[] args = [], typedesc T = <>) returns T = external;
 
 // # Get the result from the last invocation of the specified activity.
 // #

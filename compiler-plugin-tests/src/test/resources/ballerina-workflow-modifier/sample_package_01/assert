@@ -38,14 +38,30 @@ workflow:PersistentProvider persistentProvider = object {
         return error("Not implemented");
     }
 };
-@wfl:__WorkflowActivities{"performActivity1":performActivity1,"activityReturnsUserDefinedType":activityReturnsUserDefinedType,"m1:performActivity":m1:performActivity}
+@wfl:__WorkflowActivities{"performActivity1":performActivity1,"activityReturnsUserDefinedType":activityReturnsUserDefinedType,"m1:performActivity":m1:performActivity,"activityReturnsArray":activityReturnsArray,"activityReturnsUserDefinedTypeArray":activityReturnsUserDefinedTypeArray,"activityReturnsNil":activityReturnsNil,"activityReturnsMap":activityReturnsMap,"activityReturnsTable":activityReturnsTable,"m1:activityReturnsArray":m1:activityReturnsArray,"m1:activityReturnsUserDefinedTypeArray":m1:activityReturnsUserDefinedTypeArray,"m1:activityReturnsNil":m1:activityReturnsNil,"m1:activityReturnsUserDefinedType":m1:activityReturnsUserDefinedType,"m1:activityReturnsMap":m1:activityReturnsMap,"m1:activityReturnsTable":m1:activityReturnsTable}
 service "workflow" on new workflow:WorkflowEventListener(persistentProvider) {
     isolated remote function execute() {
-        record { string name; } a = <record {|string name; anydata...;|}>wfl:__invokeActivity("performActivity1");
-        Person b = <Person>wfl:__invokeActivity("activityReturnsUserDefinedType",5,"john");
+        record { string name; } a = wfl:__invokeActivity("performActivity1");
+        Person b = wfl:__invokeActivity("activityReturnsUserDefinedType",[5,["john", "wick"]]);
         var c = foo(3, "doe");
-        int d = <int>wfl:__invokeActivity("m1:performActivity",7,"smith");
+        int d = wfl:__invokeActivity("m1:performActivity",[7,"smith"]);
         var e = {"a": "a"};
+        int[] f = wfl:__invokeActivity("activityReturnsArray");
+        Person[] g = wfl:__invokeActivity("activityReturnsUserDefinedTypeArray",[10,"alice"]);
+        () h = wfl:__invokeActivity("activityReturnsNil",[4,"bob"]);
+        map<anydata> m = wfl:__invokeActivity("activityReturnsMap",[6,"charlie"]);
+        table<map<anydata>> n = wfl:__invokeActivity("activityReturnsTable",[8,"david"]);
+
+        int[] i = wfl:__invokeActivity("m1:activityReturnsArray");
+        m1:Person1[] j = wfl:__invokeActivity("m1:activityReturnsUserDefinedTypeArray",[10,"alice"]);
+        () k = wfl:__invokeActivity("m1:activityReturnsNil",[4,"bob"]);
+        m1:Person1 l = wfl:__invokeActivity("m1:activityReturnsUserDefinedType",[5,"john"]);
+        map<anydata> o = wfl:__invokeActivity("m1:activityReturnsMap",[6,"charlie"]);
+        table<map<anydata>> p = wfl:__invokeActivity("m1:activityReturnsTable",[8,"david"]);
+    }
+
+    isolated function foo() {
+        int a = foo(8, "david");
     }
 }
 
@@ -55,8 +71,8 @@ isolated function performActivity1() returns record { string name; } {
 }
 
 @workflow:Activity
-isolated function activityReturnsUserDefinedType(int a, string name) returns Person {
-    return { name, age: a };
+isolated function activityReturnsUserDefinedType(int a, string[] name) returns Person {
+    return { name: name[0], age: a };
 }
 
 @workflow:Activity
@@ -66,4 +82,28 @@ isolated function unusedActivity(int a, string name) returns int {
 
 isolated function foo(int a, string name) returns int {
     return a;
+}
+
+@workflow:Activity
+isolated function activityReturnsArray() returns int[] {
+    return [1, 2];
+}
+
+@workflow:Activity
+isolated function activityReturnsUserDefinedTypeArray(int a, string name) returns Person[] {
+    return [{ name, age: a }];
+}
+
+@workflow:Activity
+isolated function activityReturnsNil(int a, string name)  {
+}
+
+@workflow:Activity
+isolated function activityReturnsMap(int a, string name) returns map<anydata> {
+    return { name, age: a };
+}
+
+@workflow:Activity
+isolated function activityReturnsTable(int a, string name) returns table<map<anydata>> {
+    return table [{ name, age: a }];
 }

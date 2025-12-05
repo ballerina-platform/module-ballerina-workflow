@@ -42,7 +42,7 @@ workflow:PersistentProvider persistentProvider = object {
 service "workflow" on new workflow:WorkflowEventListener(persistentProvider) {
     isolated remote function execute() {
         record { string name; } a = performActivity1();
-        Person b = activityReturnsUserDefinedType(5, "john");
+        Person b = activityReturnsUserDefinedType(5, ["john", "wick"]);
         var c = foo(3, "doe");
         int d = m1:performActivity(7, "smith");
         var e = {"a": "a"};
@@ -59,6 +59,10 @@ service "workflow" on new workflow:WorkflowEventListener(persistentProvider) {
         map<anydata> o = m1:activityReturnsMap(6, "charlie");
         table<map<anydata>> p = m1:activityReturnsTable(8, "david");
     }
+
+    isolated function foo() {
+        int a = foo(8, "david");
+    }
 }
 
 @workflow:Activity
@@ -67,8 +71,8 @@ isolated function performActivity1() returns record { string name; } {
 }
 
 @workflow:Activity
-isolated function activityReturnsUserDefinedType(int a, string name) returns Person {
-    return { name, age: a };
+isolated function activityReturnsUserDefinedType(int a, string[] name) returns Person {
+    return { name: name[0], age: a };
 }
 
 @workflow:Activity

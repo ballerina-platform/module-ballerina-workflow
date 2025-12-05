@@ -70,7 +70,7 @@ public class WorkflowModifierTest {
         } catch (IOException e) {
             Assert.fail("Failed to read the expected BIR file: typedesc_bir");
         }
-        Assert.assertEquals(syntaxTree.toSourceCode(), expected);
+        Assert.assertEquals(syntaxTree.toSourceCode().trim(), expected);
     }
 
     private String readFile() throws IOException {

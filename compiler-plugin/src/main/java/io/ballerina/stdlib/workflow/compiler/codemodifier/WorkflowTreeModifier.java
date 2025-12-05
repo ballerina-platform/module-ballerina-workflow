@@ -39,7 +39,6 @@ import io.ballerina.compiler.syntax.tree.ServiceDeclarationNode;
 import io.ballerina.compiler.syntax.tree.SpecificFieldNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.compiler.syntax.tree.TreeModifier;
-import io.ballerina.projects.Package;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -71,7 +70,7 @@ public class WorkflowTreeModifier extends TreeModifier {
     private final SemanticModel semanticModel;
     private final List<NameReferenceNode> activityFunctions;
 
-    public WorkflowTreeModifier(SemanticModel semanticModel, Package currentPackage) {
+    public WorkflowTreeModifier(SemanticModel semanticModel) {
         this.semanticModel = semanticModel;
         activityFunctions = new ArrayList<>();
     }

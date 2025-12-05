@@ -92,7 +92,7 @@ public class WorkflowModifierTask implements ModifierTask<SourceModifierContext>
         Document currentDoc = currentModule.document(documentId);
         ModulePartNode rootNode = currentDoc.syntaxTree().rootNode();
         SemanticModel semanticModel = modifierContext.compilation().getSemanticModel(currentModule.moduleId());
-        ModulePartNode newModulePart = performModifications(rootNode, semanticModel, modifierContext);
+        ModulePartNode newModulePart = performModifications(rootNode, semanticModel);
         SyntaxTree updatedSyntaxTree = currentDoc.syntaxTree().modifyWith(newModulePart);
         TextDocument textDocument = updatedSyntaxTree.textDocument();
         if (currentModule.documentIds().contains(documentId)) {
@@ -102,8 +102,7 @@ public class WorkflowModifierTask implements ModifierTask<SourceModifierContext>
         }
     }
 
-    private ModulePartNode performModifications(ModulePartNode rootNode, SemanticModel semanticModel,
-                                                SourceModifierContext modifierContext) {
+    private ModulePartNode performModifications(ModulePartNode rootNode, SemanticModel semanticModel) {
         NodeList<ModuleMemberDeclarationNode> oldMembers = rootNode.members();
         NodeList<ModuleMemberDeclarationNode> updatedMembers = AbstractNodeFactory.createEmptyNodeList();
         boolean workflowServiceFound = false;
@@ -112,7 +111,7 @@ public class WorkflowModifierTask implements ModifierTask<SourceModifierContext>
                     getServiceDeclarationNode(memberNode, semanticModel) != null) {
                 workflowServiceFound = true;
                 updatedMembers = updatedMembers.add(updateServiceDeclarationNode((ServiceDeclarationNode) memberNode,
-                        semanticModel, modifierContext));
+                        semanticModel));
             } else {
                 updatedMembers = updatedMembers.add(memberNode);
             }
@@ -126,10 +125,8 @@ public class WorkflowModifierTask implements ModifierTask<SourceModifierContext>
     }
 
     private ServiceDeclarationNode updateServiceDeclarationNode(ServiceDeclarationNode serviceDeclarationNode,
-                                                                SemanticModel semanticModel,
-                                                                SourceModifierContext modifierContext) {
-        WorkflowTreeModifier workflowTreeModifier = new WorkflowTreeModifier(semanticModel,
-                modifierContext.currentPackage());
+                                                                SemanticModel semanticModel) {
+        WorkflowTreeModifier workflowTreeModifier = new WorkflowTreeModifier(semanticModel);
         return workflowTreeModifier.transform(serviceDeclarationNode);
     }
 

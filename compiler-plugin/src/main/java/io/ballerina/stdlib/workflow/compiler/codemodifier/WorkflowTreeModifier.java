@@ -41,8 +41,10 @@ import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.compiler.syntax.tree.TreeModifier;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static io.ballerina.compiler.syntax.tree.AbstractNodeFactory.createEmptyMinutiaeList;
 import static io.ballerina.compiler.syntax.tree.AbstractNodeFactory.createIdentifierToken;
@@ -66,13 +68,18 @@ import static io.ballerina.stdlib.workflow.compiler.Constants.WORKFLOW_ACTIVITIE
 import static io.ballerina.stdlib.workflow.compiler.Constants.WORKFLOW_INTERNAL;
 import static io.ballerina.stdlib.workflow.compiler.WorkflowCompilerPluginUtil.isWorkflowModule;
 
+/**
+ * Tree modifier for transforming workflow service declarations and activity function calls.
+ *
+ * @since 0.1.0
+ */
 public class WorkflowTreeModifier extends TreeModifier {
     private final SemanticModel semanticModel;
-    private final List<NameReferenceNode> activityFunctions;
+    private final Set<NameReferenceNode> activityFunctions;
 
     public WorkflowTreeModifier(SemanticModel semanticModel) {
         this.semanticModel = semanticModel;
-        activityFunctions = new ArrayList<>();
+        activityFunctions = new LinkedHashSet<>();
     }
 
     @Override
@@ -162,8 +169,9 @@ public class WorkflowTreeModifier extends TreeModifier {
 
         List<Node> annotationFields = new ArrayList<>();
         int size = activityFunctions.size();
+        List<NameReferenceNode> functionList = new ArrayList<>(activityFunctions);
         for (int i = 0; i < size; i++) {
-            NameReferenceNode funcName = activityFunctions.get(i);
+            NameReferenceNode funcName = functionList.get(i);
             LiteralValueToken valueToken = createLiteralValueToken(SyntaxKind.STRING_LITERAL_TOKEN,
                     "\"" + funcName.toString() + "\"",
                     createEmptyMinutiaeList(), createEmptyMinutiaeList());

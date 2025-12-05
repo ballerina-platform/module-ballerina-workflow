@@ -1,6 +1,6 @@
 // import workflow;
 
-//  import ballerina/jballerina.java;
+// import ballerina/jballerina.java;
 
 // # Check if the current workflow execution is in replaying mode.
 // #

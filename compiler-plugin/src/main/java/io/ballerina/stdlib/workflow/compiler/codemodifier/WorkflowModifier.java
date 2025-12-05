@@ -22,6 +22,12 @@ import io.ballerina.projects.plugins.CodeModifier;
 import io.ballerina.projects.plugins.CodeModifierContext;
 import io.ballerina.stdlib.workflow.compiler.codemodifier.tasks.WorkflowModifierTask;
 
+/**
+ * Workflow code modifier for transforming workflow service declarations.
+ *
+ * @since 0.1.0
+ */
+
 public class WorkflowModifier extends CodeModifier {
     @Override
     public void init(CodeModifierContext codeModifierContext) {

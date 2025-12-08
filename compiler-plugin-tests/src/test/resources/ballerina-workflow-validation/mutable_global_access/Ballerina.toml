@@ -1,0 +1,8 @@
+[package]
+org = "workflow_test"
+name = "test"
+version = "0.1.0"
+
+[build-options]
+observabilityIncluded = true
+

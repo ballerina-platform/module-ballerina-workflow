@@ -21,11 +21,18 @@ package io.ballerina.stdlib.workflow.compiler.analyzer;
 import io.ballerina.compiler.api.TypeBuilder;
 import io.ballerina.compiler.api.Types;
 import io.ballerina.compiler.api.symbols.MethodSymbol;
+import io.ballerina.compiler.api.symbols.Qualifier;
+import io.ballerina.compiler.api.symbols.Symbol;
+import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
+import io.ballerina.compiler.api.symbols.VariableSymbol;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
+import io.ballerina.compiler.syntax.tree.LockStatementNode;
 import io.ballerina.compiler.syntax.tree.MetadataNode;
 import io.ballerina.compiler.syntax.tree.Node;
+import io.ballerina.compiler.syntax.tree.NodeVisitor;
 import io.ballerina.compiler.syntax.tree.ServiceDeclarationNode;
+import io.ballerina.compiler.syntax.tree.SimpleNameReferenceNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.projects.plugins.AnalysisTask;
 import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
@@ -74,6 +81,8 @@ public class WorkflowServiceAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
 
             if (functionNode.functionName().text().equals(EXECUTE)) {
                 executeMethodFound = true;
+                // Validate that execute function doesn't access mutable global variables
+                validateNoMutableGlobalAccess(ctx, functionNode);
             } else {
                 // non-execute remote methods should be annotated with @workflow:Query or @workflow:Signal
                 validateAnnotations(ctx, functionNode);
@@ -161,5 +170,71 @@ public class WorkflowServiceAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
                 location.lineRange().startLine().line(), location.lineRange().endLine().line(),
                 location.lineRange().startLine().offset(), location.lineRange().endLine().offset(), 0, 0);
         updateDiagnostic(ctx, diagnosticLocation, WorkflowDiagnostic.WORKFLOW_100);
+    }
+
+    private static void validateNoMutableGlobalAccess(SyntaxNodeAnalysisContext ctx,
+                                                       FunctionDefinitionNode functionNode) {
+        // Create a visitor that extends NodeTransformer to traverse the tree
+        MutableGlobalAccessChecker checker = new MutableGlobalAccessChecker(ctx);
+        functionNode.accept(checker);
+    }
+
+    /**
+     * Checker to validate mutable global variable access in execute function.
+     * Only checks variables accessed inside lock statements since isolated function
+     * validation will handle access outside locks.
+     */
+    private static class MutableGlobalAccessChecker extends NodeVisitor {
+        private final SyntaxNodeAnalysisContext ctx;
+        private boolean insideLockStatement = false;
+
+        MutableGlobalAccessChecker(SyntaxNodeAnalysisContext ctx) {
+            this.ctx = ctx;
+        }
+
+        @Override
+        public void visit(LockStatementNode lockStatementNode) {
+            insideLockStatement = true;
+            super.visit(lockStatementNode);
+            insideLockStatement = false;
+        }
+
+        @Override
+        public void visit(SimpleNameReferenceNode simpleNameReferenceNode) {
+            // Only check if we're inside a lock statement
+            if (insideLockStatement) {
+                checkNameReference(simpleNameReferenceNode);
+            }
+        }
+
+        void checkNameReference(Node nameReferenceNode) {
+            Optional<Symbol> optSymbol = ctx.semanticModel().symbol(nameReferenceNode);
+            if (optSymbol.isEmpty()) {
+                return;
+            }
+
+            Symbol symbol = optSymbol.get();
+            if (symbol.kind() != SymbolKind.VARIABLE) {
+                return;
+            }
+
+            VariableSymbol variableSymbol = (VariableSymbol) symbol;
+            // compiler allow mutable storage access via isolated variables, we need to disallow them here
+            if (!variableSymbol.qualifiers().contains(Qualifier.ISOLATED)) {
+                // If the variable is not isolated, compiler would have already reported an error
+                return;
+            }
+
+            boolean isFinal = variableSymbol.qualifiers().contains(Qualifier.FINAL);
+            TypeSymbol typeSymbol = variableSymbol.typeDescriptor();
+            boolean isReadonlyType = typeSymbol.subtypeOf(ctx.semanticModel().types().READONLY);
+
+            if (isFinal && isReadonlyType) {
+                return;
+            }
+
+            updateDiagnostic(ctx, createDiagnosticLocation(Optional.of(nameReferenceNode.location())),
+                    WorkflowDiagnostic.WORKFLOW_108);
+        }
     }
 }

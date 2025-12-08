@@ -35,6 +35,7 @@ import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnost
 import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_104;
 import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_105;
 import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_106;
+import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_108;
 import static io.ballerina.stdlib.workflow.compiler.util.WorkFlowAssertUtil.assertError;
 import static io.ballerina.stdlib.workflow.compiler.util.WorkFlowTestUtil.getEnvironmentBuilder;
 
@@ -87,5 +88,26 @@ public class WorkflowCompilerPluginTest {
                 "should be a subtype of `error?`", WORKFLOW_106, 72, 5);
         assertError(diagnosticResult, i++, "return type of a remote method annotated with " +
                 "`@workflow:Query` should be a subtype of `anydata|error`", WORKFLOW_105, 77, 5);
+    }
+
+    @Test
+    public void testMutableGlobalVariableAccess() {
+        Package currentPackage = loadPackage("mutable_global_access");
+        PackageCompilation compilation = currentPackage.getCompilation();
+        DiagnosticResult diagnosticResult = compilation.diagnosticResult();
+        Assert.assertEquals(diagnosticResult.errorCount(), 6);
+        int i = 0;
+        assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
+                WORKFLOW_108, 49, 28);
+        assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
+                WORKFLOW_108, 53, 25);
+        assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
+                WORKFLOW_108, 57, 34);
+        assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
+                WORKFLOW_108, 61, 34);
+        assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
+                WORKFLOW_108, 65, 38);
+        assertError(diagnosticResult, i, "execute function cannot access mutable global variables",
+                WORKFLOW_108, 69, 38);
     }
 }

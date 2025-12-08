@@ -33,5 +33,7 @@ public class WorkflowAnalyzer extends CodeAnalyzer {
         codeAnalysisContext.addSyntaxNodeAnalysisTask(new WorkflowServiceAnalysisTask(),
                 SyntaxKind.SERVICE_DECLARATION);
         codeAnalysisContext.addSyntaxNodeAnalysisTask(new WorkflowServiceAnalysisTask(), SyntaxKind.OBJECT_CONSTRUCTOR);
+        codeAnalysisContext.addSyntaxNodeAnalysisTask(new WorkflowActivityAnalysisTask(),
+                SyntaxKind.FUNCTION_DEFINITION);
     }
 }

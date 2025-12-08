@@ -31,4 +31,5 @@ public final class Constants {
     public static final String EXECUTE = "execute";
     public static final String SIGNAL = "Signal";
     public static final String QUERY = "Query";
+    public static final String ACTIVITY = "Activity";
 }

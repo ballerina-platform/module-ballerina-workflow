@@ -4,8 +4,6 @@ import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
-import io.ballerina.compiler.syntax.tree.Node;
-import io.ballerina.compiler.syntax.tree.QualifiedNameReferenceNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.projects.plugins.AnalysisTask;
 import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
@@ -14,9 +12,8 @@ import io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic;
 import java.util.ArrayList;
 import java.util.Optional;
 
-import static io.ballerina.stdlib.workflow.compiler.Constants.ACTIVITY;
-import static io.ballerina.stdlib.workflow.compiler.Constants.WORKFLOW;
 import static io.ballerina.stdlib.workflow.compiler.WorkflowCompilerPluginUtil.createDiagnosticLocation;
+import static io.ballerina.stdlib.workflow.compiler.WorkflowCompilerPluginUtil.isActivityFunction;
 import static io.ballerina.stdlib.workflow.compiler.WorkflowCompilerPluginUtil.updateDiagnostic;
 
 /**
@@ -52,21 +49,6 @@ public class WorkflowActivityAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             if (!param.typeDescriptor().subtypeOf(ctx.semanticModel().types().ANYDATA)) {
                 updateDiagnostic(ctx, createDiagnosticLocation(param.getLocation()), WorkflowDiagnostic.WORKFLOW_107);
             }
-        });
-    }
-
-    private boolean isActivityFunction(FunctionDefinitionNode functionNode) {
-        if (functionNode.metadata().isEmpty()) {
-            return true;
-        }
-        return functionNode.metadata().get().annotations().stream().anyMatch(annotation -> {
-            Node annotReference = annotation.annotReference();
-            if (annotReference.kind() != SyntaxKind.QUALIFIED_NAME_REFERENCE) {
-                return false;
-            }
-            QualifiedNameReferenceNode annotationNode = (QualifiedNameReferenceNode) annotReference;
-            return annotationNode.modulePrefix().text().equals(WORKFLOW) &&
-                    (annotationNode.identifier().text().equals(ACTIVITY));
         });
     }
 }

@@ -20,12 +20,14 @@ package io.ballerina.stdlib.workflow.compiler.analyzer;
 
 import io.ballerina.compiler.api.TypeBuilder;
 import io.ballerina.compiler.api.Types;
+import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.MethodSymbol;
 import io.ballerina.compiler.api.symbols.Qualifier;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.api.symbols.VariableSymbol;
+import io.ballerina.compiler.syntax.tree.FunctionCallExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.LockStatementNode;
 import io.ballerina.compiler.syntax.tree.MetadataNode;
@@ -34,6 +36,9 @@ import io.ballerina.compiler.syntax.tree.NodeVisitor;
 import io.ballerina.compiler.syntax.tree.ServiceDeclarationNode;
 import io.ballerina.compiler.syntax.tree.SimpleNameReferenceNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
+import io.ballerina.compiler.syntax.tree.TypeDescriptorNode;
+import io.ballerina.compiler.syntax.tree.TypedBindingPatternNode;
+import io.ballerina.compiler.syntax.tree.VariableDeclarationNode;
 import io.ballerina.projects.plugins.AnalysisTask;
 import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
 import io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic;
@@ -43,11 +48,13 @@ import org.wso2.ballerinalang.compiler.diagnostic.BLangDiagnosticLocation;
 import java.util.ArrayList;
 import java.util.Optional;
 
+import static io.ballerina.stdlib.workflow.compiler.Constants.ACTIVITY;
 import static io.ballerina.stdlib.workflow.compiler.Constants.EXECUTE;
 import static io.ballerina.stdlib.workflow.compiler.WorkflowCompilerPluginUtil.createDiagnosticLocation;
 import static io.ballerina.stdlib.workflow.compiler.WorkflowCompilerPluginUtil.getServiceDeclarationNode;
 import static io.ballerina.stdlib.workflow.compiler.WorkflowCompilerPluginUtil.hasQueryAnnotation;
 import static io.ballerina.stdlib.workflow.compiler.WorkflowCompilerPluginUtil.hasQueryOrSignalAnnotation;
+import static io.ballerina.stdlib.workflow.compiler.WorkflowCompilerPluginUtil.isWorkflowModule;
 import static io.ballerina.stdlib.workflow.compiler.WorkflowCompilerPluginUtil.updateDiagnostic;
 
 /**
@@ -82,7 +89,7 @@ public class WorkflowServiceAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
             if (functionNode.functionName().text().equals(EXECUTE)) {
                 executeMethodFound = true;
                 // Validate that execute function doesn't access mutable global variables
-                validateNoMutableGlobalAccess(ctx, functionNode);
+                validateExecuteFunctionBody(ctx, functionNode);
             } else {
                 // non-execute remote methods should be annotated with @workflow:Query or @workflow:Signal
                 validateAnnotations(ctx, functionNode);
@@ -172,31 +179,32 @@ public class WorkflowServiceAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
         updateDiagnostic(ctx, diagnosticLocation, WorkflowDiagnostic.WORKFLOW_100);
     }
 
-    private static void validateNoMutableGlobalAccess(SyntaxNodeAnalysisContext ctx,
-                                                       FunctionDefinitionNode functionNode) {
-        // Create a visitor that extends NodeTransformer to traverse the tree
-        MutableGlobalAccessChecker checker = new MutableGlobalAccessChecker(ctx);
-        functionNode.accept(checker);
+    private static void validateExecuteFunctionBody(SyntaxNodeAnalysisContext ctx,
+                                                    FunctionDefinitionNode functionNode) {
+        ExecuteFunctionBodyValidator validator = new ExecuteFunctionBodyValidator(ctx);
+        functionNode.accept(validator);
     }
 
     /**
-     * Checker to validate mutable global variable access in execute function.
-     * Only checks variables accessed inside lock statements since isolated function
-     * validation will handle access outside locks.
+     * Checker to validate mutable global variable access and var binding pattern usage in execute function.
+     * Accessing isolated variables inside lock statements is not allowed.
+     * Using var binding pattern to assign activity function results is not allowed.
      */
-    private static class MutableGlobalAccessChecker extends NodeVisitor {
+    private static class ExecuteFunctionBodyValidator extends NodeVisitor {
         private final SyntaxNodeAnalysisContext ctx;
         private boolean insideLockStatement = false;
+        private TypeDescriptorNode varTypeDesc = null;
 
-        MutableGlobalAccessChecker(SyntaxNodeAnalysisContext ctx) {
+        ExecuteFunctionBodyValidator(SyntaxNodeAnalysisContext ctx) {
             this.ctx = ctx;
         }
 
         @Override
         public void visit(LockStatementNode lockStatementNode) {
+            boolean previousInsideLockStatement = insideLockStatement;
             insideLockStatement = true;
             super.visit(lockStatementNode);
-            insideLockStatement = false;
+            insideLockStatement = previousInsideLockStatement;
         }
 
         @Override
@@ -207,12 +215,55 @@ public class WorkflowServiceAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
             }
         }
 
+        @Override
+        public void visit(VariableDeclarationNode variableDeclarationNode) {
+            TypeDescriptorNode previousVarBindingPattern = this.varTypeDesc;
+            this.varTypeDesc = getVarBindingPattern(variableDeclarationNode.typedBindingPattern());
+            super.visit(variableDeclarationNode);
+            this.varTypeDesc = previousVarBindingPattern;
+        }
+
+        @Override
+        public void visit(FunctionCallExpressionNode functionCallExpressionNode) {
+            if (varTypeDesc != null && isActivityFunction(functionCallExpressionNode)) {
+                updateDiagnostic(ctx, createDiagnosticLocation(Optional.of(varTypeDesc.location())),
+                        WorkflowDiagnostic.WORKFLOW_109);
+            }
+            super.visit(functionCallExpressionNode);
+        }
+
+        private TypeDescriptorNode getVarBindingPattern(TypedBindingPatternNode typedBindingPattern) {
+            TypeDescriptorNode typeDescriptorNode = typedBindingPattern.typeDescriptor();
+            return (typeDescriptorNode.kind() == SyntaxKind.VAR_TYPE_DESC) ? typeDescriptorNode : null;
+        }
+
+        /**
+         * Check if the given function call node represents an activity function.
+         *
+         * @param functionCallNode Function call expression node
+         * @return true if the function is an activity function, false otherwise
+         */
+        private boolean isActivityFunction(FunctionCallExpressionNode functionCallNode) {
+            Optional<Symbol> functionSymbolOpt = ctx.semanticModel().symbol(functionCallNode);
+            if (functionSymbolOpt.isEmpty()) {
+                return false;
+            }
+            Symbol functionSymbol = functionSymbolOpt.get();
+            if (functionSymbol.kind() != SymbolKind.FUNCTION) {
+                return false;
+            }
+            FunctionSymbol function = (FunctionSymbol) functionSymbol;
+            return function.annotations().stream().anyMatch(annotation -> {
+                String annotationName = annotation.getName().orElse("");
+                return annotationName.equals(ACTIVITY) && isWorkflowModule(annotation.getModule().orElse(null));
+            });
+        }
+
         void checkNameReference(Node nameReferenceNode) {
             Optional<Symbol> optSymbol = ctx.semanticModel().symbol(nameReferenceNode);
             if (optSymbol.isEmpty()) {
                 return;
             }
-
             Symbol symbol = optSymbol.get();
             if (symbol.kind() != SymbolKind.VARIABLE) {
                 return;
@@ -228,7 +279,6 @@ public class WorkflowServiceAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
             boolean isFinal = variableSymbol.qualifiers().contains(Qualifier.FINAL);
             TypeSymbol typeSymbol = variableSymbol.typeDescriptor();
             boolean isReadonlyType = typeSymbol.subtypeOf(ctx.semanticModel().types().READONLY);
-
             if (isFinal && isReadonlyType) {
                 return;
             }

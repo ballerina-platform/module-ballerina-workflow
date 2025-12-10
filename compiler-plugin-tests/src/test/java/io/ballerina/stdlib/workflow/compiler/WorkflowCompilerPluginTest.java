@@ -36,6 +36,7 @@ import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnost
 import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_105;
 import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_106;
 import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_108;
+import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_109;
 import static io.ballerina.stdlib.workflow.compiler.util.WorkFlowAssertUtil.assertError;
 import static io.ballerina.stdlib.workflow.compiler.util.WorkFlowTestUtil.getEnvironmentBuilder;
 
@@ -95,7 +96,7 @@ public class WorkflowCompilerPluginTest {
         Package currentPackage = loadPackage("mutable_global_access");
         PackageCompilation compilation = currentPackage.getCompilation();
         DiagnosticResult diagnosticResult = compilation.diagnosticResult();
-        Assert.assertEquals(diagnosticResult.errorCount(), 6);
+        Assert.assertEquals(diagnosticResult.errorCount(), 7);
         int i = 0;
         assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
                 WORKFLOW_108, 49, 28);
@@ -106,8 +107,27 @@ public class WorkflowCompilerPluginTest {
         assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
                 WORKFLOW_108, 61, 34);
         assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
-                WORKFLOW_108, 65, 38);
-        assertError(diagnosticResult, i, "execute function cannot access mutable global variables",
-                WORKFLOW_108, 69, 38);
+                WORKFLOW_108, 65, 35);
+        assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
+                WORKFLOW_108, 69, 35);
+        assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
+                WORKFLOW_108, 74, 35);
+    }
+
+    @Test
+    public void testVarBindingWithActivityFunctionCall() {
+        Package currentPackage = loadPackage("var_binding_activity_call");
+        PackageCompilation compilation = currentPackage.getCompilation();
+        DiagnosticResult diagnosticResult = compilation.diagnosticResult();
+        Assert.assertEquals(diagnosticResult.errorCount(), 4);
+        int i = 0;
+        assertError(diagnosticResult, i++, "cannot use var binding pattern when calling an activity function",
+                WORKFLOW_109, 56, 9);
+        assertError(diagnosticResult, i++, "cannot use var binding pattern when calling an activity function",
+                WORKFLOW_109, 57, 9);
+        assertError(diagnosticResult, i++, "cannot use var binding pattern when calling an activity function",
+                WORKFLOW_109, 58, 9);
+        assertError(diagnosticResult, i++, "cannot use var binding pattern when calling an activity function",
+                WORKFLOW_109, 59, 9);
     }
 }

@@ -15,15 +15,22 @@
 // under the License.
 
 import ballerina/workflow;
+import test.m1;
 
-int globalCounter = 0;
-isolated int isolatedCounter = 0;
-isolated final int[] mutableArray = [1, 2, 3];
-final int & readonly readonlyInt = 42;
-isolated final map<string> finalMap = {a: "one", b: "two"};
-isolated final record{|string a;|} finalRecord = {a: "one"};
-isolated string & readonly readonlyString = "immutable";
-configurable int timeout = 30;
+@workflow:Activity
+isolated function activityOne() returns int {
+    return 1;
+}
+
+@workflow:Activity
+isolated function activityTwo() returns string {
+    return "result";
+}
+
+@workflow:Activity
+isolated function activityThree() returns int {
+    return 3;
+}
 
 final workflow:PersistentProvider persistentProvider = object {
     public isolated function registerWorkflowModel(workflow:WorkflowModel svc,  workflow:WorkflowModelData data) returns error? {
@@ -43,50 +50,19 @@ final workflow:PersistentProvider persistentProvider = object {
 };
 
 service "workflow" on new workflow:WorkflowEventListener(persistentProvider) {
-    private int a = 5;
+
     isolated remote function execute() returns error? {
-        lock {
-            int isoCount = isolatedCounter;
-        }
+        // These should trigger WORKFLOW_109 error - var binding with activity function call
+        var result1 = activityOne();
+        var result2 = activityTwo();
+        var result3 = activityThree();
+        var result4 = m1:activityOne();
 
-        lock {
-            int[] arr = mutableArray;
-        }
-
-        lock {
-            string readonlyStr = readonlyString;
-        }
-
-        lock {
-            string readonlyStr = readonlyString + " modified";
-        }
-
-        lock {
-            string? readonlyStr = finalMap["a"];
-        }
-
-        lock {
-            string? readonlyStr = finalRecord.a;
-        }
-        lock {
-            lock {
-            }
-            string? readonlyStr = finalRecord.a;
-        }
-        // These should be allowed inside lock (final AND readonly, or configurable)
-        lock {
-            int readonlyValue = readonlyInt;
-        }
-
-        lock {
-            int timeoutValue = timeout;
-        }
-
-        lock {
-            int b = self.a;
-        }
-        // Note: Accessing globalCounter outside lock will be caught by Ballerina's
-        // isolated function validation, so we don't need to test it here
+        // These should be allowed - explicit type binding
+        int explicitResult1 = activityOne();
+        string explicitResult2 = activityTwo();
+        int|error explicitResult3 = activityThree();
+        int explicitResult4 = m1:activityOne();
     }
 
     @workflow:Signal

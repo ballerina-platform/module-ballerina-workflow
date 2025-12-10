@@ -2,7 +2,6 @@ package io.ballerina.stdlib.workflow.compiler.analyzer;
 
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
-import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.projects.plugins.AnalysisTask;
@@ -40,10 +39,6 @@ public class WorkflowActivityAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         }
 
         Symbol funcSymbol = optFuncSym.get();
-        if (funcSymbol.kind() != SymbolKind.FUNCTION) {
-            return;
-        }
-
         FunctionSymbol functionSymbol = (FunctionSymbol) funcSymbol;
         functionSymbol.typeDescriptor().params().orElse(new ArrayList<>()).forEach(param -> {
             if (!param.typeDescriptor().subtypeOf(ctx.semanticModel().types().ANYDATA)) {

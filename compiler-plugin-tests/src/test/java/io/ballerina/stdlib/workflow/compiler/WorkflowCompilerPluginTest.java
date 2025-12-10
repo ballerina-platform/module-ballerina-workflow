@@ -35,6 +35,7 @@ import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnost
 import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_104;
 import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_105;
 import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_106;
+import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_107;
 import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_108;
 import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_109;
 import static io.ballerina.stdlib.workflow.compiler.util.WorkFlowAssertUtil.assertError;
@@ -129,5 +130,22 @@ public class WorkflowCompilerPluginTest {
                 WORKFLOW_109, 58, 9);
         assertError(diagnosticResult, i++, "cannot use var binding pattern when calling an activity function",
                 WORKFLOW_109, 59, 9);
+    }
+
+    @Test
+    public void testActivityFunctionParameterValidation() {
+        Package currentPackage = loadPackage("invalid_activity_parameters");
+        PackageCompilation compilation = currentPackage.getCompilation();
+        DiagnosticResult diagnosticResult = compilation.diagnosticResult();
+        Assert.assertEquals(diagnosticResult.errorCount(), 4);
+        int i = 0;
+        assertError(diagnosticResult, i++, "parameters of an activity function should be a subtype of `anydata`",
+                WORKFLOW_107, 21, 63);
+        assertError(diagnosticResult, i++, "parameters of an activity function should be a subtype of `anydata`",
+                WORKFLOW_107, 30, 45);
+        assertError(diagnosticResult, i++, "parameters of an activity function should be a subtype of `anydata`",
+                WORKFLOW_107, 35, 46);
+        assertError(diagnosticResult, i++, "parameters of an activity function should be a subtype of `anydata`",
+                WORKFLOW_107, 44, 42);
     }
 }

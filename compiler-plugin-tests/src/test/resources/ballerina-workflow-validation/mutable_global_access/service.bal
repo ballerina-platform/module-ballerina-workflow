@@ -93,4 +93,3 @@ service "workflow" on new workflow:WorkflowEventListener(persistentProvider) {
     isolated remote function notify() returns error? {
     }
 }
-

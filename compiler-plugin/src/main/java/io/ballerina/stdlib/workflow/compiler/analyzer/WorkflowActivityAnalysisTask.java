@@ -3,7 +3,6 @@ package io.ballerina.stdlib.workflow.compiler.analyzer;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
-import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.projects.plugins.AnalysisTask;
 import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
 import io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic;
@@ -24,10 +23,6 @@ import static io.ballerina.stdlib.workflow.compiler.WorkflowCompilerPluginUtil.u
 public class WorkflowActivityAnalysisTask implements AnalysisTask<SyntaxNodeAnalysisContext> {
     @Override
     public void perform(SyntaxNodeAnalysisContext ctx) {
-        if (ctx.node().kind() != SyntaxKind.FUNCTION_DEFINITION) {
-            return;
-        }
-
         FunctionDefinitionNode functionDefinitionNode = (FunctionDefinitionNode) ctx.node();
         if (!isActivityFunction(functionDefinitionNode)) {
             return;

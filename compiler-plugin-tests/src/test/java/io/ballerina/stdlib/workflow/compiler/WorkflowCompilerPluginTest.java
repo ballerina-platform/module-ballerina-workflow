@@ -100,19 +100,19 @@ public class WorkflowCompilerPluginTest {
         Assert.assertEquals(diagnosticResult.errorCount(), 7);
         int i = 0;
         assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
-                WORKFLOW_108, 49, 28);
+                WORKFLOW_108, 50, 28);
         assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
-                WORKFLOW_108, 53, 25);
+                WORKFLOW_108, 54, 25);
         assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
-                WORKFLOW_108, 57, 34);
+                WORKFLOW_108, 58, 34);
         assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
-                WORKFLOW_108, 61, 34);
+                WORKFLOW_108, 62, 34);
         assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
-                WORKFLOW_108, 65, 35);
+                WORKFLOW_108, 66, 35);
         assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
-                WORKFLOW_108, 69, 35);
+                WORKFLOW_108, 70, 35);
         assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
-                WORKFLOW_108, 74, 35);
+                WORKFLOW_108, 75, 35);
     }
 
     @Test

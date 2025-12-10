@@ -144,7 +144,7 @@ public class WorkflowCompilerPluginUtil {
 
     public static boolean isActivityFunction(FunctionDefinitionNode functionNode) {
         if (functionNode.metadata().isEmpty()) {
-            return true;
+            return false;
         }
         return functionNode.metadata().get().annotations().stream().anyMatch(annotation -> {
             Node annotReference = annotation.annotReference();

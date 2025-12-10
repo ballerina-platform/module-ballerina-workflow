@@ -187,7 +187,7 @@ public class WorkflowServiceAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
 
     /**
      * Checker to validate mutable global variable access and var binding pattern usage in execute function.
-     * Accessing isolated variables inside lock statements is not allowed.
+     * Accessing mutable isolated variables inside lock statements is not allowed.
      * Using var binding pattern to assign activity function results is not allowed.
      */
     private static class ExecuteFunctionBodyValidator extends NodeVisitor {

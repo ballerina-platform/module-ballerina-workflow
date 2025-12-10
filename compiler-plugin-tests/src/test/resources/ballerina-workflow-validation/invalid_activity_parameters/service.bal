@@ -70,3 +70,12 @@ function validActivityWithJson(json payload) returns json {
 function validActivityMultipleParams(int x, string y, boolean z) returns string {
     return y;
 }
+
+function regularFunc(function (int) returns int invalidParam) returns int {
+    return 1;
+}
+
+@deprecated
+function regularFuncDeprecated(function (int) returns int invalidParam) returns int {
+    return 1;
+}

@@ -24,6 +24,7 @@ isolated final map<string> finalMap = {a: "one", b: "two"};
 isolated final record{|string a;|} finalRecord = {a: "one"};
 isolated string & readonly readonlyString = "immutable";
 configurable int timeout = 30;
+isolated final int timeoutFinal = 30;
 
 final workflow:PersistentProvider persistentProvider = object {
     public isolated function registerWorkflowModel(workflow:WorkflowModel svc,  workflow:WorkflowModelData data) returns error? {
@@ -77,13 +78,14 @@ service "workflow" on new workflow:WorkflowEventListener(persistentProvider) {
         lock {
             int readonlyValue = readonlyInt;
         }
-
         lock {
             int timeoutValue = timeout;
         }
-
         lock {
             int b = self.a;
+        }
+        lock {
+            int timeoutValue = timeoutFinal;
         }
         // Note: Accessing globalCounter outside lock will be caught by Ballerina's
         // isolated function validation, so we don't need to test it here

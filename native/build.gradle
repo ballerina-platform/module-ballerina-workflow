@@ -24,11 +24,16 @@ plugins {
 
 description = 'Ballerina - Workflow Native Implementation'
 
+def temporalVersion = '1.32.1'
+
 dependencies {
     checkstyle project(':checkstyle')
     checkstyle "com.puppycrawl.tools:checkstyle:${checkstylePluginVersion}"
 
     implementation group: 'org.ballerinalang', name: 'ballerina-runtime', version: "${ballerinaLangVersion}"
+    
+    // Temporal SDK for durable workflow execution
+    implementation "io.temporal:temporal-sdk:${temporalVersion}"
 }
 
 def excludePattern = '**/module-info.java'
@@ -78,13 +83,4 @@ publishing {
 
 spotbugsTest {
     enabled = false
-}
-
-compileJava {
-    doFirst {
-        options.compilerArgs = [
-                '--module-path', classpath.asPath,
-        ]
-        classpath = files()
-    }
 }

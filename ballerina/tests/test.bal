@@ -16,8 +16,28 @@
 
 import ballerina/test;
 
+# Test process function for workflow registration tests.
+@Process
+function testProcessFunction(string input) returns string|error {
+    return "processed: " + input;
+}
+
+# Test activity function for activity execution tests.
+@Activity
+function testActivityFunction(string input) returns string|error {
+    return "activity result: " + input;
+}
+
 @test:Config {}
-function testGetInfo() {
-    string info = getInfo();
-    test:assertEquals(info, "Workflow Module");
+function testRegisterProcess() returns error? {
+    boolean result = check registerProcess(testProcessFunction, "test-process");
+    test:assertTrue(result, "Process registration should succeed");
+}
+
+@test:Config {
+    dependsOn: [testRegisterProcess]
+}
+function testRegisterProcessDuplicate() {
+    boolean|error result = registerProcess(testProcessFunction, "test-process");
+    test:assertTrue(result is error, "Duplicate registration should fail");
 }

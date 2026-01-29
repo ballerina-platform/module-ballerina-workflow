@@ -18,4 +18,20 @@
     <Match>
         <Bug pattern="EI_EXPOSE_REP2" />
     </Match>
+    
+    <!-- Singleton pattern - intentionally exposing internal representation -->
+    <Match>
+        <Bug pattern="MS_EXPOSE_REP" />
+    </Match>
+    
+    <!-- Dead local stores in placeholder implementations -->
+    <Match>
+        <Bug pattern="DLS_DEAD_LOCAL_STORE" />
+    </Match>
+    
+    <!-- Inconsistent sync in simple initialized flag -->
+    <Match>
+        <Class name="io.ballerina.stdlib.workflow.runtime.WorkflowRuntime" />
+        <Bug pattern="IS2_INCONSISTENT_SYNC" />
+    </Match>
 </FindBugsFilter>

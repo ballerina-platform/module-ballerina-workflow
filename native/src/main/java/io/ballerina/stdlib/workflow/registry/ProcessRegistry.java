@@ -20,8 +20,11 @@ package io.ballerina.stdlib.workflow.registry;
 
 import io.ballerina.runtime.api.values.BFunctionPointer;
 
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -115,15 +118,42 @@ public final class ProcessRegistry {
     }
 
     /**
+     * Returns all registered processes.
+     *
+     * @return an unmodifiable map of process names to ProcessInfo
+     */
+    public Map<String, ProcessInfo> getAllProcesses() {
+        return Collections.unmodifiableMap(processes);
+    }
+
+    /**
+     * Adds an activity to a process.
+     *
+     * @param processName the name of the process
+     * @param activityName the name of the activity to add
+     * @return true if the activity was added, false if the process doesn't exist
+     */
+    public boolean addActivityToProcess(String processName, String activityName) {
+        ProcessInfo info = processes.get(processName);
+        if (info != null) {
+            info.addActivity(activityName);
+            return true;
+        }
+        return false;
+    }
+
+    /**
      * Information about a registered process.
      */
     public static class ProcessInfo {
         private final String name;
         private final BFunctionPointer functionPointer;
+        private final Set<String> activityNames;
 
         public ProcessInfo(String name, BFunctionPointer functionPointer) {
             this.name = name;
             this.functionPointer = functionPointer;
+            this.activityNames = new HashSet<>();
         }
 
         public String getName() {
@@ -132,6 +162,14 @@ public final class ProcessRegistry {
 
         public BFunctionPointer getFunctionPointer() {
             return functionPointer;
+        }
+
+        public Set<String> getActivityNames() {
+            return Collections.unmodifiableSet(activityNames);
+        }
+
+        public void addActivity(String activityName) {
+            activityNames.add(activityName);
         }
     }
 }

@@ -16,6 +16,18 @@
 
 import ballerina/jballerina.java;
 
+// Initialize the module - this captures the module reference for use in native code
+function init() {
+    initModule();
+}
+
+# Initializes the workflow module.
+# This captures the module reference for creating Ballerina record values in native code.
+function initModule() = @java:Method {
+    'class: "io.ballerina.stdlib.workflow.ModuleUtils",
+    name: "setModule"
+} external;
+
 # Executes an activity function within the workflow context.
 # 
 # Activities are non-deterministic operations (I/O, database calls, external APIs)
@@ -62,7 +74,35 @@ public isolated function sendEvent(function processFunction, anydata eventData) 
 #
 # + processFunction - The process function to register (must be annotated with @Process)
 # + processName - The unique name to register the process under
+# + activities - Optional map of activity function pointers used by the process
 # + return - `true` if registration was successful, or an error if registration fails
-public isolated function registerProcess(function processFunction, string processName) returns boolean|error = @java:Method {
+public isolated function registerProcess(function processFunction, string processName, map<function>? activities = ()) returns boolean|error = @java:Method {
+    'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative"
+} external;
+
+# Returns information about all registered workflow processes and their activities.
+#
+# This function is useful for testing and runtime introspection to verify
+# that workflow processes have been properly registered with their activities.
+#
+# + return - A map of process names to their registration information, or an error
+public isolated function getRegisteredWorkflows() returns WorkflowRegistry|error {
+    return getRegisteredWorkflowsNative();
+}
+
+# Native implementation to get registered workflows.
+# + return - A map of process names to their registration information, or an error
+isolated function getRegisteredWorkflowsNative() returns WorkflowRegistry|error = @java:Method {
+    'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative",
+    name: "getRegisteredWorkflows"
+} external;
+
+# Clears all registered processes and activities from the registry.
+#
+# This function is primarily used for testing to reset the registry state
+# between test cases. Use with caution in production code.
+#
+# + return - `true` if clearing was successful, or an error
+isolated function clearRegistry() returns boolean|error = @java:Method {
     'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative"
 } external;

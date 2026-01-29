@@ -1,0 +1,66 @@
+/*
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package io.ballerina.stdlib.workflow.compiler;
+
+import java.util.Collections;
+import java.util.Map;
+
+/**
+ * Holds information about a @Process annotated function.
+ * <p>
+ * Contains the function name and a map of activity functions called within it.
+ *
+ * @since 0.1.0
+ */
+public class ProcessFunctionInfo {
+
+    private final String functionName;
+    private final Map<String, String> activityMap;
+
+    /**
+     * Creates a new ProcessFunctionInfo.
+     *
+     * @param functionName the name of the process function
+     * @param activityMap  map of activity function names to their references
+     */
+    public ProcessFunctionInfo(String functionName, Map<String, String> activityMap) {
+        this.functionName = functionName;
+        this.activityMap = activityMap;
+    }
+
+    /**
+     * Gets the name of the process function.
+     *
+     * @return the function name
+     */
+    public String getFunctionName() {
+        return functionName;
+    }
+
+    /**
+     * Gets the map of activity functions called within this process.
+     * <p>
+     * The key is the activity function name, and the value is the function reference.
+     *
+     * @return unmodifiable map of activity function names to references
+     */
+    public Map<String, String> getActivityMap() {
+        return Collections.unmodifiableMap(activityMap);
+    }
+}

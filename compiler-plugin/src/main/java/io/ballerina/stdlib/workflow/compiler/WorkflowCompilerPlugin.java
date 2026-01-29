@@ -23,6 +23,16 @@ import io.ballerina.projects.plugins.CompilerPluginContext;
 
 /**
  * Workflow compiler plugin.
+ * <p>
+ * This plugin is engaged when the user imports the "ballerina/workflow" module.
+ * It provides:
+ * <ul>
+ *   <li>Validation of @Process and @Activity function signatures</li>
+ *   <li>Code modification to detect functions annotated with @workflow:Process</li>
+ *   <li>Finding @workflow:Activity function calls within process functions</li>
+ *   <li>Replacing activity calls with callActivity(functionPointer, args...)</li>
+ *   <li>Adding registerProcess call at module level</li>
+ * </ul>
  *
  * @since 0.1.0
  */
@@ -30,6 +40,10 @@ public class WorkflowCompilerPlugin extends CompilerPlugin {
 
     @Override
     public void init(CompilerPluginContext pluginContext) {
-        // TODO: Initialize compiler plugin
+        // Add code analyzer for validation of @Process and @Activity function signatures
+        pluginContext.addCodeAnalyzer(new WorkflowCodeAnalyzer());
+        
+        // Add code modifier for workflow transformations
+        pluginContext.addCodeModifier(new WorkflowCodeModifier(pluginContext.userData()));
     }
 }

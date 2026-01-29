@@ -20,15 +20,25 @@ package io.ballerina.stdlib.workflow.runtime.nativeimpl;
 
 import io.ballerina.runtime.api.Environment;
 import io.ballerina.runtime.api.creators.ErrorCreator;
+import io.ballerina.runtime.api.creators.TypeCreator;
+import io.ballerina.runtime.api.creators.ValueCreator;
+import io.ballerina.runtime.api.types.MapType;
+import io.ballerina.runtime.api.types.RecordType;
 import io.ballerina.runtime.api.utils.StringUtils;
+import io.ballerina.runtime.api.values.BArray;
 import io.ballerina.runtime.api.values.BFunctionPointer;
+import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
+import io.ballerina.stdlib.workflow.ModuleUtils;
 import io.ballerina.stdlib.workflow.registry.ActivityRegistry;
 import io.ballerina.stdlib.workflow.registry.ProcessRegistry;
 import io.ballerina.stdlib.workflow.runtime.WorkflowRuntime;
 import io.ballerina.stdlib.workflow.utils.TypesUtil;
 
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+
 
 /**
  * Native implementation for workflow module functions.
@@ -187,9 +197,11 @@ public final class WorkflowNative {
      * @param env the Ballerina runtime environment
      * @param processFunction the process function to register
      * @param processName the name to register the process under
+     * @param activities optional map of activity function pointers
      * @return true if registration was successful, or an error
      */
-    public static Object registerProcess(Environment env, BFunctionPointer processFunction, BString processName) {
+    public static Object registerProcess(Environment env, BFunctionPointer processFunction, BString processName,
+                                         Object activities) {
         try {
             String name = processName.getValue();
 
@@ -201,11 +213,91 @@ public final class WorkflowNative {
                         StringUtils.fromString("Process with name '" + name + "' is already registered"));
             }
 
+            // Register activities if provided and track them with the process
+            if (activities instanceof BMap) {
+                BMap<BString, BFunctionPointer> activityMap = (BMap<BString, BFunctionPointer>) activities;
+                for (BString activityName : activityMap.getKeys()) {
+                    BFunctionPointer activityFunc = activityMap.get(activityName);
+                    String activityNameStr = activityName.getValue();
+                    ActivityRegistry.getInstance().register(activityNameStr, activityFunc);
+                    // Track this activity with the process
+                    ProcessRegistry.getInstance().addActivityToProcess(name, activityNameStr);
+                }
+            }
+
             return true;
 
         } catch (Exception e) {
             return ErrorCreator.createError(
                     StringUtils.fromString("Failed to register process: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Native implementation for getRegisteredWorkflows function.
+     * <p>
+     * Returns information about all registered workflow processes and their activities.
+     * This is useful for testing and introspection.
+     *
+     * @return a map of process names to their information including activities
+     */
+    public static Object getRegisteredWorkflows() {
+        try {
+            Map<String, ProcessRegistry.ProcessInfo> allProcesses =
+                    ProcessRegistry.getInstance().getAllProcesses();
+
+            // Get the ProcessRegistration record type from the workflow module
+            RecordType processRegType = (RecordType) ValueCreator.createRecordValue(
+                    ModuleUtils.getModule(), "ProcessRegistration").getType();
+
+            // Create a typed map for map<ProcessRegistration>
+            MapType mapType = TypeCreator.createMapType(processRegType);
+            BMap<BString, Object> resultMap = ValueCreator.createMapValue(mapType);
+
+            for (Map.Entry<String, ProcessRegistry.ProcessInfo> entry : allProcesses.entrySet()) {
+                String processName = entry.getKey();
+                ProcessRegistry.ProcessInfo processInfo = entry.getValue();
+
+                // Create a ProcessRegistration record
+                BMap<BString, Object> processRecord = ValueCreator.createRecordValue(
+                        ModuleUtils.getModule(), "ProcessRegistration");
+                processRecord.put(StringUtils.fromString("name"), StringUtils.fromString(processName));
+
+                // Add activities as an array of strings
+                Set<String> activityNames = processInfo.getActivityNames();
+                BString[] activityArray = activityNames.stream()
+                        .map(StringUtils::fromString)
+                        .toArray(BString[]::new);
+                BArray activitiesBalArray = ValueCreator.createArrayValue(activityArray);
+                processRecord.put(StringUtils.fromString("activities"), activitiesBalArray);
+
+                resultMap.put(StringUtils.fromString(processName), processRecord);
+            }
+
+            return resultMap;
+
+        } catch (Exception e) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to get registered workflows: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Native implementation for clearRegistry function.
+     * <p>
+     * Clears all registered processes and activities.
+     * This is primarily used for testing.
+     *
+     * @return true if clearing was successful
+     */
+    public static Object clearRegistry() {
+        try {
+            ProcessRegistry.getInstance().clear();
+            ActivityRegistry.getInstance().clear();
+            return true;
+        } catch (Exception e) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to clear registry: " + e.getMessage()));
         }
     }
 

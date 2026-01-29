@@ -131,7 +131,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         String activitiesArg = processInfo.getActivityMap().isEmpty() ? "()" : mapLiteral.toString();
 
         String registerStatement = String.format(
-                "var _ = workflow:registerProcess(%s, \"%s\", %s);",
+                "boolean _ = workflow:registerProcess(%s, \"%s\", %s);",
                 processInfo.getFunctionName(),
                 processInfo.getFunctionName(),
                 activitiesArg
@@ -272,11 +272,8 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             if (functionName.kind() == SyntaxKind.SIMPLE_NAME_REFERENCE) {
                 return functionName.toString().trim();
             } else if (functionName.kind() == SyntaxKind.QUALIFIED_NAME_REFERENCE) {
-                // Handle module:function calls
-                String[] parts = functionName.toString().trim().split(":");
-                if (parts.length == 2) {
-                    return parts[1];
-                }
+                // For module:function calls, preserve the full qualified name
+                return functionName.toString().trim();
             }
             return null;
         }

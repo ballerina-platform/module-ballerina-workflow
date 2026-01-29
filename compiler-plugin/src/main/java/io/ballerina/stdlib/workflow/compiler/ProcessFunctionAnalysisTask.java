@@ -182,11 +182,8 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
             if (functionName.kind() == SyntaxKind.SIMPLE_NAME_REFERENCE) {
                 return functionName.toString().trim();
             } else if (functionName.kind() == SyntaxKind.QUALIFIED_NAME_REFERENCE) {
-                // For module:function calls, extract just the function name
-                String[] parts = functionName.toString().trim().split(":");
-                if (parts.length == 2) {
-                    return parts[1];
-                }
+                // For module:function calls, preserve the full qualified name
+                return functionName.toString().trim();
             }
             return null;
         }

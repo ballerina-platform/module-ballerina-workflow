@@ -44,7 +44,7 @@ public final class WorkflowRuntime {
     private final ExecutorService executor;
 
     // Flag to track if runtime is initialized
-    private boolean initialized;
+    private volatile boolean initialized;
 
     private WorkflowRuntime() {
         // Use virtual threads for efficient concurrency (Java 21+)

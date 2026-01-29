@@ -109,6 +109,33 @@ public class WorkflowCompilerPluginTest {
         assertDiagnosticContains(diagnosticResult, WorkflowConstants.WORKFLOW_104);
     }
 
+    @Test(groups = "invalid")
+    public void testInvalidProcessParam() {
+        String packagePath = "invalid_process_param";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for process with non-anydata input parameter");
+        assertDiagnosticContains(diagnosticResult, WorkflowConstants.WORKFLOW_101);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidProcessReturn() {
+        String packagePath = "invalid_process_return";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for process with non-anydata return type");
+        assertDiagnosticContains(diagnosticResult, WorkflowConstants.WORKFLOW_105);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidProcessEvents() {
+        String packagePath = "invalid_process_events";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for process with invalid events parameter type");
+        assertDiagnosticContains(diagnosticResult, WorkflowConstants.WORKFLOW_102);
+    }
+
     /**
      * Get diagnostic result for the given package path.
      * Uses runCodeGenAndModifyPlugins() to run the code modifier.

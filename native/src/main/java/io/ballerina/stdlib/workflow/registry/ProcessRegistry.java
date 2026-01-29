@@ -21,7 +21,6 @@ package io.ballerina.stdlib.workflow.registry;
 import io.ballerina.runtime.api.values.BFunctionPointer;
 
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -153,7 +152,7 @@ public final class ProcessRegistry {
         public ProcessInfo(String name, BFunctionPointer functionPointer) {
             this.name = name;
             this.functionPointer = functionPointer;
-            this.activityNames = new HashSet<>();
+            this.activityNames = ConcurrentHashMap.newKeySet();
         }
 
         public String getName() {

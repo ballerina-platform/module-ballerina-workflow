@@ -55,6 +55,7 @@ public final class WorkflowConstants {
     public static final String WORKFLOW_103 = "WORKFLOW_103";
     public static final String WORKFLOW_104 = "WORKFLOW_104";
     public static final String WORKFLOW_105 = "WORKFLOW_105";
+    public static final String WORKFLOW_106 = "WORKFLOW_106";
 
     // Diagnostic messages
     public static final String PROCESS_INVALID_CONTEXT_PARAM =
@@ -69,4 +70,6 @@ public final class WorkflowConstants {
             "@Activity function return type must be a subtype of 'anydata' or 'error'";
     public static final String PROCESS_INVALID_RETURN_TYPE =
             "@Process function return type must be a subtype of 'anydata' or 'error'";
+    public static final String PROCESS_TOO_MANY_PARAMS =
+            "@Process function can have at most 3 parameters: Context, input, and events";
 }

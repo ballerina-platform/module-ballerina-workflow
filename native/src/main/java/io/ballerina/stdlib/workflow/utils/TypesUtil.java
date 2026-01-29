@@ -19,7 +19,10 @@
 package io.ballerina.stdlib.workflow.utils;
 
 import io.ballerina.runtime.api.creators.ErrorCreator;
+import io.ballerina.runtime.api.creators.TypeCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
+import io.ballerina.runtime.api.types.ArrayType;
+import io.ballerina.runtime.api.types.PredefinedTypes;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BArray;
 import io.ballerina.runtime.api.values.BDecimal;
@@ -177,16 +180,12 @@ public final class TypesUtil {
      * @return the BArray equivalent
      */
     public static BArray convertListToBArray(List<?> list) {
-        BString[] converted = new BString[list.size()];
+        ArrayType anydataArrayType = TypeCreator.createArrayType(PredefinedTypes.TYPE_ANYDATA);
+        BArray bArray = ValueCreator.createArrayValue(anydataArrayType, list.size());
         for (int i = 0; i < list.size(); i++) {
-            Object item = convertJavaToBallerinaType(list.get(i));
-            if (item instanceof BString) {
-                converted[i] = (BString) item;
-            } else if (item != null) {
-                converted[i] = StringUtils.fromString(item.toString());
-            }
+            bArray.add(i, convertJavaToBallerinaType(list.get(i)));
         }
-        return ValueCreator.createArrayValue(converted);
+        return bArray;
     }
 
     /**

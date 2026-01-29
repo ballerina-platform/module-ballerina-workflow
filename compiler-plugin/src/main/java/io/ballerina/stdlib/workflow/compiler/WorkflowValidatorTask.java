@@ -187,6 +187,14 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                         WorkflowConstants.PROCESS_INVALID_EVENTS_TYPE);
                 return;
             }
+            paramIndex++;
+        }
+
+        // Check for excess parameters (max 3: Context, input, events)
+        if (paramIndex < params.size()) {
+            reportDiagnostic(context, functionNode, WorkflowConstants.WORKFLOW_106,
+                    WorkflowConstants.PROCESS_TOO_MANY_PARAMS);
+            return;
         }
 
         // Check return type
@@ -306,7 +314,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                 // Check if all members are subtypes of anydata
                 UnionTypeSymbol unionType = (UnionTypeSymbol) typeSymbol;
                 return unionType.memberTypeDescriptors().stream()
-                        .allMatch(this::isSubtypeOfAnydataOrError);
+                        .allMatch(this::isSubtypeOfAnydata);
             default:
                 return false;
         }

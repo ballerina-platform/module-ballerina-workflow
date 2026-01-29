@@ -16,22 +16,21 @@
  * under the License.
  */
 
-package io.ballerina.stdlib.workflow.compiler;
+package io.ballerina.stdlib.workflow.compiler.codemodifier;
 
-import io.ballerina.projects.plugins.CompilerPlugin;
-import io.ballerina.projects.plugins.CompilerPluginContext;
-import io.ballerina.stdlib.workflow.compiler.analyzer.WorkflowAnalyzer;
-import io.ballerina.stdlib.workflow.compiler.codemodifier.WorkflowModifier;
+import io.ballerina.projects.plugins.CodeModifier;
+import io.ballerina.projects.plugins.CodeModifierContext;
+import io.ballerina.stdlib.workflow.compiler.codemodifier.tasks.WorkflowModifierTask;
 
 /**
- * Workflow compiler plugin for Ballerina.
+ * Workflow code modifier for transforming workflow service declarations.
  *
  * @since 0.1.0
  */
-public class WorkflowCompilerPlugin extends CompilerPlugin {
+
+public class WorkflowModifier extends CodeModifier {
     @Override
-    public void init(CompilerPluginContext compilerPluginContext) {
-        compilerPluginContext.addCodeAnalyzer(new WorkflowAnalyzer());
-        compilerPluginContext.addCodeModifier(new WorkflowModifier());
+    public void init(CodeModifierContext codeModifierContext) {
+        codeModifierContext.addSourceModifierTask(new WorkflowModifierTask());
     }
 }

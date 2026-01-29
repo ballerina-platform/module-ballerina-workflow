@@ -1,0 +1,6 @@
+[plugin]
+id = "workflow-compiler-plugin"
+class = "io.ballerina.stdlib.workflow.compiler.WorkflowCompilerPlugin"
+
+[[dependency]]
+path = "../compiler-plugin/build/libs/workflow-compiler-plugin-@project.version@.jar"

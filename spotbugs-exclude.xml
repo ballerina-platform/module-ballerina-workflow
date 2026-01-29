@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FindBugsFilter>
+    <!-- Exclude test files -->
+    <Match>
+        <Source name="~.*Test\.java" />
+    </Match>
+    
+    <!-- Exclude generated files -->
+    <Match>
+        <Source name="~.*target.*" />
+    </Match>
+    
+    <!-- Exclude specific warnings -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP" />
+    </Match>
+    
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP2" />
+    </Match>
+</FindBugsFilter>

@@ -22,3 +22,8 @@ groupId = "io.ballerina.stdlib"
 artifactId = "workflow-commons"
 version = "0.1.0"
 path = "../commons/build/libs/workflow-commons-0.1.0-SNAPSHOT.jar"
+
+[[package.modules]]
+name = "workflow.internal"
+export = true
+readme = "README.md"

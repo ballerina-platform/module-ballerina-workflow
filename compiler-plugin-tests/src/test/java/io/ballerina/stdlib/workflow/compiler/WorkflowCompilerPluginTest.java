@@ -35,6 +35,9 @@ import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnost
 import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_104;
 import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_105;
 import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_106;
+import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_107;
+import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_108;
+import static io.ballerina.stdlib.workflow.compiler.diagnostics.WorkflowDiagnostic.WORKFLOW_109;
 import static io.ballerina.stdlib.workflow.compiler.util.WorkFlowAssertUtil.assertError;
 import static io.ballerina.stdlib.workflow.compiler.util.WorkFlowTestUtil.getEnvironmentBuilder;
 
@@ -87,5 +90,62 @@ public class WorkflowCompilerPluginTest {
                 "should be a subtype of `error?`", WORKFLOW_106, 72, 5);
         assertError(diagnosticResult, i++, "return type of a remote method annotated with " +
                 "`@workflow:Query` should be a subtype of `anydata|error`", WORKFLOW_105, 77, 5);
+    }
+
+    @Test
+    public void testMutableGlobalVariableAccess() {
+        Package currentPackage = loadPackage("mutable_global_access");
+        PackageCompilation compilation = currentPackage.getCompilation();
+        DiagnosticResult diagnosticResult = compilation.diagnosticResult();
+        Assert.assertEquals(diagnosticResult.errorCount(), 7);
+        int i = 0;
+        assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
+                WORKFLOW_108, 50, 28);
+        assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
+                WORKFLOW_108, 54, 25);
+        assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
+                WORKFLOW_108, 58, 34);
+        assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
+                WORKFLOW_108, 62, 34);
+        assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
+                WORKFLOW_108, 66, 35);
+        assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
+                WORKFLOW_108, 70, 35);
+        assertError(diagnosticResult, i++, "execute function cannot access mutable global variables",
+                WORKFLOW_108, 75, 35);
+    }
+
+    @Test
+    public void testVarBindingWithActivityFunctionCall() {
+        Package currentPackage = loadPackage("var_binding_activity_call");
+        PackageCompilation compilation = currentPackage.getCompilation();
+        DiagnosticResult diagnosticResult = compilation.diagnosticResult();
+        Assert.assertEquals(diagnosticResult.errorCount(), 4);
+        int i = 0;
+        assertError(diagnosticResult, i++, "cannot use var binding pattern when calling an activity function",
+                WORKFLOW_109, 56, 9);
+        assertError(diagnosticResult, i++, "cannot use var binding pattern when calling an activity function",
+                WORKFLOW_109, 57, 9);
+        assertError(diagnosticResult, i++, "cannot use var binding pattern when calling an activity function",
+                WORKFLOW_109, 58, 9);
+        assertError(diagnosticResult, i++, "cannot use var binding pattern when calling an activity function",
+                WORKFLOW_109, 59, 9);
+    }
+
+    @Test
+    public void testActivityFunctionParameterValidation() {
+        Package currentPackage = loadPackage("invalid_activity_parameters");
+        PackageCompilation compilation = currentPackage.getCompilation();
+        DiagnosticResult diagnosticResult = compilation.diagnosticResult();
+        Assert.assertEquals(diagnosticResult.errorCount(), 4);
+        int i = 0;
+        assertError(diagnosticResult, i++, "parameters of an activity function should be a subtype of `anydata`",
+                WORKFLOW_107, 21, 63);
+        assertError(diagnosticResult, i++, "parameters of an activity function should be a subtype of `anydata`",
+                WORKFLOW_107, 30, 45);
+        assertError(diagnosticResult, i++, "parameters of an activity function should be a subtype of `anydata`",
+                WORKFLOW_107, 35, 46);
+        assertError(diagnosticResult, i++, "parameters of an activity function should be a subtype of `anydata`",
+                WORKFLOW_107, 44, 42);
     }
 }

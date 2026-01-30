@@ -28,6 +28,7 @@ import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.api.symbols.UnionTypeSymbol;
 import io.ballerina.compiler.syntax.tree.AnnotationNode;
 import io.ballerina.compiler.syntax.tree.IdentifierToken;
+import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.Node;
 import io.ballerina.compiler.syntax.tree.NodeFactory;
 import io.ballerina.compiler.syntax.tree.NodeList;
@@ -47,6 +48,7 @@ import java.util.Optional;
 
 import static io.ballerina.compiler.syntax.tree.AbstractNodeFactory.createIdentifierToken;
 import static io.ballerina.compiler.syntax.tree.AbstractNodeFactory.createToken;
+import static io.ballerina.stdlib.workflow.compiler.Constants.ACTIVITY;
 import static io.ballerina.stdlib.workflow.compiler.Constants.BALLERINA;
 import static io.ballerina.stdlib.workflow.compiler.Constants.QUERY;
 import static io.ballerina.stdlib.workflow.compiler.Constants.SIGNAL;
@@ -166,5 +168,20 @@ public class WorkflowCompilerPluginUtil {
     public static Token createTokenWithWS(SyntaxKind kind) {
         return createToken(kind, NodeFactory.createMinutiaeList(),
                 NodeFactory.createMinutiaeList(NodeFactory.createWhitespaceMinutiae(" ")));
+    }
+
+    public static boolean isActivityFunction(FunctionDefinitionNode functionNode) {
+        if (functionNode.metadata().isEmpty()) {
+            return false;
+        }
+        return functionNode.metadata().get().annotations().stream().anyMatch(annotation -> {
+            Node annotReference = annotation.annotReference();
+            if (annotReference.kind() != SyntaxKind.QUALIFIED_NAME_REFERENCE) {
+                return false;
+            }
+            QualifiedNameReferenceNode annotationNode = (QualifiedNameReferenceNode) annotReference;
+            return annotationNode.modulePrefix().text().equals(WORKFLOW) &&
+                    (annotationNode.identifier().text().equals(ACTIVITY));
+        });
     }
 }

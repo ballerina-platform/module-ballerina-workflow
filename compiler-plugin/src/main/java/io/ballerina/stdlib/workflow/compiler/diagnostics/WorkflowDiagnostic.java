@@ -37,7 +37,13 @@ public enum WorkflowDiagnostic {
     WORKFLOW_105("WORKFLOW_105", "return type of a remote method annotated with " +
             "`@workflow:Query` should be a subtype of `anydata|error`", ERROR),
     WORKFLOW_106("WORKFLOW_106", "return type of a remote method in a " +
-            "workflow service should be a subtype of `error?`", ERROR);
+            "workflow service should be a subtype of `error?`", ERROR),
+    WORKFLOW_107("WORKFLOW_107",
+            "parameters of an activity function should be a subtype of `anydata`", ERROR),
+    WORKFLOW_108("WORKFLOW_108",
+            "execute function cannot access mutable global variables", ERROR),
+    WORKFLOW_109("WORKFLOW_109",
+            "cannot use var binding pattern when calling an activity function", ERROR);
 
     private final String code;
     private final String message;

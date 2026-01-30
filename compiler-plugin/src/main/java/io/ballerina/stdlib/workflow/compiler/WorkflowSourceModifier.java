@@ -225,32 +225,38 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
 
         @Override
         public FunctionCallExpressionNode transform(FunctionCallExpressionNode callNode) {
+            // First, transform child nodes (arguments) to handle nested activity calls
+            FunctionCallExpressionNode transformedNode = (FunctionCallExpressionNode) super.transform(callNode);
+
             if (!insideProcessFunction || currentProcessName == null) {
-                return callNode;
+                return transformedNode;
             }
 
             ProcessFunctionInfo processInfo = workflowContext.getProcessInfoMap().get(currentProcessName);
             if (processInfo == null) {
-                return callNode;
+                return transformedNode;
             }
 
             // Get the function name being called
-            String calledFunctionName = getFunctionName(callNode);
+            String calledFunctionName = getFunctionName(transformedNode);
             if (calledFunctionName == null) {
-                return callNode;
+                return transformedNode;
             }
 
             // Check if this is an activity function call
             if (!processInfo.getActivityMap().containsKey(calledFunctionName)) {
-                return callNode;
+                return transformedNode;
             }
 
             // Build the new callActivity call
+            // Note: We use 'workflow:' prefix assuming standard import. If users use an alias,
+            // they should also import without alias or the modifier adds an unaliased import.
             StringBuilder newCallBuilder = new StringBuilder("workflow:callActivity(");
             newCallBuilder.append(calledFunctionName);
 
-            // Add original arguments
-            SeparatedNodeList<io.ballerina.compiler.syntax.tree.FunctionArgumentNode> args = callNode.arguments();
+            // Add transformed arguments (handles nested activity calls)
+            SeparatedNodeList<io.ballerina.compiler.syntax.tree.FunctionArgumentNode> args =
+                    transformedNode.arguments();
             for (int i = 0; i < args.size(); i++) {
                 newCallBuilder.append(", ");
                 newCallBuilder.append(args.get(i).toString());
@@ -264,7 +270,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                 return (FunctionCallExpressionNode) parsed;
             }
 
-            return callNode;
+            return transformedNode;
         }
 
         private String getFunctionName(FunctionCallExpressionNode callNode) {

@@ -63,7 +63,7 @@ public final class WorkflowConstants {
     public static final String PROCESS_INVALID_INPUT_TYPE =
             "@Process function's input parameter must be a subtype of 'anydata'";
     public static final String PROCESS_INVALID_EVENTS_TYPE =
-            "@Process function's events parameter must be a record with 'future<anydata>' fields";
+            "@Process function's events parameter must be a record type";
     public static final String ACTIVITY_INVALID_PARAM_TYPE =
             "@Activity function parameters must be subtypes of 'anydata'";
     public static final String ACTIVITY_INVALID_RETURN_TYPE =

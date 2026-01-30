@@ -24,8 +24,6 @@ plugins {
 
 description = 'Ballerina - Workflow Native Implementation'
 
-def temporalVersion = '1.32.1'
-
 dependencies {
     checkstyle project(':checkstyle')
     checkstyle "com.puppycrawl.tools:checkstyle:${checkstylePluginVersion}"
@@ -33,7 +31,21 @@ dependencies {
     implementation group: 'org.ballerinalang', name: 'ballerina-runtime', version: "${ballerinaLangVersion}"
     
     // Temporal SDK for durable workflow execution
-    implementation "io.temporal:temporal-sdk:${temporalVersion}"
+    implementation "io.temporal:temporal-sdk:${temporalSdkVersion}"
+    
+    // Jackson for JSON serialization (required by Temporal for payload conversion)
+    implementation "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
+    implementation "com.fasterxml.jackson.core:jackson-core:${jacksonVersion}"
+    implementation "com.fasterxml.jackson.core:jackson-annotations:${jacksonVersion}"
+    
+    // gRPC dependencies - force consistent version to avoid conflicts
+    implementation "io.grpc:grpc-api:${grpcVersion}"
+    implementation "io.grpc:grpc-context:${grpcVersion}"
+    implementation "io.grpc:grpc-core:${grpcVersion}"
+    implementation "io.grpc:grpc-stub:${grpcVersion}"
+    implementation "io.grpc:grpc-protobuf:${grpcVersion}"
+    implementation "io.grpc:grpc-netty-shaded:${grpcVersion}"
+    implementation "io.grpc:grpc-services:${grpcVersion}"
 }
 
 def excludePattern = '**/module-info.java'

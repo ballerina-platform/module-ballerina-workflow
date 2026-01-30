@@ -34,6 +34,16 @@ task updateTomlFiles {
     doLast {
         def newBallerinaToml = ballerinaTomlFilePlaceHolder.text.replace("@project.version@", project.version)
         newBallerinaToml = newBallerinaToml.replace("@toml.version@", tomlVersion)
+        // Substitute dependency versions
+        newBallerinaToml = newBallerinaToml.replace("@temporal.sdk.version@", temporalSdkVersion)
+        newBallerinaToml = newBallerinaToml.replace("@jackson.version@", jacksonVersion)
+        newBallerinaToml = newBallerinaToml.replace("@grpc.version@", grpcVersion)
+        newBallerinaToml = newBallerinaToml.replace("@protobuf.version@", protobufVersion)
+        newBallerinaToml = newBallerinaToml.replace("@proto.google.common.version@", protoGoogleCommonVersion)
+        newBallerinaToml = newBallerinaToml.replace("@guava.version@", guavaVersion)
+        newBallerinaToml = newBallerinaToml.replace("@slf4j.version@", slf4jVersion)
+        newBallerinaToml = newBallerinaToml.replace("@micrometer.version@", micrometerVersion)
+        newBallerinaToml = newBallerinaToml.replace("@gson.version@", gsonVersion)
         ballerinaTomlFile.text = newBallerinaToml
 
         def newCompilerPluginToml = compilerPluginTomlFilePlaceHolder.text.replace("@project.version@", project.version)

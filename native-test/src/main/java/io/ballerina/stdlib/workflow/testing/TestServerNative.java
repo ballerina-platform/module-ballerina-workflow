@@ -51,7 +51,7 @@ public final class TestServerNative {
     private static final Logger LOGGER = Logger.getLogger(TestServerNative.class.getName());
     private static final String PID_FILE = "test-server.pid";
     private static final String TARGET_FILE = "test-server.target";
-    private static final int DEFAULT_PORT = 7233;
+    private static final int DEFAULT_PORT = 7231;
     
     private static Closeable testServer;
     private static volatile boolean running = false;
@@ -104,7 +104,7 @@ public final class TestServerNative {
         LOGGER.info("  status - Check server status");
         LOGGER.info("Options:");
         LOGGER.info("  workDir - Directory for PID and target files (default: current dir)");
-        LOGGER.info("  port    - Port to listen on (default: 7233)");
+        LOGGER.info("  port    - Port to listen on (default: 7231)");
     }
 
     private static void startServer(String workDir, int port) throws Exception {

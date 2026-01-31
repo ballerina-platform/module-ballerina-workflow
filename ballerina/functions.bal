@@ -74,7 +74,7 @@ public isolated function registerProcess(function processFunction, string proces
 } external;
 
 
-// Intenral functions
+// Internal functions
 
 # Starts the singleton worker after all processes have been registered.
 # This must be called after all registerProcess calls are complete.
@@ -129,7 +129,7 @@ isolated function clearRegistry() returns boolean|error = @java:Method {
 # + workflowId - The ID of the workflow to get the result for
 # + timeoutSeconds - Maximum time to wait for the workflow to complete
 # + return - The workflow execution info including result, or an error
-isolated function getWorkflowResult(string workflowId, int timeoutSeconds = 30) returns WorkflowExecutionInfo|error = @java:Method {
+public isolated function getWorkflowResult(string workflowId, int timeoutSeconds = 30) returns WorkflowExecutionInfo|error = @java:Method {
     'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative"
 } external;
 
@@ -139,6 +139,6 @@ isolated function getWorkflowResult(string workflowId, int timeoutSeconds = 30) 
 #
 # + workflowId - The ID of the workflow to get info for
 # + return - The workflow execution info, or an error
-isolated function getWorkflowInfo(string workflowId) returns WorkflowExecutionInfo|error = @java:Method {
+public isolated function getWorkflowInfo(string workflowId) returns WorkflowExecutionInfo|error = @java:Method {
     'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative"
 } external;

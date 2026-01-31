@@ -129,7 +129,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         String activitiesArg = processInfo.getActivityMap().isEmpty() ? "()" : mapLiteral.toString();
 
         String registerStatement = String.format(
-                "boolean _ = workflow:registerProcess(%s, \"%s\", %s);",
+                "boolean _ = check workflow:registerProcess(%s, \"%s\", %s);",
                 processInfo.getFunctionName(),
                 processInfo.getFunctionName(),
                 activitiesArg

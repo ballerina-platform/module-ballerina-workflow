@@ -1,6 +1,6 @@
-# Test configuration for unit tests
-# Note: Unit tests use lazy gRPC connection and don't require a running server
-# For integration tests, use the workflow-integration-tests module
+# Auto-generated test configuration
+# Using EXTERNAL Temporal server for debugging
+# Start your local Temporal server with: temporal server start-dev
 
 [ballerina.workflow.workflowConfig]
 provider = "TEMPORAL"

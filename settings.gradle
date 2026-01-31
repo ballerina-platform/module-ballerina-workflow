@@ -44,12 +44,16 @@ include ':workflow-compiler-plugin-tests'
 // Core Ballerina module
 include ':workflow-ballerina'
 
+// Integration tests (Temporal server tests)
+include ':workflow-integration-tests'
+
 project(':checkstyle').projectDir = file('build-config/checkstyle')
 project(':workflow-compiler-plugin').projectDir = file('compiler-plugin')
 project(':workflow-native').projectDir = file('native')
 project(':workflow-native-test').projectDir = file('native-test')
 project(':workflow-compiler-plugin-tests').projectDir = file('compiler-plugin-tests')
 project(':workflow-ballerina').projectDir = file('ballerina')
+project(':workflow-integration-tests').projectDir = file('integration-tests')
 
 gradleEnterprise {
     buildScan {

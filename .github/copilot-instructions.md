@@ -113,8 +113,14 @@ fpValue.metadata = new StrandMetadata(true, fpValue.metadata.properties());
 # Full build
 ./gradlew build
 
-# Run all tests (starts embedded Temporal server automatically)
+# Run unit tests only (no Temporal server needed)
 ./gradlew :workflow-ballerina:test
+
+# Run integration tests (starts embedded Temporal server on port 7231)
+./gradlew :workflow-integration-tests:test
+
+# Run compiler plugin tests
+./gradlew :workflow-compiler-plugin-tests:test
 
 # Build specific modules
 ./gradlew :workflow-native:build
@@ -125,8 +131,14 @@ fpValue.metadata = new StrandMetadata(true, fpValue.metadata.properties());
 ```
 
 ### Test Infrastructure
-Integration tests use an embedded Temporal server managed by Gradle:
-1. `startTestServer` task launches shadow JAR from `native-test/`
+
+**Module Structure:**
+- `ballerina/tests/` - Unit tests (registration, introspection, no Temporal server needed)
+- `integration-tests/tests/` - Integration tests with actual Temporal workflow execution
+- `compiler-plugin-tests/` - Compiler plugin validation tests
+
+**Integration Tests** use an embedded Temporal server managed by Gradle:
+1. `startTestServer` task launches shadow JAR from `native-test/` on port **7231**
 2. Writes `tests/Config.toml` with server URL
 3. Ballerina tests connect via configurable
 4. `stopTestServer` runs on completion (even on failure via `buildFinished` listener)
@@ -137,7 +149,7 @@ Via `Config.toml` or programmatic defaults:
 ```toml
 [ballerina.workflow.workflowConfig]
 provider = "TEMPORAL"
-url = "localhost:7233"
+url = "localhost:7231"
 namespace = "default"
 
 [ballerina.workflow.workflowConfig.params]

@@ -105,7 +105,7 @@ public type SignalData InputData;
 # + output - The result returned by the activity (nil if not yet completed or failed)
 # + status - The status of the activity execution ("COMPLETED", "FAILED", "RUNNING", "PENDING")
 # + errorMessage - Error message if the activity failed
-type ActivityInvocation record {
+public type ActivityInvocation record {
     string activityName;
     anydata[] input;
     anydata? output;
@@ -120,7 +120,7 @@ type ActivityInvocation record {
 # + result - The workflow result if completed successfully
 # + errorMessage - Error message if the workflow failed
 # + activityInvocations - List of activities invoked by this workflow
-type WorkflowExecutionInfo record {
+public type WorkflowExecutionInfo record {
     string workflowId;
     string workflowType;
     string status;

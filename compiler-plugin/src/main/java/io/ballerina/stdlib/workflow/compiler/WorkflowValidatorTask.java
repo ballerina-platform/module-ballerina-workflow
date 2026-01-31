@@ -515,12 +515,26 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
 
     /**
      * Checks if the type is a subtype of anydata or error.
+     * Handles union types like `string|error` where each member must be anydata or error.
      */
     private boolean isSubtypeOfAnydataOrError(TypeSymbol typeSymbol) {
         TypeDescKind kind = typeSymbol.typeKind();
 
+        // Handle type references
+        if (kind == TypeDescKind.TYPE_REFERENCE) {
+            TypeReferenceTypeSymbol typeRef = (TypeReferenceTypeSymbol) typeSymbol;
+            return isSubtypeOfAnydataOrError(typeRef.typeDescriptor());
+        }
+
         if (kind == TypeDescKind.ERROR) {
             return true;
+        }
+
+        // Handle union types like `string|error` - each member must be anydata or error
+        if (kind == TypeDescKind.UNION) {
+            UnionTypeSymbol unionType = (UnionTypeSymbol) typeSymbol;
+            return unionType.memberTypeDescriptors().stream()
+                    .allMatch(this::isSubtypeOfAnydataOrError);
         }
 
         return isSubtypeOfAnydata(typeSymbol);

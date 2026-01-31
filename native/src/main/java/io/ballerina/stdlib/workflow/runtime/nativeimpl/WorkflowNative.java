@@ -133,6 +133,8 @@ public final class WorkflowNative {
      * Starts a new workflow process with the given input.
      * The input must contain an "id" field for workflow correlation.
      * Returns the workflow ID that can be used to track and interact with the workflow.
+     * <p>
+     * Automatically starts the singleton worker if not already started.
      *
      * @param env the Ballerina runtime environment
      * @param processFunction the process function to execute
@@ -145,6 +147,13 @@ public final class WorkflowNative {
 
             WorkflowRuntime.getInstance().getExecutor().execute(() -> {
                 try {
+                    // Auto-start the worker if not already started
+                    Object startResult = WorkflowWorkerNative.startSingletonWorker();
+                    if (startResult != null) {
+                        balFuture.complete(startResult);
+                        return;
+                    }
+
                     // Get the process name from the function pointer
                     String processName = processFunction.getType().getName();
 

@@ -1,0 +1,333 @@
+/*
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import org.apache.tools.ant.taskdefs.condition.Os
+
+plugins {
+    id 'jacoco'
+}
+
+apply plugin: 'java'
+
+description = 'Ballerina - Workflow Integration Tests'
+
+def packageName = "workflow"
+def packageOrg = "ballerina"
+def tomlVersion = stripBallerinaExtensionVersion("${project.version}")
+def ballerinaTomlFile = new File("$project.projectDir/Ballerina.toml")
+def originalBallerinaToml = ballerinaTomlFile.text
+def distributionBinPath = project.rootDir.absolutePath + "/target/ballerina-runtime/bin"
+def testCoverageParam = "--code-coverage --coverage-format=xml --includes=io.ballerina.stdlib.workflow.*:ballerina.workflow*"
+
+def stripBallerinaExtensionVersion(String extVersion) {
+    if (extVersion.matches(project.ext.timestampedVersionRegex)) {
+        def splitVersion = extVersion.split('-')
+        if (splitVersion.length > 3) {
+            def strippedValues = splitVersion[0..-4]
+            return strippedValues.join('-')
+        } else {
+            return extVersion
+        }
+    } else {
+        return extVersion.replace("${project.ext.snapshotVersion}", "")
+    }
+}
+
+configurations {
+    jbalTools
+}
+
+dependencies {
+    jbalTools("org.ballerinalang:jballerina-tools:${ballerinaLangVersion}") {
+        transitive = false
+    }
+}
+
+clean {
+    delete "$project.projectDir/target"
+}
+
+task updateTomlFiles {
+    doLast {
+        def newBallerinaToml = ballerinaTomlFile.text.replace("@project.version@", project.version)
+        newBallerinaToml = newBallerinaToml.replace("@toml.version@", tomlVersion)
+        ballerinaTomlFile.text = newBallerinaToml
+    }
+}
+
+task revertTomlFiles {
+    doLast {
+        ballerinaTomlFile.text = originalBallerinaToml
+    }
+}
+
+// Push workflow bala to local Ballerina repository for dependency resolution
+task pushBalaToLocal {
+    dependsOn ":${packageName}-ballerina:build"
+    
+    doLast {
+        def balaFile = file("${project(':workflow-ballerina').projectDir}/build/bal_build_target/bala/ballerina-workflow-java21-${tomlVersion}.bala")
+        if (balaFile.exists()) {
+            exec {
+                workingDir project.rootDir
+                commandLine 'sh', '-c', "${distributionBinPath}/bal push --repository=local ${balaFile.absolutePath}"
+            }
+            logger.lifecycle("Pushed workflow bala to local repository: ${balaFile.absolutePath}")
+        } else {
+            logger.warn("Bala file not found: ${balaFile.absolutePath}")
+        }
+    }
+}
+
+def debugParams = ""
+def balJavaDebugParam = ""
+def testParams = ""
+
+task initializeVariables {
+    if (project.hasProperty("debug")) {
+        debugParams = "--debug ${project.findProperty("debug")}"
+    }
+    if (project.hasProperty("balJavaDebug")) {
+        balJavaDebugParam = "BAL_JAVA_DEBUG=${project.findProperty("balJavaDebug")}"
+    }
+
+    gradle.taskGraph.whenReady { graph ->
+        if (graph.hasTask(":${packageName}-integration-tests:test")) {
+            testParams = "${testCoverageParam}"
+        }
+    }
+}
+
+// Test server configuration
+def testServerProcess = null
+def testServerWorkDir = file("${project(':workflow-native-test').buildDir}")
+def testServerStarted = false
+def testServerPort = 7233  // Same as default Temporal port - we check for external server first
+def externalServerPort = 7233  // Default Temporal server port for debugging
+def usingExternalServer = false
+
+// Helper function to check if a server is running on a given port
+def isServerRunning = { String host, int port ->
+    try {
+        def socket = new Socket()
+        socket.connect(new InetSocketAddress(host, port), 1000)
+        socket.close()
+        return true
+    } catch (Exception e) {
+        return false
+    }
+}
+
+// Helper function to stop the test server
+def stopTestServerIfRunning = {
+    if (!testServerStarted || usingExternalServer) {
+        return
+    }
+    
+    try {
+        def pidFile = new File(testServerWorkDir, 'test-server.pid')
+        if (pidFile.exists()) {
+            def shadowJarFile = project(':workflow-native-test').tasks.shadowJar.archiveFile.get().asFile
+            
+            logger.lifecycle("Stopping embedded Temporal test server...")
+            
+            def command = [
+                'java', '-jar', 
+                shadowJarFile.absolutePath,
+                'stop', 
+                testServerWorkDir.absolutePath
+            ]
+            
+            def processBuilder = new ProcessBuilder(command)
+            processBuilder.inheritIO()
+            processBuilder.directory(testServerWorkDir)
+            def stopProcess = processBuilder.start()
+            stopProcess.waitFor()
+            
+            logger.lifecycle("Embedded Temporal test server stopped")
+        }
+    } catch (Exception e) {
+        logger.warn("Error stopping test server: ${e.message}")
+    }
+    testServerStarted = false
+}
+
+// Register a build listener to stop the server on any failure
+gradle.buildFinished { result ->
+    if (testServerStarted) {
+        logger.lifecycle("Build finished - ensuring test server is stopped...")
+        stopTestServerIfRunning()
+    }
+}
+
+// Start test server before Ballerina tests
+task startTestServer {
+    dependsOn ":workflow-native-test:shadowJar"
+    
+    doLast {
+        // First, check if an external Temporal server is running (for debugging)
+        if (isServerRunning("localhost", externalServerPort)) {
+            def externalTarget = "localhost:${externalServerPort}"
+            logger.lifecycle("=".multiply(60))
+            logger.lifecycle("External Temporal server detected at ${externalTarget}")
+            logger.lifecycle("Using external server for debugging (skipping embedded server)")
+            logger.lifecycle("=".multiply(60))
+            
+            usingExternalServer = true
+            testServerStarted = true
+            
+            // Write test Config.toml with the external server URL
+            def testConfigFile = new File("${project.projectDir}/tests/Config.toml")
+            testConfigFile.parentFile.mkdirs()
+            testConfigFile.text = """# Auto-generated test configuration
+# Using EXTERNAL Temporal server for debugging
+# Start your local Temporal server with: temporal server start-dev
+
+[ballerina.workflow.workflowConfig]
+provider = "TEMPORAL"
+url = "${externalTarget}"
+namespace = "default"
+
+[ballerina.workflow.workflowConfig.params]
+taskQueue = "BALLERINA_WORKFLOW_TASK_QUEUE"
+maxConcurrentWorkflows = 100
+maxConcurrentActivities = 100
+"""
+            logger.lifecycle("Test Config.toml updated with external server URL: ${externalTarget}")
+            return
+        }
+        
+        // No external server found - start embedded test server
+        logger.lifecycle("No external Temporal server found on port ${externalServerPort}")
+        logger.lifecycle("Starting embedded Temporal test server on port ${testServerPort}...")
+        
+        def shadowJarFile = project(':workflow-native-test').tasks.shadowJar.archiveFile.get().asFile
+        
+        // Ensure work directory exists
+        testServerWorkDir.mkdirs()
+        
+        def command = [
+            'java', '-jar', 
+            shadowJarFile.absolutePath,
+            'start', 
+            testServerWorkDir.absolutePath,
+            testServerPort.toString()
+        ]
+        
+        def processBuilder = new ProcessBuilder(command)
+        processBuilder.redirectOutput(new File(testServerWorkDir, 'test-server.log'))
+        processBuilder.redirectErrorStream(true)
+        processBuilder.directory(testServerWorkDir)
+        testServerProcess = processBuilder.start()
+        
+        // Wait for the server to start and write the target file with content
+        def targetFile = new File(testServerWorkDir, 'test-server.target')
+        def maxWait = 30 // seconds
+        def waited = 0
+        def target = ""
+        while (waited < maxWait) {
+            Thread.sleep(1000)
+            waited++
+            if (targetFile.exists()) {
+                target = targetFile.text.trim()
+                if (target.length() > 0) {
+                    logger.lifecycle("Target file found with content after ${waited}s")
+                    break
+                }
+            }
+            logger.lifecycle("Waiting for test server to start... (${waited}s)")
+        }
+        
+        if (target.length() > 0) {
+            testServerStarted = true
+            logger.lifecycle("Embedded Temporal test server started at: ${target}")
+            
+            // Write test Config.toml with the test server URL
+            def testConfigFile = new File("${project.projectDir}/tests/Config.toml")
+            testConfigFile.parentFile.mkdirs()
+            testConfigFile.text = """# Auto-generated test configuration
+# This file is generated by Gradle before running tests
+# DO NOT EDIT - changes will be overwritten
+
+[ballerina.workflow.workflowConfig]
+provider = "TEMPORAL"
+url = "${target}"
+namespace = "default"
+
+[ballerina.workflow.workflowConfig.params]
+taskQueue = "BALLERINA_WORKFLOW_TASK_QUEUE"
+maxConcurrentWorkflows = 100
+maxConcurrentActivities = 100
+"""
+            logger.lifecycle("Test Config.toml updated with server URL: ${target}")
+        } else {
+            // Check if process is still running
+            if (!testServerProcess.isAlive()) {
+                def exitCode = testServerProcess.exitValue()
+                logger.error("Test server process exited with code: ${exitCode}")
+                def logFile = new File(testServerWorkDir, 'test-server.log')
+                if (logFile.exists()) {
+                    logger.error("Test server log:\n${logFile.text}")
+                }
+            }
+            throw new GradleException("Test server failed to start within ${maxWait} seconds")
+        }
+    }
+}
+
+// Stop test server after Ballerina tests
+task stopTestServer {
+    doLast {
+        stopTestServerIfRunning()
+    }
+}
+
+task ballerinaTest {
+    inputs.dir file(project.projectDir)
+    dependsOn(":${packageName}-ballerina:build")
+    dependsOn(pushBalaToLocal)
+    dependsOn(updateTomlFiles)
+    dependsOn(initializeVariables)
+    dependsOn(startTestServer)
+    // Explicit dependencies to avoid Gradle validation errors
+    mustRunAfter(compileJava)
+    mustRunAfter(compileTestJava)
+    mustRunAfter(processResources)
+    mustRunAfter(processTestResources)
+    mustRunAfter(jar)
+    finalizedBy(revertTomlFiles)
+    finalizedBy(stopTestServer)
+
+    doLast {
+        exec {
+            workingDir project.projectDir
+            environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
+            if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+                commandLine 'cmd', '/c', "${balJavaDebugParam} ${distributionBinPath}/bal.bat test " +
+                        "--offline ${testParams} ${debugParams} && " +
+                        "exit %%ERRORLEVEL%%"
+            } else {
+                commandLine 'sh', '-c', "${balJavaDebugParam} ${distributionBinPath}/bal test " +
+                        "--offline ${testParams} ${debugParams}"
+            }
+        }
+    }
+}
+
+test.dependsOn ballerinaTest
+build.dependsOn test

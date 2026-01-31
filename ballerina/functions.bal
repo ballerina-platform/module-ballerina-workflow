@@ -16,18 +16,6 @@
 
 import ballerina/jballerina.java;
 
-// Initialize the module - this captures the module reference for use in native code
-function init() {
-    initModule();
-}
-
-# Initializes the workflow module.
-# This captures the module reference for creating Ballerina record values in native code.
-function initModule() = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.ModuleUtils",
-    name: "setModule"
-} external;
-
 # Executes an activity function within the workflow context.
 # 
 # Activities are non-deterministic operations (I/O, database calls, external APIs)
@@ -44,13 +32,14 @@ public isolated function callActivity(function activityFunction, anydata... args
 # Starts a new workflow process with the given input.
 #
 # Creates a new instance of the specified workflow process and begins execution.
+# The workflow ID is extracted from the `id` field in the input data.
 # Returns a unique workflow ID that can be used to track, query, or send events
 # to the running workflow.
 #
 # + processFunction - The process function to execute (must be annotated with @Process)
-# + input - The input data for the workflow process
+# + input - The workflow input data (must contain "id" field for correlation)
 # + return - The unique workflow ID as a string, or an error if the process fails to start
-public isolated function startProcess(function processFunction, anydata input) returns string|error = @java:Method {
+public isolated function startProcess(function processFunction, map<anydata> input) returns string|error = @java:Method {
     'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative"
 } external;
 
@@ -58,26 +47,51 @@ public isolated function startProcess(function processFunction, anydata input) r
 #
 # Events can be used to communicate with running workflows and trigger state changes.
 # The workflow can wait for and react to these events using workflow primitives.
+# The `id` field in the event data is used to identify the target workflow instance.
 #
 # + processFunction - The process function that identifies the workflow type
-# + eventData - The event data to send to the workflow
+# + eventData - The signal data (must contain "id" field for workflow correlation)
 # + return - `true` if the event was sent successfully, or an error if sending fails
-public isolated function sendEvent(function processFunction, anydata eventData) returns boolean|error = @java:Method {
+public isolated function sendEvent(function processFunction, map<anydata> eventData) returns boolean|error = @java:Method {
     'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative"
 } external;
 
-# Registers a workflow process function with the runtime.
+# Registers a workflow process function with the singleton worker.
 #
 # Makes the process available for execution when `startProcess` is called.
-# This is typically called during application initialization to register
-# all available workflow processes.
+# The process is registered with the singleton worker that was created at
+# module initialization time. This function should be called during
+# application initialization to register all workflow processes.
 #
 # + processFunction - The process function to register (must be annotated with @Process)
 # + processName - The unique name to register the process under
 # + activities - Optional map of activity function pointers used by the process
 # + return - `true` if registration was successful, or an error if registration fails
 public isolated function registerProcess(function processFunction, string processName, map<function>? activities = ()) returns boolean|error = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative"
+    'class: "io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative",
+    name: "registerProcessWithWorker"
+} external;
+
+
+// Intenral functions
+
+# Starts the singleton worker after all processes have been registered.
+# This must be called after all registerProcess calls are complete.
+# The worker will begin polling for workflow and activity tasks.
+#
+# + return - An error if starting fails, otherwise nil
+isolated function startWorker() returns error? = @java:Method {
+    'class: "io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative",
+    name: "startSingletonWorker"
+} external;
+
+# Stops the singleton worker gracefully.
+# Any in-progress workflows will be allowed to complete their current tasks.
+#
+# + return - An error if stopping fails, otherwise nil
+isolated function stopWorker() returns error? = @java:Method {
+    'class: "io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative",
+    name: "stopSingletonWorker"
 } external;
 
 # Returns information about all registered workflow processes and their activities.

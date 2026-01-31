@@ -20,37 +20,37 @@ plugins {
     id 'java'
     id 'checkstyle'
     id 'com.github.spotbugs'
+    id 'com.github.johnrengelman.shadow'
 }
 
-description = 'Ballerina - Workflow Native Implementation'
+description = 'Ballerina - Workflow Native Test Server'
 
 dependencies {
     checkstyle project(':checkstyle')
     checkstyle "com.puppycrawl.tools:checkstyle:${checkstylePluginVersion}"
-
-    implementation group: 'org.ballerinalang', name: 'ballerina-runtime', version: "${ballerinaLangVersion}"
     
-    // Temporal SDK for durable workflow execution
-    implementation "io.temporal:temporal-sdk:${temporalSdkVersion}"
+    // Temporal Testing dependencies (these include temporal-sdk transitively)
+    implementation "io.temporal:temporal-testing:${temporalTestingVersion}"
+    implementation "io.temporal:temporal-test-server:${temporalTestingVersion}"
     
-    // Tally metrics library (required by Temporal SDK)
-    implementation "com.uber.m3:tally-core:${tallyVersion}"
-    
-    // Jackson for JSON serialization (required by Temporal for payload conversion)
-    implementation "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
-    implementation "com.fasterxml.jackson.core:jackson-core:${jacksonVersion}"
-    implementation "com.fasterxml.jackson.core:jackson-annotations:${jacksonVersion}"
-    
-    // gRPC dependencies - force consistent version to avoid conflicts
-    implementation "io.grpc:grpc-api:${grpcVersion}"
-    implementation "io.grpc:grpc-context:${grpcVersion}"
-    implementation "io.grpc:grpc-core:${grpcVersion}"
-    implementation "io.grpc:grpc-stub:${grpcVersion}"
-    implementation "io.grpc:grpc-protobuf:${grpcVersion}"
+    // gRPC dependencies for real server communication
     implementation "io.grpc:grpc-netty-shaded:${grpcVersion}"
-    implementation "io.grpc:grpc-services:${grpcVersion}"
-    implementation "io.grpc:grpc-util:${grpcVersion}"
+    implementation "io.grpc:grpc-inprocess:${grpcVersion}"
 }
+
+// Create shadow JAR for running test server standalone
+shadowJar {
+    archiveBaseName.set('workflow-test-server')
+    archiveClassifier.set('all')
+    archiveVersion.set(project.version.toString())
+    manifest {
+        attributes 'Main-Class': 'io.ballerina.stdlib.workflow.testing.TestServerNative'
+    }
+    // Merge service files for proper gRPC/Temporal service discovery
+    mergeServiceFiles()
+}
+
+build.dependsOn shadowJar
 
 def excludePattern = '**/module-info.java'
 tasks.withType(Checkstyle) {
@@ -86,7 +86,7 @@ publishing {
     publications {
         mavenJava(MavenPublication) {
             groupId project.group
-            artifactId "workflow-native"
+            artifactId "workflow-native-test"
             version = project.version
             artifact jar
         }

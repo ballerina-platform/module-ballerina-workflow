@@ -18,7 +18,7 @@ artifactId = "workflow-native"
 version = "@toml.version@"
 path = "../native/build/libs/workflow-native-@project.version@.jar"
 
-# Temporal SDK
+# Temporal SDK dependencies
 [[platform.java21.dependency]]
 groupId = "io.temporal"
 artifactId = "temporal-sdk"
@@ -29,6 +29,12 @@ groupId = "io.temporal"
 artifactId = "temporal-serviceclient"
 version = "@temporal.sdk.version@"
 
+# Nexus RPC (required by Temporal SDK)
+[[platform.java21.dependency]]
+groupId = "io.nexusrpc"
+artifactId = "nexus-sdk"
+version = "@nexusrpc.version@"
+
 # gRPC dependencies
 [[platform.java21.dependency]]
 groupId = "io.grpc"
@@ -38,11 +44,6 @@ version = "@grpc.version@"
 [[platform.java21.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-context"
-version = "@grpc.version@"
-
-[[platform.java21.dependency]]
-groupId = "io.grpc"
-artifactId = "grpc-core"
 version = "@grpc.version@"
 
 [[platform.java21.dependency]]
@@ -62,6 +63,11 @@ version = "@grpc.version@"
 
 [[platform.java21.dependency]]
 groupId = "io.grpc"
+artifactId = "grpc-core"
+version = "@grpc.version@"
+
+[[platform.java21.dependency]]
+groupId = "io.grpc"
 artifactId = "grpc-netty-shaded"
 version = "@grpc.version@"
 
@@ -69,6 +75,28 @@ version = "@grpc.version@"
 groupId = "io.grpc"
 artifactId = "grpc-services"
 version = "@grpc.version@"
+
+[[platform.java21.dependency]]
+groupId = "io.grpc"
+artifactId = "grpc-util"
+version = "@grpc.version@"
+
+# gRPC InProcess (required for embedded test server)
+[[platform.java21.dependency]]
+groupId = "io.grpc"
+artifactId = "grpc-inprocess"
+version = "@grpc.version@"
+
+# Protobuf dependencies
+[[platform.java21.dependency]]
+groupId = "com.google.protobuf"
+artifactId = "protobuf-java"
+version = "@protobuf.version@"
+
+[[platform.java21.dependency]]
+groupId = "com.google.protobuf"
+artifactId = "protobuf-java-util"
+version = "@protobuf.version@"
 
 # Jackson JSON dependencies
 [[platform.java21.dependency]]
@@ -96,23 +124,13 @@ groupId = "com.fasterxml.jackson.datatype"
 artifactId = "jackson-datatype-jdk8"
 version = "@jackson.version@"
 
-# Protobuf dependencies
+# Metrics
 [[platform.java21.dependency]]
-groupId = "com.google.protobuf"
-artifactId = "protobuf-java"
-version = "@protobuf.version@"
+groupId = "com.uber.m3"
+artifactId = "tally-core"
+version = "@tally.version@"
 
-[[platform.java21.dependency]]
-groupId = "com.google.protobuf"
-artifactId = "protobuf-java-util"
-version = "@protobuf.version@"
-
-[[platform.java21.dependency]]
-groupId = "com.google.api.grpc"
-artifactId = "proto-google-common-protos"
-version = "@proto.google.common.version@"
-
-# Guava
+# Guava and supporting libraries
 [[platform.java21.dependency]]
 groupId = "com.google.guava"
 artifactId = "guava"
@@ -123,40 +141,8 @@ groupId = "com.google.guava"
 artifactId = "failureaccess"
 version = "1.0.1"
 
-# Logging dependencies
-[[platform.java21.dependency]]
-groupId = "org.slf4j"
-artifactId = "slf4j-api"
-version = "@slf4j.version@"
-
-# Metrics dependencies (required by Temporal)
-[[platform.java21.dependency]]
-groupId = "io.micrometer"
-artifactId = "micrometer-core"
-version = "@micrometer.version@"
-
 # Other dependencies
-[[platform.java21.dependency]]
-groupId = "com.google.code.gson"
-artifactId = "gson"
-version = "@gson.version@"
-
 [[platform.java21.dependency]]
 groupId = "io.perfmark"
 artifactId = "perfmark-api"
-version = "0.26.0"
-
-[[platform.java21.dependency]]
-groupId = "com.google.code.findbugs"
-artifactId = "jsr305"
-version = "3.0.2"
-
-[[platform.java21.dependency]]
-groupId = "org.checkerframework"
-artifactId = "checker-qual"
-version = "3.33.0"
-
-[[platform.java21.dependency]]
-groupId = "com.google.errorprone"
-artifactId = "error_prone_annotations"
-version = "2.20.0"
+version = "@perfmark.version@"

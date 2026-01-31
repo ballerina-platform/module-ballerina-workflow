@@ -39,11 +39,10 @@ task updateTomlFiles {
         newBallerinaToml = newBallerinaToml.replace("@jackson.version@", jacksonVersion)
         newBallerinaToml = newBallerinaToml.replace("@grpc.version@", grpcVersion)
         newBallerinaToml = newBallerinaToml.replace("@protobuf.version@", protobufVersion)
-        newBallerinaToml = newBallerinaToml.replace("@proto.google.common.version@", protoGoogleCommonVersion)
         newBallerinaToml = newBallerinaToml.replace("@guava.version@", guavaVersion)
-        newBallerinaToml = newBallerinaToml.replace("@slf4j.version@", slf4jVersion)
-        newBallerinaToml = newBallerinaToml.replace("@micrometer.version@", micrometerVersion)
-        newBallerinaToml = newBallerinaToml.replace("@gson.version@", gsonVersion)
+        newBallerinaToml = newBallerinaToml.replace("@tally.version@", tallyVersion)
+        newBallerinaToml = newBallerinaToml.replace("@perfmark.version@", perfmarkVersion)
+        newBallerinaToml = newBallerinaToml.replace("@nexusrpc.version@", nexusrpcVersion)
         ballerinaTomlFile.text = newBallerinaToml
 
         def newCompilerPluginToml = compilerPluginTomlFilePlaceHolder.text.replace("@project.version@", project.version)
@@ -84,7 +83,145 @@ build.dependsOn "generatePomFileForMavenPublication"
 build.dependsOn ":${packageName}-native:build"
 build.dependsOn ":${packageName}-compiler-plugin:build"
 test.dependsOn ":${packageName}-native:build"
+test.dependsOn ":${packageName}-native-test:shadowJar"
 test.dependsOn ":${packageName}-compiler-plugin:build"
+
+// Test server process handle
+def testServerProcess = null
+def testServerWorkDir = file("${project(':workflow-native-test').buildDir}")
+def testServerStarted = false
+
+// Helper function to stop the test server
+def stopTestServerIfRunning = {
+    if (!testServerStarted) {
+        return
+    }
+    
+    try {
+        def pidFile = new File(testServerWorkDir, 'test-server.pid')
+        if (pidFile.exists()) {
+            def shadowJarFile = project(':workflow-native-test').tasks.shadowJar.archiveFile.get().asFile
+            
+            logger.lifecycle("Stopping embedded Temporal test server...")
+            
+            def command = [
+                'java', '-jar', 
+                shadowJarFile.absolutePath,
+                'stop', 
+                testServerWorkDir.absolutePath
+            ]
+            
+            def processBuilder = new ProcessBuilder(command)
+            processBuilder.inheritIO()
+            processBuilder.directory(testServerWorkDir)
+            def stopProcess = processBuilder.start()
+            stopProcess.waitFor()
+            
+            logger.lifecycle("Embedded Temporal test server stopped")
+        }
+    } catch (Exception e) {
+        logger.warn("Error stopping test server: ${e.message}")
+    }
+    testServerStarted = false
+}
+
+// Register a build listener to stop the server on any failure
+gradle.buildFinished { result ->
+    if (testServerStarted) {
+        logger.lifecycle("Build finished - ensuring test server is stopped...")
+        stopTestServerIfRunning()
+    }
+}
+
+// Start test server before Ballerina tests
+task startTestServer {
+    dependsOn ":${packageName}-native-test:shadowJar"
+    
+    doLast {
+        def shadowJarFile = project(':workflow-native-test').tasks.shadowJar.archiveFile.get().asFile
+        
+        // Ensure work directory exists
+        testServerWorkDir.mkdirs()
+        
+        logger.lifecycle("Starting embedded Temporal test server...")
+        
+        def command = [
+            'java', '-jar', 
+            shadowJarFile.absolutePath,
+            'start', 
+            testServerWorkDir.absolutePath
+        ]
+        
+        def processBuilder = new ProcessBuilder(command)
+        processBuilder.redirectOutput(new File(testServerWorkDir, 'test-server.log'))
+        processBuilder.redirectErrorStream(true)
+        processBuilder.directory(testServerWorkDir)
+        testServerProcess = processBuilder.start()
+        
+        // Wait for the server to start and write the target file with content
+        def targetFile = new File(testServerWorkDir, 'test-server.target')
+        def maxWait = 30 // seconds
+        def waited = 0
+        def target = ""
+        while (waited < maxWait) {
+            Thread.sleep(1000)
+            waited++
+            if (targetFile.exists()) {
+                target = targetFile.text.trim()
+                if (target.length() > 0) {
+                    logger.lifecycle("Target file found with content after ${waited}s")
+                    break
+                }
+            }
+            logger.lifecycle("Waiting for test server to start... (${waited}s)")
+        }
+        
+        if (target.length() > 0) {
+            testServerStarted = true
+            logger.lifecycle("Embedded Temporal test server started at: ${target}")
+            
+            // Write test Config.toml with the test server URL
+            def testConfigFile = new File("${project.projectDir}/tests/Config.toml")
+            testConfigFile.text = """# Auto-generated test configuration
+# This file is generated by Gradle before running tests
+# DO NOT EDIT - changes will be overwritten
+
+[ballerina.workflow.workflowConfig]
+provider = "TEMPORAL"
+url = "${target}"
+namespace = "default"
+
+[ballerina.workflow.workflowConfig.params]
+taskQueue = "BALLERINA_WORKFLOW_TASK_QUEUE"
+maxConcurrentWorkflows = 100
+maxConcurrentActivities = 100
+"""
+            logger.lifecycle("Test Config.toml updated with server URL: ${target}")
+        } else {
+            // Check if process is still running
+            if (!testServerProcess.isAlive()) {
+                def exitCode = testServerProcess.exitValue()
+                logger.error("Test server process exited with code: ${exitCode}")
+                def logFile = new File(testServerWorkDir, 'test-server.log')
+                if (logFile.exists()) {
+                    logger.error("Test server log:\n${logFile.text}")
+                }
+            }
+            throw new GradleException("Test server failed to start within ${maxWait} seconds")
+        }
+    }
+}
+
+// Stop test server after Ballerina tests
+task stopTestServer {
+    doLast {
+        stopTestServerIfRunning()
+    }
+}
+
+// Wire up test lifecycle
+test.dependsOn startTestServer
+test.finalizedBy stopTestServer
 
 publishToMavenLocal.dependsOn build
 publish.dependsOn build

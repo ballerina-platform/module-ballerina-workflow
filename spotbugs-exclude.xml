@@ -34,4 +34,21 @@
         <Class name="io.ballerina.stdlib.workflow.runtime.WorkflowRuntime" />
         <Bug pattern="IS2_INCONSISTENT_SYNC" />
     </Match>
+    
+    <!-- Exception is caught for broad error handling in native implementations -->
+    <Match>
+        <Bug pattern="REC_CATCH_EXCEPTION" />
+    </Match>
+    
+    <!-- Lazy initialization is intentional for test server singleton -->
+    <Match>
+        <Class name="io.ballerina.stdlib.workflow.testing.TestServerNative" />
+        <Bug pattern="LI_LAZY_INIT_STATIC" />
+    </Match>
+    
+    <!-- System.exit is intentional for CLI commands (main, checkStatus) -->
+    <Match>
+        <Class name="io.ballerina.stdlib.workflow.testing.TestServerNative" />
+        <Bug pattern="DM_EXIT" />
+    </Match>
 </FindBugsFilter>

@@ -37,6 +37,7 @@ rootProject.name = 'workflow'
 // Java modules
 include ':checkstyle'
 include ':workflow-native'
+include ':workflow-native-test'
 include ':workflow-compiler-plugin'
 include ':workflow-compiler-plugin-tests'
 
@@ -46,6 +47,7 @@ include ':workflow-ballerina'
 project(':checkstyle').projectDir = file('build-config/checkstyle')
 project(':workflow-compiler-plugin').projectDir = file('compiler-plugin')
 project(':workflow-native').projectDir = file('native')
+project(':workflow-native-test').projectDir = file('native-test')
 project(':workflow-compiler-plugin-tests').projectDir = file('compiler-plugin-tests')
 project(':workflow-ballerina').projectDir = file('ballerina')
 

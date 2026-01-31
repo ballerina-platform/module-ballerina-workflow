@@ -30,17 +30,13 @@ import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
 import io.ballerina.stdlib.workflow.ModuleUtils;
-import io.ballerina.stdlib.workflow.registry.ActivityRegistry;
-import io.ballerina.stdlib.workflow.registry.EventInfo;
-import io.ballerina.stdlib.workflow.registry.EventRegistry;
-import io.ballerina.stdlib.workflow.registry.ProcessRegistry;
 import io.ballerina.stdlib.workflow.runtime.WorkflowRuntime;
-import io.ballerina.stdlib.workflow.utils.EventExtractor;
 import io.ballerina.stdlib.workflow.utils.TypesUtil;
+import io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 
@@ -85,9 +81,6 @@ public final class WorkflowNative {
                     // Get the activity name from the function pointer
                     String activityName = activityFunction.getType().getName();
 
-                    // Register the activity if not already registered
-                    ActivityRegistry.getInstance().register(activityName, activityFunction);
-
                     // Convert arguments to Java types for Temporal
                     Object[] javaArgs = new Object[args == null ? 0 : args.length];
                     if (args != null) {
@@ -117,14 +110,15 @@ public final class WorkflowNative {
      * Native implementation for startProcess function.
      * <p>
      * Starts a new workflow process with the given input.
+     * The input must contain an "id" field for workflow correlation.
      * Returns the workflow ID that can be used to track and interact with the workflow.
      *
      * @param env the Ballerina runtime environment
      * @param processFunction the process function to execute
-     * @param input the input data for the process
+     * @param input the input data for the process (map with "id" field)
      * @return the workflow ID as a string, or an error
      */
-    public static Object startProcess(Environment env, BFunctionPointer processFunction, Object input) {
+    public static Object startProcess(Environment env, BFunctionPointer processFunction, BMap<BString, Object> input) {
         return env.yieldAndRun(() -> {
             CompletableFuture<Object> balFuture = new CompletableFuture<>();
 
@@ -132,9 +126,6 @@ public final class WorkflowNative {
                 try {
                     // Get the process name from the function pointer
                     String processName = processFunction.getType().getName();
-
-                    // Register the process if not already registered
-                    ProcessRegistry.getInstance().register(processName, processFunction);
 
                     // Convert input to Java type
                     Object javaInput = TypesUtil.convertBallerinaToJavaType(input);
@@ -158,14 +149,15 @@ public final class WorkflowNative {
      * Native implementation for sendEvent function.
      * <p>
      * Sends an event (signal) to a running workflow process.
+     * The event data must contain an "id" field to identify the target workflow.
      * Events can be used to communicate with running workflows and trigger state changes.
      *
      * @param env the Ballerina runtime environment
      * @param processFunction the process function to send the event to
-     * @param eventData the event data to send
+     * @param eventData the event data to send (map with "id" field)
      * @return true if the event was sent successfully, or an error
      */
-    public static Object sendEvent(Environment env, BFunctionPointer processFunction, Object eventData) {
+    public static Object sendEvent(Environment env, BFunctionPointer processFunction, BMap<BString, Object> eventData) {
         return env.yieldAndRun(() -> {
             CompletableFuture<Object> balFuture = new CompletableFuture<>();
 
@@ -193,61 +185,6 @@ public final class WorkflowNative {
     }
 
     /**
-     * Native implementation for registerProcess function.
-     * <p>
-     * Registers a process function with the workflow runtime.
-     * This makes the process available for execution when startProcess is called.
-     *
-     * @param env the Ballerina runtime environment
-     * @param processFunction the process function to register
-     * @param processName the name to register the process under
-     * @param activities optional map of activity function pointers
-     * @return true if registration was successful, or an error
-     */
-    public static Object registerProcess(Environment env, BFunctionPointer processFunction, BString processName,
-                                         Object activities) {
-        try {
-            String name = processName.getValue();
-
-            // Register the process in the registry
-            boolean registered = ProcessRegistry.getInstance().register(name, processFunction);
-
-            if (!registered) {
-                return ErrorCreator.createError(
-                        StringUtils.fromString("Process with name '" + name + "' is already registered"));
-            }
-
-            // Register activities if provided and track them with the process
-            if (activities instanceof BMap) {
-                BMap<BString, BFunctionPointer> activityMap = (BMap<BString, BFunctionPointer>) activities;
-                for (BString activityName : activityMap.getKeys()) {
-                    BFunctionPointer activityFunc = activityMap.get(activityName);
-                    String activityNameStr = activityName.getValue();
-                    ActivityRegistry.getInstance().register(activityNameStr, activityFunc);
-                    // Track this activity with the process
-                    ProcessRegistry.getInstance().addActivityToProcess(name, activityNameStr);
-                }
-            }
-
-            // Extract events from process function signature and register them
-            List<EventInfo> events = EventExtractor.extractEvents(processFunction, name);
-            if (!events.isEmpty()) {
-                // Add events to the process in ProcessRegistry
-                ProcessRegistry.getInstance().addEventsToProcess(name, events);
-                
-                // Also register in EventRegistry for quick lookup
-                EventRegistry.getInstance().registerEvents(name, events);
-            }
-
-            return true;
-
-        } catch (Exception e) {
-            return ErrorCreator.createError(
-                    StringUtils.fromString("Failed to register process: " + e.getMessage()));
-        }
-    }
-
-    /**
      * Native implementation for getRegisteredWorkflows function.
      * <p>
      * Returns information about all registered workflow processes and their activities.
@@ -257,8 +194,10 @@ public final class WorkflowNative {
      */
     public static Object getRegisteredWorkflows() {
         try {
-            Map<String, ProcessRegistry.ProcessInfo> allProcesses =
-                    ProcessRegistry.getInstance().getAllProcesses();
+            // Get registries from WorkflowWorkerNative (the singleton worker)
+            Map<String, BFunctionPointer> processRegistry = WorkflowWorkerNative.getProcessRegistry();
+            Map<String, BFunctionPointer> activityRegistry = WorkflowWorkerNative.getActivityRegistry();
+            Map<String, List<String>> eventRegistry = WorkflowWorkerNative.getEventRegistry();
 
             // Get the ProcessRegistration record type from the workflow module
             RecordType processRegType = (RecordType) ValueCreator.createRecordValue(
@@ -268,26 +207,33 @@ public final class WorkflowNative {
             MapType mapType = TypeCreator.createMapType(processRegType);
             BMap<BString, Object> resultMap = ValueCreator.createMapValue(mapType);
 
-            for (Map.Entry<String, ProcessRegistry.ProcessInfo> entry : allProcesses.entrySet()) {
+            for (Map.Entry<String, BFunctionPointer> entry : processRegistry.entrySet()) {
                 String processName = entry.getKey();
-                ProcessRegistry.ProcessInfo processInfo = entry.getValue();
 
                 // Create a ProcessRegistration record
                 BMap<BString, Object> processRecord = ValueCreator.createRecordValue(
                         ModuleUtils.getModule(), "ProcessRegistration");
                 processRecord.put(StringUtils.fromString("name"), StringUtils.fromString(processName));
 
-                // Add activities as an array of strings
-                Set<String> activityNames = processInfo.getActivityNames();
-                BString[] activityArray = activityNames.stream()
+                // Find activities for this process (activities are registered as "processName.activityName")
+                List<String> processActivities = new ArrayList<>();
+                for (String activityName : activityRegistry.keySet()) {
+                    if (activityName.startsWith(processName + ".")) {
+                        // Extract just the activity name part
+                        String shortName = activityName.substring(processName.length() + 1);
+                        processActivities.add(shortName);
+                    }
+                }
+
+                BString[] activityArray = processActivities.stream()
                         .map(StringUtils::fromString)
                         .toArray(BString[]::new);
                 BArray activitiesBalArray = ValueCreator.createArrayValue(activityArray);
                 processRecord.put(StringUtils.fromString("activities"), activitiesBalArray);
 
-                // Add events as an array of strings
-                List<String> eventNames = processInfo.getEventNames();
-                BString[] eventArray = eventNames.stream()
+                // Get events for this process from the event registry
+                List<String> processEvents = eventRegistry.getOrDefault(processName, new ArrayList<>());
+                BString[] eventArray = processEvents.stream()
                         .map(StringUtils::fromString)
                         .toArray(BString[]::new);
                 BArray eventsBalArray = ValueCreator.createArrayValue(eventArray);
@@ -314,9 +260,8 @@ public final class WorkflowNative {
      */
     public static Object clearRegistry() {
         try {
-            ProcessRegistry.getInstance().clear();
-            ActivityRegistry.getInstance().clear();
-            EventRegistry.getInstance().clear();
+            // Clear the WorkflowWorkerNative registries (the source of truth for workflow execution)
+            WorkflowWorkerNative.clearRegistries();
             return true;
         } catch (Exception e) {
             return ErrorCreator.createError(

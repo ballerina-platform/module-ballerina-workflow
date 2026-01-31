@@ -14,16 +14,47 @@
 // specific language governing permissions and limitations
 // under the License.
 
-# Workflow execution context.
+# Supported workflow providers.
+public enum Provider {
+    TEMPORAL
+}
+
+# Temporal-specific configuration parameters.
 #
-# The Context provides access to workflow-specific operations and metadata
-# within a process function. It is an optional first parameter for @Process functions.
+# + taskQueue - The task queue for workflow execution (default: "BALLERINA_WORKFLOW_TASK_QUEUE")
+# + maxConcurrentWorkflows - Maximum number of concurrent workflow executions (default: 100)
+# + maxConcurrentActivities - Maximum number of concurrent activity executions (default: 100)
+# + authentication - Optional authentication configuration
+public type TemporalParams record {|
+    string taskQueue = "BALLERINA_WORKFLOW_TASK_QUEUE";
+    int maxConcurrentWorkflows = 100;
+    int maxConcurrentActivities = 100;
+    AuthConfig? authentication = ();
+|};
+
+# Authentication configuration for workflow provider.
 #
-# + workflowId - The unique identifier for this workflow execution
-# + runId - The unique identifier for this specific run of the workflow
-public type Context record {|
-    string workflowId;
-    string runId;
+# + apiKey - Optional API key for authentication
+# + mtlsCert - Optional mTLS certificate path
+# + mtlsKey - Optional mTLS private key path
+public type AuthConfig record {|
+    string? apiKey = ();
+    string? mtlsCert = ();
+    string? mtlsKey = ();
+|};
+
+# Workflow module configuration.
+# This is a generic configuration that can support multiple providers.
+#
+# + provider - The workflow provider to use (currently only TEMPORAL is supported)
+# + url - URL of the workflow server (default: "localhost:7233")
+# + namespace - Workflow namespace (default: "default")
+# + params - Provider-specific parameters
+public type WorkflowConfig record {|
+    Provider provider = TEMPORAL;
+    string url = "localhost:7233";
+    string namespace = "default";
+    TemporalParams params = {};
 |};
 
 # Information about a registered workflow process.
@@ -40,3 +71,30 @@ type ProcessRegistration record {
 # Information about all registered workflows.
 # This is a map where keys are process names and values are their registration info.
 type WorkflowRegistry map<ProcessRegistration>;
+
+# Base input data type for workflow and signal data.
+# All workflow inputs and signal data must include a mandatory "id" field
+# which is used internally by the workflow engine for correlation.
+# This is a type alias for documentation purposes - use `map<anydata>` with "id" field.
+#
+# Expected structure:
+# ```
+# {
+#     id: "unique-identifier",
+#     ... // other fields
+# }
+# ```
+#
+# + id - Unique identifier for the workflow instance or signal (used for correlation)
+public type InputData record {|
+    string id;
+    anydata...;
+|};
+
+# Workflow input data type alias.
+# Used when starting a workflow. The "id" field becomes the workflow ID in Temporal.
+public type WorkflowData InputData;
+
+# Signal input data type alias.
+# Used when sending signals. The "id" field identifies the target workflow instance.
+public type SignalData InputData;

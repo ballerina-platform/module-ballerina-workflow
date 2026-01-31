@@ -18,10 +18,14 @@
 
 package io.ballerina.stdlib.workflow.runtime;
 
-import io.ballerina.stdlib.workflow.registry.ActivityRegistry;
-import io.ballerina.stdlib.workflow.registry.ProcessRegistry;
+import io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative;
+import io.temporal.client.WorkflowClient;
+import io.temporal.client.WorkflowOptions;
+import io.temporal.client.WorkflowStub;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import java.util.UUID;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -30,12 +34,13 @@ import java.util.concurrent.Executors;
  * <p>
  * This class serves as the central runtime for the workflow module,
  * coordinating the execution of workflow processes and activities.
- * In the full implementation, this will integrate with Temporal for
- * durable workflow execution.
+ * It delegates to the singleton WorkflowWorkerNative for Temporal integration.
  *
  * @since 0.1.0
  */
 public final class WorkflowRuntime {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(WorkflowRuntime.class);
 
     // Singleton instance
     private static final WorkflowRuntime INSTANCE = new WorkflowRuntime();
@@ -73,23 +78,18 @@ public final class WorkflowRuntime {
     /**
      * Initializes the workflow runtime.
      * <p>
-     * In the full implementation, this will:
-     * - Connect to the Temporal server
-     * - Register workflow workers
-     * - Set up activity workers
+     * The actual Temporal initialization is done through WorkflowWorkerNative.initSingletonWorker().
+     * This method just marks the runtime as initialized.
      */
     public synchronized void initialize() {
         if (initialized) {
             return;
         }
 
-        // TODO: Initialize Temporal client and workers
-        // WorkflowServiceStubs service = WorkflowServiceStubs.newLocalServiceStubs();
-        // WorkflowClient client = WorkflowClient.newInstance(service);
-        // WorkerFactory factory = WorkerFactory.newInstance(client);
-        // Worker worker = factory.newWorker("workflow-task-queue");
-
+        // The actual Temporal client and workers are initialized through
+        // WorkflowWorkerNative.initSingletonWorker() which is called from Ballerina init
         initialized = true;
+        LOGGER.info("WorkflowRuntime initialized");
     }
 
     /**
@@ -103,33 +103,82 @@ public final class WorkflowRuntime {
 
     /**
      * Starts a new workflow process.
+     * The workflow ID is extracted from the "id" field in the input data.
      *
      * @param processName the name of the process to start
-     * @param input the input data for the process
+     * @param input the input data for the process (must be a Map with "id" field)
      * @return the workflow ID
-     * @throws RuntimeException if the process is not registered
+     * @throws RuntimeException if the process is not registered or id is missing
      */
+    @SuppressWarnings("unchecked")
     public String startProcess(String processName, Object input) {
-        ProcessRegistry.ProcessInfo processInfo = ProcessRegistry.getInstance()
-                .getProcess(processName)
-                .orElseThrow(() -> new RuntimeException("Process not registered: " + processName));
+        // Verify the process is registered in WorkflowWorkerNative
+        if (!WorkflowWorkerNative.getProcessRegistry().containsKey(processName)) {
+            throw new RuntimeException("Process not registered: " + processName);
+        }
 
-        // Generate a unique workflow ID
-        String workflowId = generateWorkflowId(processName);
+        // Extract the workflow ID from the "id" field in input
+        String workflowId = extractId(input, "workflow");
+        if (workflowId == null) {
+            throw new RuntimeException("Input data must contain 'id' field for workflow correlation");
+        }
 
-        // TODO: Start the workflow through Temporal
-        // WorkflowOptions options = WorkflowOptions.newBuilder()
-        //         .setWorkflowId(workflowId)
-        //         .setTaskQueue("workflow-task-queue")
-        //         .build();
-        // DynamicWorkflow workflow = client.newWorkflowStub(DynamicWorkflow.class, options);
-        // WorkflowClient.start(workflow::execute, input);
+        // Get the singleton workflow client from WorkflowWorkerNative
+        WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+        if (client == null) {
+            throw new RuntimeException("Workflow client not initialized. Ensure worker is initialized.");
+        }
 
-        return workflowId;
+        String taskQueue = WorkflowWorkerNative.getTaskQueue();
+        if (taskQueue == null) {
+            throw new RuntimeException("Task queue not configured.");
+        }
+
+        try {
+            // Build workflow options with the extracted ID
+            WorkflowOptions options = WorkflowOptions.newBuilder()
+                    .setWorkflowId(workflowId)
+                    .setTaskQueue(taskQueue)
+                    .build();
+
+            // Create an untyped workflow stub for dynamic workflow execution
+            WorkflowStub workflowStub = client.newUntypedWorkflowStub(processName, options);
+
+            // Start the workflow asynchronously with the input data
+            workflowStub.start(input);
+
+            LOGGER.info("Started workflow: type={}, id={}", processName, workflowId);
+            return workflowId;
+
+        } catch (Exception e) {
+            LOGGER.error("Failed to start workflow {}: {}", processName, e.getMessage(), e);
+            throw new RuntimeException("Failed to start workflow: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Extracts the "id" field from the input data.
+     *
+     * @param input the input data (expected to be a Map)
+     * @param context context description for error messages
+     * @return the id value, or null if not found
+     */
+    @SuppressWarnings("unchecked")
+    private String extractId(Object input, String context) {
+        if (input instanceof Map) {
+            Object idValue = ((Map<String, Object>) input).get("id");
+            if (idValue != null) {
+                return idValue.toString();
+            }
+        }
+        return null;
     }
 
     /**
      * Executes an activity within the current workflow context.
+     * Note: Activity execution is handled by the Temporal SDK through WorkflowWorkerNative.
+     * This method is kept for compatibility but actual activity execution goes through
+     * the dynamic activity adapter in WorkflowWorkerNative.
      *
      * @param activityName the name of the activity to execute
      * @param args the arguments to pass to the activity
@@ -137,44 +186,56 @@ public final class WorkflowRuntime {
      * @throws RuntimeException if the activity is not registered
      */
     public Object executeActivity(String activityName, Object[] args) {
-        ActivityRegistry.ActivityInfo activityInfo = ActivityRegistry.getInstance()
-                .getActivity(activityName)
-                .orElseThrow(() -> new RuntimeException("Activity not registered: " + activityName));
+        // Verify the activity is registered in WorkflowWorkerNative
+        if (!WorkflowWorkerNative.getActivityRegistry().containsKey(activityName)) {
+            throw new RuntimeException("Activity not registered: " + activityName);
+        }
 
-        // TODO: Execute the activity through Temporal
-        // ActivityOptions options = ActivityOptions.newBuilder()
-        //         .setStartToCloseTimeout(Duration.ofMinutes(5))
-        //         .build();
-        // ActivityStub activity = Workflow.newUntypedActivityStub(options);
-        // return activity.execute(activityName, Object.class, args);
-
-        // For now, return null as placeholder
-        return null;
+        // Activity execution is handled by Temporal through the BallerinaActivityAdapter
+        // in WorkflowWorkerNative. This method should not be called directly.
+        // The module-level callActivity() function in Ballerina uses WorkflowNative.callActivity()
+        // which delegates to Temporal's activity stub.
+        throw new RuntimeException(
+                "Direct activity execution not supported. Use module-level callActivity() function.");
     }
 
     /**
      * Sends an event (signal) to a running workflow.
+     * The target workflow ID is extracted from the "id" field in the event data.
      *
      * @param processName the name of the process to signal
-     * @param eventData the event data to send
+     * @param eventData the event data to send (must be a Map with "id" field)
      * @return true if the event was sent successfully
+     * @throws RuntimeException if the id field is missing
      */
     public boolean sendEvent(String processName, Object eventData) {
-        // TODO: Send signal through Temporal
-        // WorkflowStub workflow = client.newUntypedWorkflowStub(workflowId);
-        // workflow.signal("eventReceived", eventData);
+        // Extract the workflow ID from the "id" field in event data
+        String workflowId = extractId(eventData, "signal");
+        if (workflowId == null) {
+            throw new RuntimeException("Event data must contain 'id' field for workflow correlation");
+        }
 
-        return true;
-    }
+        // Get the singleton workflow client from WorkflowWorkerNative
+        WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+        if (client == null) {
+            throw new RuntimeException("Workflow client not initialized. Ensure worker is initialized.");
+        }
 
-    /**
-     * Generates a unique workflow ID.
-     *
-     * @param processName the name of the process
-     * @return a unique workflow ID
-     */
-    private String generateWorkflowId(String processName) {
-        return processName + "-" + UUID.randomUUID().toString();
+        try {
+            // Create an untyped workflow stub for the existing workflow
+            WorkflowStub workflowStub = client.newUntypedWorkflowStub(workflowId);
+
+            // Send the signal to the workflow
+            // The signal name is derived from the process name or can be a generic event signal
+            workflowStub.signal(processName, eventData);
+
+            LOGGER.info("Sent signal to workflow: id={}, signalName={}", workflowId, processName);
+            return true;
+
+        } catch (Exception e) {
+            LOGGER.error("Failed to send signal to workflow {}: {}", workflowId, e.getMessage(), e);
+            throw new RuntimeException("Failed to send signal: " + e.getMessage(), e);
+        }
     }
 
     /**
@@ -188,9 +249,10 @@ public final class WorkflowRuntime {
         // Shutdown the executor
         executor.shutdown();
 
-        // TODO: Shutdown Temporal workers
-        // factory.shutdown();
+        // The Temporal workers are shutdown through WorkflowWorkerNative.stopSingletonWorker()
+        // which is called from Ballerina stop lifecycle
 
         initialized = false;
+        LOGGER.info("WorkflowRuntime shutdown");
     }
 }

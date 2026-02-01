@@ -35,20 +35,24 @@ import java.util.Collections;
  * <p>This class extends Ballerina's {@link FutureValue} to bridge Temporal's 
  * {@link CompletablePromise} to Ballerina's wait mechanism.
  * 
- * <p>CRITICAL ARCHITECTURE NOTE:
- * Ballerina's wait action does NOT call our get() method. Instead, it directly accesses
- * the inherited {@code completableFuture} field and calls {@code completableFuture.get()}.
- * See {@code AsyncUtils.handleWait(Strand, FutureValue)} in ballerina-runtime.
+
+ * Ballerina's wait action uses AsyncUtils.handleWait() which:
+ * 1. Calls future.getAndSetWaited() - we intercept here
+ * 2. Directly calls future.completableFuture.get() - which would block!
  * 
- * <p>Therefore, we cannot use blocking in our get() method. Instead, we must:
- * 1. Create a Temporal promise via {@code Workflow.newPromise()}
- * 2. Set up a callback using Temporal's {@code promise.thenApply()} to complete our
- *    inherited {@code completableFuture} when the signal arrives
- * 3. Let Ballerina's wait mechanism handle the Java CompletableFuture blocking
+ * <p>The problem is that CompletableFuture.get() blocks the Java thread, which
+ * triggers Temporal's deadlock detection (PotentialDeadlockException) because
+ * Temporal expects workflow threads to yield control using Workflow.await().
  * 
- * <p>The key insight is that when Temporal's signal handler calls {@code promise.complete()},
- * the callback will trigger, convert the signal data to Ballerina types, and complete
- * the Java CompletableFuture that Ballerina's wait is blocking on.
+ * <p>Our solution is to override getAndSetWaited() to:
+ * 1. Call Workflow.await() to wait for the signal in a Temporal-safe way
+ * 2. Once await() returns, completableFuture is guaranteed complete
+ * 3. When Ballerina then calls completableFuture.get(), it returns immediately
+ * 
+ * <p>This ensures that:
+ * - Temporal's workflow thread can yield during the wait (proper replay behavior)
+ * - No deadlock detection is triggered
+ * - Ballerina's standard wait mechanism works without modification
  *
  * @since 0.1.0
  */
@@ -154,17 +158,65 @@ public class TemporalFutureValue extends FutureValue {
 
     /**
      * Returns the result value of the future.
-     * Note: This method is typically not called by Ballerina's wait action,
-     * which directly accesses completableFuture.get() instead.
+     * <p>
+     * Note: This method may not be called directly by Ballerina's wait action
+     * (which uses AsyncUtils.handleWait), but we override it for completeness.
      *
      * @return the signal data converted to Ballerina type
      */
     @Override
     public Object get() {
         try {
+            // Ensure signal is ready using Temporal's await
+            ensureSignalReady();
             return this.completableFuture.get();
         } catch (Exception e) {
             throw new RuntimeException("Error getting signal value for '" + signalName + "'", e);
+        }
+    }
+    
+    /**
+     * Called by Ballerina's AsyncUtils.handleWait before accessing completableFuture.
+     * <p>
+     * CRITICAL: This method is called BEFORE Ballerina calls completableFuture.get().
+     * We use this as an interception point to block using Temporal's Workflow.await()
+     * until the signal arrives. This ensures that when completableFuture.get() is called,
+     * it will return immediately without blocking the Temporal workflow thread.
+     * <p>
+     * The flow is:
+     * 1. Ballerina's wait action calls AsyncUtils.handleWait(strand, future)
+     * 2. AsyncUtils calls future.getAndSetWaited()
+     * 3. We intercept here and use Workflow.await() to wait for the signal
+     * 4. Once Workflow.await() returns, completableFuture is guaranteed complete
+     * 5. AsyncUtils then calls completableFuture.get() which returns immediately
+     *
+     * @return false to allow waiting (we handle the actual blocking in ensureSignalReady)
+     */
+    @Override
+    public boolean getAndSetWaited() {
+        // First, ensure the signal is ready using Temporal's await mechanism
+        // This blocks the workflow thread in a Temporal-safe way
+        ensureSignalReady();
+        
+        // Return false to indicate this future hasn't been waited on yet
+        // (we allow multiple waits on signal futures since the value is cached)
+        return false;
+    }
+    
+    /**
+     * Ensures the signal is ready by using Temporal's Workflow.await().
+     * <p>
+     * This method blocks using Temporal's cooperative scheduling mechanism
+     * until the signal arrives and the completableFuture is complete.
+     * Unlike Java's CompletableFuture.get(), Workflow.await() properly
+     * yields control to Temporal's event loop, avoiding deadlock detection.
+     */
+    private void ensureSignalReady() {
+        if (!this.completableFuture.isDone()) {
+            LOGGER.info("[TemporalFutureValue] Waiting for signal '{}' using Temporal await", signalName);
+            // Use Temporal's await - this yields control properly during replay
+            Workflow.await(() -> this.completableFuture.isDone());
+            LOGGER.info("[TemporalFutureValue] Signal '{}' is ready", signalName);
         }
     }
 
@@ -203,17 +255,5 @@ public class TemporalFutureValue extends FutureValue {
      */
     public String getSignalName() {
         return signalName;
-    }
-    
-    /**
-     * Checks if this future has been waited on already.
-     * For signal futures, we allow multiple waits since the result is cached in completableFuture.
-     * 
-     * @return false always to allow multiple waits on signal futures
-     */
-    @Override
-    public boolean getAndSetWaited() {
-        // Allow multiple waits on signal futures - the result is deterministic and cached
-        return false;
     }
 }

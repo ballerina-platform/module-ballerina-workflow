@@ -159,7 +159,15 @@ public final class TestServerNative {
         
         String pidStr = new String(Files.readAllBytes(Paths.get(pidFile.getAbsolutePath())), 
                 StandardCharsets.UTF_8).trim();
-        long pid = Long.parseLong(pidStr);
+        long pid;
+        try {
+            pid = Long.parseLong(pidStr);
+        } catch (NumberFormatException e) {
+            LOGGER.warning("Invalid PID in file: " + pidStr);
+            deleteFile(pidFile);
+            deleteFile(new File(workDir, TARGET_FILE));
+            return;
+        }
         
         LOGGER.info("Stopping test server with PID: " + pid);
         
@@ -186,7 +194,16 @@ public final class TestServerNative {
         try {
             String pidStr = new String(Files.readAllBytes(Paths.get(pidFile.getAbsolutePath())), 
                     StandardCharsets.UTF_8).trim();
-            long pid = Long.parseLong(pidStr);
+            long pid;
+            try {
+                pid = Long.parseLong(pidStr);
+            } catch (NumberFormatException e) {
+                LOGGER.warning("Invalid PID in file: " + pidStr);
+                deleteFile(pidFile);
+                deleteFile(targetFile);
+                System.exit(1);
+                return;
+            }
             
             if (ProcessHandle.of(pid).isPresent()) {
                 String target = "";

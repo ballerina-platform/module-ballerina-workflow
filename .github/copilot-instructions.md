@@ -167,3 +167,5 @@ maxConcurrentWorkflows = 100
 - Process functions must be deterministic - no I/O, use activities instead
 - The `id` field in workflow input is mandatory for correlation
 - Don't mix Listener pattern (deprecated) with singleton pattern
+- **Never use Java blocking calls** in workflow code (causes `PotentialDeadlockException`)
+- Signal waiting uses `TemporalFutureValue.getAndSetWaited()` to intercept Ballerina's `wait` and use `Workflow.await()` instead of blocking `CompletableFuture.get()`

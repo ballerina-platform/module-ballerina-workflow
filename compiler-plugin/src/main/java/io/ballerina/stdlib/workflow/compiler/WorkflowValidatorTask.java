@@ -19,27 +19,20 @@
 package io.ballerina.stdlib.workflow.compiler;
 
 import io.ballerina.compiler.api.SemanticModel;
-import io.ballerina.compiler.api.symbols.AnnotationSymbol;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.FunctionTypeSymbol;
-import io.ballerina.compiler.api.symbols.ModuleSymbol;
 import io.ballerina.compiler.api.symbols.ParameterKind;
 import io.ballerina.compiler.api.symbols.ParameterSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.api.symbols.TypeDescKind;
-import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
-import io.ballerina.compiler.api.symbols.UnionTypeSymbol;
-import io.ballerina.compiler.syntax.tree.AnnotationNode;
 import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
 import io.ballerina.compiler.syntax.tree.FunctionCallExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.MappingConstructorExpressionNode;
 import io.ballerina.compiler.syntax.tree.MappingFieldNode;
-import io.ballerina.compiler.syntax.tree.MetadataNode;
-import io.ballerina.compiler.syntax.tree.NodeList;
 import io.ballerina.compiler.syntax.tree.NodeVisitor;
 import io.ballerina.compiler.syntax.tree.PositionalArgumentNode;
 import io.ballerina.compiler.syntax.tree.RemoteMethodCallActionNode;
@@ -96,55 +89,28 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
 
     private boolean hasAnnotation(FunctionDefinitionNode functionNode, SemanticModel semanticModel,
                                    String annotationName) {
-        Optional<MetadataNode> metadataOpt = functionNode.metadata();
-        if (metadataOpt.isEmpty()) {
-            return false;
-        }
-
-        NodeList<AnnotationNode> annotations = metadataOpt.get().annotations();
-        for (AnnotationNode annotation : annotations) {
-            if (isWorkflowAnnotation(annotation, semanticModel, annotationName)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean isWorkflowAnnotation(AnnotationNode annotation, SemanticModel semanticModel,
-                                         String expectedName) {
-        Optional<Symbol> symbolOpt = semanticModel.symbol(annotation);
-        if (symbolOpt.isEmpty()) {
-            return false;
-        }
-
-        Symbol symbol = symbolOpt.get();
-        if (symbol.kind() != SymbolKind.ANNOTATION) {
-            return false;
-        }
-
-        AnnotationSymbol annotationSymbol = (AnnotationSymbol) symbol;
-        Optional<String> nameOpt = annotationSymbol.getName();
-        if (nameOpt.isEmpty() || !expectedName.equals(nameOpt.get())) {
-            return false;
-        }
-
-        Optional<ModuleSymbol> moduleOpt = annotationSymbol.getModule();
-        if (moduleOpt.isEmpty()) {
-            return false;
-        }
-
-        ModuleSymbol module = moduleOpt.get();
-        Optional<String> moduleNameOpt = module.getName();
-        return moduleNameOpt.isPresent() && WorkflowConstants.PACKAGE_NAME.equals(moduleNameOpt.get());
+        return WorkflowPluginUtils.hasWorkflowAnnotation(functionNode, semanticModel, annotationName);
     }
 
     /**
      * Validates @Process function signature according to Agent.md semantics.
      * <ul>
      *   <li>Optional first parameter: workflow:Context</li>
-     *   <li>Required input parameter: subtype of anydata</li>
+     *   <li>Optional input parameter: subtype of anydata</li>
      *   <li>Optional events parameter: record with future anydata fields</li>
      *   <li>Return type: subtype of anydata|error</li>
+     * </ul>
+     * <p>
+     * Valid signatures:
+     * <ul>
+     *   <li>function process() returns R|error</li>
+     *   <li>function process(Context ctx) returns R|error</li>
+     *   <li>function process(Input input) returns R|error</li>
+     *   <li>function process(Events events) returns R|error</li>
+     *   <li>function process(Context ctx, Input input) returns R|error</li>
+     *   <li>function process(Context ctx, Events events) returns R|error</li>
+     *   <li>function process(Input input, Events events) returns R|error</li>
+     *   <li>function process(Context ctx, Input input, Events events) returns R|error</li>
      * </ul>
      */
     private void validateProcessFunction(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context) {
@@ -160,19 +126,33 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
 
         // Get parameters
         Optional<List<ParameterSymbol>> paramsOpt = typeSymbol.params();
-        if (paramsOpt.isEmpty()) {
-            return; // No parameters is valid (though unusual)
+        if (paramsOpt.isEmpty() || paramsOpt.get().isEmpty()) {
+            // No parameters is valid - validate return type only
+            validateReturnType(functionNode, context, typeSymbol);
+            return;
         }
 
         List<ParameterSymbol> params = paramsOpt.get();
-        int paramIndex = 0;
+        
+        // Check for excess parameters (max 3: Context, input, events)
+        if (params.size() > 3) {
+            reportDiagnostic(context, functionNode, WorkflowConstants.WORKFLOW_106,
+                    WorkflowConstants.PROCESS_TOO_MANY_PARAMS);
+            return;
+        }
 
-        // Check first parameter - could be Context
-        if (!params.isEmpty()) {
+        int paramIndex = 0;
+        boolean hasContext = false;
+        boolean hasInput = false;
+        boolean hasEvents = false;
+
+        // Check first parameter - could be Context, input, or events
+        if (paramIndex < params.size()) {
             ParameterSymbol firstParam = params.get(paramIndex);
             TypeSymbol firstParamType = firstParam.typeDescriptor();
 
-            if (isContextType(firstParamType)) {
+            if (WorkflowPluginUtils.isContextType(firstParamType)) {
+                hasContext = true;
                 paramIndex++;
             } else if (looksLikeContextType(firstParamType)) {
                 // First param looks like it should be Context but isn't the right type
@@ -182,41 +162,65 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
             }
         }
 
-        // Check input parameter (if exists after Context)
-        if (paramIndex < params.size()) {
-            ParameterSymbol inputParam = params.get(paramIndex);
-            TypeSymbol inputType = inputParam.typeDescriptor();
+        // Check remaining parameters - they can be input and/or events
+        // The order should be: [Context], [input], [events]
+        while (paramIndex < params.size()) {
+            ParameterSymbol param = params.get(paramIndex);
+            TypeSymbol paramType = param.typeDescriptor();
 
-            if (!isSubtypeOfAnydata(inputType)) {
-                reportDiagnostic(context, functionNode, WorkflowConstants.WORKFLOW_101,
-                        WorkflowConstants.PROCESS_INVALID_INPUT_TYPE);
-                return;
-            }
-            paramIndex++;
-        }
-
-        // Check events parameter (if exists)
-        if (paramIndex < params.size()) {
-            ParameterSymbol eventsParam = params.get(paramIndex);
-            TypeSymbol eventsType = eventsParam.typeDescriptor();
-
-            if (!isValidEventsType(eventsType)) {
-                reportDiagnostic(context, functionNode, WorkflowConstants.WORKFLOW_102,
-                        WorkflowConstants.PROCESS_INVALID_EVENTS_TYPE);
-                return;
-            }
+            // Determine expected parameter type based on position
+            // After context (or at start), next should be input or events
+            // After input, next should be events
             
-            paramIndex++;
+            if (hasInput) {
+                // Already have input, so this parameter MUST be events
+                if (!isValidEventsType(paramType)) {
+                    reportDiagnostic(context, functionNode, WorkflowConstants.WORKFLOW_102,
+                            WorkflowConstants.PROCESS_INVALID_EVENTS_TYPE);
+                    return;
+                }
+                if (hasEvents) {
+                    // Already have events parameter, this is an error
+                    reportDiagnostic(context, functionNode, WorkflowConstants.WORKFLOW_106,
+                            WorkflowConstants.PROCESS_TOO_MANY_PARAMS);
+                    return;
+                }
+                hasEvents = true;
+                paramIndex++;
+            } else {
+                // No input yet - this could be input or events
+                if (isValidEventsType(paramType)) {
+                    // This is an events parameter (can come without input)
+                    hasEvents = true;
+                    paramIndex++;
+                } else if (WorkflowPluginUtils.isSubtypeOfAnydata(paramType, semanticModel)) {
+                    // This is an input parameter
+                    if (hasEvents) {
+                        // Input must come before events
+                        reportDiagnostic(context, functionNode, WorkflowConstants.WORKFLOW_101,
+                                "@Process function's input parameter must come before events parameter");
+                        return;
+                    }
+                    hasInput = true;
+                    paramIndex++;
+                } else {
+                    // Parameter is neither anydata nor events record - error
+                    reportDiagnostic(context, functionNode, WorkflowConstants.WORKFLOW_101,
+                            WorkflowConstants.PROCESS_INVALID_INPUT_TYPE);
+                    return;
+                }
+            }
         }
 
-        // Check for excess parameters (max 3: Context, input, events)
-        if (paramIndex < params.size()) {
-            reportDiagnostic(context, functionNode, WorkflowConstants.WORKFLOW_106,
-                    WorkflowConstants.PROCESS_TOO_MANY_PARAMS);
-            return;
-        }
+        // Validate return type
+        validateReturnType(functionNode, context, typeSymbol);
+    }
 
-        // Check return type
+    /**
+     * Validates the return type of a process or activity function.
+     */
+    private void validateReturnType(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context,
+                                     FunctionTypeSymbol typeSymbol) {
         Optional<TypeSymbol> returnTypeOpt = typeSymbol.returnTypeDescriptor();
         if (returnTypeOpt.isPresent()) {
             TypeSymbol returnType = returnTypeOpt.get();
@@ -250,7 +254,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         if (paramsOpt.isPresent()) {
             for (ParameterSymbol param : paramsOpt.get()) {
                 TypeSymbol paramType = param.typeDescriptor();
-                if (!isSubtypeOfAnydata(paramType)) {
+                if (!WorkflowPluginUtils.isSubtypeOfAnydata(paramType, semanticModel)) {
                     reportDiagnostic(context, functionNode, WorkflowConstants.WORKFLOW_103,
                             WorkflowConstants.ACTIVITY_INVALID_PARAM_TYPE);
                     return;
@@ -262,7 +266,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         Optional<TypeSymbol> returnTypeOpt = typeSymbol.returnTypeDescriptor();
         if (returnTypeOpt.isPresent()) {
             TypeSymbol returnType = returnTypeOpt.get();
-            if (!isValidReturnType(returnType)) {
+            if (!WorkflowPluginUtils.isSubtypeOfAnydataOrError(returnType, semanticModel)) {
                 reportDiagnostic(context, functionNode, WorkflowConstants.WORKFLOW_104,
                         WorkflowConstants.ACTIVITY_INVALID_RETURN_TYPE);
             }
@@ -439,40 +443,8 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
          * Checks if the given expression references a function with @Activity annotation.
          */
         private boolean hasActivityAnnotation(ExpressionNode expression) {
-            Optional<Symbol> symbolOpt = semanticModel.symbol(expression);
-            if (symbolOpt.isEmpty()) {
-                return false;
-            }
-
-            Symbol symbol = symbolOpt.get();
-            if (symbol.kind() != SymbolKind.FUNCTION) {
-                return false;
-            }
-
-            FunctionSymbol functionSymbol = (FunctionSymbol) symbol;
-            List<AnnotationSymbol> annotations = functionSymbol.annotations();
-
-            for (AnnotationSymbol annotation : annotations) {
-                Optional<String> nameOpt = annotation.getName();
-                if (nameOpt.isEmpty()) {
-                    continue;
-                }
-
-                if (WorkflowConstants.ACTIVITY_ANNOTATION.equals(nameOpt.get())) {
-                    // Verify it's from the workflow module
-                    Optional<ModuleSymbol> moduleOpt = annotation.getModule();
-                    if (moduleOpt.isPresent()) {
-                        ModuleSymbol module = moduleOpt.get();
-                        Optional<String> moduleNameOpt = module.getName();
-                        if (moduleNameOpt.isPresent() &&
-                                WorkflowConstants.PACKAGE_NAME.equals(moduleNameOpt.get())) {
-                            return true;
-                        }
-                    }
-                }
-            }
-
-            return false;
+            return WorkflowPluginUtils.hasWorkflowAnnotation(expression, semanticModel, 
+                    WorkflowConstants.ACTIVITY_ANNOTATION);
         }
 
         private void reportCallActivityDiagnostic(RemoteMethodCallActionNode node) {
@@ -550,39 +522,12 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
          */
         private boolean isActivityFunction(FunctionCallExpressionNode callNode) {
             Optional<Symbol> symbolOpt = semanticModel.symbol(callNode);
-            if (symbolOpt.isEmpty()) {
+            if (symbolOpt.isEmpty() || symbolOpt.get().kind() != SymbolKind.FUNCTION) {
                 return false;
             }
-
-            Symbol symbol = symbolOpt.get();
-            if (symbol.kind() != SymbolKind.FUNCTION) {
-                return false;
-            }
-
-            FunctionSymbol functionSymbol = (FunctionSymbol) symbol;
-            List<AnnotationSymbol> annotations = functionSymbol.annotations();
-
-            for (AnnotationSymbol annotation : annotations) {
-                Optional<String> nameOpt = annotation.getName();
-                if (nameOpt.isEmpty()) {
-                    continue;
-                }
-
-                if (WorkflowConstants.ACTIVITY_ANNOTATION.equals(nameOpt.get())) {
-                    // Verify it's from the workflow module
-                    Optional<ModuleSymbol> moduleOpt = annotation.getModule();
-                    if (moduleOpt.isPresent()) {
-                        ModuleSymbol module = moduleOpt.get();
-                        Optional<String> moduleNameOpt = module.getName();
-                        if (moduleNameOpt.isPresent() &&
-                                WorkflowConstants.PACKAGE_NAME.equals(moduleNameOpt.get())) {
-                            return true;
-                        }
-                    }
-                }
-            }
-
-            return false;
+            FunctionSymbol functionSymbol = (FunctionSymbol) symbolOpt.get();
+            return WorkflowPluginUtils.hasWorkflowAnnotation(functionSymbol, 
+                    WorkflowConstants.ACTIVITY_ANNOTATION);
         }
 
         private void reportDirectActivityCallError(FunctionCallExpressionNode callNode) {
@@ -596,25 +541,6 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
     }
 
     /**
-     * Checks if the type is workflow:Context.
-     */
-    private boolean isContextType(TypeSymbol typeSymbol) {
-        if (typeSymbol.typeKind() == TypeDescKind.TYPE_REFERENCE) {
-            TypeReferenceTypeSymbol typeRef = (TypeReferenceTypeSymbol) typeSymbol;
-            Optional<String> nameOpt = typeRef.getName();
-            if (nameOpt.isPresent() && WorkflowConstants.CONTEXT_TYPE.equals(nameOpt.get())) {
-                Optional<ModuleSymbol> moduleOpt = typeRef.getModule();
-                if (moduleOpt.isPresent()) {
-                    ModuleSymbol module = moduleOpt.get();
-                    Optional<String> moduleNameOpt = module.getName();
-                    return moduleNameOpt.isPresent() && WorkflowConstants.PACKAGE_NAME.equals(moduleNameOpt.get());
-                }
-            }
-        }
-        return false;
-    }
-
-    /**
      * Checks if the type looks like it's intended to be a Context type
      * (e.g., named "ctx" or "context") but isn't the actual workflow:Context type.
      */
@@ -625,85 +551,12 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
     }
 
     /**
-     * Checks if the type is a subtype of anydata.
-     */
-    private boolean isSubtypeOfAnydata(TypeSymbol typeSymbol) {
-        TypeDescKind kind = typeSymbol.typeKind();
-
-        // Handle type references
-        if (kind == TypeDescKind.TYPE_REFERENCE) {
-            TypeReferenceTypeSymbol typeRef = (TypeReferenceTypeSymbol) typeSymbol;
-            return isSubtypeOfAnydata(typeRef.typeDescriptor());
-        }
-
-        // anydata includes: (), boolean, int, float, decimal, string, xml, 
-        // anydata[], map<anydata>, table<map<anydata>>, record types
-        switch (kind) {
-            case NIL:
-            case BOOLEAN:
-            case INT:
-            case FLOAT:
-            case DECIMAL:
-            case STRING:
-            case XML:
-            case ANYDATA:
-            case JSON:
-            case BYTE:
-            case ARRAY:
-            case MAP:
-            case RECORD:
-            case TABLE:
-            case TUPLE:
-                return true;
-            case UNION:
-                // Check if all members are subtypes of anydata
-                UnionTypeSymbol unionType = (UnionTypeSymbol) typeSymbol;
-                return unionType.memberTypeDescriptors().stream()
-                        .allMatch(this::isSubtypeOfAnydata);
-            default:
-                return false;
-        }
-    }
-
-    /**
-     * Checks if the type is a subtype of anydata or error.
-     * Handles union types like `string|error` where each member must be anydata or error.
-     */
-    private boolean isSubtypeOfAnydataOrError(TypeSymbol typeSymbol) {
-        TypeDescKind kind = typeSymbol.typeKind();
-
-        // Handle type references
-        if (kind == TypeDescKind.TYPE_REFERENCE) {
-            TypeReferenceTypeSymbol typeRef = (TypeReferenceTypeSymbol) typeSymbol;
-            return isSubtypeOfAnydataOrError(typeRef.typeDescriptor());
-        }
-
-        if (kind == TypeDescKind.ERROR) {
-            return true;
-        }
-
-        // Handle union types like `string|error` - each member must be anydata or error
-        if (kind == TypeDescKind.UNION) {
-            UnionTypeSymbol unionType = (UnionTypeSymbol) typeSymbol;
-            return unionType.memberTypeDescriptors().stream()
-                    .allMatch(this::isSubtypeOfAnydataOrError);
-        }
-
-        return isSubtypeOfAnydata(typeSymbol);
-    }
-
-    /**
      * Validates the events parameter type - should be a record with future<anydata> fields.
      * All fields in the record must be future types.
      */
     private boolean isValidEventsType(TypeSymbol typeSymbol) {
-        TypeDescKind kind = typeSymbol.typeKind();
-
-        // Handle type references
-        if (kind == TypeDescKind.TYPE_REFERENCE) {
-            TypeReferenceTypeSymbol typeRef = (TypeReferenceTypeSymbol) typeSymbol;
-            return isValidEventsType(typeRef.typeDescriptor());
-        }
+        TypeSymbol resolvedType = WorkflowPluginUtils.resolveTypeReference(typeSymbol);
+        TypeDescKind kind = resolvedType.typeKind();
 
         // Must be a record type
         if (kind != TypeDescKind.RECORD) {
@@ -711,9 +564,9 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         }
 
         // Check that it's a RecordTypeSymbol and all fields are future types
-        if (typeSymbol instanceof io.ballerina.compiler.api.symbols.RecordTypeSymbol) {
+        if (resolvedType instanceof io.ballerina.compiler.api.symbols.RecordTypeSymbol) {
             io.ballerina.compiler.api.symbols.RecordTypeSymbol recordType = 
-                    (io.ballerina.compiler.api.symbols.RecordTypeSymbol) typeSymbol;
+                    (io.ballerina.compiler.api.symbols.RecordTypeSymbol) resolvedType;
             
             // Get all record fields and validate each is a future type
             java.util.Map<String, io.ballerina.compiler.api.symbols.RecordFieldSymbol> fields = 
@@ -725,18 +578,10 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
             }
             
             for (io.ballerina.compiler.api.symbols.RecordFieldSymbol field : fields.values()) {
-                TypeSymbol fieldType = field.typeDescriptor();
-                TypeDescKind fieldKind = fieldType.typeKind();
-                
-                // Handle type references for field types
-                if (fieldKind == TypeDescKind.TYPE_REFERENCE) {
-                    TypeReferenceTypeSymbol fieldTypeRef = (TypeReferenceTypeSymbol) fieldType;
-                    fieldType = fieldTypeRef.typeDescriptor();
-                    fieldKind = fieldType.typeKind();
-                }
+                TypeSymbol fieldType = WorkflowPluginUtils.resolveTypeReference(field.typeDescriptor());
                 
                 // Each field must be a future type
-                if (fieldKind != TypeDescKind.FUTURE) {
+                if (fieldType.typeKind() != TypeDescKind.FUTURE) {
                     return false;
                 }
             }
@@ -749,7 +594,8 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
      * Validates return type is subtype of anydata|error.
      */
     private boolean isValidReturnType(TypeSymbol typeSymbol) {
-        return isSubtypeOfAnydataOrError(typeSymbol);
+        // Use kind-based checking as fallback since we don't have SemanticModel here
+        return WorkflowPluginUtils.isSubtypeOfAnydataOrError(typeSymbol, null);
     }
 
     private void reportDiagnostic(SyntaxNodeAnalysisContext context, FunctionDefinitionNode functionNode,

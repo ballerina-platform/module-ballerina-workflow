@@ -29,7 +29,6 @@ import io.ballerina.compiler.api.symbols.RecordTypeSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.api.symbols.TypeDescKind;
-import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
@@ -191,7 +190,7 @@ public class SendEventValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCo
     private TypeSymbol findEventsRecordType(List<ParameterSymbol> params) {
         for (ParameterSymbol param : params) {
             TypeSymbol paramType = param.typeDescriptor();
-            TypeSymbol actualType = resolveTypeReference(paramType);
+            TypeSymbol actualType = WorkflowPluginUtils.resolveTypeReference(paramType);
             
             if (actualType.typeKind() == TypeDescKind.RECORD) {
                 // Check if this record contains future fields (events record signature)
@@ -207,16 +206,6 @@ public class SendEventValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCo
     }
     
     /**
-     * Resolves type references to get the actual type.
-     */
-    private TypeSymbol resolveTypeReference(TypeSymbol typeSymbol) {
-        if (typeSymbol.typeKind() == TypeDescKind.TYPE_REFERENCE) {
-            return ((TypeReferenceTypeSymbol) typeSymbol).typeDescriptor();
-        }
-        return typeSymbol;
-    }
-    
-    /**
      * Checks if a record type contains at least one future field.
      */
     private boolean containsFutureFields(RecordTypeSymbol recordType) {
@@ -226,7 +215,7 @@ public class SendEventValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCo
         }
         
         for (RecordFieldSymbol field : fields.values()) {
-            TypeSymbol fieldType = resolveTypeReference(field.typeDescriptor());
+            TypeSymbol fieldType = WorkflowPluginUtils.resolveTypeReference(field.typeDescriptor());
             if (fieldType.typeKind() == TypeDescKind.FUTURE) {
                 return true;
             }
@@ -241,7 +230,7 @@ public class SendEventValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCo
      * Returns the names of two ambiguous signals, or empty array if no ambiguity.
      */
     private String[] findAmbiguousSignals(TypeSymbol eventsType) {
-        TypeSymbol actualType = resolveTypeReference(eventsType);
+        TypeSymbol actualType = WorkflowPluginUtils.resolveTypeReference(eventsType);
         
         if (actualType.typeKind() != TypeDescKind.RECORD) {
             return EMPTY_STRING_ARRAY;
@@ -284,7 +273,7 @@ public class SendEventValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCo
      * Gets a string signature representing the constraint type of a future field.
      */
     private String getSignalTypeSignature(TypeSymbol futureType) {
-        TypeSymbol actualType = resolveTypeReference(futureType);
+        TypeSymbol actualType = WorkflowPluginUtils.resolveTypeReference(futureType);
         
         if (actualType.typeKind() != TypeDescKind.FUTURE) {
             return actualType.signature();
@@ -305,7 +294,7 @@ public class SendEventValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCo
      * Gets a structural signature for a type.
      */
     private String getStructuralSignature(TypeSymbol typeSymbol) {
-        TypeSymbol actualType = resolveTypeReference(typeSymbol);
+        TypeSymbol actualType = WorkflowPluginUtils.resolveTypeReference(typeSymbol);
         
         if (actualType.typeKind() == TypeDescKind.RECORD && actualType instanceof RecordTypeSymbol) {
             RecordTypeSymbol recordType = (RecordTypeSymbol) actualType;

@@ -19,18 +19,13 @@
 package io.ballerina.stdlib.workflow.compiler;
 
 import io.ballerina.compiler.api.SemanticModel;
-import io.ballerina.compiler.api.symbols.AnnotationSymbol;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
-import io.ballerina.compiler.api.symbols.ModuleSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
-import io.ballerina.compiler.syntax.tree.AnnotationNode;
 import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
 import io.ballerina.compiler.syntax.tree.FunctionCallExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
-import io.ballerina.compiler.syntax.tree.MetadataNode;
 import io.ballerina.compiler.syntax.tree.Node;
-import io.ballerina.compiler.syntax.tree.NodeList;
 import io.ballerina.compiler.syntax.tree.NodeVisitor;
 import io.ballerina.compiler.syntax.tree.PositionalArgumentNode;
 import io.ballerina.compiler.syntax.tree.RemoteMethodCallActionNode;
@@ -41,7 +36,6 @@ import io.ballerina.projects.plugins.AnalysisTask;
 import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -84,46 +78,8 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
     }
 
     private boolean hasProcessAnnotation(FunctionDefinitionNode functionNode, SemanticModel semanticModel) {
-        Optional<MetadataNode> metadataOpt = functionNode.metadata();
-        if (metadataOpt.isEmpty()) {
-            return false;
-        }
-
-        NodeList<AnnotationNode> annotations = metadataOpt.get().annotations();
-        for (AnnotationNode annotation : annotations) {
-            if (isWorkflowProcessAnnotation(annotation, semanticModel)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean isWorkflowProcessAnnotation(AnnotationNode annotation, SemanticModel semanticModel) {
-        Optional<Symbol> symbolOpt = semanticModel.symbol(annotation);
-        if (symbolOpt.isEmpty()) {
-            return false;
-        }
-
-        Symbol symbol = symbolOpt.get();
-        if (symbol.kind() != SymbolKind.ANNOTATION) {
-            return false;
-        }
-
-        AnnotationSymbol annotationSymbol = (AnnotationSymbol) symbol;
-        Optional<String> nameOpt = annotationSymbol.getName();
-        if (nameOpt.isEmpty() || !WorkflowConstants.PROCESS_ANNOTATION.equals(nameOpt.get())) {
-            return false;
-        }
-
-        // Verify it's from the workflow module
-        Optional<ModuleSymbol> moduleOpt = annotationSymbol.getModule();
-        if (moduleOpt.isEmpty()) {
-            return false;
-        }
-
-        ModuleSymbol module = moduleOpt.get();
-        Optional<String> moduleNameOpt = module.getName();
-        return moduleNameOpt.isPresent() && WorkflowConstants.PACKAGE_NAME.equals(moduleNameOpt.get());
+        return WorkflowPluginUtils.hasWorkflowAnnotation(functionNode, semanticModel, 
+                WorkflowConstants.PROCESS_ANNOTATION);
     }
 
     private Map<String, String> collectActivityCalls(FunctionDefinitionNode functionNode,
@@ -236,39 +192,12 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
 
         private boolean isActivityFunction(FunctionCallExpressionNode callNode) {
             Optional<Symbol> symbolOpt = semanticModel.symbol(callNode);
-            if (symbolOpt.isEmpty()) {
+            if (symbolOpt.isEmpty() || symbolOpt.get().kind() != SymbolKind.FUNCTION) {
                 return false;
             }
-
-            Symbol symbol = symbolOpt.get();
-            if (symbol.kind() != SymbolKind.FUNCTION) {
-                return false;
-            }
-
-            FunctionSymbol functionSymbol = (FunctionSymbol) symbol;
-            List<AnnotationSymbol> annotations = functionSymbol.annotations();
-
-            for (AnnotationSymbol annotation : annotations) {
-                Optional<String> nameOpt = annotation.getName();
-                if (nameOpt.isEmpty()) {
-                    continue;
-                }
-
-                if (WorkflowConstants.ACTIVITY_ANNOTATION.equals(nameOpt.get())) {
-                    // Verify it's from the workflow module
-                    Optional<ModuleSymbol> moduleOpt = annotation.getModule();
-                    if (moduleOpt.isPresent()) {
-                        ModuleSymbol module = moduleOpt.get();
-                        Optional<String> moduleNameOpt = module.getName();
-                        if (moduleNameOpt.isPresent() &&
-                                WorkflowConstants.PACKAGE_NAME.equals(moduleNameOpt.get())) {
-                            return true;
-                        }
-                    }
-                }
-            }
-
-            return false;
+            FunctionSymbol functionSymbol = (FunctionSymbol) symbolOpt.get();
+            return WorkflowPluginUtils.hasWorkflowAnnotation(functionSymbol,
+                    WorkflowConstants.ACTIVITY_ANNOTATION);
         }
     }
 }

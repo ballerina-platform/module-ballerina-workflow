@@ -251,10 +251,12 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
      * <p>
      * Rules:
      * <ul>
-     *   <li>If input has readonly fields, all signal types must have the SAME readonly fields</li>
-     *   <li>If input has no readonly fields, input must have 'id' field</li>
-     *   <li>If input has no readonly fields, all signal types must have 'id' field</li>
+     *   <li>If process has events, input MUST have readonly fields for correlation</li>
+     *   <li>All signal types must have the SAME readonly fields as the input</li>
      * </ul>
+     * <p>
+     * Note: The 'id' field fallback is no longer supported. Correlation is done
+     * exclusively via readonly fields which become Temporal Search Attributes.
      */
     private void validateCorrelationKeys(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context,
                                           TypeSymbol inputType, TypeSymbol eventsType) {
@@ -274,22 +276,10 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         // Get signal types from events record
         List<RecordTypeSymbol> signalTypes = extractSignalTypes(eventsType);
 
-        if (inputReadonlyFields.isEmpty()) {
-            // Fallback to ID-based correlation
-            if (!hasIdField(inputRecordType)) {
-                reportDiagnostic(context, functionNode, WorkflowConstants.WORKFLOW_116,
-                        WorkflowConstants.CORRELATION_KEY_REQUIRED);
-                return;
-            }
-
-            // Validate all signal types have 'id' field
-            for (RecordTypeSymbol signalType : signalTypes) {
-                if (!hasIdField(signalType)) {
-                    String signalTypeName = signalType.getName().orElse("anonymous");
-                    reportDiagnostic(context, functionNode, WorkflowConstants.WORKFLOW_116,
-                            String.format(WorkflowConstants.SIGNAL_MISSING_ID_FIELD, signalTypeName));
-                }
-            }
+        // If process has events but no readonly fields, report error
+        if (inputReadonlyFields.isEmpty() && !signalTypes.isEmpty()) {
+            reportDiagnostic(context, functionNode, WorkflowConstants.WORKFLOW_116,
+                    WorkflowConstants.CORRELATION_KEY_REQUIRED_FOR_EVENTS);
             return;
         }
 
@@ -341,16 +331,6 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         }
 
         return readonlyFields;
-    }
-
-    /**
-     * Checks if a record type has an 'id' field.
-     *
-     * @param recordType the record type symbol
-     * @return true if the record has an 'id' field
-     */
-    private boolean hasIdField(RecordTypeSymbol recordType) {
-        return recordType.fieldDescriptors().containsKey("id");
     }
 
     /**

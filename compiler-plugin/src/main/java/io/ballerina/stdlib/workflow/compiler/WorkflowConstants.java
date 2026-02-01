@@ -107,10 +107,9 @@ public final class WorkflowConstants {
             "Signal type '%s' is missing readonly field '%s' required for correlation with process input";
     public static final String CORRELATION_KEY_TYPE_MISMATCH =
             "Readonly field '%s' type mismatch: input has '%s', signal '%s' has '%s'";
-    public static final String CORRELATION_KEY_REQUIRED =
-            "Process input must have either readonly fields or 'id' field for correlation";
-    public static final String SIGNAL_MISSING_ID_FIELD =
-            "Signal type '%s' must have 'id' field for correlation (no readonly correlation keys defined)";
+    public static final String CORRELATION_KEY_REQUIRED_FOR_EVENTS =
+            "Process with events must have readonly fields in input for correlation. " +
+            "Add 'readonly' modifier to fields used for correlation (e.g., 'readonly string customerId')";
     
     // Function names for validation
     public static final String SEND_EVENT_FUNCTION = "sendEvent";

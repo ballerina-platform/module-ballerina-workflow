@@ -38,8 +38,8 @@ function processName(
 ```
 
 - **Context** (`workflow:Context`): Client class as first parameter. **Required** if calling activities. Provides `callActivity` remote method.
-- **Input**: Workflow input data, must include `id` field for correlation
-- **Events**: Optional record with `future<T>` fields for receiving signals. Wait using `check events.event1`
+- **Input**: Workflow input data. If process has events, must have `readonly` fields for correlation (e.g., `readonly string customerId`)
+- **Events**: Optional record with `future<T>` fields for receiving signals. Wait using `check events.event1`. **Requires readonly fields in input for correlation.**
 
 ### Activity Functions
 ```ballerina
@@ -91,7 +91,7 @@ function processWithErrorHandling(workflow:Context ctx, Input input) returns Out
 ### Type Mappings (Ballerina ↔ Java ↔ Temporal)
 - `map<anydata>` → `BMap<BString, Object>` (use `PredefinedTypes.TYPE_ANYDATA`)
 - `function` → `BFunctionPointer` / `FPValue` (set `StrandMetadata` before calling)
-- Workflow inputs must include `id` field for correlation
+- Workflow inputs with events must have `readonly` fields for correlation
 
 ### Native Code Patterns
 When calling Ballerina methods from Java:
@@ -165,7 +165,7 @@ maxConcurrentWorkflows = 100
 ## Common Pitfalls
 - Always clear registry in test `@BeforeEach` with `clearRegistry()` to avoid state leakage
 - Process functions must be deterministic - no I/O, use activities instead
-- The `id` field in workflow input is mandatory for correlation
+- Workflows with events (signals) must have `readonly` fields in input for correlation
 - Don't mix Listener pattern (deprecated) with singleton pattern
 - **Never use Java blocking calls** in workflow code (causes `PotentialDeadlockException`)
 - Signal waiting uses `TemporalFutureValue.getAndSetWaited()` to intercept Ballerina's `wait` and use `Workflow.await()` instead of blocking `CompletableFuture.get()`

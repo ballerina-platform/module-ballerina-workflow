@@ -19,7 +19,6 @@
 package io.ballerina.stdlib.workflow.runtime;
 
 import io.ballerina.runtime.api.types.RecordType;
-import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
@@ -119,17 +118,18 @@ public final class WorkflowRuntime {
     /**
      * Starts a new workflow process.
      * <p>
-     * The workflow ID is determined by correlation keys:
-     * <ul>
-     *   <li>If readonly fields are defined, generates composite ID from correlation keys</li>
-     *   <li>Otherwise falls back to the "id" field in input data</li>
-     * </ul>
-     * Search Attributes are automatically registered for correlation keys.
+     * The workflow ID is generated using UUID v7 for uniqueness and sortability.
+     * If readonly fields are defined, they are stored as Temporal search attributes
+     * for correlation-based signal routing.
+     * <p>
+     * <b>Validation:</b> If the process expects events (signals) but no readonly
+     * fields are defined, an error is thrown since signals cannot be correlated.
      *
      * @param processName the name of the process to start
-     * @param input the input data for the process (must be a Map with correlation keys or "id" field)
+     * @param input the input data for the process
      * @return the workflow ID
-     * @throws RuntimeException if the process is not registered or correlation keys are missing
+     * @throws RuntimeException if the process is not registered, or if events are 
+     *                          expected but no correlation keys (readonly fields) are defined
      */
     @SuppressWarnings("unchecked")
     public String startProcess(String processName, Object input) {
@@ -143,7 +143,12 @@ public final class WorkflowRuntime {
         RecordType inputRecordType = processFunction != null ? 
                 EventExtractor.getInputRecordType(processFunction) : null;
 
-        // Extract correlation keys from input
+        // Check if process expects events (has events record parameter)
+        RecordType eventsRecordType = processFunction != null ?
+                EventExtractor.getEventsRecordType(processFunction) : null;
+        boolean hasEvents = eventsRecordType != null && !eventsRecordType.getFields().isEmpty();
+
+        // Extract correlation keys from input (only readonly fields)
         Map<String, Object> correlationKeys;
         if (input instanceof Map) {
             correlationKeys = CorrelationExtractor.extractCorrelationKeysFromMap(
@@ -156,22 +161,16 @@ public final class WorkflowRuntime {
             throw new RuntimeException("Input must be a Map or BMap type");
         }
 
-        // Generate workflow ID from correlation keys or fallback to 'id' field
-        String workflowId;
-        if (!correlationKeys.isEmpty()) {
-            // Use correlation keys for workflow ID
-            workflowId = CorrelationExtractor.generateWorkflowId(correlationKeys, processName);
-        } else {
-            // Fallback to 'id' field for workflow ID (without using it as a search attribute)
-            String fallbackId = extractIdFromInput(input);
-            if (fallbackId == null) {
-                throw new RuntimeException("Input data must contain correlation keys (readonly fields) or 'id' field");
-            }
-            workflowId = fallbackId;
+        // Validation: If process expects events but no correlation keys are defined,
+        // signals cannot be routed to this workflow
+        if (hasEvents && correlationKeys.isEmpty()) {
+            throw new RuntimeException(
+                "Process '" + processName + "' expects events but input has no readonly fields. " +
+                "Add 'readonly' modifier to fields used for correlation (e.g., 'readonly string customerId')");
         }
-        if (workflowId == null) {
-            throw new RuntimeException("Failed to generate workflow ID from correlation keys");
-        }
+
+        // Generate workflow ID using UUID v7
+        String workflowId = CorrelationExtractor.generateWorkflowId(processName);
 
         // Get the singleton workflow client from WorkflowWorkerNative
         WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
@@ -190,9 +189,8 @@ public final class WorkflowRuntime {
                     .setWorkflowId(workflowId)
                     .setTaskQueue(taskQueue);
 
-            // Add search attributes for correlation keys (if more than just 'id')
-            // These are auto-registered with Temporal during process registration
-            if (correlationKeys.size() > 1 || !correlationKeys.containsKey("id")) {
+            // Add search attributes for correlation keys (if any readonly fields exist)
+            if (!correlationKeys.isEmpty()) {
                 Map<String, Object> searchAttrs = CorrelationExtractor.toSearchAttributes(correlationKeys);
                 SearchAttributes typedSearchAttrs = buildTypedSearchAttributes(searchAttrs);
                 if (typedSearchAttrs != null) {
@@ -257,50 +255,6 @@ public final class WorkflowRuntime {
     }
 
     /**
-     * Extracts the "id" field from input data for workflow ID generation.
-     * Used as a fallback when no readonly correlation fields are present.
-     *
-     * @param input the input data (Map or BMap)
-     * @return the id value as a string, or null if not found
-     */
-    @SuppressWarnings("unchecked")
-    private String extractIdFromInput(Object input) {
-        if (input instanceof Map) {
-            Object idValue = ((Map<String, Object>) input).get("id");
-            if (idValue != null) {
-                return idValue.toString();
-            }
-        } else if (input instanceof BMap) {
-            Object idValue = ((BMap<BString, Object>) input).get(StringUtils.fromString("id"));
-            if (idValue != null) {
-                if (idValue instanceof BString) {
-                    return ((BString) idValue).getValue();
-                }
-                return idValue.toString();
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Extracts the "id" field from the input data (for backward compatibility).
-     *
-     * @param input the input data (expected to be a Map)
-     * @param context context description for error messages
-     * @return the id value, or null if not found
-     */
-    @SuppressWarnings("unchecked")
-    private String extractId(Object input, String context) {
-        if (input instanceof Map) {
-            Object idValue = ((Map<String, Object>) input).get("id");
-            if (idValue != null) {
-                return idValue.toString();
-            }
-        }
-        return null;
-    }
-
-    /**
      * Executes an activity within the current workflow context.
      * Note: Activity execution is handled by the Temporal SDK through WorkflowWorkerNative.
      * This method is kept for compatibility but actual activity execution goes through
@@ -341,17 +295,14 @@ public final class WorkflowRuntime {
     /**
      * Sends an event (signal) to a running workflow with a specific signal name.
      * <p>
-     * The target workflow ID is determined by correlation keys:
-     * <ul>
-     *   <li>If event data has readonly correlation keys, uses composite ID or visibility query</li>
-     *   <li>Otherwise falls back to the "id" field in event data</li>
-     * </ul>
+     * The target workflow is found using Temporal Visibility API by querying
+     * search attributes that match the correlation keys (readonly fields) in the event data.
      *
      * @param processName the name of the process (workflow type)
-     * @param eventData the event data to send (must have correlation keys or "id" field)
+     * @param eventData the event data to send (must have readonly correlation keys)
      * @param signalName the name of the signal to send (if null, uses processName)
      * @return true if the event was sent successfully
-     * @throws RuntimeException if correlation keys or id field is missing
+     * @throws RuntimeException if no correlation keys are found or no matching workflow exists
      */
     @SuppressWarnings("unchecked")
     public boolean sendEvent(String processName, Object eventData, String signalName) {
@@ -364,7 +315,7 @@ public final class WorkflowRuntime {
             signalRecordType = EventExtractor.getSignalRecordType(processFunction, signalName);
         }
 
-        // Extract correlation keys from event data
+        // Extract correlation keys from event data (only readonly fields)
         Map<String, Object> correlationKeys;
         if (eventData instanceof Map) {
             correlationKeys = CorrelationExtractor.extractCorrelationKeysFromMap(
@@ -379,29 +330,17 @@ public final class WorkflowRuntime {
         }
 
         if (correlationKeys.isEmpty()) {
-            // Fallback to 'id' field for workflow ID (without using it as search attribute)
-            String fallbackId = extractIdFromInput(eventData);
-            if (fallbackId == null) {
-                throw new RuntimeException("Event data must contain correlation keys (readonly fields) or 'id' field");
-            }
-            // Use 'id' as a simple correlation key for workflow ID lookup
-            correlationKeys.put("id", fallbackId);
+            throw new RuntimeException(
+                "Event data must contain readonly correlation keys. " +
+                "Add 'readonly' modifier to fields used for correlation (e.g., 'readonly string customerId')");
         }
 
-        // Determine the workflow ID
-        String workflowId;
-        
-        // If using simple ID-based correlation
-        if (correlationKeys.size() == 1 && correlationKeys.containsKey("id")) {
-            workflowId = correlationKeys.get("id").toString();
-        } else {
-            // Use Visibility API to find workflow by search attributes
-            workflowId = findWorkflowByCorrelationKeys(processName, correlationKeys);
-            if (workflowId == null) {
-                throw new RuntimeException(
-                    "No running workflow found for process " + processName + 
-                    " with correlation keys: " + correlationKeys);
-            }
+        // Use Visibility API to find workflow by search attributes
+        String workflowId = findWorkflowByCorrelationKeys(processName, correlationKeys);
+        if (workflowId == null) {
+            throw new RuntimeException(
+                "No running workflow found for process " + processName + 
+                " with correlation keys: " + correlationKeys);
         }
 
         // Get the singleton workflow client from WorkflowWorkerNative

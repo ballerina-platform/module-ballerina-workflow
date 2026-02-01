@@ -18,17 +18,17 @@ import ballerina/workflow;
 
 // Types with SAME structure - this creates ambiguity
 type SignalType1 record {|
-    string id;
+    readonly string id;
     string value;
 |};
 
 type SignalType2 record {|
-    string id;
+    readonly string id;
     string value;
 |};
 
 type TestInput record {|
-    string id;
+    readonly string id;
     string name;
 |};
 

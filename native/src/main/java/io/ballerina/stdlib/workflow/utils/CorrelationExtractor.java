@@ -56,9 +56,8 @@ public final class CorrelationExtractor {
     /**
      * Extracts correlation key values from input data based on the record type.
      * <p>
-     * Looks for readonly fields in the record type and extracts their values
-     * from the input data. If no readonly fields are found, falls back to
-     * the 'id' field.
+     * Only readonly fields in the record type are considered correlation keys.
+     * The 'id' field must be explicitly marked as readonly to be used for correlation.
      *
      * @param inputData  the input data map
      * @param recordType the record type definition (can be null)
@@ -74,21 +73,13 @@ public final class CorrelationExtractor {
                 Field field = entry.getValue();
                 String fieldName = entry.getKey();
 
-                // Check if field is readonly
+                // Only readonly fields are correlation keys
                 if (isReadonlyField(field)) {
                     Object value = inputData.get(StringUtils.fromString(fieldName));
                     if (value != null) {
                         correlationKeys.put(fieldName, value);
                     }
                 }
-            }
-        }
-
-        // Fallback to 'id' field if no readonly fields found
-        if (correlationKeys.isEmpty()) {
-            Object idValue = inputData.get(StringUtils.fromString("id"));
-            if (idValue != null) {
-                correlationKeys.put("id", idValue);
             }
         }
 
@@ -212,21 +203,13 @@ public final class CorrelationExtractor {
      *   <li>No collisions even in clustered environments</li>
      * </ul>
      * Format: {@code processName-<uuid7>}
+     * <p>
+     * Correlation keys are stored as Temporal search attributes, not embedded in the workflow ID.
      *
-     * @param correlationKeys the correlation key values (used for logging/validation)
-     * @param processName     the process name for namespacing
+     * @param processName the process name for namespacing
      * @return workflow ID in format: processName-uuid7
      */
-    public static String generateWorkflowId(Map<String, Object> correlationKeys, String processName) {
-        if (correlationKeys.isEmpty()) {
-            return null;
-        }
-
-        // If only 'id' field exists, use it directly (backward compatibility)
-        if (correlationKeys.size() == 1 && correlationKeys.containsKey("id")) {
-            return convertToString(correlationKeys.get("id"));
-        }
-
+    public static String generateWorkflowId(String processName) {
         // Generate UUID v7 (time-ordered UUID)
         // Correlation keys are stored as search attributes, not in the workflow ID
         return processName + "-" + generateUuidV7();
@@ -362,19 +345,6 @@ public final class CorrelationExtractor {
             return s;
         }
         return Character.toUpperCase(s.charAt(0)) + s.substring(1);
-    }
-
-    /**
-     * Converts a value to its string representation for use in workflow IDs.
-     *
-     * @param value the value to convert
-     * @return string representation
-     */
-    private static String convertToString(Object value) {
-        if (value instanceof BString) {
-            return ((BString) value).getValue();
-        }
-        return value != null ? value.toString() : "";
     }
 
     /**

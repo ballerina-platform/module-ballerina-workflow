@@ -18,12 +18,12 @@ import ballerina/workflow;
 
 // Three signals with same structure - tests detection of first two ambiguous signals
 type StringSignal record {|
-    string id;
+    readonly string id;
     string data;
 |};
 
 type TestInput record {|
-    string id;
+    readonly string id;
     string name;
 |};
 

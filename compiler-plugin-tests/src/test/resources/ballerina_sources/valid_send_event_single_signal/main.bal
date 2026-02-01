@@ -18,12 +18,12 @@ import ballerina/workflow;
 
 // Single signal type
 type ResponseSignal record {|
-    string id;
+    readonly string id;
     string message;
 |};
 
 type TestInput record {|
-    string id;
+    readonly string id;
     string name;
 |};
 

@@ -32,23 +32,23 @@ import ballerina/workflow;
 
 # Input for the approval workflow.
 #
-# + id - The workflow identifier
+# + id - The workflow identifier (readonly for correlation)
 # + orderId - The order identifier
 # + amount - The order amount
 type ApprovalInput record {|
-    string id;
+    readonly string id;
     string orderId;
     decimal amount;
 |};
 
 # Signal data for approval decision.
 #
-# + id - The workflow identifier
+# + id - The workflow identifier (readonly for correlation)
 # + approverId - The approver's identifier
 # + approved - Whether the approval was granted
 # + reason - The reason for approval/rejection (optional)
 type ApprovalSignal record {|
-    string id;
+    readonly string id;
     string approverId;
     boolean approved;
     string? reason;
@@ -56,11 +56,11 @@ type ApprovalSignal record {|
 
 # Signal data for payment confirmation.
 #
-# + id - The workflow identifier
+# + id - The workflow identifier (readonly for correlation)
 # + txnId - The transaction identifier
 # + amount - The payment amount
 type PaymentSignal record {|
-    string id;
+    readonly string id;
     string txnId;
     decimal amount;
 |};
@@ -171,19 +171,19 @@ function approvalWorkflow(
 
 # Simple workflow input for single signal demo.
 #
-# + id - The workflow identifier
+# + id - The workflow identifier (readonly for correlation)
 # + message - The input message
 type SimpleSignalInput record {|
-    string id;
+    readonly string id;
     string message;
 |};
 
 # Simple signal data.
 #
-# + id - The workflow identifier
+# + id - The workflow identifier (readonly for correlation)
 # + response - The signal response
 type SimpleSignalData record {|
-    string id;
+    readonly string id;
     string response;
 |};
 

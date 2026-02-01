@@ -33,19 +33,19 @@ import ballerina/workflow;
 
 # Input for single signal inference workflow.
 #
-# + id - The workflow identifier
+# + id - The workflow identifier (readonly for correlation)
 # + data - The input data
 type SingleSignalInferInput record {|
-    string id;
+    readonly string id;
     string data;
 |};
 
 # Signal data for the single signal.
 #
-# + id - The workflow identifier
+# + id - The workflow identifier (readonly for correlation)
 # + response - The response data
 type SingleInferSignal record {|
-    string id;
+    readonly string id;
     string response;
 |};
 
@@ -85,42 +85,42 @@ function singleSignalInferWorkflow(
 
 # Input for distinct types workflow.
 #
-# + id - The workflow identifier
+# + id - The workflow identifier (readonly for correlation)
 # + requestId - The request identifier
 type DistinctTypesInput record {|
-    string id;
+    readonly string id;
     string requestId;
 |};
 
 # First signal with distinct structure (has 'approved' boolean).
 #
-# + id - The workflow identifier
+# + id - The workflow identifier (readonly for correlation)
 # + approved - Whether the approval was granted
 # + approverName - The name of the approver
 type ApprovalTypeSignal record {|
-    string id;
+    readonly string id;
     boolean approved;
     string approverName;
 |};
 
 # Second signal with distinct structure (has 'amount' decimal).
 #
-# + id - The workflow identifier
+# + id - The workflow identifier (readonly for correlation)
 # + amount - The payment amount
 # + transactionRef - The transaction reference
 type PaymentTypeSignal record {|
-    string id;
+    readonly string id;
     decimal amount;
     string transactionRef;
 |};
 
 # Third signal with distinct structure (has 'rating' int).
 #
-# + id - The workflow identifier
+# + id - The workflow identifier (readonly for correlation)
 # + rating - The feedback rating
 # + comment - The feedback comment
 type FeedbackTypeSignal record {|
-    string id;
+    readonly string id;
     int rating;
     string comment;
 |};
@@ -170,28 +170,28 @@ function distinctTypesWorkflow(
 
 # Input for explicit signal name test.
 #
-# + id - The workflow identifier
+# + id - The workflow identifier (readonly for correlation)
 # + message - The input message
 type ExplicitSignalInput record {|
-    string id;
+    readonly string id;
     string message;
 |};
 
 # Ambiguous signal type 1 - same structure as type 2.
 #
-# + id - The workflow identifier
+# + id - The workflow identifier (readonly for correlation)
 # + value - The signal value
 type AmbiguousSignal1 record {|
-    string id;
+    readonly string id;
     string value;
 |};
 
 # Ambiguous signal type 2 - same structure as type 1.
 #
-# + id - The workflow identifier
+# + id - The workflow identifier (readonly for correlation)
 # + value - The signal value
 type AmbiguousSignal2 record {|
-    string id;
+    readonly string id;
     string value;
 |};
 
@@ -233,20 +233,20 @@ function explicitSignalNameWorkflow(
 
 # Input for mixed signals workflow.
 #
-# + id - The workflow identifier
+# + id - The workflow identifier (readonly for correlation)
 # + orderId - The order identifier
 type MixedSignalsInput record {|
-    string id;
+    readonly string id;
     string orderId;
 |};
 
 # Distinct signal type with unique field (statusCode: int).
 #
-# + id - The workflow identifier
+# + id - The workflow identifier (readonly for correlation)
 # + statusCode - The status code
 # + description - The status description
 type StatusUpdateSignal record {|
-    string id;
+    readonly string id;
     int statusCode;
     string description;
 |};

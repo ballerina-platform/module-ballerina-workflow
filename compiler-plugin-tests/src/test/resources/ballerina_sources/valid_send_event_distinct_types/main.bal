@@ -18,19 +18,19 @@ import ballerina/workflow;
 
 // Types with DIFFERENT structure (not ambiguous)
 type ApprovalSignal record {|
-    string id;
+    readonly string id;
     boolean approved;
     string approver;
 |};
 
 type PaymentSignal record {|
-    string id;
+    readonly string id;
     string txnId;
     decimal amount;
 |};
 
 type TestInput record {|
-    string id;
+    readonly string id;
     string name;
 |};
 

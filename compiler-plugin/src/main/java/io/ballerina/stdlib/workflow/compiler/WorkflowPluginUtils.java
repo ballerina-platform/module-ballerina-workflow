@@ -15,7 +15,6 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package io.ballerina.stdlib.workflow.compiler;
 
 import io.ballerina.compiler.api.SemanticModel;
@@ -27,7 +26,6 @@ import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.api.symbols.TypeDescKind;
 import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
-import io.ballerina.compiler.api.symbols.UnionTypeSymbol;
 import io.ballerina.compiler.syntax.tree.AnnotationNode;
 import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
@@ -198,93 +196,41 @@ public final class WorkflowPluginUtils {
     }
 
     /**
-     * Checks if a type is a subtype of anydata.
-     * Uses the semantic model's type checking when available, otherwise falls back to kind checking.
+     * Checks if a type is a subtype of anydata using the compiler's built-in type checking.
      *
      * @param typeSymbol    the type symbol to check
-     * @param semanticModel the semantic model (may be null for fallback behavior)
+     * @param semanticModel the semantic model
      * @return true if the type is a subtype of anydata
      */
     public static boolean isSubtypeOfAnydata(TypeSymbol typeSymbol, SemanticModel semanticModel) {
-        if (semanticModel != null) {
-            return typeSymbol.subtypeOf(semanticModel.types().ANYDATA);
-        }
-        // Fallback to kind-based checking
-        return isSubtypeOfAnydataByKind(typeSymbol);
+        return typeSymbol.subtypeOf(semanticModel.types().ANYDATA);
     }
 
     /**
-     * Checks if a type is a subtype of anydata based on type kind.
-     * This is a fallback method when semantic model is not available.
-     *
-     * @param typeSymbol the type symbol to check
-     * @return true if the type is a subtype of anydata
-     */
-    public static boolean isSubtypeOfAnydataByKind(TypeSymbol typeSymbol) {
-        TypeDescKind kind = typeSymbol.typeKind();
-
-        // Handle type references
-        if (kind == TypeDescKind.TYPE_REFERENCE) {
-            TypeReferenceTypeSymbol typeRef = (TypeReferenceTypeSymbol) typeSymbol;
-            return isSubtypeOfAnydataByKind(typeRef.typeDescriptor());
-        }
-
-        // anydata includes: (), boolean, int, float, decimal, string, xml,
-        // anydata[], map<anydata>, table<map<anydata>>, record types
-        switch (kind) {
-            case NIL:
-            case BOOLEAN:
-            case INT:
-            case FLOAT:
-            case DECIMAL:
-            case STRING:
-            case XML:
-            case ANYDATA:
-            case JSON:
-            case BYTE:
-            case ARRAY:
-            case MAP:
-            case RECORD:
-            case TABLE:
-            case TUPLE:
-                return true;
-            case UNION:
-                // Check if all members are subtypes of anydata
-                UnionTypeSymbol unionType = (UnionTypeSymbol) typeSymbol;
-                return unionType.memberTypeDescriptors().stream()
-                        .allMatch(WorkflowPluginUtils::isSubtypeOfAnydataByKind);
-            default:
-                return false;
-        }
-    }
-
-    /**
-     * Checks if a type is a subtype of anydata or error.
+     * Checks if a type is a subtype of anydata or error using the compiler's built-in type checking.
+     * This handles union types like `string|error` where each member must be either anydata or error.
      *
      * @param typeSymbol    the type symbol to check
-     * @param semanticModel the semantic model (may be null for fallback behavior)
+     * @param semanticModel the semantic model
      * @return true if the type is a subtype of anydata or error
      */
     public static boolean isSubtypeOfAnydataOrError(TypeSymbol typeSymbol, SemanticModel semanticModel) {
-        TypeDescKind kind = typeSymbol.typeKind();
-
-        // Handle type references
-        if (kind == TypeDescKind.TYPE_REFERENCE) {
-            TypeReferenceTypeSymbol typeRef = (TypeReferenceTypeSymbol) typeSymbol;
-            return isSubtypeOfAnydataOrError(typeRef.typeDescriptor(), semanticModel);
-        }
-
-        if (kind == TypeDescKind.ERROR) {
-            return true;
-        }
-
-        // Handle union types like `string|error`
-        if (kind == TypeDescKind.UNION) {
-            UnionTypeSymbol unionType = (UnionTypeSymbol) typeSymbol;
+        // For union types like `string|error`, check each member
+        if (typeSymbol.typeKind() == TypeDescKind.UNION) {
+            io.ballerina.compiler.api.symbols.UnionTypeSymbol unionType = 
+                    (io.ballerina.compiler.api.symbols.UnionTypeSymbol) typeSymbol;
             return unionType.memberTypeDescriptors().stream()
                     .allMatch(member -> isSubtypeOfAnydataOrError(member, semanticModel));
         }
-
-        return isSubtypeOfAnydata(typeSymbol, semanticModel);
+        
+        // Handle type references
+        if (typeSymbol.typeKind() == TypeDescKind.TYPE_REFERENCE) {
+            TypeSymbol resolved = resolveTypeReference(typeSymbol);
+            return isSubtypeOfAnydataOrError(resolved, semanticModel);
+        }
+        
+        // Check if it's a subtype of anydata or error
+        return typeSymbol.subtypeOf(semanticModel.types().ANYDATA) 
+                || typeSymbol.subtypeOf(semanticModel.types().ERROR);
     }
 }

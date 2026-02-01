@@ -224,7 +224,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         Optional<TypeSymbol> returnTypeOpt = typeSymbol.returnTypeDescriptor();
         if (returnTypeOpt.isPresent()) {
             TypeSymbol returnType = returnTypeOpt.get();
-            if (!isValidReturnType(returnType)) {
+            if (!WorkflowPluginUtils.isSubtypeOfAnydataOrError(returnType, context.semanticModel())) {
                 reportDiagnostic(context, functionNode, WorkflowConstants.WORKFLOW_105,
                         WorkflowConstants.PROCESS_INVALID_RETURN_TYPE);
             }
@@ -588,14 +588,6 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         }
 
         return true;
-    }
-
-    /**
-     * Validates return type is subtype of anydata|error.
-     */
-    private boolean isValidReturnType(TypeSymbol typeSymbol) {
-        // Use kind-based checking as fallback since we don't have SemanticModel here
-        return WorkflowPluginUtils.isSubtypeOfAnydataOrError(typeSymbol, null);
     }
 
     private void reportDiagnostic(SyntaxNodeAnalysisContext context, FunctionDefinitionNode functionNode,

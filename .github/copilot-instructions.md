@@ -116,7 +116,7 @@ fpValue.metadata = new StrandMetadata(true, fpValue.metadata.properties());
 # Run unit tests only (no Temporal server needed)
 ./gradlew :workflow-ballerina:test
 
-# Run integration tests (starts embedded Temporal server on port 7231)
+# Run integration tests (starts embedded Temporal server on port 7233)
 ./gradlew :workflow-integration-tests:test
 
 # Run compiler plugin tests
@@ -138,7 +138,7 @@ fpValue.metadata = new StrandMetadata(true, fpValue.metadata.properties());
 - `compiler-plugin-tests/` - Compiler plugin validation tests
 
 **Integration Tests** use an embedded Temporal server managed by Gradle:
-1. `startTestServer` task launches shadow JAR from `native-test/` on port **7231**
+1. `startTestServer` task launches shadow JAR from `native-test/` on port **7233**
 2. Writes `tests/Config.toml` with server URL
 3. Ballerina tests connect via configurable
 4. `stopTestServer` runs on completion (even on failure via `buildFinished` listener)
@@ -149,7 +149,7 @@ Via `Config.toml` or programmatic defaults:
 ```toml
 [ballerina.workflow.workflowConfig]
 provider = "TEMPORAL"
-url = "localhost:7231"
+url = "localhost:7233"
 namespace = "default"
 
 [ballerina.workflow.workflowConfig.params]
@@ -161,6 +161,18 @@ maxConcurrentWorkflows = 100
 - **Ballerina**: 2201.13.0
 - **Java**: 21
 - **Temporal SDK**: 1.32.0 (with matching gRPC 1.58.1)
+
+## Compiler Plugin Error Codes
+
+| Code | Error | Cause |
+|------|-------|-------|
+| WORKFLOW_107 | callActivity target not @Activity | Calling non-activity via ctx->callActivity() |
+| WORKFLOW_108 | Direct activity call | Direct call to @Activity function (must use ctx->callActivity()) |
+| WORKFLOW_112 | Ambiguous signal types | Multiple signals with same structure, need explicit signalName |
+| WORKFLOW_113 | Input not record type | Process input must be record type for correlation |
+| WORKFLOW_114 | Missing correlation key | Signal missing readonly field present in input |
+| WORKFLOW_115 | Correlation type mismatch | Readonly field type differs between input and signal |
+| WORKFLOW_116 | Events need correlation | Process with events lacks readonly fields in input |
 
 ## Common Pitfalls
 - Always clear registry in test `@BeforeEach` with `clearRegistry()` to avoid state leakage

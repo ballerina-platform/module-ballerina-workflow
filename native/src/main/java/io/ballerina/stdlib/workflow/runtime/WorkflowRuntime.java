@@ -65,6 +65,9 @@ public final class WorkflowRuntime {
     private static final int VISIBILITY_MAX_RETRIES = 10;
     private static final long VISIBILITY_RETRY_DELAY_MS = 200;
 
+    // Error type for duplicate workflow detection
+    private static final String DUPLICATE_WORKFLOW_ERROR = "DuplicateWorkflowError";
+
     private WorkflowRuntime() {
         // Use virtual threads for efficient concurrency (Java 21+)
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
@@ -167,6 +170,18 @@ public final class WorkflowRuntime {
             throw new RuntimeException(
                 "Process '" + processName + "' expects events but input has no readonly fields. " +
                 "Add 'readonly' modifier to fields used for correlation (e.g., 'readonly string customerId')");
+        }
+
+        // Check for duplicate workflow with same correlation keys (if any exist)
+        // Use single attempt (no retry) since we're just checking for existing workflow
+        if (!correlationKeys.isEmpty()) {
+            String existingWorkflowId = findWorkflowByCorrelationKeys(processName, correlationKeys, true, false);
+            if (existingWorkflowId != null) {
+                throw new DuplicateWorkflowException(
+                    "A running workflow already exists for process '" + processName + 
+                    "' with the same correlation keys. Existing workflow ID: " + existingWorkflowId,
+                    existingWorkflowId, processName, correlationKeys);
+            }
         }
 
         // Generate workflow ID using UUID v7
@@ -371,15 +386,30 @@ public final class WorkflowRuntime {
 
     /**
      * Finds a workflow by correlation keys using Temporal Visibility API.
-     * <p>
-     * This method can be used when the composite ID pattern is insufficient
-     * and a visibility query is needed.
+     * Uses retry logic for eventual consistency when waiting for a workflow to appear.
      *
      * @param processName the workflow type name
      * @param correlationKeys the correlation key values
      * @return the workflow ID if found, null otherwise
      */
     private String findWorkflowByCorrelationKeys(String processName, Map<String, Object> correlationKeys) {
+        return findWorkflowByCorrelationKeys(processName, correlationKeys, true, true);
+    }
+
+    /**
+     * Finds a workflow by correlation keys using Temporal Visibility API.
+     * <p>
+     * This method can be used when the composite ID pattern is insufficient
+     * and a visibility query is needed.
+     *
+     * @param processName the workflow type name
+     * @param correlationKeys the correlation key values
+     * @param runningOnly if true, only search for running workflows; if false, search all statuses
+     * @param withRetry if true, retry with backoff for eventual consistency; if false, single attempt
+     * @return the workflow ID if found, null otherwise
+     */
+    private String findWorkflowByCorrelationKeys(String processName, Map<String, Object> correlationKeys, 
+            boolean runningOnly, boolean withRetry) {
         WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
         if (client == null) {
             return null;
@@ -389,7 +419,9 @@ public final class WorkflowRuntime {
         // Search attributes are named: Correlation + capitalize(fieldName)
         StringBuilder query = new StringBuilder();
         query.append("WorkflowType = '").append(processName).append("'");
-        query.append(" AND ExecutionStatus = 'Running'");
+        if (runningOnly) {
+            query.append(" AND ExecutionStatus = 'Running'");
+        }
 
         for (Map.Entry<String, Object> entry : correlationKeys.entrySet()) {
             String attrName = "Correlation" + CorrelationExtractor.capitalize(entry.getKey());
@@ -406,8 +438,11 @@ public final class WorkflowRuntime {
         String queryStr = query.toString();
         LOGGER.debug("Searching for workflow with query: {}", queryStr);
 
+        int maxAttempts = withRetry ? VISIBILITY_MAX_RETRIES : 1;
+        int attempt = 1;
+        
         // Retry with exponential backoff to handle Temporal visibility eventual consistency
-        for (int attempt = 1; attempt <= VISIBILITY_MAX_RETRIES; attempt++) {
+        for (attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
                 ListWorkflowExecutionsRequest request = ListWorkflowExecutionsRequest.newBuilder()
                         .setNamespace(client.getOptions().getNamespace())
@@ -426,9 +461,9 @@ public final class WorkflowRuntime {
                 }
 
                 // Not found yet, wait before retry (visibility eventual consistency)
-                if (attempt < VISIBILITY_MAX_RETRIES) {
+                if (withRetry && attempt < maxAttempts) {
                     LOGGER.debug("Workflow not found in visibility, retrying... (attempt {}/{})", 
-                            attempt, VISIBILITY_MAX_RETRIES);
+                            attempt, maxAttempts);
                     Thread.sleep(VISIBILITY_RETRY_DELAY_MS * attempt);
                 }
 
@@ -438,7 +473,7 @@ public final class WorkflowRuntime {
                 return null;
             } catch (Exception e) {
                 LOGGER.warn("Visibility query failed (attempt {}): {}", attempt, e.getMessage());
-                if (attempt < VISIBILITY_MAX_RETRIES) {
+                if (withRetry && attempt < maxAttempts) {
                     try {
                         Thread.sleep(VISIBILITY_RETRY_DELAY_MS * attempt);
                     } catch (InterruptedException ie) {
@@ -449,8 +484,11 @@ public final class WorkflowRuntime {
             }
         }
 
-        LOGGER.warn("No running workflow found for correlation keys after {} attempts: {}", 
-                VISIBILITY_MAX_RETRIES, correlationKeys);
+        // Only log warning when retries were used and still not found (signal sending case)
+        if (withRetry) {
+            LOGGER.debug("No running workflow found for correlation keys after {} attempts: {}", 
+                    attempt - 1, correlationKeys);
+        }
         return null;
     }
 

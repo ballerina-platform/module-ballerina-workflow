@@ -95,6 +95,24 @@ test.dependsOn ":${packageName}-compiler-plugin:build"
 publishToMavenLocal.dependsOn build
 publish.dependsOn build
 
+// Task to push the Ballerina package to local repository
+task pushToLocalRepository(type: Exec) {
+    description = 'Pushes the Ballerina package to the local repository'
+    group = 'build'
+    
+    workingDir project.projectDir
+    
+    if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+        commandLine 'cmd', '/c', 'bal', 'push', '--repository=local'
+    } else {
+        commandLine 'bal', 'push', '--repository=local'
+    }
+}
+
+// Make pushToLocalRepository run after the build task completes successfully
+pushToLocalRepository.shouldRunAfter build
+build.finalizedBy pushToLocalRepository
+
 // Use the shared test server from root project
 test.dependsOn ":startSharedTestServer"
 

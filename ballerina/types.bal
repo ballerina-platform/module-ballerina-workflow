@@ -193,3 +193,8 @@ public type WorkflowExecutionInfo record {
     string? errorMessage;
     ActivityInvocation[] activityInvocations;
 };
+
+# Error type alias for duplicate workflow errors.
+# When a workflow with the same correlation keys already exists, an error is thrown
+# with "DuplicateWorkflowError" in the message. Check error message for details.
+public type DuplicateWorkflowError error;

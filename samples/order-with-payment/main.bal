@@ -18,14 +18,32 @@ import ballerina/http;
 import ballerina/workflow;
 import ballerina/io;
 
-// HTTP Service for Order Processing with Payment
-// Demonstrates signal handling in workflows
-
+# HTTP Service for Order Processing with Payment
+# 
+# This service provides REST endpoints for:
+# - Placing new orders (which start workflows)
+# - Sending payment confirmations (which send signals to waiting workflows)
+# - Health check monitoring
+#
+# The service demonstrates how to integrate Ballerina workflows with HTTP APIs,
+# particularly the pattern of starting a workflow and later sending signals to it.
 service /orders on new http:Listener(9094) {
 
-    # Place order
+    # Place a new order and start the order processing workflow.
+    # 
+    # This endpoint initiates an asynchronous workflow that will:
+    # 1. Check inventory availability
+    # 2. Wait for payment confirmation signal
+    # 3. Complete the order once payment is received
+    #
+    # + request - Order request containing orderId and item name
+    # + return - JSON response with workflow ID and status, or error
+    #
+    # Example:
+    # ```
     # POST /orders
     # Body: {"orderId": "ORD-001", "item": "laptop"}
+    # ```
     resource function post .(OrderRequest request) returns json|error {
         // Start workflow using @workflow:Process function
         string workflowId = check workflow:startProcess(processOrderWithPayment, request);
@@ -40,9 +58,21 @@ service /orders on new http:Listener(9094) {
         };
     }
 
-    # Send payment confirmation signal
-    # POST /orders/{orderId}/payment
+    # Send payment confirmation signal to a waiting workflow.
+    # 
+    # This endpoint sends a signal to the workflow processing the specified order.
+    # The workflow must be waiting for the payment signal, otherwise the signal
+    # will be queued or fail depending on the workflow state.
+    #
+    # + orderId - The order ID to send payment confirmation for
+    # + paymentData - Payment information containing the amount
+    # + return - JSON response indicating success or failure, or error
+    #
+    # Example:
+    # ```
+    # POST /orders/ORD-001/payment
     # Body: {"amount": 1999.99}
+    # ```
     resource function post [string orderId]/payment(record {decimal amount;} paymentData) returns json|error {
         // Send payment signal
         // The field name 'paymentReceived' in the events record determines the signal name
@@ -63,13 +93,20 @@ service /orders on new http:Listener(9094) {
         };
     }
 
-    # Health check
+    # Health check endpoint to verify service availability.
+    #
+    # + return - Status message indicating service is running
     resource function get health() returns string {
         return "Order Payment Service is running";
     }
 }
 
-# Module initialization
+# Main entry point for the Order with Payment sample application.
+# 
+# This function starts the HTTP service and displays usage instructions.
+# The service will listen on port 9094 for incoming order and payment requests.
+#
+# + return - Error if startup fails
 public function main() returns error? {
     io:println("Starting Order with Payment Sample...");
     io:println("Worker started. HTTP Service listening on http://localhost:9094/orders");

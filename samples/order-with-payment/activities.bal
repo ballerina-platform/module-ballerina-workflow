@@ -17,6 +17,12 @@
 import ballerina/workflow;
 import ballerina/io;
 
+# Checks the inventory level for a given item.
+# This is a workflow activity that can be invoked from workflow functions.
+# In a real implementation, this would query an inventory database or external system.
+#
+# + item - The name of the item to check inventory for
+# + return - The current stock level, or an error if the check fails
 @workflow:Activity
 isolated function checkInventory(string item) returns int|error {
     io:println(string `[Activity] Checking inventory for: ${item}`);

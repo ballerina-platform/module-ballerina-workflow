@@ -30,6 +30,7 @@ import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
 import io.ballerina.stdlib.workflow.ModuleUtils;
+import io.ballerina.stdlib.workflow.runtime.DuplicateWorkflowException;
 import io.ballerina.stdlib.workflow.runtime.WorkflowRuntime;
 import io.ballerina.stdlib.workflow.utils.EventExtractor;
 import io.ballerina.stdlib.workflow.utils.TypesUtil;
@@ -108,6 +109,9 @@ public final class WorkflowNative {
 
                     balFuture.complete(StringUtils.fromString(workflowId));
 
+                } catch (DuplicateWorkflowException e) {
+                    // Create a DuplicateWorkflowError with proper details
+                    balFuture.complete(createDuplicateWorkflowError(e));
                 } catch (Exception e) {
                     balFuture.complete(ErrorCreator.createError(
                             StringUtils.fromString("Failed to start process: " + e.getMessage())));
@@ -466,6 +470,28 @@ public final class WorkflowNative {
         record.put(StringUtils.fromString("activityInvocations"), emptyActivities);
 
         return record;
+    }
+
+    /**
+     * Creates a DuplicateWorkflowError for the Ballerina runtime.
+     * <p>
+     * This creates an error with details about the duplicate workflow.
+     *
+     * @param e the DuplicateWorkflowException from the runtime
+     * @return a Ballerina BError with duplicate workflow details
+     */
+    private static Object createDuplicateWorkflowError(DuplicateWorkflowException e) {
+        // Create a simple error with all details in the message
+        // This avoids type checking issues with distinct error types from Java
+        String message = String.format(
+            "DuplicateWorkflowError: %s [existingWorkflowId=%s, processName=%s, correlationKeys=%s]",
+            e.getMessage(),
+            e.getExistingWorkflowId(),
+            e.getProcessName(),
+            e.getCorrelationKeys()
+        );
+        
+        return ErrorCreator.createError(StringUtils.fromString(message));
     }
 
     /**

@@ -14,19 +14,31 @@
 // specific language governing permissions and limitations
 // under the License.
 
-# Order request
+# Represents an order request initiated by a customer.
+# The orderId field is readonly to enable workflow correlation.
+#
+# + orderId - Unique identifier for the order (readonly for correlation)
+# + item - Name of the item being ordered
 public type OrderRequest record {|
     readonly string orderId;
     string item;
 |};
 
-# Payment confirmation
+# Represents payment confirmation received for an order.
+# Used as a signal payload to confirm payment has been processed.
+#
+# + orderId - Order ID for which payment is being confirmed (readonly for correlation)
+# + amount - Payment amount received
 public type PaymentConfirmation record {|
     readonly string orderId;
     decimal amount;
 |};
 
-# Order result
+# Represents the final result of an order processing workflow.
+#
+# + orderId - The order identifier
+# + status - Order status (e.g., "COMPLETED", "FAILED")
+# + message - Descriptive message about the order outcome
 public type OrderResult record {|
     string orderId;
     string status;

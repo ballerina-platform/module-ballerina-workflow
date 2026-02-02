@@ -280,7 +280,7 @@ The compiler plugin has **no direct involvement** in the singleton worker patter
            └─> workerFactory.start() - begin polling Temporal
 
 4. Runtime Execution
-   ├─> startProcess() → WorkflowClient.start() → Temporal creates workflow
+   ├─> createInstance() → WorkflowClient.start() → Temporal creates workflow
    └─> Worker polls task → BallerinaWorkflowAdapter.execute()
        └─> PROCESS_REGISTRY.get(workflowType) → calls Ballerina function
 

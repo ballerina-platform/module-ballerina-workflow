@@ -29,7 +29,7 @@ service /sync on new http:Listener(9091) {
     # Body: {"id": "...", "email": "...", "firstName": "...", "lastName": "...", "phone": "...", "company": "..."}
     resource function post contact(SourceContact contact) returns json|error {
         // Start workflow using the @workflow:Process function
-        string workflowId = check workflow:startProcess(syncContact, contact);
+        string workflowId = check workflow:createInstance(syncContact, contact);
 
         io:println(string `Started CRM sync workflow: ${workflowId} for contact: ${contact.email}`);
 

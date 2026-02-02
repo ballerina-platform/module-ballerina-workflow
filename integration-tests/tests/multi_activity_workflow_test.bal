@@ -27,7 +27,7 @@ import ballerina/workflow;
 function testMultiActivityExecution() returns error? {
     string testId = uniqueId("multi-activity");
     MultiActivityInput input = {id: testId, name: "Bob"};
-    string workflowId = check workflow:startProcess(multiActivityWorkflow, input);
+    string workflowId = check workflow:createInstance(multiActivityWorkflow, input);
     
     workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
     

@@ -24,7 +24,7 @@ public annotation Activity on function;
 #### Public API Functions ([functions.bal](ballerina/functions.bal))
 ```ballerina
 # Start a new workflow instance
-public isolated function startProcess(function processFunction, map<anydata> input) 
+public isolated function createInstance(function processFunction, map<anydata> input) 
     returns string|error;
 
 # Send an event/signal to a running workflow
@@ -120,7 +120,7 @@ public static class BallerinaActivityAdapter implements DynamicActivity {
 #### WorkflowNative.java
 Location: [WorkflowNative.java](native/src/main/java/io/ballerina/stdlib/workflow/runtime/nativeimpl/WorkflowNative.java)
 
-Implements `startProcess()` and `sendEvent()` by interacting with Temporal's `WorkflowClient`.
+Implements `createInstance()` and `sendEvent()` by interacting with Temporal's `WorkflowClient`.
 
 ## Usage Patterns
 
@@ -200,7 +200,7 @@ function processWithSignals(
 - Calls to non-activity functions via `callActivity()` produce WORKFLOW_107 error
 
 ✅ **Runtime Behavior:**
-- `startProcess()` successfully starts workflows and returns workflow ID
+- `createInstance()` successfully starts workflows and returns workflow ID
 - `sendEvent()` successfully sends signals to running workflows
 - `ctx->callActivity()` executes activities and returns results
 - Process functions execute deterministically (same inputs → same outputs)

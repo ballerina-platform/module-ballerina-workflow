@@ -27,7 +27,7 @@ import ballerina/workflow;
 function testSimpleWorkflowExecution() returns error? {
     string testId = uniqueId("simple-workflow");
     SimpleInput input = {id: testId, name: "TestUser"};
-    string workflowId = check workflow:startProcess(simpleWorkflow, input);
+    string workflowId = check workflow:createInstance(simpleWorkflow, input);
     
     // Workflow ID is now UUID v7 based, verify it starts with process name
     test:assertTrue(workflowId.length() > 0, "Workflow ID should be generated");

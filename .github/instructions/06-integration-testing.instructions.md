@@ -117,7 +117,7 @@ function simpleProcess(workflow:Context ctx, Input input) returns Output|error {
 @test:Config {}
 function testSimpleWorkflow() returns error? {
     // Start workflow
-    string workflowId = check workflow:startProcess(simpleProcess, {id: "test-1", data: "test"});
+    string workflowId = check workflow:createInstance(simpleProcess, {id: "test-1", data: "test"});
     
     // Wait for completion and verify
     // ... test assertions
@@ -296,7 +296,7 @@ function testRegistration() returns error? {
 ```ballerina
 @test:Config {}
 function testWorkflowExecution() returns error? {
-    string wfId = check workflow:startProcess(orderProcess, {id: "order-1"});
+    string wfId = check workflow:createInstance(orderProcess, {id: "order-1"});
     _ = check workflow:sendEvent(orderProcess, {id: "order-1", approved: true}, "approval");
     // Wait and verify result
 }

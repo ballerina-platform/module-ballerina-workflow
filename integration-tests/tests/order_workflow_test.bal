@@ -27,7 +27,7 @@ import ballerina/workflow;
 function testOrderWorkflowWithRecordResult() returns error? {
     string testId = uniqueId("order-test");
     OrderInput input = {id: testId, orderId: "ORD-12345", quantity: 10};
-    string workflowId = check workflow:startProcess(orderWorkflow, input);
+    string workflowId = check workflow:createInstance(orderWorkflow, input);
     
     workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
     

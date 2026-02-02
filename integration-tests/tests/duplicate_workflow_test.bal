@@ -40,7 +40,7 @@ function testDuplicateWorkflowPrevention() returns error? {
     SimpleSignalInput input = {id: testId, message: "First workflow"};
     
     // Start the first workflow
-    string workflowId1 = check workflow:startProcess(simpleSignalWorkflow, input);
+    string workflowId1 = check workflow:createInstance(simpleSignalWorkflow, input);
     test:assertNotEquals(workflowId1, "", "First workflow should start successfully");
     
     // Give the workflow time to start and be visible in the search index
@@ -49,7 +49,7 @@ function testDuplicateWorkflowPrevention() returns error? {
     // Try to start a second workflow with the same correlation key (id)
     // This should fail with a DuplicateWorkflowError
     SimpleSignalInput duplicateInput = {id: testId, message: "Duplicate attempt"};
-    string|error result = workflow:startProcess(simpleSignalWorkflow, duplicateInput);
+    string|error result = workflow:createInstance(simpleSignalWorkflow, duplicateInput);
     
     if result is error {
         // Verify the error message indicates duplicate
@@ -72,7 +72,7 @@ function testDuplicateAfterCompletionAllowed() returns error? {
     SimpleSignalInput input = {id: testId, message: "First workflow"};
     
     // Start the first workflow
-    string workflowId1 = check workflow:startProcess(simpleSignalWorkflow, input);
+    string workflowId1 = check workflow:createInstance(simpleSignalWorkflow, input);
     
     // Give the workflow time to start
     runtime:sleep(1);
@@ -91,7 +91,7 @@ function testDuplicateAfterCompletionAllowed() returns error? {
     // Now starting a new workflow with the same correlation key should succeed
     // because the first one is no longer running
     SimpleSignalInput newInput = {id: testId, message: "Second workflow after completion"};
-    string|error workflowId2 = workflow:startProcess(simpleSignalWorkflow, newInput);
+    string|error workflowId2 = workflow:createInstance(simpleSignalWorkflow, newInput);
     
     if workflowId2 is error {
         test:assertFail("Should be able to start new workflow after first one completes: " + workflowId2.message());
@@ -115,10 +115,10 @@ function testDifferentCorrelationKeysAllowed() returns error? {
     SimpleSignalInput input1 = {id: testId1, message: "First unique workflow"};
     SimpleSignalInput input2 = {id: testId2, message: "Second unique workflow"};
     
-    string workflowId1 = check workflow:startProcess(simpleSignalWorkflow, input1);
+    string workflowId1 = check workflow:createInstance(simpleSignalWorkflow, input1);
     runtime:sleep(1); // Wait for visibility
     
-    string workflowId2 = check workflow:startProcess(simpleSignalWorkflow, input2);
+    string workflowId2 = check workflow:createInstance(simpleSignalWorkflow, input2);
     
     test:assertNotEquals(workflowId1, "", "First workflow should start");
     test:assertNotEquals(workflowId2, "", "Second workflow should start");

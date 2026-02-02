@@ -17,7 +17,7 @@
 import ballerina/jballerina.java;
 
 
-# Starts a new workflow process with the given input.
+# Creates a new workflow process instance with the given input.
 #
 # Creates a new instance of the specified workflow process and begins execution.
 # The workflow ID is extracted from the `id` field in the input data.
@@ -27,8 +27,9 @@ import ballerina/jballerina.java;
 # + processFunction - The process function to execute (must be annotated with @Process)
 # + input - The workflow input data (must contain "id" field for correlation)
 # + return - The unique workflow ID as a string, or an error if the process fails to start
-public isolated function startProcess(function processFunction, map<anydata> input) returns string|error = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative"
+public isolated function createInstance(function processFunction, map<anydata> input) returns string|error = @java:Method {
+    'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative",
+    name: "startProcess"
 } external;
 
 # Sends an event (signal) to a running workflow process.
@@ -48,7 +49,7 @@ public isolated function sendEvent(function processFunction, map<anydata> eventD
 
 # Registers a workflow process function with the singleton worker.
 #
-# Makes the process available for execution when `startProcess` is called.
+# Makes the process available for execution when `createInstance` is called.
 # The process is registered with the singleton worker that was created at
 # module initialization time. This function should be called during
 # application initialization to register all workflow processes.

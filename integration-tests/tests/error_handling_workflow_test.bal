@@ -28,7 +28,7 @@ function testActivityErrorHandling() returns error? {
     // Test with failing activity - error should be caught and handled
     string testId1 = uniqueId("error-test-fail");
     ErrorHandlingInput input1 = {id: testId1, shouldFail: true};
-    string workflowId1 = check workflow:startProcess(errorHandlingWorkflow, input1);
+    string workflowId1 = check workflow:createInstance(errorHandlingWorkflow, input1);
     
     workflow:WorkflowExecutionInfo execInfo1 = check workflow:getWorkflowResult(workflowId1, 30);
     
@@ -39,7 +39,7 @@ function testActivityErrorHandling() returns error? {
     // Test with successful path
     string testId2 = uniqueId("error-test-success");
     ErrorHandlingInput input2 = {id: testId2, shouldFail: false};
-    string workflowId2 = check workflow:startProcess(errorHandlingWorkflow, input2);
+    string workflowId2 = check workflow:createInstance(errorHandlingWorkflow, input2);
     
     workflow:WorkflowExecutionInfo execInfo2 = check workflow:getWorkflowResult(workflowId2, 30);
     

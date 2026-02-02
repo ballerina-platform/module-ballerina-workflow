@@ -27,7 +27,7 @@ import ballerina/workflow;
 function testArrayProcessingWithLargerArray() returns error? {
     string testId = uniqueId("array-large");
     ArrayProcessInput input = {id: testId, numbers: [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]};
-    string workflowId = check workflow:startProcess(arrayProcessingWorkflow, input);
+    string workflowId = check workflow:createInstance(arrayProcessingWorkflow, input);
     
     workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
     

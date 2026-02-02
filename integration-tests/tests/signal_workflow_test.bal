@@ -40,7 +40,7 @@ function testSimpleSignalWorkflow() returns error? {
     SimpleSignalInput input = {id: testId, message: "Hello from workflow"};
     
     // Start the workflow
-    string workflowId = check workflow:startProcess(simpleSignalWorkflow, input);
+    string workflowId = check workflow:createInstance(simpleSignalWorkflow, input);
     
     // Give the workflow time to start and begin waiting for signal
     runtime:sleep(1);
@@ -78,7 +78,7 @@ function testApprovalWorkflowApprovedPath() returns error? {
     ApprovalInput input = {id: testId, orderId: "ORD-001", amount: 100.0};
     
     // Start the workflow
-    string workflowId = check workflow:startProcess(approvalWorkflow, input);
+    string workflowId = check workflow:createInstance(approvalWorkflow, input);
     
     // Give the workflow time to start
     runtime:sleep(1);
@@ -133,7 +133,7 @@ function testApprovalWorkflowRejectedPath() returns error? {
     ApprovalInput input = {id: testId, orderId: "ORD-002", amount: 5000.0};
     
     // Start the workflow
-    string workflowId = check workflow:startProcess(approvalWorkflow, input);
+    string workflowId = check workflow:createInstance(approvalWorkflow, input);
     
     // Give the workflow time to start
     runtime:sleep(1);
@@ -176,7 +176,7 @@ function testApprovalWorkflowInsufficientPayment() returns error? {
     ApprovalInput input = {id: testId, orderId: "ORD-003", amount: 200.0};
     
     // Start the workflow
-    string workflowId = check workflow:startProcess(approvalWorkflow, input);
+    string workflowId = check workflow:createInstance(approvalWorkflow, input);
     
     // Give the workflow time to start
     runtime:sleep(1);

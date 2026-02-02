@@ -69,7 +69,7 @@ OrderInput input = {
 
 // Workflow ID is auto-generated using UUID v7
 // Correlation keys stored as Temporal Search Attributes
-string workflowId = check workflow:startProcess(orderProcess, input);
+string workflowId = check workflow:createInstance(orderProcess, input);
 ```
 
 #### Sending Signals with Correlation
@@ -89,7 +89,7 @@ _ = check workflow:sendEvent(orderProcess, payment, "payment");
 #### Duplicate Detection
 ```ballerina
 // First workflow starts successfully
-string wfId1 = check workflow:startProcess(orderProcess, {
+string wfId1 = check workflow:createInstance(orderProcess, {
     orderId: "ORD-123",
     customerId: "CUST-456",
     productName: "Widget",
@@ -97,7 +97,7 @@ string wfId1 = check workflow:startProcess(orderProcess, {
 });
 
 // Second attempt with same correlation keys FAILS
-string|error result = workflow:startProcess(orderProcess, {
+string|error result = workflow:createInstance(orderProcess, {
     orderId: "ORD-123",        // Same orderId
     customerId: "CUST-456",    // Same customerId
     productName: "Gadget",     // Different data
@@ -365,7 +365,7 @@ public final class CorrelationExtractor {
 }
 ```
 
-#### WorkflowRuntime.java - startProcess with Duplicate Detection
+#### WorkflowRuntime.java - createInstance with Duplicate Detection
 Location: [WorkflowRuntime.java](native/src/main/java/io/ballerina/stdlib/workflow/runtime/WorkflowRuntime.java)
 
 ```java
@@ -693,7 +693,7 @@ public class DuplicateWorkflowException extends RuntimeException {
 
 ### Ballerina Error Handling
 ```ballerina
-string|error result = workflow:startProcess(orderProcess, input);
+string|error result = workflow:createInstance(orderProcess, input);
 
 if result is error {
     if result.message().includes("DuplicateWorkflowError") {

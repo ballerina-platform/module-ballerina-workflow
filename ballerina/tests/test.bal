@@ -18,7 +18,7 @@ import ballerina/test;
 
 // Note: Module-level tests focus on registration and introspection.
 // These tests work with the lazy gRPC connection (no active Temporal server needed).
-// For workflow execution tests (startProcess, sendEvent), a separate integration test 
+// For workflow execution tests (createInstance, sendEvent), a separate integration test 
 // suite should be created that initializes the embedded test server before registering workflows.
 
 // Record types for events in test processes
@@ -439,10 +439,10 @@ function testInlineRecordWithActivities() returns error? {
 }
 
 // ================== Workflow Creation Tests ==================
-// These tests validate the startProcess API's input validation and error handling.
+// These tests validate the createInstance API's input validation and error handling.
 // They work with lazy gRPC connection - actual workflow execution requires Temporal server.
 
-// Simple workflow process for testing startProcess
+// Simple workflow process for testing createInstance
 @Process
 function simpleWorkflowProcess(string input) returns string|error {
     return "Hello, " + input;
@@ -454,7 +454,7 @@ function testStartProcessWithUnregisteredProcess() returns error? {
     // Attempt to start a workflow without registering the process first
     WorkflowData input = {id: "test-workflow-001"};
     
-    string|error result = startProcess(simpleWorkflowProcess, input);
+    string|error result = createInstance(simpleWorkflowProcess, input);
     
     // Should fail because the process is not registered
     test:assertTrue(result is error, "Starting unregistered process should fail");
@@ -474,7 +474,7 @@ function testStartProcessWithMissingId() returns error? {
     // Attempt to start workflow without 'id' field
     map<anydata> inputWithoutId = {"name": "test"};
     
-    string|error result = startProcess(simpleWorkflowProcess, inputWithoutId);
+    string|error result = createInstance(simpleWorkflowProcess, inputWithoutId);
     
     // Should fail because 'id' field is required
     test:assertTrue(result is error, "Starting workflow without 'id' should fail");
@@ -496,7 +496,7 @@ function testStartProcessWithValidInput() returns error? {
     
     // This will attempt to connect to Temporal server
     // Without a running Temporal server, we expect a connection error
-    string|error result = startProcess(simpleWorkflowProcess, input);
+    string|error result = createInstance(simpleWorkflowProcess, input);
     
     // The result could be:
     // 1. A workflow ID string if Temporal is running (integration test environment)

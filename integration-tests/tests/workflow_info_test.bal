@@ -28,7 +28,7 @@ import ballerina/workflow;
 function testGetWorkflowInfo() returns error? {
     string testId = uniqueId("info-test");
     InfoTestInput input = {id: testId, name: "Charlie"};
-    string workflowId = check workflow:startProcess(infoTestWorkflow, input);
+    string workflowId = check workflow:createInstance(infoTestWorkflow, input);
     
     // Give it a moment to start
     runtime:sleep(0.5);
@@ -48,7 +48,7 @@ function testGetWorkflowInfo() returns error? {
 function testGetWorkflowInfoAfterCompletion() returns error? {
     string testId = uniqueId("info-complete");
     InfoTestInput input = {id: testId, name: "Diana"};
-    string workflowId = check workflow:startProcess(infoTestWorkflow, input);
+    string workflowId = check workflow:createInstance(infoTestWorkflow, input);
     
     // Wait for completion
     workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);

@@ -23,7 +23,7 @@
 ### Ballerina Module
 - [ballerina/annotations.bal](../../ballerina/annotations.bal) - @Process, @Activity annotations
 - [ballerina/context.bal](../../ballerina/context.bal) - Context client class
-- [ballerina/functions.bal](../../ballerina/functions.bal) - startProcess(), sendEvent()
+- [ballerina/functions.bal](../../ballerina/functions.bal) - createInstance(), sendEvent()
 - [ballerina/types.bal](../../ballerina/types.bal) - ProcessInfo, ActivityInfo
 - [ballerina/config.bal](../../ballerina/config.bal) - WorkflowConfig
 - [ballerina/module.bal](../../ballerina/module.bal) - Module initialization

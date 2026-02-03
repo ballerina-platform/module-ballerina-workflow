@@ -33,11 +33,9 @@ listener WorkflowListener _workflowListener = new;
 class WorkflowListener {
 
     public function attach(service object {} svc, string attachPoint) returns error? {
-
     }
 
     public function detach(service object {} svc) returns error? {
-
     }
 
     public function 'start() returns error? {

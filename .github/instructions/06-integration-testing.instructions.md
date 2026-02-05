@@ -279,11 +279,16 @@ test.dependsOn testBallerina
 ### Unit Tests (ballerina/tests/)
 - No Temporal server needed
 - Tests registration, introspection, type conversions
-- Example: Test `getRegisteredWorkflows()`, `clearRegistry()`
+- All processes registered once in `@test:BeforeSuite`, tests verify specific registrations
+- Example: Test `getRegisteredWorkflows()`
 ```ballerina
+@test:BeforeSuite
+function setup() returns error? {
+    _ = check workflow:registerProcess(myProcess, "myProcess");
+}
+
 @test:Config {}
 function testRegistration() returns error? {
-    _ = check workflow:registerProcess(myProcess, "myProcess");
     WorkflowRegistry registry = check workflow:getRegisteredWorkflows();
     test:assertTrue(registry.hasKey("myProcess"));
 }

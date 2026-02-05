@@ -96,7 +96,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
     }
 
     /**
-     * Validates @Process function signature according to Agent.md semantics.
+     * Validates @Process function signature.
      * <ul>
      *   <li>Optional first parameter: workflow:Context</li>
      *   <li>Optional input parameter: subtype of anydata</li>
@@ -361,7 +361,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
     }
 
     /**
-     * Validates @Activity function signature according to Agent.md semantics.
+     * Validates @Activity function signature.
      * <ul>
      *   <li>All parameters must be subtypes of anydata</li>
      *   <li>Return type must be subtype of anydata|error</li>

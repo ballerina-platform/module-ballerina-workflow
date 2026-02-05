@@ -175,7 +175,7 @@ maxConcurrentWorkflows = 100
 | WORKFLOW_116 | Events need correlation | Process with events lacks readonly fields in input |
 
 ## Common Pitfalls
-- Always clear registry in test `@BeforeEach` with `clearRegistry()` to avoid state leakage
+- Register all test processes in `@test:BeforeSuite` - registry cannot be cleared with singleton pattern
 - Process functions must be deterministic - no I/O, use activities instead
 - Workflows with events (signals) must have `readonly` fields in input for correlation
 - Don't mix Listener pattern (deprecated) with singleton pattern

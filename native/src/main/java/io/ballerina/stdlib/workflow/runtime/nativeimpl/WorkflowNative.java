@@ -92,13 +92,6 @@ public final class WorkflowNative {
 
             WorkflowRuntime.getInstance().getExecutor().execute(() -> {
                 try {
-                    // Auto-start the worker if not already started
-                    Object startResult = WorkflowWorkerNative.startSingletonWorker();
-                    if (startResult != null) {
-                        balFuture.complete(startResult);
-                        return;
-                    }
-
                     // Get the process name from the function pointer
                     String processName = processFunction.getType().getName();
 
@@ -296,25 +289,6 @@ public final class WorkflowNative {
         } catch (Exception e) {
             return ErrorCreator.createError(
                     StringUtils.fromString("Failed to get registered workflows: " + e.getMessage()));
-        }
-    }
-
-    /**
-     * Native implementation for clearRegistry function.
-     * <p>
-     * Clears all registered processes, activities, and events.
-     * This is primarily used for testing.
-     *
-     * @return Boolean true if clearing was successful, Otherwise an error
-     */
-    public static Object clearRegistry() {
-        try {
-            // Clear the WorkflowWorkerNative registries (the source of truth for workflow execution)
-            WorkflowWorkerNative.clearRegistries();
-            return true;
-        } catch (Exception e) {
-            return ErrorCreator.createError(
-                    StringUtils.fromString("Failed to clear registry: " + e.getMessage()));
         }
     }
 

@@ -28,12 +28,27 @@ function init() returns error? {
     check initSingletonWorker();
 }
 
-function 'start() returns error? {
-    check startWorker();
-}
+listener WorkflowListener _workflowListener = new;
 
-function stop() returns error? {
-    check stopWorker();
+class WorkflowListener {
+
+    public function attach(service object {} svc, string attachPoint) returns error? {
+    }
+
+    public function detach(service object {} svc) returns error? {
+    }
+
+    public function 'start() returns error? {
+        check startWorker();
+    }
+
+    public function gracefulStop() returns error? {
+        check stopWorker();
+    }
+
+    public function immediateStop() returns error? {
+        check stopWorker();
+    }
 }
 
 # Initializes the workflow module.

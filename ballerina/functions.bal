@@ -102,16 +102,6 @@ isolated function getRegisteredWorkflowsNative() returns WorkflowRegistry|error 
     name: "getRegisteredWorkflows"
 } external;
 
-# Clears all registered processes and activities from the registry.
-#
-# This function is primarily used for testing to reset the registry state
-# between test cases. Use with caution in production code.
-#
-# + return - `true` if clearing was successful, or an error
-isolated function clearRegistry() returns boolean|error = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative"
-} external;
-
 # Gets the execution result of a workflow.
 # This function waits for the workflow to complete and returns its result.
 # Used for testing to verify workflow execution outcomes.

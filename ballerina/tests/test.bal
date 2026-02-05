@@ -20,6 +20,9 @@ import ballerina/test;
 // These tests work with the lazy gRPC connection (no active Temporal server needed).
 // For workflow execution tests (createInstance, sendEvent), a separate integration test 
 // suite should be created that initializes the embedded test server before registering workflows.
+//
+// IMPORTANT: With the singleton worker pattern, we cannot clear the registry between tests.
+// All processes are registered once in @test:BeforeSuite and tests verify specific registrations.
 
 // Record types for events in test processes
 type MultiEventRecord record {|
@@ -30,6 +33,10 @@ type MultiEventRecord record {|
 type SingleEventRecord record {|
     future<boolean> confirmationEvent;
 |};
+
+// ============================================================================
+// Test Process and Activity Functions
+// ============================================================================
 
 // Test process function for workflow registration tests.
 @Process
@@ -58,114 +65,6 @@ function processWithActivities(Context ctx, string input) returns string|error {
     return result1 + " - " + result2.toString();
 }
 
-// Note: Removed @test:BeforeEach that cleared registry globally.
-// Unit tests now clear registry explicitly at the start of each test.
-// This prevents interference with integration tests that register processes
-// in @test:BeforeSuite.
-
-@test:Config {groups: ["unit"]}
-function testRegisterProcess() returns error? {
-    _ = check clearRegistry();
-    boolean result = check registerProcess(testProcessFunction, "test-process");
-    test:assertTrue(result, "Process registration should succeed");
-    
-    // Verify the process is registered
-    WorkflowRegistry registry = check getRegisteredWorkflows();
-    test:assertTrue(registry.hasKey("test-process"), "Process should be in registry");
-}
-
-@test:Config {groups: ["unit"]}
-function testRegisterProcessDuplicate() returns error? {
-    _ = check clearRegistry();
-    // First registration should succeed
-    boolean result1 = check registerProcess(testProcessFunction, "dup-process");
-    test:assertTrue(result1, "First registration should succeed");
-    
-    // Second registration with same name should fail
-    boolean|error result2 = registerProcess(testProcessFunction, "dup-process");
-    test:assertTrue(result2 is error, "Duplicate registration should fail");
-}
-
-@test:Config {groups: ["unit"]}
-function testRegisterProcessWithActivities() returns error? {
-    _ = check clearRegistry();
-    // Create a map of activities
-    map<function> activities = {
-        "testActivityFunction": testActivityFunction,
-        "testActivityFunction2": testActivityFunction2
-    };
-    
-    // Register process with activities
-    boolean result = check registerProcess(processWithActivities, "process-with-activities", activities);
-    test:assertTrue(result, "Process registration with activities should succeed");
-    
-    // Verify the process and activities are registered
-    WorkflowRegistry registry = check getRegisteredWorkflows();
-    test:assertTrue(registry.hasKey("process-with-activities"), "Process should be in registry");
-    
-    ProcessRegistration? processInfo = registry["process-with-activities"];
-    test:assertTrue(processInfo is ProcessRegistration, "Process info should exist");
-    
-    if processInfo is ProcessRegistration {
-        test:assertEquals(processInfo.name, "process-with-activities");
-        test:assertEquals(processInfo.activities.length(), 2, "Should have 2 activities");
-        
-        // Check that both activities are present
-        boolean hasActivity1 = false;
-        boolean hasActivity2 = false;
-        foreach string activity in processInfo.activities {
-            if activity == "testActivityFunction" {
-                hasActivity1 = true;
-            }
-            if activity == "testActivityFunction2" {
-                hasActivity2 = true;
-            }
-        }
-        test:assertTrue(hasActivity1, "Should have testActivityFunction");
-        test:assertTrue(hasActivity2, "Should have testActivityFunction2");
-    }
-}
-
-@test:Config {groups: ["unit"]}
-function testGetRegisteredWorkflowsEmpty() returns error? {
-    _ = check clearRegistry();
-    // Registry should be empty after clear
-    WorkflowRegistry registry = check getRegisteredWorkflows();
-    test:assertEquals(registry.length(), 0, "Registry should be empty");
-}
-
-@test:Config {groups: ["unit"]}
-function testClearRegistry() returns error? {
-    _ = check clearRegistry();
-    // Register a process
-    _ = check registerProcess(testProcessFunction, "clear-test-process");
-    
-    // Verify it's registered
-    WorkflowRegistry registry1 = check getRegisteredWorkflows();
-    test:assertTrue(registry1.hasKey("clear-test-process"), "Process should be registered");
-    
-    // Clear the registry
-    boolean cleared = check clearRegistry();
-    test:assertTrue(cleared, "Clear should succeed");
-    
-    // Verify it's gone
-    WorkflowRegistry registry2 = check getRegisteredWorkflows();
-    test:assertEquals(registry2.length(), 0, "Registry should be empty after clear");
-}
-
-@test:Config {groups: ["unit"]}
-function testMultipleProcessRegistration() returns error? {
-    _ = check clearRegistry();
-    // Register multiple processes
-    _ = check registerProcess(testProcessFunction, "multi-process-1");
-    _ = check registerProcess(processWithActivities, "multi-process-2");
-    
-    // Verify both are registered
-    WorkflowRegistry registry = check getRegisteredWorkflows();
-    test:assertEquals(registry.length(), 2, "Should have 2 processes");
-    test:assertTrue(registry.hasKey("multi-process-1"), "Should have process 1");
-    test:assertTrue(registry.hasKey("multi-process-2"), "Should have process 2");
-}
 // Test process with events for event extraction tests.
 // Events are modeled as a record with future fields.
 @Process
@@ -179,102 +78,6 @@ function processWithEvents(Context ctx, string input, MultiEventRecord events) r
 function processWithContextAndEvents(Context ctx, SingleEventRecord events) returns boolean|error {
     return true;
 }
-
-@test:Config {groups: ["unit"]}
-function testRegisterProcessWithEvents() returns error? {
-    _ = check clearRegistry();
-    // Register process with events
-    boolean result = check registerProcess(processWithEvents, "process-with-events");
-    test:assertTrue(result, "Process registration with events should succeed");
-    
-    // Verify the process is registered with events
-    WorkflowRegistry registry = check getRegisteredWorkflows();
-    test:assertTrue(registry.hasKey("process-with-events"), "Process should be in registry");
-    
-    ProcessRegistration? processInfo = registry["process-with-events"];
-    test:assertTrue(processInfo is ProcessRegistration, "Process info should exist");
-    
-    if processInfo is ProcessRegistration {
-        test:assertEquals(processInfo.name, "process-with-events");
-        test:assertEquals(processInfo.events.length(), 2, "Should have 2 events");
-        
-        // Check that both events are present
-        boolean hasApproval = false;
-        boolean hasPayment = false;
-        foreach string event in processInfo.events {
-            if event == "approvalEvent" {
-                hasApproval = true;
-            }
-            if event == "paymentEvent" {
-                hasPayment = true;
-            }
-        }
-        test:assertTrue(hasApproval, "Should have approvalEvent");
-        test:assertTrue(hasPayment, "Should have paymentEvent");
-    }
-}
-
-@test:Config {groups: ["unit"]}
-function testRegisterProcessWithSingleEvent() returns error? {
-    _ = check clearRegistry();
-    // Register process with a single event
-    boolean result = check registerProcess(processWithContextAndEvents, "process-single-event");
-    test:assertTrue(result, "Process registration with single event should succeed");
-    
-    // Verify the process is registered with the event
-    WorkflowRegistry registry = check getRegisteredWorkflows();
-    test:assertTrue(registry.hasKey("process-single-event"), "Process should be in registry");
-    
-    ProcessRegistration? processInfo = registry["process-single-event"];
-    test:assertTrue(processInfo is ProcessRegistration, "Process info should exist");
-    
-    if processInfo is ProcessRegistration {
-        test:assertEquals(processInfo.events.length(), 1, "Should have 1 event");
-        test:assertEquals(processInfo.events[0], "confirmationEvent", "Should have confirmationEvent");
-    }
-}
-
-@test:Config {groups: ["unit"]}
-function testProcessWithoutEventsHasEmptyEventList() returns error? {
-    _ = check clearRegistry();
-    // Register a process without events
-    boolean result = check registerProcess(testProcessFunction, "no-events-process");
-    test:assertTrue(result, "Process registration should succeed");
-    
-    // Verify the process has empty events array
-    WorkflowRegistry registry = check getRegisteredWorkflows();
-    ProcessRegistration? processInfo = registry["no-events-process"];
-    
-    if processInfo is ProcessRegistration {
-        test:assertEquals(processInfo.events.length(), 0, "Should have 0 events");
-    }
-}
-
-@test:Config {groups: ["unit"]}
-function testProcessWithActivitiesAndEvents() returns error? {
-    _ = check clearRegistry();
-    // Create a map of activities
-    map<function> activities = {
-        "testActivityFunction": testActivityFunction
-    };
-    
-    // Register process with both activities and events
-    boolean result = check registerProcess(processWithEvents, "process-activities-events", activities);
-    test:assertTrue(result, "Process registration with activities and events should succeed");
-    
-    // Verify the process has both activities and events
-    WorkflowRegistry registry = check getRegisteredWorkflows();
-    ProcessRegistration? processInfo = registry["process-activities-events"];
-    
-    if processInfo is ProcessRegistration {
-        test:assertEquals(processInfo.activities.length(), 1, "Should have 1 activity");
-        test:assertEquals(processInfo.events.length(), 2, "Should have 2 events");
-    }
-}
-
-// ============================================================================
-// Inline Record Tests - Testing event extraction with anonymous record types
-// ============================================================================
 
 // Test process with inline record for events (multiple events).
 @Process
@@ -312,14 +115,220 @@ function processWithInlineEventsNoContext(string input, record {|
     return "no context: " + input;
 }
 
+// Simple workflow process for testing createInstance
+@Process
+function simpleWorkflowProcess(string input) returns string|error {
+    return "Hello, " + input;
+}
+
+// ============================================================================
+// Test Setup - Register all processes once before tests run
+// ============================================================================
+
+@test:BeforeSuite
+function setupTests() returns error? {
+    // Register all test processes once. This matches how the compiler plugin
+    // generates registerProcess calls at module init time in real applications.
+    
+    // Basic process registration
+    _ = check registerProcess(testProcessFunction, "test-process");
+    
+    // Process with activities
+    map<function> activities1 = {
+        "testActivityFunction": testActivityFunction,
+        "testActivityFunction2": testActivityFunction2
+    };
+    _ = check registerProcess(processWithActivities, "process-with-activities", activities1);
+    
+    // Process with events (named record type)
+    _ = check registerProcess(processWithEvents, "process-with-events");
+    
+    // Process with single event
+    _ = check registerProcess(processWithContextAndEvents, "process-single-event");
+    
+    // Process without events (to verify empty events list)
+    _ = check registerProcess(testProcessFunction, "no-events-process");
+    
+    // Process with both activities and events
+    map<function> activities2 = {
+        "testActivityFunction": testActivityFunction
+    };
+    _ = check registerProcess(processWithEvents, "process-activities-events", activities2);
+    
+    // Inline record event processes
+    _ = check registerProcess(processWithInlineEvents, "inline-multi-events");
+    _ = check registerProcess(processWithSingleInlineEvent, "inline-single-event");
+    _ = check registerProcess(processWithMixedInlineEvents, "inline-mixed-events");
+    _ = check registerProcess(processWithInlineEventsNoContext, "inline-no-context");
+    
+    // Inline record with activities
+    map<function> activities3 = {
+        "testActivityFunction": testActivityFunction,
+        "testActivityFunction2": testActivityFunction2
+    };
+    _ = check registerProcess(processWithInlineEvents, "inline-with-activities", activities3);
+    
+    // Process for createInstance tests
+    _ = check registerProcess(simpleWorkflowProcess, "simple-workflow");
+}
+
+// ============================================================================
+// Basic Registration Tests
+// ============================================================================
+
+@test:Config {groups: ["unit"]}
+function testRegisterProcess() returns error? {
+    // Verify the process registered in @BeforeSuite is in the registry
+    WorkflowRegistry registry = check getRegisteredWorkflows();
+    test:assertTrue(registry.hasKey("test-process"), "Process should be in registry");
+    
+    ProcessRegistration? processInfo = registry["test-process"];
+    test:assertTrue(processInfo is ProcessRegistration, "Process info should exist");
+    if processInfo is ProcessRegistration {
+        test:assertEquals(processInfo.name, "test-process");
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testRegisterProcessDuplicate() returns error? {
+    // Attempt to register a process with the same name that was already registered
+    // This should fail because "test-process" was registered in @BeforeSuite
+    boolean|error result = registerProcess(testProcessFunction, "test-process");
+    test:assertTrue(result is error, "Duplicate registration should fail");
+}
+
+@test:Config {groups: ["unit"]}
+function testRegisterProcessWithActivities() returns error? {
+    // Verify the process with activities is registered correctly
+    WorkflowRegistry registry = check getRegisteredWorkflows();
+    test:assertTrue(registry.hasKey("process-with-activities"), "Process should be in registry");
+    
+    ProcessRegistration? processInfo = registry["process-with-activities"];
+    test:assertTrue(processInfo is ProcessRegistration, "Process info should exist");
+    
+    if processInfo is ProcessRegistration {
+        test:assertEquals(processInfo.name, "process-with-activities");
+        test:assertEquals(processInfo.activities.length(), 2, "Should have 2 activities");
+        
+        // Check that both activities are present
+        boolean hasActivity1 = false;
+        boolean hasActivity2 = false;
+        foreach string activity in processInfo.activities {
+            if activity == "testActivityFunction" {
+                hasActivity1 = true;
+            }
+            if activity == "testActivityFunction2" {
+                hasActivity2 = true;
+            }
+        }
+        test:assertTrue(hasActivity1, "Should have testActivityFunction");
+        test:assertTrue(hasActivity2, "Should have testActivityFunction2");
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testGetRegisteredWorkflows() returns error? {
+    // Verify we can retrieve all registered workflows
+    WorkflowRegistry registry = check getRegisteredWorkflows();
+    
+    // We registered 12 processes in @BeforeSuite
+    test:assertTrue(registry.length() >= 12, "Should have at least 12 processes registered");
+    
+    // Verify some key processes are present
+    test:assertTrue(registry.hasKey("test-process"), "Should have test-process");
+    test:assertTrue(registry.hasKey("process-with-activities"), "Should have process-with-activities");
+    test:assertTrue(registry.hasKey("process-with-events"), "Should have process-with-events");
+}
+
+@test:Config {groups: ["unit"]}
+function testMultipleProcessRegistration() returns error? {
+    // Verify multiple processes are registered
+    WorkflowRegistry registry = check getRegisteredWorkflows();
+    
+    test:assertTrue(registry.hasKey("test-process"), "Should have test-process");
+    test:assertTrue(registry.hasKey("process-with-activities"), "Should have process-with-activities");
+    test:assertTrue(registry.hasKey("process-with-events"), "Should have process-with-events");
+    test:assertTrue(registry.hasKey("inline-multi-events"), "Should have inline-multi-events");
+}
+
+// ============================================================================
+// Event Extraction Tests - Named Record Types
+// ============================================================================
+
+@test:Config {groups: ["unit"]}
+function testRegisterProcessWithEvents() returns error? {
+    // Verify process with events is registered with correct event list
+    WorkflowRegistry registry = check getRegisteredWorkflows();
+    test:assertTrue(registry.hasKey("process-with-events"), "Process should be in registry");
+    
+    ProcessRegistration? processInfo = registry["process-with-events"];
+    test:assertTrue(processInfo is ProcessRegistration, "Process info should exist");
+    
+    if processInfo is ProcessRegistration {
+        test:assertEquals(processInfo.name, "process-with-events");
+        test:assertEquals(processInfo.events.length(), 2, "Should have 2 events");
+        
+        // Check that both events are present
+        boolean hasApproval = false;
+        boolean hasPayment = false;
+        foreach string event in processInfo.events {
+            if event == "approvalEvent" {
+                hasApproval = true;
+            }
+            if event == "paymentEvent" {
+                hasPayment = true;
+            }
+        }
+        test:assertTrue(hasApproval, "Should have approvalEvent");
+        test:assertTrue(hasPayment, "Should have paymentEvent");
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testRegisterProcessWithSingleEvent() returns error? {
+    // Verify process with single event
+    WorkflowRegistry registry = check getRegisteredWorkflows();
+    test:assertTrue(registry.hasKey("process-single-event"), "Process should be in registry");
+    
+    ProcessRegistration? processInfo = registry["process-single-event"];
+    test:assertTrue(processInfo is ProcessRegistration, "Process info should exist");
+    
+    if processInfo is ProcessRegistration {
+        test:assertEquals(processInfo.events.length(), 1, "Should have 1 event");
+        test:assertEquals(processInfo.events[0], "confirmationEvent", "Should have confirmationEvent");
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testProcessWithoutEventsHasEmptyEventList() returns error? {
+    // Verify process without events has empty events array
+    WorkflowRegistry registry = check getRegisteredWorkflows();
+    ProcessRegistration? processInfo = registry["no-events-process"];
+    
+    if processInfo is ProcessRegistration {
+        test:assertEquals(processInfo.events.length(), 0, "Should have 0 events");
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testProcessWithActivitiesAndEvents() returns error? {
+    // Verify process with both activities and events
+    WorkflowRegistry registry = check getRegisteredWorkflows();
+    ProcessRegistration? processInfo = registry["process-activities-events"];
+    
+    if processInfo is ProcessRegistration {
+        test:assertEquals(processInfo.activities.length(), 1, "Should have 1 activity");
+        test:assertEquals(processInfo.events.length(), 2, "Should have 2 events");
+    }
+}
+
+// ============================================================================
+// Inline Record Tests - Testing event extraction with anonymous record types
+// ============================================================================
+
 @test:Config {groups: ["unit"]}
 function testInlineRecordWithMultipleEvents() returns error? {
-    _ = check clearRegistry();
-    // Register process with inline record events
-    boolean result = check registerProcess(processWithInlineEvents, "inline-multi-events");
-    test:assertTrue(result, "Process registration with inline events should succeed");
-    
-    // Verify the process is registered with events
+    // Verify process with inline record events
     WorkflowRegistry registry = check getRegisteredWorkflows();
     test:assertTrue(registry.hasKey("inline-multi-events"), "Process should be in registry");
     
@@ -348,12 +357,7 @@ function testInlineRecordWithMultipleEvents() returns error? {
 
 @test:Config {groups: ["unit"]}
 function testInlineRecordWithSingleEvent() returns error? {
-    _ = check clearRegistry();
-    // Register process with single inline event
-    boolean result = check registerProcess(processWithSingleInlineEvent, "inline-single-event");
-    test:assertTrue(result, "Process registration with single inline event should succeed");
-    
-    // Verify the process is registered with the event
+    // Verify process with single inline event
     WorkflowRegistry registry = check getRegisteredWorkflows();
     ProcessRegistration? processInfo = registry["inline-single-event"];
     
@@ -365,12 +369,7 @@ function testInlineRecordWithSingleEvent() returns error? {
 
 @test:Config {groups: ["unit"]}
 function testInlineRecordWithThreeEvents() returns error? {
-    _ = check clearRegistry();
-    // Register process with three inline events of different types
-    boolean result = check registerProcess(processWithMixedInlineEvents, "inline-mixed-events");
-    test:assertTrue(result, "Process registration with mixed inline events should succeed");
-    
-    // Verify the process is registered with all events
+    // Verify process with three inline events of different types
     WorkflowRegistry registry = check getRegisteredWorkflows();
     ProcessRegistration? processInfo = registry["inline-mixed-events"];
     
@@ -400,12 +399,7 @@ function testInlineRecordWithThreeEvents() returns error? {
 
 @test:Config {groups: ["unit"]}
 function testInlineRecordWithoutContext() returns error? {
-    _ = check clearRegistry();
-    // Register process with inline events but no Context parameter
-    boolean result = check registerProcess(processWithInlineEventsNoContext, "inline-no-context");
-    test:assertTrue(result, "Process registration with inline events (no context) should succeed");
-    
-    // Verify the process is registered with the event
+    // Verify process with inline events but no Context parameter
     WorkflowRegistry registry = check getRegisteredWorkflows();
     ProcessRegistration? processInfo = registry["inline-no-context"];
     
@@ -417,18 +411,7 @@ function testInlineRecordWithoutContext() returns error? {
 
 @test:Config {groups: ["unit"]}
 function testInlineRecordWithActivities() returns error? {
-    _ = check clearRegistry();
-    // Create a map of activities
-    map<function> activities = {
-        "testActivityFunction": testActivityFunction,
-        "testActivityFunction2": testActivityFunction2
-    };
-    
-    // Register process with inline events and activities
-    boolean result = check registerProcess(processWithInlineEvents, "inline-with-activities", activities);
-    test:assertTrue(result, "Process registration with inline events and activities should succeed");
-    
-    // Verify the process has both activities and events
+    // Verify process with inline events and activities
     WorkflowRegistry registry = check getRegisteredWorkflows();
     ProcessRegistration? processInfo = registry["inline-with-activities"];
     
@@ -438,23 +421,25 @@ function testInlineRecordWithActivities() returns error? {
     }
 }
 
-// ================== Workflow Creation Tests ==================
-// These tests validate the createInstance API's input validation and error handling.
-// They work with lazy gRPC connection - actual workflow execution requires Temporal server.
+// ============================================================================
+// Workflow Creation Tests (require Temporal server - marked for integration)
+// ============================================================================
+// Note: These tests validate the createInstance API's input validation.
+// Without a running Temporal server, they will get connection errors.
+// Full workflow execution tests are in integration-tests module.
 
-// Simple workflow process for testing createInstance
+// Separate unregistered process for testing createInstance with unregistered process
 @Process
-function simpleWorkflowProcess(string input) returns string|error {
-    return "Hello, " + input;
+function unregisteredProcess(string input) returns string|error {
+    return "This process is intentionally not registered: " + input;
 }
 
 @test:Config {groups: ["unit"]}
 function testCreateInstanceWithUnregisteredProcess() returns error? {
-    _ = check clearRegistry();
-    // Attempt to start a workflow without registering the process first
+    // Attempt to start a workflow with a process that was NOT registered
     WorkflowData input = {id: "test-workflow-001"};
     
-    string|error result = createInstance(simpleWorkflowProcess, input);
+    string|error result = createInstance(unregisteredProcess, input);
     
     // Should fail because the process is not registered
     test:assertTrue(result is error, "Starting unregistered process should fail");
@@ -466,12 +451,7 @@ function testCreateInstanceWithUnregisteredProcess() returns error? {
 
 @test:Config {groups: ["unit"]}
 function testCreateInstanceWithMissingId() returns error? {
-    _ = check clearRegistry();
-    // First register the process
-    boolean registered = check registerProcess(simpleWorkflowProcess, "simple-workflow");
-    test:assertTrue(registered, "Process registration should succeed");
-    
-    // Attempt to start workflow without 'id' field
+    // Attempt to start workflow without 'id' field using a registered process
     map<anydata> inputWithoutId = {"name": "test"};
     
     string|error result = createInstance(simpleWorkflowProcess, inputWithoutId);
@@ -486,11 +466,6 @@ function testCreateInstanceWithMissingId() returns error? {
 
 @test:Config {groups: ["unit"]}
 function testCreateInstanceWithValidInput() returns error? {
-    _ = check clearRegistry();
-    // Register the process first
-    boolean registered = check registerProcess(simpleWorkflowProcess, "workflow-for-start-test");
-    test:assertTrue(registered, "Process registration should succeed");
-    
     // Prepare valid input with required 'id' field
     WorkflowData input = {id: "test-workflow-002", "name": "TestUser"};
     

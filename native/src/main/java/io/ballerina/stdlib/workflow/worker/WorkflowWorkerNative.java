@@ -424,34 +424,6 @@ public final class WorkflowWorkerNative {
     }
 
     /**
-     * Clears all registries. Used for testing.
-     */
-    public static void clearRegistries() {
-        SERVICE_REGISTRY.clear();
-        ACTIVITY_REGISTRY.clear();
-        PROCESS_REGISTRY.clear();
-        EVENT_REGISTRY.clear();
-    }
-
-    /**
-     * Reset the singleton for testing purposes.
-     */
-    public static void resetForTesting() {
-        clearRegistries();
-        initialized.set(false);
-        started.set(false);
-        dynamicWorkflowRegistered.set(false);
-        dynamicActivityRegistered.set(false);
-        singletonWorker = null;
-        workerFactory = null;
-        workflowClient = null;
-        if (serviceStubs != null) {
-            serviceStubs.shutdown();
-            serviceStubs = null;
-        }
-    }
-
-    /**
      * Convert Ballerina types to Java types for Temporal serialization.
      *
      * @param ballerinaValue the Ballerina value to convert

@@ -1,0 +1,7 @@
+[ballerina.workflow.workflowConfig]
+provider = "TEMPORAL"
+url = "localhost:7233"
+namespace = "default"
+
+[ballerina.workflow.workflowConfig.params]
+taskQueue = "ORDER_PAYMENT_QUEUE"

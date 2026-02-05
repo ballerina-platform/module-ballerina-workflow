@@ -1,0 +1,389 @@
+/*
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+plugins {
+    id 'com.github.spotbugs'
+    id 'com.github.johnrengelman.shadow'
+    id 'de.undercouch.download'
+    id 'net.researchgate.release'
+    id 'jacoco'
+}
+
+allprojects {
+    group = project.group
+    version = project.version
+
+    apply plugin: 'maven-publish'
+
+    repositories {
+        mavenLocal()
+        maven {
+            url = 'https://maven.wso2.org/nexus/content/repositories/releases/'
+        }
+
+        maven {
+            url = 'https://mvnrepository.com/artifact/org.testng/testng'
+        }
+
+        maven {
+            url = 'https://maven.wso2.org/nexus/content/groups/wso2-public/'
+        }
+
+        maven {
+            url = 'https://repo.maven.apache.org/maven2'
+        }
+
+        maven {
+            url = 'https://maven.pkg.github.com/ballerina-platform/*'
+            credentials {
+                username System.getenv("packageUser")
+                password System.getenv("packagePAT")
+            }
+        }
+    }
+
+    ext {
+        snapshotVersion = '-SNAPSHOT'
+        timestampedVersionRegex = '.*-\\d{8}-\\d{6}-\\w.*\$'
+    }
+}
+
+def moduleVersion = project.version.replace("-SNAPSHOT", "")
+
+subprojects {
+    configurations {
+        ballerinaStdLibs
+        jbalTools
+    }
+
+    dependencies {
+        /* JBallerina Tools */
+        jbalTools ("org.ballerinalang:jballerina-tools:${ballerinaLangVersion}") {
+            transitive = false
+        }
+
+        /* Standard libraries */
+        ballerinaStdLibs "io.ballerina.stdlib:io-ballerina:${stdlibIoVersion}"
+        ballerinaStdLibs "io.ballerina.stdlib:log-ballerina:${stdlibLogVersion}"
+        ballerinaStdLibs "io.ballerina.stdlib:time-ballerina:${stdlibTimeVersion}"
+    }
+}
+
+task build {
+    dependsOn(':workflow-compiler-plugin:build')
+    dependsOn(':workflow-native:build')
+    dependsOn(':workflow-ballerina:build')
+    dependsOn(':workflow-compiler-plugin-tests:test')
+}
+
+// Task to publish workflow module to local Maven repository
+// This makes the module available for samples to use as a local dependency
+task publishWorkflowToLocal {
+    description = 'Publishes the workflow module to local Maven repository and Ballerina local repository'
+    group = 'publishing'
+    dependsOn(':workflow-ballerina:build')
+    
+    doLast {
+        logger.lifecycle("Publishing workflow module to Ballerina local repository...")
+        
+        def balaFile = file("${project(':workflow-ballerina').buildDir}/bal_build_target/bala/ballerina-workflow-java21-0.1.0.bala")
+        def localRepoDir = file("${System.getProperty('user.home')}/.ballerina/repositories/local/bala/ballerina/workflow/0.1.0/java21")
+        
+        localRepoDir.mkdirs()
+        
+        // Extract bala contents to local repository
+        exec {
+            workingDir localRepoDir
+            commandLine 'unzip', '-o', balaFile.absolutePath
+        }
+        
+        logger.lifecycle("Workflow module published to local repository successfully")
+    }
+}
+
+// Build samples after publishing workflow module to local repo
+task buildSamples {
+    description = 'Builds all sample projects'
+    group = 'build'
+    dependsOn('publishWorkflowToLocal')
+    
+    doLast {
+        logger.lifecycle("Building workflow samples...")
+        
+        def samplesDir = file("${project.rootDir}/samples")
+        if (!samplesDir.exists()) {
+            logger.warn("Samples directory not found at: ${samplesDir}")
+            return
+        }
+        
+        samplesDir.eachDir { sampleDir ->
+            // Skip empty directories (check for Ballerina.toml)
+            def tomlFile = new File(sampleDir, "Ballerina.toml")
+            if (!tomlFile.exists()) {
+                logger.lifecycle("Skipping ${sampleDir.name} (not a Ballerina package)")
+                return
+            }
+            
+            logger.lifecycle("Building sample: ${sampleDir.name}")
+            
+            exec {
+                workingDir sampleDir
+                commandLine 'bal', 'build'
+            }
+        }
+        
+        logger.lifecycle("All samples built successfully")
+    }
+}
+
+// ============================================================================
+// Shared Temporal Test Server Configuration
+// Single server instance shared across module and integration tests
+// ============================================================================
+
+import java.net.InetSocketAddress
+import java.net.Socket
+
+def testServerProcess = null
+def testServerWorkDir = file("${project(':workflow-native-test').buildDir}")
+def testServerStarted = false
+def testServerPort = 7233
+def usingExternalServer = false
+
+// Helper function to check if a server is running on a given port
+def isServerRunning = { String host, int port ->
+    try {
+        def socket = new Socket()
+        socket.connect(new InetSocketAddress(host, port), 1000)
+        socket.close()
+        return true
+    } catch (Exception e) {
+        return false
+    }
+}
+
+// Helper function to stop the test server
+def stopTestServerIfRunning = {
+    if (!testServerStarted || usingExternalServer) {
+        return
+    }
+    
+    try {
+        def pidFile = new File(testServerWorkDir, 'test-server.pid')
+        if (pidFile.exists()) {
+            def shadowJarFile = project(':workflow-native-test').tasks.shadowJar.archiveFile.get().asFile
+            
+            logger.lifecycle("Stopping shared embedded Temporal test server...")
+            
+            def command = [
+                'java', '-jar', 
+                shadowJarFile.absolutePath,
+                'stop', 
+                testServerWorkDir.absolutePath
+            ]
+            
+            def processBuilder = new ProcessBuilder(command)
+            processBuilder.inheritIO()
+            processBuilder.directory(testServerWorkDir)
+            def stopProcess = processBuilder.start()
+            stopProcess.waitFor()
+            
+            logger.lifecycle("Shared embedded Temporal test server stopped")
+        }
+    } catch (Exception e) {
+        logger.warn("Error stopping test server: ${e.message}")
+    }
+    testServerStarted = false
+}
+
+// Register a build listener to stop the server after build completes
+gradle.buildFinished { result ->
+    if (testServerStarted) {
+        logger.lifecycle("Build finished - stopping shared test server...")
+        stopTestServerIfRunning()
+    }
+}
+
+// Start shared test server - used by both module and integration tests
+task startSharedTestServer {
+    dependsOn ":workflow-native-test:shadowJar"
+    
+    doLast {
+        // First, check if an external Temporal server is running (for debugging)
+        if (isServerRunning("localhost", testServerPort)) {
+            def externalTarget = "localhost:${testServerPort}"
+            logger.lifecycle("=" * 60)
+            logger.lifecycle("External Temporal server detected at ${externalTarget}")
+            logger.lifecycle("Using external server for debugging (skipping embedded server)")
+            logger.lifecycle("=" * 60)
+            
+            usingExternalServer = true
+            testServerStarted = true
+            
+            // Write Config.toml files for both test suites
+            writeTestConfig("${project(':workflow-ballerina').projectDir}/tests/Config.toml", externalTarget, true)
+            writeTestConfig("${project(':workflow-integration-tests').projectDir}/tests/Config.toml", externalTarget, true)
+            
+            logger.lifecycle("Test Config.toml files updated with external server URL: ${externalTarget}")
+            return
+        }
+        
+        // No external server found - start embedded test server
+        logger.lifecycle("No external Temporal server found on port ${testServerPort}")
+        logger.lifecycle("Starting shared embedded Temporal test server on port ${testServerPort}...")
+        
+        def shadowJarFile = project(':workflow-native-test').tasks.shadowJar.archiveFile.get().asFile
+        
+        // Ensure work directory exists
+        testServerWorkDir.mkdirs()
+        
+        def command = [
+            'java', '-jar', 
+            shadowJarFile.absolutePath,
+            'start', 
+            testServerWorkDir.absolutePath,
+            testServerPort.toString()
+        ]
+        
+        def processBuilder = new ProcessBuilder(command)
+        processBuilder.redirectOutput(new File(testServerWorkDir, 'test-server.log'))
+        processBuilder.redirectErrorStream(true)
+        processBuilder.directory(testServerWorkDir)
+        testServerProcess = processBuilder.start()
+        
+        // Wait for the server to start and write the target file with content
+        def targetFile = new File(testServerWorkDir, 'test-server.target')
+        def maxWait = 30 // seconds
+        def waited = 0
+        def target = ""
+        while (waited < maxWait) {
+            Thread.sleep(1000)
+            waited++
+            if (targetFile.exists()) {
+                target = targetFile.text.trim()
+                if (target.length() > 0) {
+                    logger.lifecycle("Target file found with content after ${waited}s")
+                    break
+                }
+            }
+            logger.lifecycle("Waiting for test server to start... (${waited}s)")
+        }
+        
+        if (target.length() > 0) {
+            testServerStarted = true
+            logger.lifecycle("Shared embedded Temporal test server started at: ${target}")
+            
+            // Write Config.toml files for both test suites
+            writeTestConfig("${project(':workflow-ballerina').projectDir}/tests/Config.toml", target, false)
+            writeTestConfig("${project(':workflow-integration-tests').projectDir}/tests/Config.toml", target, false)
+            
+            logger.lifecycle("Test Config.toml files updated with server URL: ${target}")
+        } else {
+            // Check if process is still running
+            if (!testServerProcess.isAlive()) {
+                def exitCode = testServerProcess.exitValue()
+                logger.error("Test server process exited with code: ${exitCode}")
+                def logFile = new File(testServerWorkDir, 'test-server.log')
+                if (logFile.exists()) {
+                    logger.error("Test server log:\n${logFile.text}")
+                }
+            }
+            throw new GradleException("Test server failed to start within ${maxWait} seconds")
+        }
+    }
+}
+
+// Helper method to write test Config.toml
+def writeTestConfig(String path, String serverUrl, boolean isExternal) {
+    def configFile = new File(path)
+    configFile.parentFile.mkdirs()
+    configFile.text = """# Auto-generated test configuration
+
+[ballerina.workflow.workflowConfig]
+provider = "TEMPORAL"
+url = "${serverUrl}"
+namespace = "default"
+
+[ballerina.workflow.workflowConfig.params]
+taskQueue = "BALLERINA_WORKFLOW_TASK_QUEUE"
+maxConcurrentWorkflows = 100
+maxConcurrentActivities = 100
+"""
+}
+
+// Stop shared test server
+task stopSharedTestServer {
+    doLast {
+        stopTestServerIfRunning()
+    }
+}
+
+// ============================================================================
+// Coverage Merging Task
+// Merges coverage reports from module tests and integration tests
+// ============================================================================
+
+task mergeCoverageReports {
+    description = 'Merges Ballerina coverage reports from module and integration tests'
+    group = 'verification'
+    
+    dependsOn ':workflow-ballerina:test'
+    dependsOn ':workflow-integration-tests:test'
+    
+    doLast {
+        def moduleReport = file("${project(':workflow-ballerina').projectDir}/target/report/workflow/coverage-report.xml")
+        def integrationReport = file("${project(':workflow-integration-tests').projectDir}/target/report/workflow_tests/coverage-report.xml")
+        def mergedReportDir = file("${project.buildDir}/coverage")
+        def mergedReport = file("${mergedReportDir}/merged-coverage-report.xml")
+        
+        mergedReportDir.mkdirs()
+        
+        logger.lifecycle("Merging coverage reports...")
+        logger.lifecycle("  Module tests: ${moduleReport.exists() ? 'found' : 'not found'}")
+        logger.lifecycle("  Integration tests: ${integrationReport.exists() ? 'found' : 'not found'}")
+        
+        if (moduleReport.exists() && integrationReport.exists()) {
+            // Simple merge: Copy module report as base, then we can use external tools for proper merge
+            // For now, copy module report as the primary and log integration report location
+            mergedReport.text = moduleReport.text
+            
+            // Copy integration report alongside for reference
+            def integrationCopy = file("${mergedReportDir}/integration-coverage-report.xml")
+            integrationCopy.text = integrationReport.text
+            
+            logger.lifecycle("Coverage reports copied to: ${mergedReportDir}")
+            logger.lifecycle("  - merged-coverage-report.xml (from module tests)")
+            logger.lifecycle("  - integration-coverage-report.xml (from integration tests)")
+            logger.lifecycle("")
+            logger.lifecycle("To view combined coverage in IDEs, configure both report locations.")
+        } else {
+            logger.warn("Could not merge coverage reports - one or more reports missing")
+        }
+    }
+}
+
+release {
+    buildTasks = ['build']
+    failOnSnapshotDependencies = true
+    versionPropertyFile = 'gradle.properties'
+    tagTemplate = 'v${version}'
+    git {
+        requireBranch = "release-${moduleVersion}"
+        pushToRemote = 'origin'
+    }
+}

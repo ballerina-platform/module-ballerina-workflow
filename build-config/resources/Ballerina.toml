@@ -1,0 +1,154 @@
+[package]
+org = "ballerina"
+name = "workflow"
+version = "@toml.version@"
+authors = ["Ballerina"]
+keywords = ["workflow"]
+repository = "https://github.com/ballerina-platform/module-ballerina-workflow"
+license = ["Apache-2.0"]
+distribution = "2201.13.0"
+
+[platform.java21]
+graalvmCompatible = false
+
+# Native implementation
+[[platform.java21.dependency]]
+groupId = "io.ballerina.stdlib"
+artifactId = "workflow-native"
+version = "@toml.version@"
+path = "../native/build/libs/workflow-native-@project.version@.jar"
+
+# Temporal SDK dependencies
+[[platform.java21.dependency]]
+groupId = "io.temporal"
+artifactId = "temporal-sdk"
+version = "@temporal.sdk.version@"
+
+[[platform.java21.dependency]]
+groupId = "io.temporal"
+artifactId = "temporal-serviceclient"
+version = "@temporal.sdk.version@"
+
+# Nexus RPC (required by Temporal SDK)
+[[platform.java21.dependency]]
+groupId = "io.nexusrpc"
+artifactId = "nexus-sdk"
+version = "@nexusrpc.version@"
+
+# gRPC dependencies
+[[platform.java21.dependency]]
+groupId = "io.grpc"
+artifactId = "grpc-api"
+version = "@grpc.version@"
+
+[[platform.java21.dependency]]
+groupId = "io.grpc"
+artifactId = "grpc-context"
+version = "@grpc.version@"
+
+[[platform.java21.dependency]]
+groupId = "io.grpc"
+artifactId = "grpc-stub"
+version = "@grpc.version@"
+
+[[platform.java21.dependency]]
+groupId = "io.grpc"
+artifactId = "grpc-protobuf"
+version = "@grpc.version@"
+
+[[platform.java21.dependency]]
+groupId = "io.grpc"
+artifactId = "grpc-protobuf-lite"
+version = "@grpc.version@"
+
+[[platform.java21.dependency]]
+groupId = "io.grpc"
+artifactId = "grpc-core"
+version = "@grpc.version@"
+
+[[platform.java21.dependency]]
+groupId = "io.grpc"
+artifactId = "grpc-netty-shaded"
+version = "@grpc.version@"
+
+[[platform.java21.dependency]]
+groupId = "io.grpc"
+artifactId = "grpc-services"
+version = "@grpc.version@"
+
+[[platform.java21.dependency]]
+groupId = "io.grpc"
+artifactId = "grpc-util"
+version = "@grpc.version@"
+
+# gRPC InProcess (required for embedded test server)
+[[platform.java21.dependency]]
+groupId = "io.grpc"
+artifactId = "grpc-inprocess"
+version = "@grpc.version@"
+
+# Protobuf dependencies
+[[platform.java21.dependency]]
+groupId = "com.google.protobuf"
+artifactId = "protobuf-java"
+version = "@protobuf.version@"
+
+[[platform.java21.dependency]]
+groupId = "com.google.protobuf"
+artifactId = "protobuf-java-util"
+version = "@protobuf.version@"
+
+# Google proto status (required by gRPC for StatusProto)
+[[platform.java21.dependency]]
+groupId = "com.google.api.grpc"
+artifactId = "proto-google-common-protos"
+version = "@proto.google.common.protos.version@"
+
+# Jackson JSON dependencies
+[[platform.java21.dependency]]
+groupId = "com.fasterxml.jackson.core"
+artifactId = "jackson-core"
+version = "@jackson.version@"
+
+[[platform.java21.dependency]]
+groupId = "com.fasterxml.jackson.core"
+artifactId = "jackson-annotations"
+version = "@jackson.version@"
+
+[[platform.java21.dependency]]
+groupId = "com.fasterxml.jackson.core"
+artifactId = "jackson-databind"
+version = "@jackson.version@"
+
+[[platform.java21.dependency]]
+groupId = "com.fasterxml.jackson.datatype"
+artifactId = "jackson-datatype-jsr310"
+version = "@jackson.version@"
+
+[[platform.java21.dependency]]
+groupId = "com.fasterxml.jackson.datatype"
+artifactId = "jackson-datatype-jdk8"
+version = "@jackson.version@"
+
+# Metrics
+[[platform.java21.dependency]]
+groupId = "com.uber.m3"
+artifactId = "tally-core"
+version = "@tally.version@"
+
+# Guava and supporting libraries
+[[platform.java21.dependency]]
+groupId = "com.google.guava"
+artifactId = "guava"
+version = "@guava.version@"
+
+[[platform.java21.dependency]]
+groupId = "com.google.guava"
+artifactId = "failureaccess"
+version = "1.0.1"
+
+# Other dependencies
+[[platform.java21.dependency]]
+groupId = "io.perfmark"
+artifactId = "perfmark-api"
+version = "@perfmark.version@"

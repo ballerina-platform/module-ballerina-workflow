@@ -1,0 +1,12 @@
+[package]
+org = "ballerina"
+name = "workflow_tests"
+version = "@toml.version@"
+
+[[dependency]]
+org = "ballerina"
+name = "workflow"
+version = "@toml.version@"
+
+[build-options]
+observabilityIncluded = true

@@ -1,0 +1,138 @@
+/*
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import org.apache.tools.ant.taskdefs.condition.Os
+
+plugins {
+    id 'io.ballerina.plugin'
+}
+
+description = 'Ballerina - Workflow Module'
+
+def packageName = "workflow"
+def packageOrg = "ballerina"
+def tomlVersion = stripBallerinaExtensionVersion("${project.version}")
+def ballerinaTomlFilePlaceHolder = new File("${project.rootDir}/build-config/resources/Ballerina.toml")
+def compilerPluginTomlFilePlaceHolder = new File("${project.rootDir}/build-config/resources/CompilerPlugin.toml")
+def ballerinaTomlFile = new File("$project.projectDir/Ballerina.toml")
+def compilerPluginTomlFile = new File("$project.projectDir/CompilerPlugin.toml")
+
+task updateTomlFiles {
+    doLast {
+        def newBallerinaToml = ballerinaTomlFilePlaceHolder.text.replace("@project.version@", project.version)
+        newBallerinaToml = newBallerinaToml.replace("@toml.version@", tomlVersion)
+        // Substitute dependency versions
+        newBallerinaToml = newBallerinaToml.replace("@temporal.sdk.version@", temporalSdkVersion)
+        newBallerinaToml = newBallerinaToml.replace("@jackson.version@", jacksonVersion)
+        newBallerinaToml = newBallerinaToml.replace("@grpc.version@", grpcVersion)
+        newBallerinaToml = newBallerinaToml.replace("@protobuf.version@", protobufVersion)
+        newBallerinaToml = newBallerinaToml.replace("@proto.google.common.protos.version@", protoGoogleCommonProtosVersion)
+        newBallerinaToml = newBallerinaToml.replace("@guava.version@", guavaVersion)
+        newBallerinaToml = newBallerinaToml.replace("@tally.version@", tallyVersion)
+        newBallerinaToml = newBallerinaToml.replace("@perfmark.version@", perfmarkVersion)
+        newBallerinaToml = newBallerinaToml.replace("@nexusrpc.version@", nexusrpcVersion)
+        ballerinaTomlFile.text = newBallerinaToml
+
+        def newCompilerPluginToml = compilerPluginTomlFilePlaceHolder.text.replace("@project.version@", project.version)
+        compilerPluginTomlFile.text = newCompilerPluginToml
+    }
+}
+
+task commitTomlFiles {
+    doLast {
+        project.exec {
+            ignoreExitValue true
+            if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+                commandLine 'cmd', '/c', "git commit -m \"[Automated] Update the native jar versions\" Ballerina.toml Dependencies.toml CompilerPlugin.toml"
+            } else {
+                commandLine 'sh', '-c', "git commit -m '[Automated] Update the native jar versions' Ballerina.toml Dependencies.toml CompilerPlugin.toml"
+            }
+        }
+    }
+}
+
+ballerina {
+    packageOrganization = packageOrg
+    module = packageName
+    langVersion = ballerinaLangVersion
+    testCoverageParam = "--code-coverage --coverage-format=xml --includes=io.ballerina.stdlib.workflow.*:ballerina.workflow*"
+}
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            artifact source: createArtifactZip, extension: 'zip'
+        }
+    }
+    repositories {
+        mavenLocal()
+    }
+}
+
+updateTomlFiles.dependsOn copyStdlibs
+
+build.dependsOn "generatePomFileForMavenPublication"
+build.dependsOn ":${packageName}-native:build"
+build.dependsOn ":${packageName}-compiler-plugin:build"
+test.dependsOn ":${packageName}-native:build"
+test.dependsOn ":${packageName}-compiler-plugin:build"
+
+publishToMavenLocal.dependsOn build
+publish.dependsOn build
+
+// Task to push the Ballerina package to local repository
+task pushToLocalRepository(type: Exec) {
+    description = 'Pushes the Ballerina package to the local repository'
+    group = 'build'
+    
+    workingDir project.projectDir
+    
+    // Use the unpacked distribution's bal command (same as integration tests)
+    def ballerinaDist = "${project.rootDir}/target/ballerina-runtime"
+    def balCommand = "${ballerinaDist}/bin/bal"
+    
+    // Version comes from Ballerina.toml via tomlVersion variable
+    def balaFile = "build/bal_build_target/bala/ballerina-workflow-java21-${tomlVersion}.bala"
+    
+    if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+        commandLine 'cmd', '/c', "${balCommand}.bat", 'push', '--repository=local', balaFile
+    } else {
+        commandLine balCommand, 'push', '--repository=local', balaFile
+    }
+}
+
+// Make pushToLocalRepository run after the build task completes successfully
+pushToLocalRepository.shouldRunAfter build
+build.finalizedBy pushToLocalRepository
+
+// Use the shared test server from root project
+test.dependsOn ":startSharedTestServer"
+
+def stripBallerinaExtensionVersion(String extVersion) {
+    if (extVersion.matches(project.ext.timestampedVersionRegex)) {
+        def splitVersion = extVersion.split('-')
+        if (splitVersion.length > 3) {
+            def strippedValues = splitVersion[0..-4]
+            return strippedValues.join('-')
+        } else {
+            return extVersion
+        }
+    } else {
+        return extVersion.replace("${project.ext.snapshotVersion}", "")
+    }
+}

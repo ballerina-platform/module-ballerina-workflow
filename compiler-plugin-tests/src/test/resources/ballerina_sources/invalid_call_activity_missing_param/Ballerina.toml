@@ -1,0 +1,8 @@
+[package]
+org = "test_samples"
+name = "invalid_call_activity_missing_param"
+version = "0.1.0"
+distribution = "2201.13.0"
+
+[build-options]
+observabilityIncluded = true

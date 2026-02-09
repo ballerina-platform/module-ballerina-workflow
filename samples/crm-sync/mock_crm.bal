@@ -110,6 +110,9 @@ public function validateContactData(SourceContact contact) returns ValidationErr
 }
 
 # Simple email validation
+#
+# + email - Email address to validate
+# + return - True if email is valid, false otherwise
 isolated function isValidEmail(string email) returns boolean {
     string emailPattern = "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$";
     return regex:matches(email, emailPattern);

@@ -26,30 +26,7 @@ Bidirectional contact synchronization between CRM systems:
 **Port**: 9091  
 **Queue**: CRM_SYNC_QUEUE
 
-### 3. File Notification (`file-notification/`)
-
-File storage to messaging notification workflow:
-- File upload event handling
-- Message formatting and posting
-- Mock file storage and messaging systems
-
-**Port**: 9092  
-**Queue**: FILE_NOTIFICATION_QUEUE
-
-### 4. Invoice Automation (`invoice-automation/`)
-
-Automated invoice processing workflow:
-- OCR data extraction (mocked)
-- Invoice validation
-- Duplicate detection
-- Purchase order matching
-- Approval routing
-- Mock document processing and accounting systems
-
-**Port**: 9093  
-**Queue**: INVOICE_PROCESSING_QUEUE
-
-### 5. Order with Payment (`order-with-payment/`)
+### 3. Order with Payment (`order-with-payment/`)
 
 Order processing with payment signal workflow:
 - Inventory checking
@@ -65,21 +42,8 @@ Order processing with payment signal workflow:
 1. **Temporal Server**: Running on `localhost:7233`
 2. **Ballerina**: 2201.13.x or later
 3. **Java**: 21
-4. **Workflow Module**: Built and available in local repository
 
 ## Quick Start
-
-### Build the Workflow Module
-
-From repository root:
-
-```bash
-cd native
-mvn clean package
-
-cd ../ballerina
-bal pack && bal push --repository=local
-```
 
 ### Run a Sample
 

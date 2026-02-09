@@ -27,6 +27,9 @@ service /sync on new http:Listener(9091) {
     # Trigger contact sync workflow
     # POST /sync/contact
     # Body: {"id": "...", "email": "...", "firstName": "...", "lastName": "...", "phone": "...", "company": "..."}
+    #
+    # + contact - Source contact data to sync
+    # + return - Success response with workflow ID or error
     resource function post contact(SourceContact contact) returns json|error {
         // Start workflow using the @workflow:Process function
         string workflowId = check workflow:createInstance(syncContact, contact);
@@ -43,6 +46,9 @@ service /sync on new http:Listener(9091) {
 
     # Get workflow result
     # GET /sync/{workflowId}/result
+    #
+    # + workflowId - The workflow execution ID
+    # + return - Workflow execution result or error
     resource function get [string workflowId]/result() returns json|error {
         workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
         
@@ -56,12 +62,16 @@ service /sync on new http:Listener(9091) {
 
     # Health check
     # GET /sync/health
+    #
+    # + return - Service health status message
     resource function get health() returns string {
         return "CRM Sync Service is running";
     }
 
     # Reset CRM data (for testing)
     # POST /sync/reset
+    #
+    # + return - Success message
     resource function post reset() returns string {
         resetCrmData();
         return "CRM data reset successfully";
@@ -69,6 +79,8 @@ service /sync on new http:Listener(9091) {
 }
 
 # Module initialization
+#
+# + return - Error if initialization fails
 public function main() returns error? {
     io:println("Starting CRM Sync Sample...");
     io:println("Worker started. HTTP Service listening on http://localhost:9091/sync");

@@ -27,6 +27,9 @@ service /orders on new http:Listener(9090) {
     # Start an order processing workflow
     # POST /orders
     # Body: {"orderId": "ORD-001", "item": "laptop", "quantity": 2}
+    #
+    # + request - Order request payload
+    # + return - Success response with workflow ID or error
     resource function post .(OrderRequest request) returns json|error {
         // Start workflow using the @workflow:Process function
         string workflowId = check workflow:createInstance(processOrder, request);
@@ -43,6 +46,9 @@ service /orders on new http:Listener(9090) {
 
     # Get workflow result
     # GET /orders/{workflowId}/result
+    #
+    # + workflowId - The workflow execution ID
+    # + return - Workflow execution result or error
     resource function get [string workflowId]/result() returns json|error {
         workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
         
@@ -56,6 +62,8 @@ service /orders on new http:Listener(9090) {
 
     # Health check endpoint
     # GET /orders/health
+    #
+    # + return - Service health status message
     resource function get health() returns string {
         return "Order Processing Service is running";
     }
@@ -63,6 +71,8 @@ service /orders on new http:Listener(9090) {
 
 # Module initialization
 # Start worker before handling requests
+#
+# + return - Error if initialization fails
 public function main() returns error? {
     io:println("Starting Order Processing Sample...");
     io:println("Worker started. HTTP Service listening on http://localhost:9090/orders");

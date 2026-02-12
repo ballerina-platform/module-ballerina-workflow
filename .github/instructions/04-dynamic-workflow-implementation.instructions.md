@@ -341,12 +341,12 @@ The compiler plugin has **limited involvement** in dynamic workflow implementati
            ├─> activityFunction.call(ballerinaRuntime, args)
            └─> Convert result to Java type
 
-5. Signal Handling
-   └─> Ballerina: wait signals.approval
+5. Event Handling
+   └─> Ballerina: wait events.approval
        ├─> TemporalFutureValue.getAndSetWaited()
        │   └─> Workflow.await(() -> completableFuture.isDone())
        └─> External: sendEvent(processFunc, data, "approval")
-           └─> Temporal delivers signal
+           └─> Temporal delivers event
                └─> DynamicSignalHandler.signal()
                    └─> signalWrapper.recordSignal()
                        └─> promise.complete() → completableFuture.complete()

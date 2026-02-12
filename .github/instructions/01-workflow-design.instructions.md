@@ -158,21 +158,21 @@ function myProcess(workflow:Context ctx, Input input) returns Result|error {
 }
 ```
 
-### Waiting for Signals
+### Waiting for Events
 ```ballerina
 @workflow:Process
-function processWithSignals(
+function processWithEvents(
     workflow:Context ctx,
     Input input,
-    record { future<ApprovalData> approval; future<PaymentData> payment; } signals
+    record { future<ApprovalData> approval; future<PaymentData> payment; } events
 ) returns Result|error {
     // Wait for approval signal
-    ApprovalData approval = check wait signals.approval;
+    ApprovalData approvalData = check wait events.approval;
     
-    if approval.approved {
+    if approvalData.approved {
         // Wait for payment signal
-        PaymentData payment = check wait signals.payment;
-        return {status: "completed", amount: payment.amount};
+        PaymentData paymentData = check wait events.payment;
+        return {status: "completed", amount: paymentData.amount};
     }
     
     return {status: "rejected"};

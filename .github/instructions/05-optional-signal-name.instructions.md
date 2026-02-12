@@ -292,9 +292,9 @@ private static String inferSignalName(
 function singleSignalWorkflow(
     workflow:Context ctx,
     Input input,
-    record {| future<SignalData> onlySignal; |} signals
+    record {| future<SignalData> onlySignal; |} events
 ) returns Result|error {
-    SignalData data = check wait signals.onlySignal;
+    SignalData data = check wait events.onlySignal;
     return {status: "completed"};
 }
 
@@ -312,7 +312,7 @@ function distinctSignalsWorkflow(
     record {|
         future<ApprovalSignal> approval;  // {id, approved, approverName}
         future<PaymentSignal> payment;    // {id, amount, transactionRef}
-    |} signals
+    |} events
 ) returns Result|error { }
 
 // ✅ Each type has unique structure - inference works
@@ -332,7 +332,7 @@ function ambiguousSignalsWorkflow(
     record {|
         future<SignalType> signal1;  // Same structure
         future<SignalType> signal2;  // Same structure
-    |} signals
+    |} events
 ) returns Result|error { }
 
 SignalType data = {id: wfId, value: "test"};

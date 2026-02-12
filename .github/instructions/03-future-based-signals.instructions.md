@@ -24,14 +24,14 @@ function orderProcess(
     record {|
         future<ApprovalSignal> approval;  // Field name = signal name
         future<PaymentSignal> payment;
-    |} signals
+    |} events
 ) returns OrderResult|error {
     // Wait for approval signal (field name maps to Temporal signal name)
-    ApprovalSignal decision = check wait signals.approval;
+    ApprovalSignal decision = check wait events.approval;
 
     if decision.status {
         // Wait for payment only if approved
-        PaymentSignal payParams = check wait signals.payment;
+        PaymentSignal payParams = check wait events.payment;
         return processPayment(payParams);
     }
 
@@ -276,7 +276,7 @@ private void validateProcessFunction(FunctionDefinitionNode node, SyntaxNodeAnal
            └─> Pass eventsRecord to Ballerina function
 
 3. Ballerina Wait Action
-   └─> wait signals.approval
+   └─> wait events.approval
        ├─> AsyncUtils.handleWait(strand, future)
        ├─> future.getAndSetWaited() → TemporalFutureValue intercepts
        │   └─> Workflow.await(() -> completableFuture.isDone())  ← Yields properly

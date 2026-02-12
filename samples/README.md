@@ -107,42 +107,32 @@ function checkInventory(string item, int quantity) returns InventoryStatus|error
 
 The `workflow:Context` parameter provides:
 - `callActivity()` - Execute activities with retry
-- `awaitSignal()` - Wait for external signals
 - `sleep()` - Durable delays
 - `isReplaying()` - Replay detection
 
-### Singleton Worker Pattern
+### Starting Workflow Executor
 
-Each sample uses the singleton worker pattern:
+Each sample uses following workflow executor initialization configuration in `Config.toml`:
 
-```ballerina
-final workflow:PersistenceProvider provider = check new ({
-    serviceUrl: "localhost:7233",
-    namespace: "default"
-});
+```toml
+# Config.toml
+[ballerina.workflow.workflowConfig]
+provider = "TEMPORAL"
+url = "localhost:7233"
+namespace = "default"
 
-listener workflow:Listener worker = check new (provider, {taskQueue: "..."});
-
-service "WorkflowName" on worker {
-    isolated remote function execute(workflow:Context ctx, ...) returns ... {
-        // Workflow logic
-    }
-}
+[ballerina.workflow.workflowConfig.params]
+taskQueue = "MY_TASK_QUEUE"
 ```
 
-## Vendor-Neutral Design
-
-All samples use mock backends instead of specific vendor APIs:
-- **No vendor names**: Generic terms like "CRM", "Storage", "Messaging"
-- **Mock implementations**: Simulate external systems in-memory
-- **Extensible**: Easy to replace mocks with real integrations
+All the workflows in current project are automatically registered to the workflow executor. No manual registration is needed.
 
 ## Common Patterns
 
 ### Error Handling
 
 ```ballerina
-anydata result = check ctx->callActivity("activityName", args...);
+MyData|error result = ctx->callActivity(activityFunc, args...);
 if result is error {
     // Handle activity failure
 }
@@ -150,28 +140,48 @@ if result is error {
 
 ### Correlation
 
+Correlation keys use `readonly` fields to match workflows with signals/events:
+
 ```ballerina
-map<string> correlationData = {
-    "orderId": request.orderId  // readonly field in input type
-};
+// Define input type with readonly correlation keys
+type OrderInput record {|
+    readonly string orderId;    // Correlation key
+    readonly string customerId; // Correlation key
+    string item;                // Regular field
+    int quantity;
+|};
+
+// Event type MUST have same readonly fields
+type PaymentEvent record {|
+    readonly string orderId;    // Must match OrderInput
+    readonly string customerId; // Must match OrderInput
+    decimal amount;             // Event-specific data
+|};
 ```
 
-### Query Methods
+
+### Event Handling
 
 ```ballerina
-isolated remote function getStatus() returns map<anydata> {
-    return {"status": self.workflowStatus};
+// In workflow - use events record with future<T> fields
+@workflow:Process
+function orderProcess(
+    workflow:Context ctx,
+    OrderInput input,
+    record {| future<PaymentEvent> paymentReceived; |} events
+) returns OrderResult|error {
+    // Check inventory first
+    var result = check ctx->callActivity(checkInventory, {item: input.item, quantity: input.quantity});
+    
+    // Wait for payment event (correlated by orderId + customerId)
+    PaymentEvent payment = check wait events.paymentReceived;
+    
+    return {status: "paid", amount: payment.amount};
 }
-```
 
-### Signal Handling
-
-```ballerina
-// In workflow
-anydata signalData = check ctx->awaitSignal("paymentReceived", 3600);
-
-// From client
-check client->signal(correlationData, "paymentReceived", {...});
+// From client - send event (correlation keys in data are used for routing)
+PaymentEvent paymentData = {orderId: "ORD-001", customerId: "C123", amount: 99.99};
+_ = check workflow:sendEvent(orderProcess, paymentData, "paymentReceived");
 ```
 
 ## Troubleshooting
@@ -189,24 +199,6 @@ Each sample uses a different port. Change in `main.bal` if needed:
 ```ballerina
 service /... on new http:Listener(9090) {  // Change port here
 ```
-
-### Activity Registration
-
-Activities must be registered in `init()`:
-```ballerina
-function init() returns error? {
-    check workflow:registerActivity("activityName", activityFunction);
-}
-```
-
-## Extension Ideas
-
-- Integrate with real APIs (Stripe, Twilio, AWS, etc.)
-- Add compensation logic (SAGA pattern)
-- Implement long-running workflows with multiple signals
-- Add workflow versioning and migration
-- Build dashboards using query methods
-- Add metrics and observability
 
 ## Learn More
 

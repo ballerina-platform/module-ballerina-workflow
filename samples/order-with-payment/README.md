@@ -4,8 +4,8 @@ Demonstrates order workflow waiting for payment confirmation via signals.
 
 ## Features
 
-- Signal-based payment waiting using `ctx->awaitSignal()`
-- Correlation with order ID
+- Future-based payment waiting using events record with `future<PaymentEvent>`
+- Correlation with order ID via readonly fields
 - Timeout handling (24 hour wait)
 - Inventory checking before payment
 
@@ -33,4 +33,4 @@ Order Request → Check Inventory → Wait for Payment Signal → Complete Order
                                   Payment Event
 ```
 
-Key: Uses future-based signals with `@Signal` annotation.
+Key: Uses future-based events with `record {| future<T>...; |}` parameter.

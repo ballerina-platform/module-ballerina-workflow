@@ -185,7 +185,7 @@ public final class WorkflowRuntime {
         }
 
         // Generate workflow ID using UUID v7
-        String workflowId = CorrelationExtractor.generateWorkflowId(processName);
+        String workflowId = CorrelationExtractor.generateWorkflowId();
 
         // Get the singleton workflow client from WorkflowWorkerNative
         WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();

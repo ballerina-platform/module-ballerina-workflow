@@ -24,7 +24,7 @@
 // Key concepts:
 // 1. Readonly fields in process input become correlation keys
 // 2. Signal types must have the same readonly fields (name AND type)
-// 3. Composite workflow ID is generated: processName-key1=value1-key2=value2
+// 3. Workflow ID is a plain UUID v7 (correlation keys are in search attributes)
 // 4. Correlation keys become Temporal Search Attributes for visibility
 //
 // ================================================================================

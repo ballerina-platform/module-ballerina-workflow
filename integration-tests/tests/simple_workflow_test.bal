@@ -29,9 +29,8 @@ function testSimpleWorkflowExecution() returns error? {
     SimpleInput input = {id: testId, name: "TestUser"};
     string workflowId = check workflow:run(simpleWorkflow, input);
     
-    // Workflow ID is now UUID v7 based, verify it starts with process name
+    // Workflow ID is a UUID v7, just verify it's not empty
     test:assertTrue(workflowId.length() > 0, "Workflow ID should be generated");
-    test:assertTrue(workflowId.startsWith("simpleWorkflow-"), "Workflow ID should be prefixed with process name");
     
     workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
     

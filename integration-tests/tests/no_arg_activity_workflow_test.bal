@@ -34,10 +34,8 @@ function testSingleNoArgActivityExecution() returns error? {
     NoArgWorkflowInput input = {id: testId};
     string workflowId = check workflow:run(singleNoArgActivityWorkflow, input);
     
-    // Verify workflow ID is generated
+    // Verify workflow ID is generated (UUID v7)
     test:assertTrue(workflowId.length() > 0, "Workflow ID should be generated");
-    test:assertTrue(workflowId.startsWith("singleNoArgActivityWorkflow-"), 
-        "Workflow ID should be prefixed with process name");
     
     workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
     
@@ -54,10 +52,8 @@ function testMultipleNoArgActivitiesExecution() returns error? {
     NoArgWorkflowInput input = {id: testId};
     string workflowId = check workflow:run(multipleNoArgActivitiesWorkflow, input);
     
-    // Verify workflow ID is generated
+    // Verify workflow ID is generated (UUID v7)
     test:assertTrue(workflowId.length() > 0, "Workflow ID should be generated");
-    test:assertTrue(workflowId.startsWith("multipleNoArgActivitiesWorkflow-"), 
-        "Workflow ID should be prefixed with process name");
     
     workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
     

@@ -333,11 +333,11 @@ public final class CorrelationExtractor {
     
     /**
      * Generates a workflow ID using UUID v7 (time-ordered UUID).
-     * Format: processName-<uuid7>
-     * Example: orderProcess-019c19e6-68f6-7e9c-ba1c-62a6e71f7802
+     * Format: UUID v7 (e.g., "019c19e6-68f6-7e9c-ba1c-62a6e71f7802")
+     * Example: 019c19e6-68f6-7e9c-ba1c-62a6e71f7802
      */
-    public static String generateWorkflowId(String processName) {
-        return processName + "-" + generateUuidV7();
+    public static String generateWorkflowId() {
+        return generateUuidV7();
     }
     
     /**
@@ -454,7 +454,7 @@ public String createInstance(String processName, Object input) {
     }
     
     // Generate workflow ID using UUID v7
-    String workflowId = CorrelationExtractor.generateWorkflowId(processName);
+    String workflowId = CorrelationExtractor.generateWorkflowId();
     
     // Convert correlation keys to Search Attributes
     Map<String, Object> searchAttributes = CorrelationExtractor.toSearchAttributes(correlationKeys);
@@ -737,7 +737,7 @@ if result is error {
 - Process with events but no @CorrelationKey is valid (signals sent via explicit workflowId)
 
 ✅ **Runtime Behavior:**
-- Workflow ID generated using UUID v7 (time-ordered, unique)
+- Workflow ID generated using UUID v7 (time-ordered, unique, no process name prefix)
 - Correlation keys extracted from readonly fields only
 - Search Attributes registered with capitalized field names
 - Duplicate detection prevents starting workflow with same correlation keys

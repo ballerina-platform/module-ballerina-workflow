@@ -37,6 +37,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   `sendData(function workflow, string workflowId, string dataName, anydata data) returns error?`
   (previously used optional named parameters with `boolean|error` return)
 - **[Breaking]** Removed automatic correlation-based signal routing from `sendData()`
+- **[Breaking]** Workflow instance IDs are now plain UUID v7 strings (previously prefixed with process name)
 - Removed compiler plugin error codes WORKFLOW_118, WORKFLOW_119, WORKFLOW_120 (no longer applicable with required sendData params)
 - Changed WORKFLOW_112 (ambiguous signal types) from error to warning
 

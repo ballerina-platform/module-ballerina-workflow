@@ -29,9 +29,8 @@ function testSingleActivityExecution() returns error? {
     GreetInput input = {id: testId, name: "Alice"};
     string workflowId = check workflow:run(singleActivityWorkflow, input);
     
-    // Workflow ID is now UUID v7 based, just verify it's not empty
+    // Workflow ID is a UUID v7, just verify it's not empty
     test:assertTrue(workflowId.length() > 0, "Workflow ID should be generated");
-    test:assertTrue(workflowId.startsWith("singleActivityWorkflow-"), "Workflow ID should be prefixed with process name");
     
     workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
     

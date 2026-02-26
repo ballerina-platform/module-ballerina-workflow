@@ -202,17 +202,14 @@ public final class CorrelationExtractor {
      *   <li>Sortability by creation time</li>
      *   <li>No collisions even in clustered environments</li>
      * </ul>
-     * Format: {@code processName-<uuid7>}
+     * Format: UUID v7 string (e.g., "019c19e6-68f6-7e9c-ba1c-62a6e71f7802")
      * <p>
      * Correlation keys are stored as Temporal search attributes, not embedded in the workflow ID.
      *
-     * @param processName the process name for namespacing
-     * @return workflow ID in format: processName-uuid7
+     * @return workflow ID as a UUID v7 string
      */
-    public static String generateWorkflowId(String processName) {
-        // Generate UUID v7 (time-ordered UUID)
-        // Correlation keys are stored as search attributes, not in the workflow ID
-        return processName + "-" + generateUuidV7();
+    public static String generateWorkflowId() {
+        return generateUuidV7();
     }
 
     /**

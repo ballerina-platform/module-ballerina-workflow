@@ -36,8 +36,8 @@ function testGetWorkflowInfo() returns error? {
     // Get workflow info (may still be running or completed)
     workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowInfo(workflowId);
     
-    // Workflow ID is UUID v7 based now, verify it starts with process name
-    test:assertTrue(execInfo.workflowId.startsWith("infoTestWorkflow-"), "Workflow ID should be prefixed with process name");
+    // Workflow ID is a UUID v7
+    test:assertTrue(execInfo.workflowId.length() > 0, "Workflow ID should be generated");
     test:assertTrue(execInfo.status == "RUNNING" || execInfo.status == "COMPLETED", 
         "Status should be RUNNING or COMPLETED");
 }
@@ -54,6 +54,6 @@ function testGetWorkflowInfoAfterCompletion() returns error? {
     workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
     
     test:assertEquals(execInfo.status, "COMPLETED", "Workflow should be completed");
-    test:assertTrue(execInfo.workflowId.startsWith("infoTestWorkflow-"), "Workflow ID should be prefixed with process name");
+    test:assertTrue(execInfo.workflowId.length() > 0, "Workflow ID should be generated");
     test:assertEquals(execInfo.result, "Processed: Diana", "Result should match");
 }

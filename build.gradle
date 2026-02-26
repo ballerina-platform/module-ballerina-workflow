@@ -251,8 +251,9 @@ task startSharedTestServer {
         if (temporalBinary == null) {
             throw new GradleException(
                 "Temporal CLI not found in PATH. Please install it:\n" +
-                "  macOS:  brew install temporal\n" +
-                "  Linux:  curl -sSf https://temporal.download/cli | sh\n" +
+                "  macOS:   brew install temporal\n" +
+                "  Linux:   curl -sL https://github.com/temporalio/cli/releases/download/v1.6.0/temporal_cli_1.6.0_linux_amd64.tar.gz | tar xz\n" +
+                "  Windows: https://github.com/temporalio/cli/releases\n" +
                 "  Or download from: https://github.com/temporalio/cli/releases")
         }
 

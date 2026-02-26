@@ -30,7 +30,10 @@ jobs:
 
       - name: Install Temporal CLI
         run: |
-          curl -sSf https://temporal.download/cli | sh
+          TEMPORAL_CLI_VERSION="1.6.0"
+          curl -sL "https://github.com/temporalio/cli/releases/download/v${TEMPORAL_CLI_VERSION}/temporal_cli_${TEMPORAL_CLI_VERSION}_linux_amd64.tar.gz" -o /tmp/temporal.tar.gz
+          mkdir -p "${HOME}/.temporalio/bin"
+          tar -xzf /tmp/temporal.tar.gz -C "${HOME}/.temporalio/bin"
           echo "${HOME}/.temporalio/bin" >> $GITHUB_PATH
 
       - name: Set ENV Variables
@@ -70,7 +73,8 @@ jobs:
 
       - name: Install Temporal CLI
         run: |
-          Invoke-WebRequest -Uri "https://temporal.download/cli/archive/latest?platform=windows&arch=amd64" -OutFile "$env:TEMP\temporal.zip"
+          $version = "1.6.0"
+          Invoke-WebRequest -Uri "https://github.com/temporalio/cli/releases/download/v$version/temporal_cli_${version}_windows_amd64.zip" -OutFile "$env:TEMP\temporal.zip"
           Expand-Archive -Path "$env:TEMP\temporal.zip" -DestinationPath "$env:USERPROFILE\.temporalio\bin" -Force
           echo "$env:USERPROFILE\.temporalio\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
 

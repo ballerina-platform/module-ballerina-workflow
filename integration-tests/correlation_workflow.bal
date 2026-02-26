@@ -44,7 +44,9 @@ import ballerina/workflow;
 # + quantity - The quantity ordered
 # + price - The unit price
 type CorrelatedOrderInput record {|
+    @workflow:CorrelationKey
     readonly string customerId;  // Correlation key
+    @workflow:CorrelationKey
     readonly string orderId;     // Correlation key
     string product;              // Regular field
     int quantity;                // Regular field
@@ -60,7 +62,9 @@ type CorrelatedOrderInput record {|
 # + amount - The payment amount
 # + paymentMethod - The payment method used
 type CorrelatedPaymentSignal record {|
+    @workflow:CorrelationKey
     readonly string customerId;  // Must match CorrelatedOrderInput
+    @workflow:CorrelationKey
     readonly string orderId;     // Must match CorrelatedOrderInput
     string txnId;                // Signal-specific data
     decimal amount;              // Signal-specific data
@@ -74,7 +78,9 @@ type CorrelatedPaymentSignal record {|
 # + trackingNumber - The shipment tracking number
 # + carrier - The carrier name
 type CorrelatedShipmentSignal record {|
+    @workflow:CorrelationKey
     readonly string customerId;
+    @workflow:CorrelationKey
     readonly string orderId;
     string trackingNumber;
     string carrier;
@@ -193,6 +199,7 @@ function correlatedOrderWorkflow(
 # + requestId - The request identifier (correlation key)
 # + message - The message content
 type SimpleCorrelatedInput record {|
+    @workflow:CorrelationKey
     readonly string requestId;
     string message;
 |};
@@ -202,6 +209,7 @@ type SimpleCorrelatedInput record {|
 # + requestId - The request identifier (must match SimpleCorrelatedInput)
 # + response - The response content
 type SimpleCorrelatedResponse record {|
+    @workflow:CorrelationKey
     readonly string requestId;
     string response;
 |};

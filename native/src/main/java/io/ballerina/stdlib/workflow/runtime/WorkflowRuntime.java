@@ -295,6 +295,49 @@ public final class WorkflowRuntime {
     }
 
     /**
+     * Sends a signal directly to a workflow by its workflow ID.
+     * <p>
+     * This method is used when the caller knows the exact workflow ID.
+     * No correlation key lookup is needed.
+     *
+     * @param workflowId the workflow ID to send the signal to
+     * @param signalName the name of the signal to send
+     * @param signalData the signal data (can be null)
+     * @return true if the signal was sent successfully
+     * @throws RuntimeException if the workflow client is not initialized or signal fails
+     */
+    public boolean sendSignalToWorkflow(String workflowId, String signalName, Object signalData) {
+        WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+        if (client == null) {
+            throw new RuntimeException("Workflow client not initialized. Ensure worker is initialized.");
+        }
+
+        if (signalName == null || signalName.isEmpty()) {
+            throw new RuntimeException("Signal name is required when sending signal by workflowId");
+        }
+
+        try {
+            // Create an untyped workflow stub for the existing workflow
+            WorkflowStub workflowStub = client.newUntypedWorkflowStub(workflowId);
+
+            // Send the signal to the workflow
+            if (signalData != null) {
+                workflowStub.signal(signalName, signalData);
+            } else {
+                workflowStub.signal(signalName);
+            }
+
+            LOGGER.debug("Sent signal directly to workflow: id={}, signalName={}", 
+                    workflowId, signalName);
+            return true;
+
+        } catch (Exception e) {
+            LOGGER.error("Failed to send signal to workflow {}: {}", workflowId, e.getMessage(), e);
+            throw new RuntimeException("Failed to send signal: " + e.getMessage(), e);
+        }
+    }
+
+    /**
      * Sends an event (signal) to a running workflow.
      * The target workflow ID is extracted from the "id" field in the event data.
      *

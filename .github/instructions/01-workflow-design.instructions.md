@@ -19,17 +19,20 @@ public annotation Process on function;
 
 # Marks a function as a workflow activity
 public annotation Activity on function;
+
+# Marks a record field as a correlation key for signal routing
+public annotation CorrelationKey on record field;
 ```
 
 #### Public API Functions ([functions.bal](ballerina/functions.bal))
 ```ballerina
 # Start a new workflow instance
-public isolated function createInstance(function processFunction, map<anydata> input) 
+public isolated function createInstance(function processFunction, map<anydata>? input = ()) 
     returns string|error;
 
-# Send an event/signal to a running workflow
-public isolated function sendEvent(function processFunction, map<anydata> eventData, 
-    string? signalName = ()) returns boolean|error;
+# Send data to a running workflow
+public isolated function sendData(function processFunction, string? workflowId = (),
+    string? signalName = (), map<anydata>? signalData = ()) returns boolean|error;
 
 # Register a process with the singleton worker
 public isolated function registerProcess(function processFunction, string processName, 
@@ -38,15 +41,10 @@ public isolated function registerProcess(function processFunction, string proces
 
 #### Context Client Class ([context.bal](ballerina/context.bal))
 ```ballerina
-# Record type for activity parameters
-public type Parameters record {|
-    anydata...;
-|};
-
 # Workflow execution context
 public client class Context {
     # Call an activity from within a workflow
-    remote function callActivity(function activityFunction, Parameters args, 
+    remote function callActivity(function activityFunction, map<anydata> args = {}, 
         typedesc<anydata> T = <>) returns T|error;
     
     # Sleep for the specified duration (deterministic)
@@ -120,7 +118,7 @@ public static class BallerinaActivityAdapter implements DynamicActivity {
 #### WorkflowNative.java
 Location: [WorkflowNative.java](native/src/main/java/io/ballerina/stdlib/workflow/runtime/nativeimpl/WorkflowNative.java)
 
-Implements `createInstance()` and `sendEvent()` by interacting with Temporal's `WorkflowClient`.
+Implements `createInstance()` and `sendData()` by interacting with Temporal's `WorkflowClient`.
 
 ## Usage Patterns
 
@@ -183,12 +181,12 @@ function processWithEvents(
 
 | Component | Requirement |
 |-----------|-------------|
-| Process input | Subtype of `anydata`, must include `readonly` fields for correlation if using signals |
+| Process input | Subtype of `anydata`, must have `@workflow:CorrelationKey` fields for correlation if using signals |
 | Process return | Subtype of `anydata` or `error` |
 | Activity params | Subtype of `anydata` |
 | Activity return | Subtype of `anydata` or `error` |
 | Signal futures | `future<T>` where `T` is subtype of `anydata` |
-| Event data | Subtype of `anydata`, must include `id` field for correlation |
+| Event data | Subtype of `anydata`, must include correlation key fields for signal routing |
 
 ## Success Criteria
 
@@ -201,7 +199,7 @@ function processWithEvents(
 
 ✅ **Runtime Behavior:**
 - `createInstance()` successfully starts workflows and returns workflow ID
-- `sendEvent()` successfully sends signals to running workflows
+- `sendData()` successfully sends data to running workflows
 - `ctx->callActivity()` executes activities and returns results
 - Process functions execute deterministically (same inputs → same outputs)
 - Activities execute exactly once (not repeated during replay)

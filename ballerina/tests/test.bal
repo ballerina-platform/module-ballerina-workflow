@@ -18,7 +18,7 @@ import ballerina/test;
 
 // Note: Module-level tests focus on registration and introspection.
 // These tests work with the lazy gRPC connection (no active Temporal server needed).
-// For workflow execution tests (createInstance, sendEvent), a separate integration test 
+// For workflow execution tests (createInstance, sendData), a separate integration test 
 // suite should be created that initializes the embedded test server before registering workflows.
 //
 // IMPORTANT: With the singleton worker pattern, we cannot clear the registry between tests.

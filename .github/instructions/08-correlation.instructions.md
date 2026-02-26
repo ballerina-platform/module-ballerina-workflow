@@ -1,4 +1,4 @@
-# Correlation Keys via Readonly Fields
+# Correlation Keys via @workflow:CorrelationKey Annotation
 
 applyTo: "**/*.bal,**/WorkflowValidatorTask.java,**/WorkflowWorkerNative.java,**/WorkflowRuntime.java,**/CorrelationExtractor.java"
 
@@ -6,23 +6,24 @@ applyTo: "**/*.bal,**/WorkflowValidatorTask.java,**/WorkflowWorkerNative.java,**
 
 ## Overview
 
-Correlation keys enable workflows to be identified by business identifiers (not just workflow IDs). This feature uses **readonly fields** in record types to define correlation keys that:
+Correlation keys enable workflows to be identified by business identifiers (not just workflow IDs). This feature uses **`@workflow:CorrelationKey` annotation** on `readonly` record fields to define correlation keys that:
 
 1. Identify the target workflow instance when sending signals
 2. Register as Temporal Search Attributes for visibility queries
 3. Enable lookup of workflows by business identifiers
 4. **Prevent duplicate workflows** - detect and reject attempts to start workflows with duplicate correlation keys
 
-## Core Concept: Readonly Fields as Correlation Keys
+## Core Concept: @CorrelationKey Annotation on Readonly Fields
 
-In Ballerina, `readonly` fields in a record type are immutable after initialization. We leverage this semantic to define **correlation keys** - fields that remain constant throughout the workflow lifecycle.
+In Ballerina, fields annotated with `@workflow:CorrelationKey` define **correlation keys** - fields that remain constant throughout the workflow lifecycle. These fields must also be `readonly`.
 
 ### Design Principles
 
 1. **Type Constraint**: Input types must be `record {| anydata...; |}` (record types)
-2. **Correlation via Readonly**: Fields marked `readonly` become correlation keys
-3. **Signal Matching**: Signal data types must have the **same readonly fields** (name and type) as the process input for correlation
-4. **Events Require Readonly Fields**: If a process has events (signals), input MUST have readonly fields for correlation
+2. **Correlation via Annotation**: Fields marked with `@workflow:CorrelationKey` become correlation keys
+3. **Readonly Required**: `@CorrelationKey` fields must also be `readonly` (enforced by WORKFLOW_117)
+4. **Signal Matching**: Signal data types must have the **same @CorrelationKey fields** (name and type) as the process input for correlation
+5. **Events Require Correlation Keys**: If a process has events (signals), input MUST have `@CorrelationKey` fields for correlation
 
 ## Current Implementation
 
@@ -32,7 +33,9 @@ In Ballerina, `readonly` fields in a record type are immutable after initializat
 ```ballerina
 // Order input with correlation keys
 type OrderInput record {|
+    @workflow:CorrelationKey
     readonly string orderId;      // Correlation key #1
+    @workflow:CorrelationKey
     readonly string customerId;   // Correlation key #2
     string productName;           // Regular field (not for correlation)
     int quantity;
@@ -40,7 +43,9 @@ type OrderInput record {|
 
 // Payment signal with SAME correlation keys
 type PaymentSignal record {|
+    @workflow:CorrelationKey
     readonly string orderId;      // Must match OrderInput.orderId
+    @workflow:CorrelationKey
     readonly string customerId;   // Must match OrderInput.customerId
     decimal amount;
     string transactionRef;
@@ -59,7 +64,7 @@ function orderProcess(
 
 #### Starting Workflow
 ```ballerina
-// Start workflow - readonly fields become Search Attributes
+// Start workflow - @CorrelationKey fields become Search Attributes
 OrderInput input = {
     orderId: "ORD-12345",
     customerId: "CUST-789",
@@ -83,7 +88,7 @@ PaymentSignal payment = {
 };
 
 // Lookup by correlation keys, then send signal
-_ = check workflow:sendEvent(orderProcess, payment, "payment");
+_ = check workflow:sendData(orderProcess, signalName = "payment", signalData = payment);
 ```
 
 #### Duplicate Detection
@@ -117,17 +122,20 @@ Location: [WorkflowValidatorTask.java](compiler-plugin/src/main/java/io/ballerin
 
 **Correlation Validation Rules:**
 - **WORKFLOW_113**: Input type must be a record type (not plain anydata)
-- **WORKFLOW_114**: Signal constraint types must have same readonly fields as input type
-- **WORKFLOW_115**: Readonly field type mismatch between input and signal types
-- **WORKFLOW_116**: Process with events MUST have readonly fields for correlation
+- **WORKFLOW_114**: Signal constraint types must have same @CorrelationKey fields as input type
+- **WORKFLOW_115**: @CorrelationKey field type mismatch between input and signal types
+- **WORKFLOW_120**: sendData without workflowId requires @CorrelationKey fields in the process
 
 ```java
 /**
  * Validates correlation key consistency between process input and signal types.
  * 
  * Rules:
- * 1. If process has events, input MUST have readonly fields for correlation
- * 2. All signal types must have the SAME readonly fields as the input
+ * 1. @CorrelationKey fields are NOT mandatory for processes with events
+ *    (signals can be sent via workflowId + signalName without correlation keys)
+ * 2. If @CorrelationKey fields exist, they must be readonly (WORKFLOW_117)
+ * 3. If @CorrelationKey fields exist, signal types must have matching fields
+ * 4. WORKFLOW_120 enforces @CorrelationKey only when sendData is called without workflowId
  */
 private void validateCorrelationKeys(
         FunctionDefinitionNode functionNode,
@@ -135,36 +143,40 @@ private void validateCorrelationKeys(
         RecordTypeSymbol inputType,
         List<RecordTypeSymbol> signalTypes) {
     
-    // Extract readonly fields from input type
-    Map<String, TypeSymbol> inputReadonlyFields = extractReadonlyFields(inputType);
+    // Extract @CorrelationKey-annotated fields from input type
+    Map<String, TypeSymbol> inputCorrelationFields = extractCorrelationKeyFields(inputType);
     
-    // If process has events but no readonly fields, report error
-    if (inputReadonlyFields.isEmpty() && !signalTypes.isEmpty()) {
-        reportDiagnostic(context, functionNode, WorkflowConstants.WORKFLOW_116,
-            "Process with events must have readonly fields in input for correlation. " +
-            "Add 'readonly' modifier to fields used for correlation (e.g., 'readonly string customerId')");
+    // If no @CorrelationKey fields, that's valid.
+    // Signals can be sent via workflowId + signalName without correlation keys.
+    // WORKFLOW_120 in SendEventValidatorTask enforces correlation keys
+    // only when sendData is called without workflowId.
+    if (inputCorrelationFields.isEmpty()) {
         return;
     }
     
-    // Validate each signal type has matching readonly fields
+    // Validate @CorrelationKey fields are also readonly (WORKFLOW_117)
+    validateCorrelationKeyReadonly(functionNode, context, inputType);
+    
+    // Validate each signal type has matching @CorrelationKey fields
     for (RecordTypeSymbol signalType : signalTypes) {
-        Map<String, TypeSymbol> signalReadonlyFields = extractReadonlyFields(signalType);
+        validateCorrelationKeyReadonly(functionNode, context, signalType);
+        Map<String, TypeSymbol> signalCorrelationFields = extractCorrelationKeyFields(signalType);
         
-        // Check if signal has all input's readonly fields
-        for (Map.Entry<String, TypeSymbol> entry : inputReadonlyFields.entrySet()) {
+        // Check if signal has all input's @CorrelationKey fields
+        for (Map.Entry<String, TypeSymbol> entry : inputCorrelationFields.entrySet()) {
             String fieldName = entry.getKey();
             TypeSymbol inputFieldType = entry.getValue();
             
-            if (!signalReadonlyFields.containsKey(fieldName)) {
+            if (!signalCorrelationFields.containsKey(fieldName)) {
                 reportDiagnostic(context, functionNode, WorkflowConstants.WORKFLOW_114,
-                    String.format("Signal type '%s' is missing readonly field '%s' " +
+                    String.format("Signal type '%s' is missing @CorrelationKey field '%s' " +
                         "required for correlation with process input",
                         signalType.getName().orElse("unknown"), fieldName));
             } else {
-                TypeSymbol signalFieldType = signalReadonlyFields.get(fieldName);
+                TypeSymbol signalFieldType = signalCorrelationFields.get(fieldName);
                 if (!inputFieldType.signature().equals(signalFieldType.signature())) {
                     reportDiagnostic(context, functionNode, WorkflowConstants.WORKFLOW_115,
-                        String.format("Readonly field '%s' type mismatch: " +
+                        String.format("@CorrelationKey field '%s' type mismatch: " +
                             "input has '%s', signal '%s' has '%s'",
                             fieldName, inputFieldType.signature(),
                             signalType.getName().orElse("unknown"),
@@ -176,18 +188,30 @@ private void validateCorrelationKeys(
 }
 
 /**
- * Extracts readonly fields from a record type.
+ * Extracts fields with @workflow:CorrelationKey annotation from a record type.
  */
-private Map<String, TypeSymbol> extractReadonlyFields(RecordTypeSymbol recordType) {
-    Map<String, TypeSymbol> readonlyFields = new LinkedHashMap<>();
+private Map<String, TypeSymbol> extractCorrelationKeyFields(RecordTypeSymbol recordType) {
+    Map<String, TypeSymbol> correlationFields = new LinkedHashMap<>();
     
     for (RecordFieldSymbol field : recordType.fieldDescriptors().values()) {
-        if (field.isReadonly()) {
-            readonlyFields.put(field.getName().get(), field.typeDescriptor());
+        if (hasCorrelationKeyAnnotation(field)) {
+            correlationFields.put(field.getName().get(), field.typeDescriptor());
         }
     }
     
-    return readonlyFields;
+    return correlationFields;
+}
+
+/**
+ * Checks if a field has @workflow:CorrelationKey annotation.
+ */
+private boolean hasCorrelationKeyAnnotation(RecordFieldSymbol field) {
+    return field.annotations().stream()
+        .anyMatch(a -> a.typeDescriptor()
+            .filter(t -> t.moduleID().moduleName().equals("workflow"))
+            .flatMap(t -> t.getName())
+            .filter(n -> n.equals("CorrelationKey"))
+            .isPresent());
 }
 ```
 
@@ -198,16 +222,19 @@ public static final String WORKFLOW_113 = "WORKFLOW_113";
 public static final String WORKFLOW_114 = "WORKFLOW_114";
 public static final String WORKFLOW_115 = "WORKFLOW_115";
 public static final String WORKFLOW_116 = "WORKFLOW_116";
+public static final String WORKFLOW_117 = "WORKFLOW_117";
 
 public static final String PROCESS_INPUT_MUST_BE_RECORD = 
     "@Process function input parameter must be a record type for correlation support";
 public static final String SIGNAL_MISSING_CORRELATION_KEY = 
-    "Signal type '%s' is missing readonly field '%s' required for correlation with process input";
+    "Signal type '%s' is missing @CorrelationKey field '%s' required for correlation with process input";
 public static final String CORRELATION_KEY_TYPE_MISMATCH = 
-    "Readonly field '%s' type mismatch: input has '%s', signal '%s' has '%s'";
+    "@CorrelationKey field '%s' type mismatch: input has '%s', signal '%s' has '%s'";
 public static final String CORRELATION_KEY_REQUIRED_FOR_EVENTS = 
-    "Process with events must have readonly fields in input for correlation. " +
-    "Add 'readonly' modifier to fields used for correlation (e.g., 'readonly string customerId')";
+    "Process with events must have @workflow:CorrelationKey fields in input for correlation. " +
+    "Add '@workflow:CorrelationKey' annotation to fields used for correlation";
+public static final String CORRELATION_KEY_MUST_BE_READONLY =
+    "@CorrelationKey field '%s' must also be declared as 'readonly'";
 ```
 
 ### 3. Native Layer
@@ -365,7 +392,7 @@ public final class CorrelationExtractor {
 }
 ```
 
-#### WorkflowRuntime.java - createInstance with Duplicate Detection
+#### WorkflowRuntime.java - create with Duplicate Detection
 Location: [WorkflowRuntime.java](native/src/main/java/io/ballerina/stdlib/workflow/runtime/WorkflowRuntime.java)
 
 ```java
@@ -486,7 +513,7 @@ private TypedSearchAttributes buildTypedSearchAttributes(Map<String, Object> att
 }
 ```
 
-#### WorkflowRuntime.java - sendEvent with Correlation Lookup
+#### WorkflowRuntime.java - sendData with Correlation Lookup
 ```java
 /**
  * Sends a signal to a workflow using correlation keys for lookup.
@@ -710,10 +737,12 @@ if result is error {
 ## Success Criteria
 
 ✅ **Compile-Time Validation:**
-- Process with events requires readonly fields (WORKFLOW_116 error if missing)
-- Signal types have same readonly fields as input (WORKFLOW_114 if missing)
-- Readonly field types match between input and signals (WORKFLOW_115 if mismatch)
+- sendData without workflowId requires @CorrelationKey fields in process (WORKFLOW_120 if missing)
+- If @CorrelationKey fields exist, signal types must have matching fields (WORKFLOW_114 if missing)
+- @CorrelationKey field types must match between input and signals (WORKFLOW_115 if mismatch)
+- @CorrelationKey fields must also be readonly (WORKFLOW_117 if not)
 - Input type must be record type (WORKFLOW_113 if not)
+- Process with events but no @CorrelationKey is valid (signals sent via workflowId)
 
 ✅ **Runtime Behavior:**
 - Workflow ID generated using UUID v7 (time-ordered, unique)

@@ -18,8 +18,6 @@
 
 plugins {
     id 'com.github.spotbugs'
-    id 'com.github.johnrengelman.shadow'
-    id 'de.undercouch.download'
     id 'net.researchgate.release'
     id 'jacoco'
 }
@@ -101,8 +99,9 @@ task publishWorkflowToLocal {
     doLast {
         logger.lifecycle("Publishing workflow module to Ballerina local repository...")
         
-        def balaFile = file("${project(':workflow-ballerina').buildDir}/bal_build_target/bala/ballerina-workflow-java21-0.1.0.bala")
-        def localRepoDir = file("${System.getProperty('user.home')}/.ballerina/repositories/local/bala/ballerina/workflow/0.1.0/java21")
+        def tomlVersion = project.version.replace("-SNAPSHOT", "")
+        def balaFile = file("${project(':workflow-ballerina').buildDir}/bal_build_target/bala/ballerina-workflow-java21-${tomlVersion}.bala")
+        def localRepoDir = file("${System.getProperty('user.home')}/.ballerina/repositories/local/bala/ballerina/workflow/${tomlVersion}/java21")
         
         localRepoDir.mkdirs()
         
@@ -152,20 +151,21 @@ task buildSamples {
 }
 
 // ============================================================================
-// Shared Temporal Test Server Configuration
-// Single server instance shared across module and integration tests
+// Temporal CLI Dev Server for Testing
+// Uses 'temporal server start-dev' which supports full Visibility API
+// (including ListWorkflowExecutions and custom search attributes)
 // ============================================================================
 
 import java.net.InetSocketAddress
 import java.net.Socket
 
 def testServerProcess = null
-def testServerWorkDir = file("${project(':workflow-native-test').buildDir}")
+def testServerWorkDir = file("${project.buildDir}/test-server")
 def testServerStarted = false
 def testServerPort = 7233
 def usingExternalServer = false
 
-// Helper function to check if a server is running on a given port
+// Helper: check if a server is running on a given port
 def isServerRunning = { String host, int port ->
     try {
         def socket = new Socket()
@@ -177,33 +177,37 @@ def isServerRunning = { String host, int port ->
     }
 }
 
-// Helper function to stop the test server
+// Helper: find temporal CLI binary in system PATH
+def findTemporalCli = {
+    try {
+        def process = ['which', 'temporal'].execute()
+        process.waitFor()
+        if (process.exitValue() == 0) {
+            def path = process.text.trim()
+            if (path && new File(path).exists()) return path
+        }
+    } catch (Exception ignored) {}
+
+    return null
+}
+
+// Helper: stop the test server
 def stopTestServerIfRunning = {
     if (!testServerStarted || usingExternalServer) {
         return
     }
-    
+
     try {
         def pidFile = new File(testServerWorkDir, 'test-server.pid')
         if (pidFile.exists()) {
-            def shadowJarFile = project(':workflow-native-test').tasks.shadowJar.archiveFile.get().asFile
-            
-            logger.lifecycle("Stopping shared embedded Temporal test server...")
-            
-            def command = [
-                'java', '-jar', 
-                shadowJarFile.absolutePath,
-                'stop', 
-                testServerWorkDir.absolutePath
-            ]
-            
-            def processBuilder = new ProcessBuilder(command)
-            processBuilder.inheritIO()
-            processBuilder.directory(testServerWorkDir)
-            def stopProcess = processBuilder.start()
-            stopProcess.waitFor()
-            
-            logger.lifecycle("Shared embedded Temporal test server stopped")
+            def pid = pidFile.text.trim().toLong()
+            logger.lifecycle("Stopping Temporal dev server (PID: ${pid})...")
+            ProcessHandle.of(pid).ifPresent { it.destroy() }
+            pidFile.delete()
+            logger.lifecycle("Temporal dev server stopped")
+        } else if (testServerProcess != null && testServerProcess.isAlive()) {
+            testServerProcess.destroy()
+            logger.lifecycle("Temporal dev server stopped")
         }
     } catch (Exception e) {
         logger.warn("Error stopping test server: ${e.message}")
@@ -214,96 +218,105 @@ def stopTestServerIfRunning = {
 // Register a build listener to stop the server after build completes
 gradle.buildFinished { result ->
     if (testServerStarted) {
-        logger.lifecycle("Build finished - stopping shared test server...")
+        logger.lifecycle("Build finished - stopping Temporal dev server...")
         stopTestServerIfRunning()
     }
 }
 
 // Start shared test server - used by both module and integration tests
 task startSharedTestServer {
-    dependsOn ":workflow-native-test:shadowJar"
-    
+
     doLast {
         // First, check if an external Temporal server is running (for debugging)
         if (isServerRunning("localhost", testServerPort)) {
             def externalTarget = "localhost:${testServerPort}"
             logger.lifecycle("=" * 60)
             logger.lifecycle("External Temporal server detected at ${externalTarget}")
-            logger.lifecycle("Using external server for debugging (skipping embedded server)")
+            logger.lifecycle("Using external server (skipping dev server)")
             logger.lifecycle("=" * 60)
-            
+
             usingExternalServer = true
             testServerStarted = true
-            
+
             // Write Config.toml files for both test suites
             writeTestConfig("${project(':workflow-ballerina').projectDir}/tests/Config.toml", externalTarget, true)
             writeTestConfig("${project(':workflow-integration-tests').projectDir}/tests/Config.toml", externalTarget, true)
-            
+
             logger.lifecycle("Test Config.toml files updated with external server URL: ${externalTarget}")
             return
         }
-        
-        // No external server found - start embedded test server
-        logger.lifecycle("No external Temporal server found on port ${testServerPort}")
-        logger.lifecycle("Starting shared embedded Temporal test server on port ${testServerPort}...")
-        
-        def shadowJarFile = project(':workflow-native-test').tasks.shadowJar.archiveFile.get().asFile
-        
-        // Ensure work directory exists
+
+        // No external server found - start Temporal dev server via CLI
+        def temporalBinary = findTemporalCli()
+        if (temporalBinary == null) {
+            throw new GradleException(
+                "Temporal CLI not found in PATH. Please install it:\n" +
+                "  macOS:  brew install temporal\n" +
+                "  Linux:  curl -sSf https://temporal.download/cli | sh\n" +
+                "  Or download from: https://github.com/temporalio/cli/releases")
+        }
+
+        logger.lifecycle("Starting Temporal dev server on port ${testServerPort}...")
+        logger.lifecycle("  Using CLI: ${temporalBinary}")
+
         testServerWorkDir.mkdirs()
-        
+
+        def dbFile = new File(testServerWorkDir, "temporal-test.db")
+
         def command = [
-            'java', '-jar', 
-            shadowJarFile.absolutePath,
-            'start', 
-            testServerWorkDir.absolutePath,
-            testServerPort.toString()
+            temporalBinary,
+            'server', 'start-dev',
+            '--port', testServerPort.toString(),
+            '--headless',
+            '--db-filename', dbFile.absolutePath,
+            '--log-format', 'text',
+            '--log-level', 'warn'
         ]
-        
+
         def processBuilder = new ProcessBuilder(command)
         processBuilder.redirectOutput(new File(testServerWorkDir, 'test-server.log'))
         processBuilder.redirectErrorStream(true)
         processBuilder.directory(testServerWorkDir)
         testServerProcess = processBuilder.start()
-        
-        // Wait for the server to start and write the target file with content
-        def targetFile = new File(testServerWorkDir, 'test-server.target')
-        def maxWait = 30 // seconds
+
+        // Write PID file for cleanup
+        def pidFile = new File(testServerWorkDir, 'test-server.pid')
+        pidFile.text = String.valueOf(testServerProcess.pid())
+
+        // Wait for server to be ready
+        def target = "localhost:${testServerPort}"
+        def maxWait = 30
         def waited = 0
-        def target = ""
         while (waited < maxWait) {
             Thread.sleep(1000)
             waited++
-            if (targetFile.exists()) {
-                target = targetFile.text.trim()
-                if (target.length() > 0) {
-                    logger.lifecycle("Target file found with content after ${waited}s")
-                    break
-                }
+            if (isServerRunning("localhost", testServerPort)) {
+                logger.lifecycle("Temporal dev server ready after ${waited}s")
+                break
             }
-            logger.lifecycle("Waiting for test server to start... (${waited}s)")
+            logger.lifecycle("Waiting for Temporal dev server... (${waited}s)")
         }
-        
-        if (target.length() > 0) {
+
+        if (isServerRunning("localhost", testServerPort)) {
             testServerStarted = true
-            logger.lifecycle("Shared embedded Temporal test server started at: ${target}")
-            
+            logger.lifecycle("Temporal dev server started at: ${target}")
+
             // Write Config.toml files for both test suites
             writeTestConfig("${project(':workflow-ballerina').projectDir}/tests/Config.toml", target, false)
             writeTestConfig("${project(':workflow-integration-tests').projectDir}/tests/Config.toml", target, false)
-            
+
             logger.lifecycle("Test Config.toml files updated with server URL: ${target}")
         } else {
             // Check if process is still running
-            if (!testServerProcess.isAlive()) {
+            if (testServerProcess != null && !testServerProcess.isAlive()) {
                 def exitCode = testServerProcess.exitValue()
-                logger.error("Test server process exited with code: ${exitCode}")
+                logger.error("Temporal dev server process exited with code: ${exitCode}")
                 def logFile = new File(testServerWorkDir, 'test-server.log')
                 if (logFile.exists()) {
-                    logger.error("Test server log:\n${logFile.text}")
+                    logger.error("Server log:\n${logFile.text}")
                 }
             }
-            throw new GradleException("Test server failed to start within ${maxWait} seconds")
+            throw new GradleException("Temporal dev server failed to start within ${maxWait} seconds")
         }
     }
 }

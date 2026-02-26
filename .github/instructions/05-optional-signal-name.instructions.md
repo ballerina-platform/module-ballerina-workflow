@@ -1,4 +1,4 @@
-# Optional signalName in sendEvent
+# Optional signalName in sendData
 
 applyTo: "**/SendEventValidatorTask.java,**/EventExtractor.java,**/WorkflowNative.java"
 
@@ -6,7 +6,11 @@ applyTo: "**/SendEventValidatorTask.java,**/EventExtractor.java,**/WorkflowNativ
 
 ## Overview
 
-The `sendEvent()` function supports an optional `signalName` parameter. When omitted, the signal name is inferred at runtime by matching the event data structure against the workflow's events record. If ambiguous signal types exist, a compile-time error (WORKFLOW_112) is reported.
+The `sendData()` function supports optional `workflowId`, `signalName`, and `signalData` parameters. When `signalName` is omitted, the signal name is inferred at runtime by matching the signal data structure against the workflow's events record. If ambiguous signal types exist, a compile-time error (WORKFLOW_112) is reported.
+
+Two routing modes are supported:
+1. **workflowId-based**: Direct signal delivery to a specific workflow instance (requires `workflowId` + `signalName`)
+2. **Correlation-based**: Signal routing via `@CorrelationKey` fields in the signal data (requires `signalData` with correlation fields)
 
 ## Current Implementation
 
@@ -14,15 +18,17 @@ The `sendEvent()` function supports an optional `signalName` parameter. When omi
 
 #### API Signature ([functions.bal](ballerina/functions.bal))
 ```ballerina
-# Send an event/signal to a running workflow
+# Send data to a running workflow
 # + processFunction - The process function identifying the workflow type
-# + eventData - The signal data (must contain "id" field for correlation)
-# + signalName - Optional signal name. If not provided, inferred from event data structure
+# + workflowId - Optional workflow ID for direct data delivery
+# + signalName - Optional signal name. If not provided, inferred from data structure
+# + signalData - Optional data (must contain @CorrelationKey fields for correlation-based routing)
 # + return - `true` if successful, error otherwise
-public isolated function sendEvent(
+public isolated function sendData(
     function processFunction,
-    map<anydata> eventData,
-    string? signalName = ()
+    string? workflowId = (),
+    string? signalName = (),
+    map<anydata>? signalData = ()
 ) returns boolean|error;
 ```
 
@@ -300,7 +306,7 @@ function singleSignalWorkflow(
 
 // ✅ signalName omitted - only one signal
 SignalData data = {id: workflowId, value: "test"};
-_ = check workflow:sendEvent(singleSignalWorkflow, data);
+_ = check workflow:sendData(singleSignalWorkflow, signalData = data);
 ```
 
 ### Distinct Signal Types (Structure-Based Inference)
@@ -317,10 +323,10 @@ function distinctSignalsWorkflow(
 
 // ✅ Each type has unique structure - inference works
 ApprovalSignal approval = {id: wfId, approved: true, approverName: "John"};
-_ = check workflow:sendEvent(distinctSignalsWorkflow, approval);
+_ = check workflow:sendData(distinctSignalsWorkflow, signalData = approval);
 
 PaymentSignal payment = {id: wfId, amount: 100.0, transactionRef: "TXN123"};
-_ = check workflow:sendEvent(distinctSignalsWorkflow, payment);
+_ = check workflow:sendData(distinctSignalsWorkflow, signalData = payment);
 ```
 
 ### Ambiguous Signal Types (Requires Explicit signalName)
@@ -338,10 +344,10 @@ function ambiguousSignalsWorkflow(
 SignalType data = {id: wfId, value: "test"};
 
 // ❌ COMPILE ERROR: WORKFLOW_112 - Ambiguous without explicit signalName
-_ = check workflow:sendEvent(ambiguousSignalsWorkflow, data);
+_ = check workflow:sendData(ambiguousSignalsWorkflow, signalData = data);
 
 // ✅ FIX: Provide explicit signalName
-_ = check workflow:sendEvent(ambiguousSignalsWorkflow, data, "signal1");
+_ = check workflow:sendData(ambiguousSignalsWorkflow, signalName = "signal1", signalData = data);
 ```
 
 ## Success Criteria

@@ -36,6 +36,7 @@ import ballerina/workflow;
 # + id - The workflow identifier (readonly for correlation)
 # + data - The input data
 type SingleSignalInferInput record {|
+    @workflow:CorrelationKey
     readonly string id;
     string data;
 |};
@@ -45,6 +46,7 @@ type SingleSignalInferInput record {|
 # + id - The workflow identifier (readonly for correlation)
 # + response - The response data
 type SingleInferSignal record {|
+    @workflow:CorrelationKey
     readonly string id;
     string response;
 |};
@@ -88,6 +90,7 @@ function singleSignalInferWorkflow(
 # + id - The workflow identifier (readonly for correlation)
 # + requestId - The request identifier
 type DistinctTypesInput record {|
+    @workflow:CorrelationKey
     readonly string id;
     string requestId;
 |};
@@ -98,6 +101,7 @@ type DistinctTypesInput record {|
 # + approved - Whether the approval was granted
 # + approverName - The name of the approver
 type ApprovalTypeSignal record {|
+    @workflow:CorrelationKey
     readonly string id;
     boolean approved;
     string approverName;
@@ -109,6 +113,7 @@ type ApprovalTypeSignal record {|
 # + amount - The payment amount
 # + transactionRef - The transaction reference
 type PaymentTypeSignal record {|
+    @workflow:CorrelationKey
     readonly string id;
     decimal amount;
     string transactionRef;
@@ -120,6 +125,7 @@ type PaymentTypeSignal record {|
 # + rating - The feedback rating
 # + comment - The feedback comment
 type FeedbackTypeSignal record {|
+    @workflow:CorrelationKey
     readonly string id;
     int rating;
     string comment;
@@ -173,6 +179,7 @@ function distinctTypesWorkflow(
 # + id - The workflow identifier (readonly for correlation)
 # + message - The input message
 type ExplicitSignalInput record {|
+    @workflow:CorrelationKey
     readonly string id;
     string message;
 |};
@@ -182,6 +189,7 @@ type ExplicitSignalInput record {|
 # + id - The workflow identifier (readonly for correlation)
 # + value - The signal value
 type AmbiguousSignal1 record {|
+    @workflow:CorrelationKey
     readonly string id;
     string value;
 |};
@@ -191,6 +199,7 @@ type AmbiguousSignal1 record {|
 # + id - The workflow identifier (readonly for correlation)
 # + value - The signal value
 type AmbiguousSignal2 record {|
+    @workflow:CorrelationKey
     readonly string id;
     string value;
 |};
@@ -236,6 +245,7 @@ function explicitSignalNameWorkflow(
 # + id - The workflow identifier (readonly for correlation)
 # + orderId - The order identifier
 type MixedSignalsInput record {|
+    @workflow:CorrelationKey
     readonly string id;
     string orderId;
 |};
@@ -246,6 +256,7 @@ type MixedSignalsInput record {|
 # + statusCode - The status code
 # + description - The status description
 type StatusUpdateSignal record {|
+    @workflow:CorrelationKey
     readonly string id;
     int statusCode;
     string description;

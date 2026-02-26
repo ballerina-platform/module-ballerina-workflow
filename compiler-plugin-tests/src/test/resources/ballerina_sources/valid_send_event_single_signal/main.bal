@@ -18,11 +18,13 @@ import ballerina/workflow;
 
 // Single signal type
 type ResponseSignal record {|
+    @workflow:CorrelationKey
     readonly string id;
     string message;
 |};
 
 type TestInput record {|
+    @workflow:CorrelationKey
     readonly string id;
     string name;
 |};
@@ -47,5 +49,5 @@ function singleSignalProcess(
 // This is VALID - single signal can always be inferred
 function validSendToSingleSignalProcess() returns error? {
     ResponseSignal data = {id: "test-1", message: "hello"};
-    _ = check workflow:sendEvent(singleSignalProcess, data);
+    _ = check workflow:sendData(singleSignalProcess, signalData = data);
 }

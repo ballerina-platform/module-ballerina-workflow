@@ -18,16 +18,19 @@ import ballerina/workflow;
 
 // Types with same structure (ambiguous)
 type SignalType1 record {|
+    @workflow:CorrelationKey
     readonly string id;
     string value;
 |};
 
 type SignalType2 record {|
+    @workflow:CorrelationKey
     readonly string id;
     string value;
 |};
 
 type TestInput record {|
+    @workflow:CorrelationKey
     readonly string id;
     string name;
 |};
@@ -53,5 +56,5 @@ function ambiguousSignalProcess(
 // This is VALID because we provide explicit signalName parameter
 function validSendWithExplicitSignalName() returns error? {
     SignalType1 data = {id: "test-1", value: "test"};
-    _ = check workflow:sendEvent(ambiguousSignalProcess, data, "signal1");
+    _ = check workflow:sendData(ambiguousSignalProcess, signalName = "signal1", signalData = data);
 }

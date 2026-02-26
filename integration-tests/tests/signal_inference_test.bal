@@ -49,7 +49,7 @@ function testSingleSignalInference() returns error? {
     
     // Send signal WITHOUT explicit signalName - should be inferred (only one signal)
     SingleInferSignal signalData = {id: testId, response: "inferred response"};
-    boolean sent = check workflow:sendEvent(singleSignalInferWorkflow, signalData);
+    boolean sent = check workflow:sendData(singleSignalInferWorkflow, signalData = signalData);
     test:assertTrue(sent, "Signal should be sent successfully without explicit signalName");
     
     // Wait for workflow to complete
@@ -85,21 +85,21 @@ function testDistinctTypesSignalInference() returns error? {
     
     // Send approval signal WITHOUT explicit signalName - distinct type (has 'approved' boolean)
     ApprovalTypeSignal approvalData = {id: testId, approved: true, approverName: "Manager"};
-    boolean approvalSent = check workflow:sendEvent(distinctTypesWorkflow, approvalData);
+    boolean approvalSent = check workflow:sendData(distinctTypesWorkflow, signalData = approvalData);
     test:assertTrue(approvalSent, "Approval signal should be inferred by type structure");
     
     runtime:sleep(1);
     
     // Send payment signal WITHOUT explicit signalName - distinct type (has 'amount' decimal)
     PaymentTypeSignal paymentData = {id: testId, amount: 250.50, transactionRef: "TXN-123"};
-    boolean paymentSent = check workflow:sendEvent(distinctTypesWorkflow, paymentData);
+    boolean paymentSent = check workflow:sendData(distinctTypesWorkflow, signalData = paymentData);
     test:assertTrue(paymentSent, "Payment signal should be inferred by type structure");
     
     runtime:sleep(1);
     
     // Send feedback signal WITHOUT explicit signalName - distinct type (has 'rating' int)
     FeedbackTypeSignal feedbackData = {id: testId, rating: 5, comment: "Excellent"};
-    boolean feedbackSent = check workflow:sendEvent(distinctTypesWorkflow, feedbackData);
+    boolean feedbackSent = check workflow:sendData(distinctTypesWorkflow, signalData = feedbackData);
     test:assertTrue(feedbackSent, "Feedback signal should be inferred by type structure");
     
     // Wait for workflow to complete
@@ -144,14 +144,14 @@ function testExplicitSignalNameWithAmbiguousTypes() returns error? {
     
     // Send first ambiguous signal WITH explicit signalName
     AmbiguousSignal1 signal1Data = {id: testId, value: "value from signal 1"};
-    boolean sent1 = check workflow:sendEvent(explicitSignalNameWorkflow, signal1Data, "ambig1");
+    boolean sent1 = check workflow:sendData(explicitSignalNameWorkflow, signalName = "ambig1", signalData = signal1Data);
     test:assertTrue(sent1, "First ambiguous signal should be sent with explicit name");
     
     runtime:sleep(1);
     
     // Send second ambiguous signal WITH explicit signalName
     AmbiguousSignal2 signal2Data = {id: testId, value: "value from signal 2"};
-    boolean sent2 = check workflow:sendEvent(explicitSignalNameWorkflow, signal2Data, "ambig2");
+    boolean sent2 = check workflow:sendData(explicitSignalNameWorkflow, signalName = "ambig2", signalData = signal2Data);
     test:assertTrue(sent2, "Second ambiguous signal should be sent with explicit name");
     
     // Wait for workflow to complete
@@ -187,7 +187,7 @@ function testMixedSignalsWorkflow() returns error? {
     
     // Send status update signal without explicit name - should be inferred (only one signal)
     StatusUpdateSignal statusData = {id: testId, statusCode: 200, description: "Success"};
-    boolean sent = check workflow:sendEvent(mixedSignalsWorkflow, statusData);
+    boolean sent = check workflow:sendData(mixedSignalsWorkflow, signalData = statusData);
     test:assertTrue(sent, "Status signal should be inferred (single signal in record)");
     
     // Wait for workflow to complete

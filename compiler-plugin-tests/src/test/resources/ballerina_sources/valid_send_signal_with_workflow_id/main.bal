@@ -16,47 +16,40 @@
 
 import ballerina/workflow;
 
-// Types with DIFFERENT structure (not ambiguous)
+// Signal types WITHOUT @CorrelationKey - correlation keys are not needed
+// when signals are sent via workflowId
 type ApprovalSignal record {|
-    @workflow:CorrelationKey
-    readonly string id;
     boolean approved;
     string approver;
 |};
 
-type PaymentSignal record {|
-    @workflow:CorrelationKey
-    readonly string id;
-    string txnId;
-    decimal amount;
+// Input type WITHOUT @CorrelationKey fields
+type OrderInput record {|
+    string orderId;
+    string customerName;
 |};
 
-type TestInput record {|
-    @workflow:CorrelationKey
-    readonly string id;
-    string name;
-|};
-
-type TestResult record {|
+type OrderResult record {|
     string status;
 |};
 
-// Valid: Process with distinct signal types - no ambiguity
+// Valid: Process with events but NO @CorrelationKey fields.
+// This is valid because signals can be routed via workflowId + signalName.
 @workflow:Process
-function distinctSignalProcess(
+function orderProcessNoCorrelation(
     workflow:Context ctx,
-    TestInput input,
+    OrderInput input,
     record {|
         future<ApprovalSignal> approval;
-        future<PaymentSignal> payment;
     |} signals
-) returns TestResult|error {
+) returns OrderResult|error {
     ApprovalSignal a = check wait signals.approval;
-    return {status: "OK"};
+    return {status: a.approved ? "approved" : "rejected"};
 }
 
-// This is VALID - distinct types allow signal name inference without explicit signalName
-function validSendWithoutSignalName() returns error? {
-    ApprovalSignal data = {id: "test-1", approved: true, approver: "admin"};
-    _ = check workflow:sendData(distinctSignalProcess, signalData = data);
+// Valid: sendData with workflowId + signalName (no correlation keys needed)
+function validSendSignalWithWorkflowId() returns error? {
+    ApprovalSignal data = {approved: true, approver: "admin"};
+    _ = check workflow:sendData(orderProcessNoCorrelation,
+        workflowId = "wf-12345", signalName = "approval", signalData = data);
 }

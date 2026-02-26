@@ -73,14 +73,29 @@ public enum WorkflowDiagnostic {
                     + "You must provide an explicit signalName parameter to disambiguate",
             DiagnosticSeverity.ERROR),
     WORKFLOW_114("WORKFLOW_114",
-            "Signal type '%s' is missing readonly field '%s' required for correlation with process input",
+            "Signal type '%s' is missing @CorrelationKey field '%s' required for correlation with process input",
             DiagnosticSeverity.ERROR),
     WORKFLOW_115("WORKFLOW_115",
-            "Readonly field '%s' type mismatch: input has '%s', signal '%s' has '%s'",
+            "@CorrelationKey field '%s' type mismatch: input has '%s', signal '%s' has '%s'",
             DiagnosticSeverity.ERROR),
     WORKFLOW_116("WORKFLOW_116",
-            "Process with events must have readonly fields in input for correlation. "
-                    + "Add 'readonly' modifier to fields used for correlation (e.g., 'readonly string customerId')",
+            "Process with events must have @CorrelationKey fields in input for correlation. "
+                    + "Add '@workflow:CorrelationKey' annotation and 'readonly' modifier to fields used "
+                    + "for correlation (e.g., '@workflow:CorrelationKey readonly string customerId')",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_117("WORKFLOW_117",
+            "@CorrelationKey field '%s' must also be declared as 'readonly'",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_118("WORKFLOW_118",
+            "sendData requires at least workflowId with signalName, or signalName with signalData "
+                    + "for correlation-based routing",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_119("WORKFLOW_119",
+            "sendData with workflowId requires signalName to be provided",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_120("WORKFLOW_120",
+            "sendData without workflowId requires the process '%s' to have @CorrelationKey "
+                    + "fields defined in its input type for correlation-based data routing",
             DiagnosticSeverity.ERROR);
 
     private final String code;

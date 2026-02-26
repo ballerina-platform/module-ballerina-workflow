@@ -62,7 +62,7 @@ function testSimpleCorrelatedWorkflow() returns error? {
         requestId: requestId,
         response: "Correlated response!"
     };
-    boolean sent = check workflow:sendEvent(simpleCorrelatedWorkflow, signalData, "response");
+    boolean sent = check workflow:sendData(simpleCorrelatedWorkflow, signalName = "response", signalData = signalData);
     test:assertTrue(sent, "Signal should be sent successfully");
     
     // Wait for workflow to complete
@@ -119,7 +119,7 @@ function testCorrelatedOrderWorkflow() returns error? {
         amount: 999.99,
         paymentMethod: "CREDIT_CARD"
     };
-    boolean paymentSent = check workflow:sendEvent(correlatedOrderWorkflow, payment, "payment");
+    boolean paymentSent = check workflow:sendData(correlatedOrderWorkflow, signalName = "payment", signalData = payment);
     test:assertTrue(paymentSent, "Payment signal should be sent successfully");
     
     // Give workflow time to process payment
@@ -132,7 +132,7 @@ function testCorrelatedOrderWorkflow() returns error? {
         trackingNumber: "TRACK-456",
         carrier: "FedEx"
     };
-    boolean shipmentSent = check workflow:sendEvent(correlatedOrderWorkflow, shipment, "shipment");
+    boolean shipmentSent = check workflow:sendData(correlatedOrderWorkflow, signalName = "shipment", signalData = shipment);
     test:assertTrue(shipmentSent, "Shipment signal should be sent successfully");
     
     // Wait for workflow to complete
@@ -184,7 +184,7 @@ function testCorrelatedOrderWorkflowInvalidPayment() returns error? {
         amount: 0.0,  // Invalid amount
         paymentMethod: "CASH"
     };
-    boolean paymentSent = check workflow:sendEvent(correlatedOrderWorkflow, payment, "payment");
+    boolean paymentSent = check workflow:sendData(correlatedOrderWorkflow, signalName = "payment", signalData = payment);
     test:assertTrue(paymentSent, "Payment signal should be sent");
     
     // Wait for workflow to complete (with payment invalid status)
@@ -227,8 +227,8 @@ function testMultipleConcurrentCorrelatedWorkflows() returns error? {
     SimpleCorrelatedResponse signal2 = {requestId: requestId2, response: "Response 2"};
     
     // Send in reverse order to verify correct correlation routing
-    boolean sent2 = check workflow:sendEvent(simpleCorrelatedWorkflow, signal2, "response");
-    boolean sent1 = check workflow:sendEvent(simpleCorrelatedWorkflow, signal1, "response");
+    boolean sent2 = check workflow:sendData(simpleCorrelatedWorkflow, signalName = "response", signalData = signal2);
+    boolean sent1 = check workflow:sendData(simpleCorrelatedWorkflow, signalName = "response", signalData = signal1);
     
     test:assertTrue(sent1 && sent2, "Both signals should be sent");
     

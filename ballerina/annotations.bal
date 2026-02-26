@@ -45,3 +45,28 @@ public annotation Process on function;
 # }
 # ```
 public annotation Activity on function;
+
+# Marks a record field as a correlation key for workflow-signal matching.
+#
+# Correlation keys are used to:
+# 1. Generate a composite workflow ID (e.g., "processName-customerId=C123-orderId=O456")
+# 2. Create Temporal Search Attributes for workflow discovery
+# 3. Match signals to the correct running workflow instance
+# 4. Prevent duplicate workflows with the same correlation keys
+#
+# Fields annotated with `@CorrelationKey` **must** also be `readonly`.
+# Signal types used with correlated workflows must have the same `@CorrelationKey`
+# fields (matching name and type) as the process input type.
+#
+# # Example
+# ```ballerina
+# type OrderInput record {|
+#     @workflow:CorrelationKey
+#     readonly string customerId;
+#     @workflow:CorrelationKey
+#     readonly string orderId;
+#     string product;      // Not a correlation key
+#     int quantity;         // Not a correlation key
+# |};
+# ```
+public annotation CorrelationKey on record field;

@@ -36,6 +36,7 @@ public final class WorkflowConstants {
     // Annotation names
     public static final String PROCESS_ANNOTATION = "Process";
     public static final String ACTIVITY_ANNOTATION = "Activity";
+    public static final String CORRELATION_KEY_ANNOTATION = "CorrelationKey";
 
     // Function names
     public static final String CALL_ACTIVITY_FUNCTION = "callActivity";
@@ -48,5 +49,10 @@ public final class WorkflowConstants {
     public static final String IS_ANALYSIS_COMPLETED = "workflow.analysis.completed";
 
     // Function names for validation
+    public static final String SEND_SIGNAL_FUNCTION = "sendData";
+
+    // Deprecated function names (for backward compatibility detection)
     public static final String SEND_EVENT_FUNCTION = "sendEvent";
+    public static final String CREATE_INSTANCE_FUNCTION = "createInstance";
+    public static final String CREATE_FUNCTION = "create";
 }

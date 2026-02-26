@@ -10,7 +10,7 @@
 pluginManagement {
     plugins {
         id "com.github.spotbugs" version "${spotbugsPluginVersion}"
-        id "com.github.johnrengelman.shadow" version "${shadowJarPluginVersion}"
+
         id "de.undercouch.download" version "${downloadPluginVersion}"
         id "net.researchgate.release" version "${releasePluginVersion}"
         id "io.ballerina.plugin" version "${ballerinaGradlePluginVersion}"
@@ -37,7 +37,6 @@ rootProject.name = 'workflow'
 // Java modules
 include ':checkstyle'
 include ':workflow-native'
-include ':workflow-native-test'
 include ':workflow-compiler-plugin'
 include ':workflow-compiler-plugin-tests'
 
@@ -50,7 +49,6 @@ include ':workflow-integration-tests'
 project(':checkstyle').projectDir = file('build-config/checkstyle')
 project(':workflow-compiler-plugin').projectDir = file('compiler-plugin')
 project(':workflow-native').projectDir = file('native')
-project(':workflow-native-test').projectDir = file('native-test')
 project(':workflow-compiler-plugin-tests').projectDir = file('compiler-plugin-tests')
 project(':workflow-ballerina').projectDir = file('ballerina')
 project(':workflow-integration-tests').projectDir = file('integration-tests')

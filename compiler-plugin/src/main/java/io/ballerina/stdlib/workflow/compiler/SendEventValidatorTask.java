@@ -19,6 +19,7 @@
 package io.ballerina.stdlib.workflow.compiler;
 
 import io.ballerina.compiler.api.SemanticModel;
+import io.ballerina.compiler.api.symbols.AnnotationSymbol;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.FunctionTypeSymbol;
 import io.ballerina.compiler.api.symbols.FutureTypeSymbol;
@@ -34,6 +35,7 @@ import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
 import io.ballerina.compiler.syntax.tree.FunctionCallExpressionNode;
 import io.ballerina.compiler.syntax.tree.NameReferenceNode;
+import io.ballerina.compiler.syntax.tree.NamedArgumentNode;
 import io.ballerina.compiler.syntax.tree.PositionalArgumentNode;
 import io.ballerina.compiler.syntax.tree.QualifiedNameReferenceNode;
 import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
@@ -50,10 +52,15 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Validation task for sendEvent function calls.
+ * Validation task for sendData function calls.
  * <p>
- * Validates that sendEvent calls provide an explicit signalName when the process
- * has structurally equivalent signal types in its events record.
+ * Validates:
+ * <ul>
+ *   <li>sendData calls provide at least workflowId+signalName or signalName+signalData</li>
+ *   <li>If workflowId is provided, signalName must also be provided</li>
+ *   <li>If workflowId is not provided, process must have @CorrelationKey fields</li>
+ *   <li>Ambiguous signal types require explicit signalName</li>
+ * </ul>
  *
  * @since 0.1.0
  */
@@ -65,96 +72,149 @@ public class SendEventValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCo
             return;
         }
 
-        // Check if this is a sendEvent call
-        if (!isSendEventCall(callNode, context.semanticModel())) {
+        // Check if this is a sendData call
+        if (!isSendDataCall(callNode, context.semanticModel())) {
             return;
         }
         
-        // Check if signalName is provided (3rd argument)
         SeparatedNodeList<FunctionArgumentNode> arguments = callNode.arguments();
-        boolean hasSignalName = arguments.size() >= 3;
         
-        if (hasSignalName) {
-            // signalName is provided, no need to check for ambiguity
-            return;
+        // Parse named arguments to determine which optional params are provided
+        boolean hasWorkflowId = false;
+        boolean hasSignalName = false;
+        boolean hasSignalData = false;
+        
+        for (int i = 0; i < arguments.size(); i++) {
+            FunctionArgumentNode arg = arguments.get(i);
+            if (arg instanceof NamedArgumentNode namedArg) {
+                String argName = namedArg.argumentName().name().text();
+                switch (argName) {
+                    case "workflowId" -> hasWorkflowId = true;
+                    case "signalName" -> hasSignalName = true;
+                    case "signalData" -> hasSignalData = true;
+                    default -> { /* ignore unknown */ }
+                }
+            }
         }
         
-        // Get the process function from the first argument
-        if (arguments.isEmpty()) {
-            return;
-        }
-        
-        FunctionArgumentNode firstArg = arguments.get(0);
-        if (!(firstArg instanceof PositionalArgumentNode)) {
-            return;
-        }
-        
-        ExpressionNode processExpr = ((PositionalArgumentNode) firstArg).expression();
-        
-        // Get the type of the process function to check its events record
-        Optional<TypeSymbol> typeOpt = context.semanticModel().typeOf(processExpr);
-        if (typeOpt.isEmpty()) {
-            return;
-        }
-        
-        TypeSymbol processType = typeOpt.get();
-        if (processType.typeKind() != TypeDescKind.FUNCTION) {
-            return;
-        }
-        
-        // Get the function type to find the events parameter
-        if (!(processType instanceof FunctionTypeSymbol funcType)) {
-            return;
-        }
-
-        Optional<List<ParameterSymbol>> paramsOpt = funcType.params();
-        if (paramsOpt.isEmpty()) {
-            return;
-        }
-        
-        // Find the events record parameter
-        TypeSymbol eventsType = findEventsRecordType(paramsOpt.get());
-        if (eventsType == null) {
-            return;
-        }
-        
-        // Check for structurally equivalent signal types
-        String[] ambiguousSignals = findAmbiguousSignals(eventsType);
-        if (ambiguousSignals.length > 0) {
-            // Get the process name for the error message
-            String processName = getProcessName(processExpr, context.semanticModel());
-            
-            // Report error: sendEvent called without signalName but events are ambiguous
+        // Case 1: All three optional parameters are missing → error
+        if (!hasWorkflowId && !hasSignalName && !hasSignalData) {
             DiagnosticInfo diagnosticInfo = new DiagnosticInfo(
-                    WorkflowDiagnostic.WORKFLOW_112.getCode(),
-                    WorkflowDiagnostic.WORKFLOW_112.getMessage(
-                            processName, ambiguousSignals[0], ambiguousSignals[1]),
-                    WorkflowDiagnostic.WORKFLOW_112.getSeverity());
+                    WorkflowDiagnostic.WORKFLOW_118.getCode(),
+                    WorkflowDiagnostic.WORKFLOW_118.getMessage(),
+                    WorkflowDiagnostic.WORKFLOW_118.getSeverity());
             context.reportDiagnostic(DiagnosticFactory.createDiagnostic(diagnosticInfo,
                     callNode.functionName().location()));
+            return;
+        }
+        
+        // Case 2: If workflowId is provided, signalName must also be provided
+        if (hasWorkflowId && !hasSignalName) {
+            DiagnosticInfo diagnosticInfo = new DiagnosticInfo(
+                    WorkflowDiagnostic.WORKFLOW_119.getCode(),
+                    WorkflowDiagnostic.WORKFLOW_119.getMessage(),
+                    WorkflowDiagnostic.WORKFLOW_119.getSeverity());
+            context.reportDiagnostic(DiagnosticFactory.createDiagnostic(diagnosticInfo,
+                    callNode.functionName().location()));
+            return;
+        }
+        
+        // Case 3: If workflowId is not provided, check correlation requirements
+        if (!hasWorkflowId) {
+            // Must have signalName and signalData for correlation-based routing  
+            // Get the process function from the first argument to check @CorrelationKey fields
+            if (arguments.isEmpty()) {
+                return;
+            }
+            
+            FunctionArgumentNode firstArg = arguments.get(0);
+            if (!(firstArg instanceof PositionalArgumentNode)) {
+                return;
+            }
+            
+            ExpressionNode processExpr = ((PositionalArgumentNode) firstArg).expression();
+            String processName = getProcessName(processExpr, context.semanticModel());
+            
+            // Check if the process has @CorrelationKey fields
+            boolean hasCorrelationKeys = processHasCorrelationKeys(processExpr, context.semanticModel());
+            if (!hasCorrelationKeys) {
+                DiagnosticInfo diagnosticInfo = new DiagnosticInfo(
+                        WorkflowDiagnostic.WORKFLOW_120.getCode(),
+                        WorkflowDiagnostic.WORKFLOW_120.getMessage(processName),
+                        WorkflowDiagnostic.WORKFLOW_120.getSeverity());
+                context.reportDiagnostic(DiagnosticFactory.createDiagnostic(diagnosticInfo,
+                        callNode.functionName().location()));
+                return;
+            }
+        }
+        
+        // If signalName is not provided, check for ambiguous signal types
+        if (!hasSignalName) {
+            if (arguments.isEmpty()) {
+                return;
+            }
+            
+            FunctionArgumentNode firstArg = arguments.get(0);
+            if (!(firstArg instanceof PositionalArgumentNode)) {
+                return;
+            }
+            
+            ExpressionNode processExpr = ((PositionalArgumentNode) firstArg).expression();
+            
+            // Get the function type to find the events parameter
+            Optional<TypeSymbol> typeOpt = context.semanticModel().typeOf(processExpr);
+            if (typeOpt.isEmpty() || typeOpt.get().typeKind() != TypeDescKind.FUNCTION) {
+                return;
+            }
+            
+            if (!(typeOpt.get() instanceof FunctionTypeSymbol funcType)) {
+                return;
+            }
+
+            Optional<List<ParameterSymbol>> paramsOpt = funcType.params();
+            if (paramsOpt.isEmpty()) {
+                return;
+            }
+            
+            TypeSymbol eventsType = findEventsRecordType(paramsOpt.get());
+            if (eventsType == null) {
+                return;
+            }
+            
+            String[] ambiguousSignals = findAmbiguousSignals(eventsType);
+            if (ambiguousSignals.length > 0) {
+                String processName = getProcessName(processExpr, context.semanticModel());
+                DiagnosticInfo diagnosticInfo = new DiagnosticInfo(
+                        WorkflowDiagnostic.WORKFLOW_112.getCode(),
+                        WorkflowDiagnostic.WORKFLOW_112.getMessage(
+                                processName, ambiguousSignals[0], ambiguousSignals[1]),
+                        WorkflowDiagnostic.WORKFLOW_112.getSeverity());
+                context.reportDiagnostic(DiagnosticFactory.createDiagnostic(diagnosticInfo,
+                        callNode.functionName().location()));
+            }
         }
     }
     
     /**
-     * Checks if the function call is a call to workflow:sendEvent.
+     * Checks if the function call is a call to workflow:sendData.
      */
-    private boolean isSendEventCall(FunctionCallExpressionNode callNode, SemanticModel semanticModel) {
+    private boolean isSendDataCall(FunctionCallExpressionNode callNode, SemanticModel semanticModel) {
         NameReferenceNode funcName = callNode.functionName();
         
-        // Check for qualified name (workflow:sendEvent)
+        // Check for qualified name (workflow:sendData)
         if (funcName instanceof QualifiedNameReferenceNode qualifiedName) {
             String moduleName = qualifiedName.modulePrefix().text();
             String functionName = qualifiedName.identifier().text();
             
             if (WorkflowConstants.PACKAGE_NAME.equals(moduleName) && 
-                    WorkflowConstants.SEND_EVENT_FUNCTION.equals(functionName)) {
+                    WorkflowConstants.SEND_SIGNAL_FUNCTION.equals(functionName)) {
                 return true;
             }
         }
         
-        // Check for simple name (sendEvent) - need to verify it's from workflow module
+        // Check for simple name (sendData) - need to verify it's from workflow module
         if (funcName instanceof SimpleNameReferenceNode simpleName) {
-            if (!WorkflowConstants.SEND_EVENT_FUNCTION.equals(simpleName.name().text())) {
+            if (!WorkflowConstants.SEND_SIGNAL_FUNCTION.equals(simpleName.name().text())) {
                 return false;
             }
             
@@ -175,6 +235,63 @@ public class SendEventValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCo
             return moduleNameOpt.isPresent() && WorkflowConstants.PACKAGE_NAME.equals(moduleNameOpt.get());
         }
         
+        return false;
+    }
+    
+    /**
+     * Checks if a process function has @CorrelationKey fields in its input type.
+     */
+    private boolean processHasCorrelationKeys(ExpressionNode processExpr, SemanticModel semanticModel) {
+        Optional<TypeSymbol> typeOpt = semanticModel.typeOf(processExpr);
+        if (typeOpt.isEmpty() || typeOpt.get().typeKind() != TypeDescKind.FUNCTION) {
+            return false;
+        }
+        
+        if (!(typeOpt.get() instanceof FunctionTypeSymbol funcType)) {
+            return false;
+        }
+
+        Optional<List<ParameterSymbol>> paramsOpt = funcType.params();
+        if (paramsOpt.isEmpty()) {
+            return false;
+        }
+        
+        // Find the input parameter (skip Context and events)
+        for (ParameterSymbol param : paramsOpt.get()) {
+            TypeSymbol paramType = param.typeDescriptor();
+            TypeSymbol actualType = WorkflowPluginUtils.resolveTypeReference(paramType);
+            
+            if (actualType.typeKind() == TypeDescKind.RECORD && actualType instanceof RecordTypeSymbol recordType) {
+                // Skip events records (those with future fields)
+                if (containsFutureFields(recordType)) {
+                    continue;
+                }
+                // Check if this record has @CorrelationKey annotated fields
+                for (RecordFieldSymbol field : recordType.fieldDescriptors().values()) {
+                    if (hasCorrelationKeyAnnotation(field)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Checks if a record field has the @workflow:CorrelationKey annotation.
+     */
+    private boolean hasCorrelationKeyAnnotation(RecordFieldSymbol field) {
+        for (AnnotationSymbol annotation : field.annotations()) {
+            Optional<String> nameOpt = annotation.getName();
+            if (nameOpt.isPresent()
+                    && WorkflowConstants.CORRELATION_KEY_ANNOTATION.equals(nameOpt.get())) {
+                Optional<ModuleSymbol> moduleOpt = annotation.getModule();
+                if (moduleOpt.isPresent() && WorkflowPluginUtils.isWorkflowModule(moduleOpt.get())) {
+                    return true;
+                }
+            }
+        }
         return false;
     }
     

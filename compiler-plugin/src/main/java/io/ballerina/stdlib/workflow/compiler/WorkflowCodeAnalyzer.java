@@ -41,7 +41,7 @@ public class WorkflowCodeAnalyzer extends CodeAnalyzer {
         // Add syntax node analysis task for function definitions
         analysisContext.addSyntaxNodeAnalysisTask(new WorkflowValidatorTask(), SyntaxKind.FUNCTION_DEFINITION);
         
-        // Add syntax node analysis task for function calls to validate sendEvent usage
+        // Add syntax node analysis task for function calls to validate sendData usage
         analysisContext.addSyntaxNodeAnalysisTask(new SendEventValidatorTask(), SyntaxKind.FUNCTION_CALL);
     }
 }

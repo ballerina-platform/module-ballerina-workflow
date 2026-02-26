@@ -181,7 +181,7 @@ function orderProcess(
 
 // From client - send event (correlation keys in data are used for routing)
 PaymentEvent paymentData = {orderId: "ORD-001", customerId: "C123", amount: 99.99};
-_ = check workflow:sendEvent(orderProcess, paymentData, "paymentReceived");
+_ = check workflow:sendData(orderProcess, paymentData, "paymentReceived");
 ```
 
 ## Troubleshooting

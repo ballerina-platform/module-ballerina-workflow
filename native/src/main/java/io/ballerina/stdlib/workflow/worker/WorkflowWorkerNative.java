@@ -95,8 +95,6 @@ public final class WorkflowWorkerNative {
     // Flags for singleton state
     private static final AtomicBoolean initialized = new AtomicBoolean(false);
     private static final AtomicBoolean started = new AtomicBoolean(false);
-    private static final AtomicBoolean dynamicWorkflowRegistered = new AtomicBoolean(false);
-    private static final AtomicBoolean dynamicActivityRegistered = new AtomicBoolean(false);
 
     // Store workflow module for creating Context objects
     private static Module workflowModule;
@@ -176,6 +174,14 @@ public final class WorkflowWorkerNative {
 
             // Initialize the SearchAttributeRegistry for correlation key support
             SearchAttributeRegistry.initialize(serviceStubs, ns, serverUrl);
+
+            // Register dynamic workflow and activity adapters eagerly.
+            // This must happen before workerFactory.start() is called.
+            // The adapters route all workflow/activity invocations through PROCESS_REGISTRY
+            // and ACTIVITY_REGISTRY, so processes can be registered at any time.
+            singletonWorker.registerWorkflowImplementationTypes(BallerinaWorkflowAdapter.class);
+            singletonWorker.registerActivitiesImplementations(new BallerinaActivityAdapter());
+            LOGGER.debug("Registered dynamic workflow and activity adapters");
 
             LOGGER.debug("Singleton worker initialized successfully");
             return null;
@@ -264,18 +270,6 @@ public final class WorkflowWorkerNative {
                 }
                 EVENT_REGISTRY.put(workflowType, eventNames);
                 LOGGER.debug("Registered {} events for process: {}", eventNames.size(), workflowType);
-            }
-
-            // Register dynamic workflow implementation ONCE
-            if (dynamicWorkflowRegistered.compareAndSet(false, true)) {
-                singletonWorker.registerWorkflowImplementationTypes(BallerinaWorkflowAdapter.class);
-                LOGGER.debug("Registered dynamic workflow adapter");
-            }
-
-            // Register dynamic activity implementation ONCE
-            if (dynamicActivityRegistered.compareAndSet(false, true)) {
-                singletonWorker.registerActivitiesImplementations(new BallerinaActivityAdapter());
-                LOGGER.debug("Registered dynamic activity adapter");
             }
 
             return true;

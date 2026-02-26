@@ -74,10 +74,10 @@ service /orders on new http:Listener(9094) {
     # Body: {"amount": 1999.99}
     # ```
     resource function post [string orderId]/payment(record {decimal amount;} paymentData) returns json|error {
-        // Send payment signal
+        // Send payment data
         // The field name 'paymentReceived' in the events record determines the signal name
         PaymentConfirmation payment = {orderId: orderId, amount: paymentData.amount};
-        boolean sent = check workflow:sendEvent(processOrderWithPayment, payment, "paymentReceived");
+        boolean sent = check workflow:sendData(processOrderWithPayment, payment, "paymentReceived");
 
         if sent {
             io:println(string `Payment signal sent for order: ${orderId}`);

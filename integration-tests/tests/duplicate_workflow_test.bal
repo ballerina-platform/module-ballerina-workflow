@@ -61,7 +61,7 @@ function testDuplicateWorkflowPrevention() returns error? {
     
     // Clean up - send signal to complete the first workflow
     SimpleSignalData signalData = {id: testId, response: "Completing first workflow"};
-    _ = check workflow:sendEvent(simpleSignalWorkflow, signalData, "response");
+    _ = check workflow:sendData(simpleSignalWorkflow, signalName = "response", signalData = signalData);
 }
 
 @test:Config {
@@ -79,7 +79,7 @@ function testDuplicateAfterCompletionAllowed() returns error? {
     
     // Send signal to complete the first workflow
     SimpleSignalData signalData = {id: testId, response: "Completing workflow"};
-    _ = check workflow:sendEvent(simpleSignalWorkflow, signalData, "response");
+    _ = check workflow:sendData(simpleSignalWorkflow, signalName = "response", signalData = signalData);
     
     // Wait for the workflow to complete
     workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId1, 30);
@@ -101,7 +101,7 @@ function testDuplicateAfterCompletionAllowed() returns error? {
     
     // Clean up - complete the second workflow
     SimpleSignalData signalData2 = {id: testId, response: "Completing second workflow"};
-    _ = check workflow:sendEvent(simpleSignalWorkflow, signalData2, "response");
+    _ = check workflow:sendData(simpleSignalWorkflow, signalName = "response", signalData = signalData2);
 }
 
 @test:Config {
@@ -127,6 +127,6 @@ function testDifferentCorrelationKeysAllowed() returns error? {
     // Clean up - complete both workflows
     SimpleSignalData signal1 = {id: testId1, response: "Done 1"};
     SimpleSignalData signal2 = {id: testId2, response: "Done 2"};
-    _ = check workflow:sendEvent(simpleSignalWorkflow, signal1, "response");
-    _ = check workflow:sendEvent(simpleSignalWorkflow, signal2, "response");
+    _ = check workflow:sendData(simpleSignalWorkflow, signalName = "response", signalData = signal1);
+    _ = check workflow:sendData(simpleSignalWorkflow, signalName = "response", signalData = signal2);
 }

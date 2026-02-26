@@ -17,33 +17,38 @@
 import ballerina/jballerina.java;
 
 
-# Creates a new workflow process instance with the given input.
+# Creates a new workflow process instance.
 #
 # Creates a new instance of the specified workflow process and begins execution.
-# The workflow ID is extracted from the `id` field in the input data.
-# Returns a unique workflow ID that can be used to track, query, or send events
+# Returns a unique workflow ID that can be used to track, query, or send signals
 # to the running workflow.
 #
 # + processFunction - The process function to execute (must be annotated with @Process)
-# + input - The workflow input data (must contain "id" field for correlation)
+# + input - Optional workflow input data. If nil, the workflow is created with no input.
 # + return - The unique workflow ID as a string, or an error if the process fails to start
-public isolated function createInstance(function processFunction, map<anydata> input) returns string|error = @java:Method {
+public isolated function createInstance(function processFunction, map<anydata>? input = ()) returns string|error = @java:Method {
     'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative",
     name: "createInstance"
 } external;
 
-# Sends an event (signal) to a running workflow process.
+# Sends data to a running workflow process.
 #
-# Events can be used to communicate with running workflows and trigger state changes.
-# The workflow can wait for and react to these events using workflow primitives.
-# The `id` field in the event data is used to identify the target workflow instance.
+# Data can be sent to running workflows to trigger state changes.
+# The workflow can wait for and react to this data using future-based event handling.
+#
+# There are two modes of sending data:
+# 1. **By workflowId**: Provide `workflowId` and `signalName` to send directly to a known workflow.
+# 2. **By correlation**: Omit `workflowId` and provide `signalName` and `signalData`. The workflow
+#    must have `@CorrelationKey` fields defined to enable lookup by correlation keys.
 #
 # + processFunction - The process function that identifies the workflow type
-# + eventData - The signal data (must contain "id" field for workflow correlation)
-# + signalName - Optional name of the signal. This should match a field name in the 
-#                workflow's events record parameter. If not provided, defaults to process name.
-# + return - `true` if the event was sent successfully, or an error if sending fails
-public isolated function sendEvent(function processFunction, map<anydata> eventData, string? signalName = ()) returns boolean|error = @java:Method {
+# + workflowId - Optional workflow ID to send the data to directly.
+#                If provided, `signalName` must also be provided.
+# + signalName - Optional name identifying the data. Must match a field name in the workflow's
+#                events record parameter.
+# + signalData - Optional data to send.
+# + return - `true` if the data was sent successfully, or an error if sending fails
+public isolated function sendData(function processFunction, string? workflowId = (), string? signalName = (), map<anydata>? signalData = ()) returns boolean|error = @java:Method {
     'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative"
 } external;
 

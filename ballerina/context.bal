@@ -17,12 +17,6 @@
 import ballerina/jballerina.java;
 import ballerina/time;
 
-# Record type for activity parameters.
-# Used to pass arguments to activity functions in a type-safe manner.
-public type Parameters record {|
-    anydata...;
-|};
-
 # Workflow execution context providing workflow APIs.
 # This is a client object that provides access to workflow operations.
 #
@@ -55,16 +49,16 @@ public client class Context {
     #
     # Example:
     # ```ballerina
-    # string result = check ctx->callActivity(sendEmailActivity, {"email": recipientEmail, "subject": subject});
-    # // For activities with no parameters, pass an empty record:
+    # string result = check ctx->callActivity(sendEmailActivity, {email: recipientEmail, subject: subject});
+    # // For activities with no parameters, pass an empty map:
     # string result = check ctx->callActivity(noArgActivity, {});
     # ```
     #
     # + activityFunction - The activity function to execute (must be annotated with @Activity)
-    # + args - Record containing the arguments to pass to the activity function
+    # + args - Map containing the arguments to pass to the activity function
     # + T - The expected return type (inferred from context or explicitly specified)
     # + return - The result of the activity execution cast to type T, or an error if execution fails
-    remote isolated function callActivity(function activityFunction, Parameters args = {}, typedesc<anydata> T = <>) 
+    remote isolated function callActivity(function activityFunction, map<anydata> args = {}, typedesc<anydata> T = <>) 
             returns T|error = @java:Method {
         'class: "io.ballerina.stdlib.workflow.context.WorkflowContextNative",
         name: "callActivity"

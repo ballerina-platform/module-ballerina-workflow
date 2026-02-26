@@ -124,6 +124,26 @@ task ballerinaTest {
                         "${graalvmFlag} ${testParams} --offline ${debugParams}"
             }
         }
+
+        // Verify Ballerina test results and fail the build if any tests failed
+        def testResultFile = file("${project.projectDir}/target/report/test_results.json")
+        if (testResultFile.exists()) {
+            def slurper = new groovy.json.JsonSlurper()
+            def results = slurper.parse(testResultFile)
+            def failed = results.failed ?: 0
+            def total = results.totalTests ?: 0
+            def passed = results.passed ?: 0
+
+            logger.lifecycle("Integration Test Results: ${passed}/${total} passed, ${failed} failed")
+
+            if (failed > 0) {
+                throw new GradleException(
+                    "Integration tests failed: ${failed} of ${total} tests failed. " +
+                    "See ${project.projectDir}/target/report/test_results.json for details.")
+            }
+        } else {
+            logger.warn("Test results file not found: ${testResultFile}")
+        }
     }
 }
 

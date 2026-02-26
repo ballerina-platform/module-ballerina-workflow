@@ -8,7 +8,6 @@ A Ballerina standard library module providing durable workflow orchestration via
 ### Module Structure
 - `ballerina/` - Core Ballerina module (types, annotations, context, public API)
 - `native/` - Java native implementation (Temporal SDK integration, worker management)
-- `native-test/` - Embedded Temporal test server for integration tests
 - `compiler-plugin/` - Validates `@Process`/`@Activity` annotations, transforms activity calls
 - `compiler-plugin-tests/` - Compiler plugin test suite
 
@@ -18,7 +17,9 @@ A Ballerina standard library module providing durable workflow orchestration via
 
 **Singleton Worker**: One Temporal SDK instance per JVM, initialized at module load via configurable variables. No Listener pattern - use `registerProcess()` + `startWorker()`.
 
-**Context Client Class**: `workflow:Context` is a client class with `callActivity` as a remote method. Users **must** call activities via `ctx->callActivity(activityFunc, args...)`. Direct activity function calls are not allowed.
+**Annotations**: `@Process`, `@Activity`, and `@CorrelationKey` (for marking correlation fields on record types).
+
+**Context Client Class**: `workflow:Context` is a client class with `callActivity` as a remote method. Users **must** call activities via `ctx->callActivity(activityFunc, args...)`. Direct activity function calls are not allowed. Parameters use `map<anydata>` type.
 
 **Compiler Plugin Validation**: The plugin at [WorkflowCompilerPlugin.java](compiler-plugin/src/main/java/io/ballerina/stdlib/workflow/compiler/WorkflowCompilerPlugin.java) performs validation:
 1. Validates that `ctx->callActivity()` calls use functions with `@Activity` annotation (produces `WORKFLOW_107` error otherwise)
@@ -38,8 +39,8 @@ function processName(
 ```
 
 - **Context** (`workflow:Context`): Client class as first parameter. **Required** if calling activities. Provides `callActivity` remote method.
-- **Input**: Workflow input data. If process has events, must have `readonly` fields for correlation (e.g., `readonly string customerId`)
-- **Events**: Optional record with `future<T>` fields for receiving signals. Wait using `check events.event1`. **Requires readonly fields in input for correlation.**
+- **Input**: Workflow input data. If process has events, must have `@workflow:CorrelationKey` annotated `readonly` fields for correlation (e.g., `@workflow:CorrelationKey readonly string customerId`)
+- **Events**: Optional record with `future<T>` fields for receiving signals. Wait using `check events.event1`. **Requires @CorrelationKey fields in input for correlation.**
 
 ### Activity Functions
 ```ballerina
@@ -91,7 +92,7 @@ function processWithErrorHandling(workflow:Context ctx, Input input) returns Out
 ### Type Mappings (Ballerina ↔ Java ↔ Temporal)
 - `map<anydata>` → `BMap<BString, Object>` (use `PredefinedTypes.TYPE_ANYDATA`)
 - `function` → `BFunctionPointer` / `FPValue` (set `StrandMetadata` before calling)
-- Workflow inputs with events must have `readonly` fields for correlation
+- Workflow inputs with events must have `@workflow:CorrelationKey` `readonly` fields for correlation
 
 ### Native Code Patterns
 When calling Ballerina methods from Java:
@@ -116,7 +117,7 @@ fpValue.metadata = new StrandMetadata(true, fpValue.metadata.properties());
 # Run unit tests only (no Temporal server needed)
 ./gradlew :workflow-ballerina:test
 
-# Run integration tests (starts embedded Temporal server on port 7233)
+# Run integration tests (starts Temporal CLI dev server on port 7233)
 ./gradlew :workflow-integration-tests:test
 
 # Run compiler plugin tests
@@ -137,11 +138,12 @@ fpValue.metadata = new StrandMetadata(true, fpValue.metadata.properties());
 - `integration-tests/tests/` - Integration tests with actual Temporal workflow execution
 - `compiler-plugin-tests/` - Compiler plugin validation tests
 
-**Integration Tests** use an embedded Temporal server managed by Gradle:
-1. `startTestServer` task launches shadow JAR from `native-test/` on port **7233**
+**Integration Tests** use a Temporal CLI dev server managed by Gradle:
+1. `startSharedTestServer` checks for existing server on port **7233**, or starts `temporal server start-dev` with SQLite persistence
 2. Writes `tests/Config.toml` with server URL
 3. Ballerina tests connect via configurable
-4. `stopTestServer` runs on completion (even on failure via `buildFinished` listener)
+4. `stopSharedTestServer` runs on completion (even on failure via `buildFinished` listener)
+5. **Prerequisite**: `temporal` CLI must be in PATH (install via `brew install temporal` on macOS or `curl -sSf https://temporal.download/cli | sh` on Linux)
 
 ## Configuration
 
@@ -170,14 +172,18 @@ maxConcurrentWorkflows = 100
 | WORKFLOW_108 | Direct activity call | Direct call to @Activity function (must use ctx->callActivity()) |
 | WORKFLOW_112 | Ambiguous signal types | Multiple signals with same structure, need explicit signalName |
 | WORKFLOW_113 | Input not record type | Process input must be record type for correlation |
-| WORKFLOW_114 | Missing correlation key | Signal missing readonly field present in input |
-| WORKFLOW_115 | Correlation type mismatch | Readonly field type differs between input and signal |
-| WORKFLOW_116 | Events need correlation | Process with events lacks readonly fields in input |
+| WORKFLOW_114 | Missing correlation key | Signal missing @CorrelationKey field present in input |
+| WORKFLOW_115 | Correlation type mismatch | @CorrelationKey field type differs between input and signal |
+| WORKFLOW_116 | Events need correlation | sendData without workflowId on process lacking @CorrelationKey fields (see WORKFLOW_120) |
+| WORKFLOW_117 | CorrelationKey not readonly | @CorrelationKey field must also be declared as readonly |
+| WORKFLOW_118 | sendData missing params | sendData requires workflowId+signalName or signalName+signalData |
+| WORKFLOW_119 | workflowId needs signalName | sendData with workflowId requires signalName |
+| WORKFLOW_120 | No correlation keys | sendData without workflowId requires @CorrelationKey fields in process |
 
 ## Common Pitfalls
 - Register all test processes in `@test:BeforeSuite` - registry cannot be cleared with singleton pattern
 - Process functions must be deterministic - no I/O, use activities instead
-- Workflows with events (signals) must have `readonly` fields in input for correlation
+- Workflows with events (signals) must have `@workflow:CorrelationKey` `readonly` fields in input for correlation
 - Don't mix Listener pattern (deprecated) with singleton pattern
 - **Never use Java blocking calls** in workflow code (causes `PotentialDeadlockException`)
 - Signal waiting uses `TemporalFutureValue.getAndSetWaited()` to intercept Ballerina's `wait` and use `Workflow.await()` instead of blocking `CompletableFuture.get()`

@@ -1,6 +1,6 @@
 [package]
 org = "test"
-name = "invalid_send_event_ambiguous_three_signals"
+name = "valid_send_signal_with_workflow_id"
 version = "0.1.0"
 distribution = "2201.13.0"
 

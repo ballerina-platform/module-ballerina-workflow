@@ -36,6 +36,7 @@ import ballerina/workflow;
 # + orderId - The order identifier
 # + amount - The order amount
 type ApprovalInput record {|
+    @workflow:CorrelationKey
     readonly string id;
     string orderId;
     decimal amount;
@@ -48,6 +49,7 @@ type ApprovalInput record {|
 # + approved - Whether the approval was granted
 # + reason - The reason for approval/rejection (optional)
 type ApprovalSignal record {|
+    @workflow:CorrelationKey
     readonly string id;
     string approverId;
     boolean approved;
@@ -60,6 +62,7 @@ type ApprovalSignal record {|
 # + txnId - The transaction identifier
 # + amount - The payment amount
 type PaymentSignal record {|
+    @workflow:CorrelationKey
     readonly string id;
     string txnId;
     decimal amount;
@@ -174,6 +177,7 @@ function approvalWorkflow(
 # + id - The workflow identifier (readonly for correlation)
 # + message - The input message
 type SimpleSignalInput record {|
+    @workflow:CorrelationKey
     readonly string id;
     string message;
 |};
@@ -183,6 +187,7 @@ type SimpleSignalInput record {|
 # + id - The workflow identifier (readonly for correlation)
 # + response - The signal response
 type SimpleSignalData record {|
+    @workflow:CorrelationKey
     readonly string id;
     string response;
 |};

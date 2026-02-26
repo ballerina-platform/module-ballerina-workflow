@@ -19,10 +19,13 @@
 package io.ballerina.stdlib.workflow.compiler;
 
 import io.ballerina.compiler.api.SemanticModel;
+import io.ballerina.compiler.api.symbols.AnnotationSymbol;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.FunctionTypeSymbol;
+import io.ballerina.compiler.api.symbols.ModuleSymbol;
 import io.ballerina.compiler.api.symbols.ParameterKind;
 import io.ballerina.compiler.api.symbols.ParameterSymbol;
+import io.ballerina.compiler.api.symbols.Qualifier;
 import io.ballerina.compiler.api.symbols.RecordFieldSymbol;
 import io.ballerina.compiler.api.symbols.RecordTypeSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
@@ -234,12 +237,10 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
      * <p>
      * Rules:
      * <ul>
-     *   <li>If process has events, input MUST have readonly fields for correlation</li>
-     *   <li>All signal types must have the SAME readonly fields as the input</li>
+     *   <li>If process has events, input MUST have @CorrelationKey fields for correlation</li>
+     *   <li>All @CorrelationKey fields must also be readonly</li>
+     *   <li>All signal types must have the SAME @CorrelationKey fields as the input</li>
      * </ul>
-     * <p>
-     * Note: The 'id' field fallback is no longer supported. Correlation is done
-     * exclusively via readonly fields which become Temporal Search Attributes.
      */
     private void validateCorrelationKeys(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context,
                                           TypeSymbol inputType, TypeSymbol eventsType) {
@@ -251,35 +252,43 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
             return;
         }
 
-        // Extract readonly fields from input type
-        Map<String, TypeSymbol> inputReadonlyFields = extractReadonlyFields(inputRecordType);
+        // Validate @CorrelationKey fields are also readonly
+        validateCorrelationKeyReadonly(functionNode, context, inputRecordType);
+
+        // Extract @CorrelationKey fields from input type
+        Map<String, TypeSymbol> inputCorrelationFields = extractCorrelationKeyFields(inputRecordType);
 
         // Get signal types from events record
         List<RecordTypeSymbol> signalTypes = extractSignalTypes(eventsType);
 
-        // If process has events but no readonly fields, report error
-        if (inputReadonlyFields.isEmpty() && !signalTypes.isEmpty()) {
-            reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_116);
+        // If process has events but no @CorrelationKey fields, that's valid.
+        // Signals can be sent via workflowId + signalName without correlation keys.
+        // The SendEventValidatorTask (WORKFLOW_120) will enforce correlation keys
+        // only when sendData is called without workflowId.
+        if (inputCorrelationFields.isEmpty()) {
             return;
         }
 
-        // Validate each signal type has matching readonly fields
+        // Validate each signal type has matching @CorrelationKey fields
         for (RecordTypeSymbol signalType : signalTypes) {
-            Map<String, TypeSymbol> signalReadonlyFields = extractReadonlyFields(signalType);
+            // Also validate signal type's @CorrelationKey fields are readonly
+            validateCorrelationKeyReadonly(functionNode, context, signalType);
+
+            Map<String, TypeSymbol> signalCorrelationFields = extractCorrelationKeyFields(signalType);
             String signalTypeName = signalType.getName().orElse("anonymous");
 
-            // Check all input readonly fields exist in signal type
-            for (Map.Entry<String, TypeSymbol> entry : inputReadonlyFields.entrySet()) {
+            // Check all input @CorrelationKey fields exist in signal type
+            for (Map.Entry<String, TypeSymbol> entry : inputCorrelationFields.entrySet()) {
                 String fieldName = entry.getKey();
                 TypeSymbol inputFieldType = entry.getValue();
 
-                if (!signalReadonlyFields.containsKey(fieldName)) {
+                if (!signalCorrelationFields.containsKey(fieldName)) {
                     reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_114,
                             signalTypeName, fieldName);
                     continue;
                 }
 
-                TypeSymbol signalFieldType = signalReadonlyFields.get(fieldName);
+                TypeSymbol signalFieldType = signalCorrelationFields.get(fieldName);
                 if (!typesAreEqual(inputFieldType, signalFieldType)) {
                     reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_115,
                             fieldName,
@@ -292,23 +301,59 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
     }
 
     /**
-     * Extracts readonly fields from a record type.
+     * Validates that all @CorrelationKey annotated fields are also declared as readonly.
+     */
+    private void validateCorrelationKeyReadonly(FunctionDefinitionNode functionNode,
+                                                SyntaxNodeAnalysisContext context,
+                                                RecordTypeSymbol recordType) {
+        for (Map.Entry<String, RecordFieldSymbol> entry : recordType.fieldDescriptors().entrySet()) {
+            RecordFieldSymbol field = entry.getValue();
+            if (hasCorrelationKeyAnnotation(field)) {
+                if (!field.qualifiers().contains(Qualifier.READONLY)) {
+                    reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_117,
+                            entry.getKey());
+                }
+            }
+        }
+    }
+
+    /**
+     * Checks if a record field symbol has the @workflow:CorrelationKey annotation.
+     *
+     * @param field the record field symbol
+     * @return true if the field has @CorrelationKey annotation
+     */
+    private boolean hasCorrelationKeyAnnotation(RecordFieldSymbol field) {
+        for (AnnotationSymbol annotation : field.annotations()) {
+            Optional<String> nameOpt = annotation.getName();
+            if (nameOpt.isPresent()
+                    && WorkflowConstants.CORRELATION_KEY_ANNOTATION.equals(nameOpt.get())) {
+                Optional<ModuleSymbol> moduleOpt = annotation.getModule();
+                if (moduleOpt.isPresent() && WorkflowPluginUtils.isWorkflowModule(moduleOpt.get())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Extracts fields annotated with @workflow:CorrelationKey from a record type.
      *
      * @param recordType the record type symbol
-     * @return map of readonly field names to their type symbols
+     * @return map of correlation key field names to their type symbols
      */
-    private Map<String, TypeSymbol> extractReadonlyFields(RecordTypeSymbol recordType) {
-        Map<String, TypeSymbol> readonlyFields = new LinkedHashMap<>();
+    private Map<String, TypeSymbol> extractCorrelationKeyFields(RecordTypeSymbol recordType) {
+        Map<String, TypeSymbol> correlationFields = new LinkedHashMap<>();
 
         for (Map.Entry<String, RecordFieldSymbol> entry : recordType.fieldDescriptors().entrySet()) {
             RecordFieldSymbol field = entry.getValue();
-            // Check if field has READONLY qualifier
-            if (field.qualifiers().contains(io.ballerina.compiler.api.symbols.Qualifier.READONLY)) {
-                readonlyFields.put(entry.getKey(), field.typeDescriptor());
+            if (hasCorrelationKeyAnnotation(field)) {
+                correlationFields.put(entry.getKey(), field.typeDescriptor());
             }
         }
 
-        return readonlyFields;
+        return correlationFields;
     }
 
     /**

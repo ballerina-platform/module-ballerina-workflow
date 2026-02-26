@@ -59,7 +59,7 @@ import java.util.concurrent.TimeUnit;
  * <ul>
  *   <li>callActivity - Execute an activity within a workflow</li>
  *   <li>createInstance - Start a new workflow process</li>
- *   <li>sendEvent - Send an event to a running workflow</li>
+ *   <li>sendData - Send data to a running workflow</li>
  *   <li>registerProcess - Register a process function with the runtime</li>
  * </ul>
  *
@@ -75,18 +75,17 @@ public final class WorkflowNative {
      * Native implementation for createInstance function.
      * <p>
      * Starts a new workflow process with the given input.
-     * The input must contain an "id" field for workflow correlation.
      * Returns the workflow ID that can be used to track and interact with the workflow.
      * <p>
      * Automatically starts the singleton worker if not already started.
      *
      * @param env the Ballerina runtime environment
      * @param processFunction the process function to execute
-     * @param input the input data for the process (map with "id" field)
+     * @param input the optional input data for the process (nil or map)
      * @return the workflow ID as a string, or an error
      */
     public static Object createInstance(Environment env, BFunctionPointer processFunction,
-                                        BMap<BString, Object> input) {
+                                        Object input) {
         return env.yieldAndRun(() -> {
             CompletableFuture<Object> balFuture = new CompletableFuture<>();
 
@@ -95,8 +94,14 @@ public final class WorkflowNative {
                     // Get the process name from the function pointer
                     String processName = processFunction.getType().getName();
 
-                    // Convert input to Java type
-                    Object javaInput = TypesUtil.convertBallerinaToJavaType(input);
+                    // Convert input to Java type (handle nil case)
+                    Object javaInput = null;
+                    if (input != null && !(input instanceof io.ballerina.runtime.api.values.BValue 
+                            && input.toString().equals("()"))) {
+                        if (input instanceof BMap) {
+                            javaInput = TypesUtil.convertBallerinaToJavaType((BMap<BString, Object>) input);
+                        }
+                    }
 
                     // Start the process through the workflow runtime
                     String workflowId = WorkflowRuntime.getInstance().createInstance(processName, javaInput);
@@ -117,20 +122,21 @@ public final class WorkflowNative {
     }
 
     /**
-     * Native implementation for sendEvent function.
+     * Native implementation for sendData function.
      * <p>
-     * Sends an event (signal) to a running workflow process.
-     * The event data must contain an "id" field to identify the target workflow.
-     * Events can be used to communicate with running workflows and trigger state changes.
+     * Sends data to a running workflow process. Supports two modes:
+     * 1. By workflowId: Direct data delivery to a known workflow (requires workflowId + signalName)
+     * 2. By correlation: Lookup workflow by correlation keys (requires signalName + signalData)
      *
      * @param env the Ballerina runtime environment
-     * @param processFunction the process function to send the event to
-     * @param eventData the event data to send (map with "id" field)
-     * @param signalName optional signal name (if null, infers from event data structure)
-     * @return BBoolean true if the event was sent successfully, or an error
+     * @param processFunction the process function to send the data to
+     * @param workflowId optional workflow ID for direct data delivery
+     * @param signalName optional signal name
+     * @param signalData optional signal data
+     * @return BBoolean true if the data was sent successfully, or an error
      */
-    public static Object sendEvent(Environment env, BFunctionPointer processFunction, 
-            BMap<BString, Object> eventData, Object signalName) {
+    public static Object sendData(Environment env, BFunctionPointer processFunction, 
+            Object workflowId, Object signalName, Object signalData) {
         return env.yieldAndRun(() -> {
             CompletableFuture<Object> balFuture = new CompletableFuture<>();
 
@@ -139,38 +145,67 @@ public final class WorkflowNative {
                     // Get the process name from the function pointer
                     String processName = processFunction.getType().getName();
 
-                    // Convert event data to Java type
-                    Object javaEventData = TypesUtil.convertBallerinaToJavaType(eventData);
+                    // Extract workflowId (can be null/nil)
+                    String workflowIdStr = extractStringParam(workflowId);
 
-                    // Get signal name (can be null/nil)
-                    String signalNameStr = null;
-                    if (signalName != null && !(signalName instanceof io.ballerina.runtime.api.values.BValue 
-                            && signalName.toString().equals("()"))) {
-                        if (signalName instanceof BString) {
-                            signalNameStr = ((BString) signalName).getValue();
-                        } else if (signalName instanceof String) {
-                            signalNameStr = (String) signalName;
-                        }
+                    // Extract signal name (can be null/nil)
+                    String signalNameStr = extractStringParam(signalName);
+
+                    // Extract signal data (can be null/nil)
+                    Object javaSignalData = null;
+                    if (signalData != null && signalData instanceof BMap) {
+                        javaSignalData = TypesUtil.convertBallerinaToJavaType(
+                                (BMap<BString, Object>) signalData);
                     }
 
-                    // If signal name not provided, try to infer from event data structure
-                    if (signalNameStr == null || signalNameStr.isEmpty()) {
-                        signalNameStr = inferSignalName(processFunction, eventData);
+                    // If signal name not provided and we have signal data, try to infer
+                    if ((signalNameStr == null || signalNameStr.isEmpty()) && signalData instanceof BMap) {
+                        signalNameStr = inferSignalName(processFunction, (BMap<BString, Object>) signalData);
                     }
 
-                    // Send the event through the workflow runtime
-                    boolean result = WorkflowRuntime.getInstance().sendEvent(processName, javaEventData, signalNameStr);
+                    // Send through the appropriate path
+                    boolean result;
+                    if (workflowIdStr != null && !workflowIdStr.isEmpty()) {
+                        // Direct signal by workflowId
+                        result = WorkflowRuntime.getInstance().sendSignalToWorkflow(
+                                workflowIdStr, signalNameStr, javaSignalData);
+                    } else {
+                        // Correlation-based signal routing
+                        result = WorkflowRuntime.getInstance().sendEvent(
+                                processName, javaSignalData, signalNameStr);
+                    }
 
                     balFuture.complete(result);
 
                 } catch (Exception e) {
                     balFuture.complete(ErrorCreator.createError(
-                            StringUtils.fromString("Failed to send event: " + e.getMessage())));
+                            StringUtils.fromString("Failed to send data: " + e.getMessage())));
                 }
             });
 
             return getResult(balFuture);
         });
+    }
+
+    /**
+     * Extracts a string parameter from an Object that may be null, BString, or Ballerina nil.
+     */
+    private static String extractStringParam(Object param) {
+        if (param == null) {
+            return null;
+        }
+        if (param instanceof BString) {
+            return ((BString) param).getValue();
+        }
+        if (param instanceof String) {
+            return (String) param;
+        }
+        // Check for Ballerina nil value
+        String strVal = param.toString();
+        if ("()".equals(strVal)) {
+            return null;
+        }
+        return strVal;
     }
 
     /**

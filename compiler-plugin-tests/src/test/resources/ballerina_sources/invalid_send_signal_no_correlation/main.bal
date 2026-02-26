@@ -16,47 +16,40 @@
 
 import ballerina/workflow;
 
-// Types with DIFFERENT structure (not ambiguous)
+// Signal type WITHOUT @CorrelationKey
 type ApprovalSignal record {|
-    @workflow:CorrelationKey
-    readonly string id;
     boolean approved;
     string approver;
 |};
 
-type PaymentSignal record {|
-    @workflow:CorrelationKey
-    readonly string id;
-    string txnId;
-    decimal amount;
+// Input type WITHOUT @CorrelationKey fields
+type OrderInput record {|
+    string orderId;
+    string customerName;
 |};
 
-type TestInput record {|
-    @workflow:CorrelationKey
-    readonly string id;
-    string name;
-|};
-
-type TestResult record {|
+type OrderResult record {|
     string status;
 |};
 
-// Valid: Process with distinct signal types - no ambiguity
+// Process with events but NO @CorrelationKey fields
 @workflow:Process
-function distinctSignalProcess(
+function orderProcessNoCorrelation(
     workflow:Context ctx,
-    TestInput input,
+    OrderInput input,
     record {|
         future<ApprovalSignal> approval;
-        future<PaymentSignal> payment;
     |} signals
-) returns TestResult|error {
+) returns OrderResult|error {
     ApprovalSignal a = check wait signals.approval;
-    return {status: "OK"};
+    return {status: a.approved ? "approved" : "rejected"};
 }
 
-// This is VALID - distinct types allow signal name inference without explicit signalName
-function validSendWithoutSignalName() returns error? {
-    ApprovalSignal data = {id: "test-1", approved: true, approver: "admin"};
-    _ = check workflow:sendData(distinctSignalProcess, signalData = data);
+// INVALID: sendData without workflowId on a process that has no @CorrelationKey fields
+// Should trigger WORKFLOW_120 error
+function invalidSendSignalNoCorrelation() returns error? {
+    ApprovalSignal data = {approved: true, approver: "admin"};
+    // No workflowId provided, and process has no @CorrelationKey fields → cannot route
+    _ = check workflow:sendData(orderProcessNoCorrelation,
+        signalName = "approval", signalData = data);
 }

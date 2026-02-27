@@ -327,14 +327,14 @@ public class WorkflowCompilerPluginTest {
                         + getDiagnosticMessages(diagnosticResult));
     }
 
-    // ===== sendData with workflowId (no @CorrelationKey needed) =====
+    // ===== sendData with workflowId =====
 
     @Test(groups = "valid")
     public void testValidSendDataWithWorkflowId() {
         String packagePath = "valid_send_signal_with_workflow_id";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertEquals(diagnosticResult.errorCount(), 0,
-                "Expected no errors when sendData uses workflowId (no @CorrelationKey needed). Errors: "
+                "Expected no errors when sendData uses workflowId. Errors: "
                         + getDiagnosticMessages(diagnosticResult));
     }
 

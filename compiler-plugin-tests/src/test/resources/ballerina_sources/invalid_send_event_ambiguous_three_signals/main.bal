@@ -18,14 +18,12 @@ import ballerina/workflow;
 
 // Three signals with same structure
 type StringSignal record {|
-    @workflow:CorrelationKey
-    readonly string id;
+    string id;
     string data;
 |};
 
 type TestInput record {|
-    @workflow:CorrelationKey
-    readonly string id;
+    string id;
     string name;
 |};
 

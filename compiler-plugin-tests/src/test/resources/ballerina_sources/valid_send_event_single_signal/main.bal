@@ -18,14 +18,12 @@ import ballerina/workflow;
 
 // Single signal type
 type ResponseSignal record {|
-    @workflow:CorrelationKey
-    readonly string id;
+    string id;
     string message;
 |};
 
 type TestInput record {|
-    @workflow:CorrelationKey
-    readonly string id;
+    string id;
     string name;
 |};
 

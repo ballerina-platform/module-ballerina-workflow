@@ -16,14 +16,14 @@
 
 import ballerina/workflow;
 
-// Signal types WITHOUT @CorrelationKey - correlation keys are not needed
+// Signal types WITHOUT annotation - fields are not needed
 // when signals are sent via workflowId
 type ApprovalSignal record {|
     boolean approved;
     string approver;
 |};
 
-// Input type WITHOUT @CorrelationKey fields
+// Input type WITHOUT annotation fields
 type OrderInput record {|
     string orderId;
     string customerName;
@@ -33,7 +33,7 @@ type OrderResult record {|
     string status;
 |};
 
-// Valid: Process with events but NO @CorrelationKey fields.
+// Valid: Process with events but NO annotation fields.
 // This is valid because signals are routed via workflowId + dataName.
 @workflow:Workflow
 function orderProcessNoCorrelation(
@@ -47,7 +47,7 @@ function orderProcessNoCorrelation(
     return {status: a.approved ? "approved" : "rejected"};
 }
 
-// Valid: sendData with all required params (no correlation keys needed)
+// Valid: sendData with all required params (no fields needed)
 function validSendSignalWithWorkflowId() returns error? {
     ApprovalSignal data = {approved: true, approver: "admin"};
     check workflow:sendData(orderProcessNoCorrelation, "wf-12345", "approval", data);

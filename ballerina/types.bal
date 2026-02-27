@@ -62,7 +62,7 @@ public type SelfHostedConfig record {|
 
 # Configuration for an in-memory workflow engine.
 # No external server is required. Workflows are not persisted and will be lost on restart.
-# Signal-based communication is not supported in this mode.
+# Signal-based communication via `sendData` is supported when the workflow ID is known.
 #
 # + mode - Deployment mode identifier (always "IN_MEMORY")
 public type InMemoryConfig record {|
@@ -76,7 +76,7 @@ public type InMemoryConfig record {|
 # - `LOCAL` - Local development server (default)
 # - `CLOUD` - Managed cloud deployment with mandatory authentication
 # - `SELF_HOSTED` - Self-hosted server with optional authentication
-# - `IN_MEMORY` - Lightweight in-memory engine (no persistence, no signals)
+# - `IN_MEMORY` - Lightweight in-memory engine (no persistence)
 public type WorkflowConfig LocalConfig|CloudConfig|SelfHostedConfig|InMemoryConfig;
 
 # Worker configuration parameters.
@@ -150,7 +150,3 @@ public type WorkflowExecutionInfo record {
     ActivityInvocation[] activityInvocations;
 };
 
-# Error type alias for duplicate workflow errors.
-# When a workflow with the same correlation keys already exists, an error is thrown
-# with "DuplicateWorkflowError" in the message. Check error message for details.
-public type DuplicateWorkflowError error;

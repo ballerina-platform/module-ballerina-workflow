@@ -71,21 +71,7 @@ public enum WorkflowDiagnostic {
     WORKFLOW_112("WORKFLOW_112",
             "The process '%s' has structurally equivalent signal types '%s' and '%s'. "
                     + "Signal types in the events record should have distinct structures",
-            DiagnosticSeverity.WARNING),
-    WORKFLOW_114("WORKFLOW_114",
-            "Signal type '%s' is missing @CorrelationKey field '%s' required for correlation with process input",
-            DiagnosticSeverity.ERROR),
-    WORKFLOW_115("WORKFLOW_115",
-            "@CorrelationKey field '%s' type mismatch: input has '%s', signal '%s' has '%s'",
-            DiagnosticSeverity.ERROR),
-    WORKFLOW_116("WORKFLOW_116",
-            "Process with events must have @CorrelationKey fields in input for correlation. "
-                    + "Add '@workflow:CorrelationKey' annotation and 'readonly' modifier to fields used "
-                    + "for correlation (e.g., '@workflow:CorrelationKey readonly string customerId')",
-            DiagnosticSeverity.ERROR),
-    WORKFLOW_117("WORKFLOW_117",
-            "@CorrelationKey field '%s' must also be declared as 'readonly'",
-            DiagnosticSeverity.ERROR);
+            DiagnosticSeverity.WARNING);
 
     private final String code;
     private final String message;

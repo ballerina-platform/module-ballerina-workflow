@@ -18,20 +18,17 @@ import ballerina/workflow;
 
 // Types with same structure
 type SignalType1 record {|
-    @workflow:CorrelationKey
-    readonly string id;
+    string id;
     string value;
 |};
 
 type SignalType2 record {|
-    @workflow:CorrelationKey
-    readonly string id;
+    string id;
     string value;
 |};
 
 type TestInput record {|
-    @workflow:CorrelationKey
-    readonly string id;
+    string id;
     string name;
 |};
 

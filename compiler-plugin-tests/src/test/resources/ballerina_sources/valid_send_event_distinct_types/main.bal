@@ -18,22 +18,19 @@ import ballerina/workflow;
 
 // Types with DIFFERENT structure
 type ApprovalSignal record {|
-    @workflow:CorrelationKey
-    readonly string id;
+    string id;
     boolean approved;
     string approver;
 |};
 
 type PaymentSignal record {|
-    @workflow:CorrelationKey
-    readonly string id;
+    string id;
     string txnId;
     decimal amount;
 |};
 
 type TestInput record {|
-    @workflow:CorrelationKey
-    readonly string id;
+    string id;
     string name;
 |};
 

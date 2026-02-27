@@ -32,25 +32,23 @@ import ballerina/workflow;
 
 # Input for the approval workflow.
 #
-# + id - The workflow identifier (readonly for correlation)
+# + id - The workflow identifier
 # + orderId - The order identifier
 # + amount - The order amount
 type ApprovalInput record {|
-    @workflow:CorrelationKey
-    readonly string id;
+    string id;
     string orderId;
     decimal amount;
 |};
 
 # Signal data for approval decision.
 #
-# + id - The workflow identifier (readonly for correlation)
+# + id - The workflow identifier
 # + approverId - The approver's identifier
 # + approved - Whether the approval was granted
 # + reason - The reason for approval/rejection (optional)
 type ApprovalSignal record {|
-    @workflow:CorrelationKey
-    readonly string id;
+    string id;
     string approverId;
     boolean approved;
     string? reason;
@@ -58,12 +56,11 @@ type ApprovalSignal record {|
 
 # Signal data for payment confirmation.
 #
-# + id - The workflow identifier (readonly for correlation)
+# + id - The workflow identifier
 # + txnId - The transaction identifier
 # + amount - The payment amount
 type PaymentSignal record {|
-    @workflow:CorrelationKey
-    readonly string id;
+    string id;
     string txnId;
     decimal amount;
 |};
@@ -174,21 +171,19 @@ function approvalWorkflow(
 
 # Simple workflow input for single signal demo.
 #
-# + id - The workflow identifier (readonly for correlation)
+# + id - The workflow identifier
 # + message - The input message
 type SimpleSignalInput record {|
-    @workflow:CorrelationKey
-    readonly string id;
+    string id;
     string message;
 |};
 
 # Simple signal data.
 #
-# + id - The workflow identifier (readonly for correlation)
+# + id - The workflow identifier
 # + response - The signal response
 type SimpleSignalData record {|
-    @workflow:CorrelationKey
-    readonly string id;
+    string id;
     string response;
 |};
 

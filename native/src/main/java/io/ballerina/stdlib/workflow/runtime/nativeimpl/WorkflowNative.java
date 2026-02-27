@@ -30,7 +30,6 @@ import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
 import io.ballerina.stdlib.workflow.ModuleUtils;
-import io.ballerina.stdlib.workflow.runtime.DuplicateWorkflowException;
 import io.ballerina.stdlib.workflow.runtime.WorkflowRuntime;
 import io.ballerina.stdlib.workflow.utils.TypesUtil;
 import io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative;
@@ -42,7 +41,6 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowStub;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -106,9 +104,6 @@ public final class WorkflowNative {
 
                     balFuture.complete(StringUtils.fromString(workflowId));
 
-                } catch (DuplicateWorkflowException e) {
-                    // Create a DuplicateWorkflowError with proper details
-                    balFuture.complete(createDuplicateWorkflowError(e));
                 } catch (Exception e) {
                     balFuture.complete(ErrorCreator.createError(
                             StringUtils.fromString("Failed to start process: " + e.getMessage())));
@@ -134,12 +129,6 @@ public final class WorkflowNative {
      */
     public static Object sendData(Environment env, BFunctionPointer workflowFunction, 
             BString workflowId, BString dataName, Object data) {
-        // Block sendData in IN_MEMORY mode
-        if (WorkflowWorkerNative.isInMemoryMode()) {
-            return ErrorCreator.createError(
-                    StringUtils.fromString("sendData is not supported in IN_MEMORY mode. " +
-                            "Use LOCAL, CLOUD, or SELF_HOSTED mode for signal-based communication."));
-        }
         return env.yieldAndRun(() -> {
             CompletableFuture<Object> balFuture = new CompletableFuture<>();
 
@@ -167,65 +156,6 @@ public final class WorkflowNative {
                 } catch (Exception e) {
                     balFuture.complete(ErrorCreator.createError(
                             StringUtils.fromString("Failed to send data: " + e.getMessage())));
-                }
-            });
-
-            return getResult(balFuture);
-        });
-    }
-
-    /**
-     * Native implementation for searchWorkflow function.
-     * <p>
-     * Searches for a running workflow instance by correlation keys using
-     * the Temporal Visibility API.
-     *
-     * @param env the Ballerina runtime environment
-     * @param workflowFunction the workflow function to identify the workflow type
-     * @param correlationKeys a map of correlation key names to their values
-     * @return the workflow ID as BString, or an error
-     */
-    public static Object searchWorkflow(Environment env, BFunctionPointer workflowFunction,
-            BMap<BString, Object> correlationKeys) {
-        // Block searchWorkflow in IN_MEMORY mode
-        if (WorkflowWorkerNative.isInMemoryMode()) {
-            return ErrorCreator.createError(
-                    StringUtils.fromString("searchWorkflow is not supported in IN_MEMORY mode. " +
-                            "Use LOCAL, CLOUD, or SELF_HOSTED mode for correlation-based workflow search."));
-        }
-        return env.yieldAndRun(() -> {
-            CompletableFuture<Object> balFuture = new CompletableFuture<>();
-
-            WorkflowRuntime.getInstance().getExecutor().execute(() -> {
-                try {
-                    String processName = workflowFunction.getType().getName();
-
-                    // Convert BMap correlation keys to Java Map
-                    Map<String, Object> javaCorrelationKeys = new LinkedHashMap<>();
-                    for (BString key : correlationKeys.getKeys()) {
-                        Object value = correlationKeys.get(key);
-                        if (value instanceof BString) {
-                            javaCorrelationKeys.put(key.getValue(), ((BString) value).getValue());
-                        } else {
-                            javaCorrelationKeys.put(key.getValue(), value);
-                        }
-                    }
-
-                    String workflowId = WorkflowRuntime.getInstance()
-                            .findWorkflowByCorrelationKeys(processName, javaCorrelationKeys);
-
-                    if (workflowId == null) {
-                        balFuture.complete(ErrorCreator.createError(
-                                StringUtils.fromString(
-                                    "No running workflow found for process '" + processName
-                                    + "' with correlation keys: " + javaCorrelationKeys)));
-                    } else {
-                        balFuture.complete(StringUtils.fromString(workflowId));
-                    }
-
-                } catch (Exception e) {
-                    balFuture.complete(ErrorCreator.createError(
-                            StringUtils.fromString("Failed to search workflow: " + e.getMessage())));
                 }
             });
 
@@ -444,28 +374,6 @@ public final class WorkflowNative {
         record.put(StringUtils.fromString("activityInvocations"), emptyActivities);
 
         return record;
-    }
-
-    /**
-     * Creates a DuplicateWorkflowError for the Ballerina runtime.
-     * <p>
-     * This creates an error with details about the duplicate workflow.
-     *
-     * @param e the DuplicateWorkflowException from the runtime
-     * @return a Ballerina BError with duplicate workflow details
-     */
-    private static Object createDuplicateWorkflowError(DuplicateWorkflowException e) {
-        // Create a simple error with all details in the message
-        // This avoids type checking issues with distinct error types from Java
-        String message = String.format(
-            "DuplicateWorkflowError: %s [existingWorkflowId=%s, processName=%s, correlationKeys=%s]",
-            e.getMessage(),
-            e.getExistingWorkflowId(),
-            e.getProcessName(),
-            e.getCorrelationKeys()
-        );
-        
-        return ErrorCreator.createError(StringUtils.fromString(message));
     }
 
     /**

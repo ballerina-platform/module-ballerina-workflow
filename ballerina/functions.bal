@@ -37,25 +37,12 @@ public isolated function run(function processFunction, map<anydata>? input = ())
 # The workflow can wait for and react to this data using future-based event handling.
 #
 # + workflow - The workflow function that identifies the workflow type (must be annotated with @Workflow)
-# + workflowId - The unique workflow ID to send the data to (obtained from `run` or `searchWorkflow`)
+# + workflowId - The unique workflow ID to send the data to (obtained from `run`)
 # + dataName - The name identifying the data. Must match a field name in the workflow's
 #              events record parameter.
 # + data - The data to send to the workflow
 # + return - An error if sending fails, otherwise nil
 public isolated function sendData(function workflow, string workflowId, string dataName, anydata data) returns error? = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative"
-} external;
-
-# Searches for a running workflow instance by correlation keys.
-#
-# Find a workflow that matches the given correlation key values.
-# The workflow must have `@CorrelationKey` fields defined in its input type for this to work.
-#
-# + workflow - The workflow function that identifies the workflow type (must be annotated with @Workflow)
-# + correlationKeys - A map of correlation key names to their values.
-#                     The keys must match `@CorrelationKey` fields in the workflow's input type.
-# + return - The unique workflow ID if found, or an error if no matching workflow exists
-public isolated function searchWorkflow(function workflow, map<anydata> correlationKeys) returns string|error = @java:Method {
     'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative"
 } external;
 

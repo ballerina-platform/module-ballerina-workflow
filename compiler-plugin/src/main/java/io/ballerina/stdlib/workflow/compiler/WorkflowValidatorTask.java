@@ -19,14 +19,10 @@
 package io.ballerina.stdlib.workflow.compiler;
 
 import io.ballerina.compiler.api.SemanticModel;
-import io.ballerina.compiler.api.symbols.AnnotationSymbol;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.FunctionTypeSymbol;
-import io.ballerina.compiler.api.symbols.ModuleSymbol;
 import io.ballerina.compiler.api.symbols.ParameterKind;
 import io.ballerina.compiler.api.symbols.ParameterSymbol;
-import io.ballerina.compiler.api.symbols.Qualifier;
-import io.ballerina.compiler.api.symbols.RecordFieldSymbol;
 import io.ballerina.compiler.api.symbols.RecordTypeSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
@@ -49,11 +45,8 @@ import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
 import io.ballerina.tools.diagnostics.DiagnosticFactory;
 import io.ballerina.tools.diagnostics.DiagnosticInfo;
 
-import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -149,8 +142,6 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         int paramIndex = 0;
         boolean hasInput = false;
         boolean hasEvents = false;
-        TypeSymbol inputType = null;
-        TypeSymbol eventsType = null;
 
         // Check first parameter - could be Context, input, or events
         ParameterSymbol firstParam = params.get(paramIndex);
@@ -182,14 +173,12 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                     return;
                 }
                 hasEvents = true;
-                eventsType = paramType;
                 paramIndex++;
             } else {
                 // No input yet - this could be input or events
                 if (isValidEventsType(paramType)) {
                     // This is an events parameter (can come without input)
                     hasEvents = true;
-                    eventsType = paramType;
                     paramIndex++;
                 } else if (WorkflowPluginUtils.isSubtypeOfAnydata(paramType, semanticModel)) {
                     // This is an input parameter
@@ -199,7 +188,6 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                         return;
                     }
                     hasInput = true;
-                    inputType = paramType;
                     paramIndex++;
                 } else {
                     // Parameter is neither anydata nor events record - error
@@ -211,11 +199,6 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
 
         // Validate return type
         validateReturnType(functionNode, context, typeSymbol);
-        
-        // Validate correlation keys if both input and events are present
-        if (hasInput && hasEvents) {
-            validateCorrelationKeys(functionNode, context, inputType, eventsType);
-        }
     }
 
     /**
@@ -230,178 +213,6 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                 reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_105);
             }
         }
-    }
-
-    /**
-     * Validates correlation key consistency between process input and signal types.
-     * <p>
-     * Rules:
-     * <ul>
-     *   <li>If process has events, input MUST have @CorrelationKey fields for correlation</li>
-     *   <li>All @CorrelationKey fields must also be readonly</li>
-     *   <li>All signal types must have the SAME @CorrelationKey fields as the input</li>
-     * </ul>
-     */
-    private void validateCorrelationKeys(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context,
-                                          TypeSymbol inputType, TypeSymbol eventsType) {
-        // Resolve the input type to get the record type symbol
-        TypeSymbol resolvedInputType = WorkflowPluginUtils.resolveTypeReference(inputType);
-        if (!(resolvedInputType instanceof RecordTypeSymbol inputRecordType)) {
-            // Input is not a record type - this is valid for simple anydata types
-            // In this case, we can't validate correlation keys
-            return;
-        }
-
-        // Validate @CorrelationKey fields are also readonly
-        validateCorrelationKeyReadonly(functionNode, context, inputRecordType);
-
-        // Extract @CorrelationKey fields from input type
-        Map<String, TypeSymbol> inputCorrelationFields = extractCorrelationKeyFields(inputRecordType);
-
-        // Get signal types from events record
-        List<RecordTypeSymbol> signalTypes = extractSignalTypes(eventsType);
-
-        // If process has events but no @CorrelationKey fields, that's valid.
-        // Signals can be sent via workflowId + dataName without correlation keys.
-        // Users can use searchWorkflow() to find workflows by correlation keys separately.
-        if (inputCorrelationFields.isEmpty()) {
-            return;
-        }
-
-        // Validate each signal type has matching @CorrelationKey fields
-        for (RecordTypeSymbol signalType : signalTypes) {
-            // Also validate signal type's @CorrelationKey fields are readonly
-            validateCorrelationKeyReadonly(functionNode, context, signalType);
-
-            Map<String, TypeSymbol> signalCorrelationFields = extractCorrelationKeyFields(signalType);
-            String signalTypeName = signalType.getName().orElse("anonymous");
-
-            // Check all input @CorrelationKey fields exist in signal type
-            for (Map.Entry<String, TypeSymbol> entry : inputCorrelationFields.entrySet()) {
-                String fieldName = entry.getKey();
-                TypeSymbol inputFieldType = entry.getValue();
-
-                if (!signalCorrelationFields.containsKey(fieldName)) {
-                    reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_114,
-                            signalTypeName, fieldName);
-                    continue;
-                }
-
-                TypeSymbol signalFieldType = signalCorrelationFields.get(fieldName);
-                if (!typesAreEqual(inputFieldType, signalFieldType)) {
-                    reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_115,
-                            fieldName,
-                            inputFieldType.signature(),
-                            signalTypeName,
-                            signalFieldType.signature());
-                }
-            }
-        }
-    }
-
-    /**
-     * Validates that all @CorrelationKey annotated fields are also declared as readonly.
-     */
-    private void validateCorrelationKeyReadonly(FunctionDefinitionNode functionNode,
-                                                SyntaxNodeAnalysisContext context,
-                                                RecordTypeSymbol recordType) {
-        for (Map.Entry<String, RecordFieldSymbol> entry : recordType.fieldDescriptors().entrySet()) {
-            RecordFieldSymbol field = entry.getValue();
-            if (hasCorrelationKeyAnnotation(field)) {
-                if (!field.qualifiers().contains(Qualifier.READONLY)) {
-                    reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_117,
-                            entry.getKey());
-                }
-            }
-        }
-    }
-
-    /**
-     * Checks if a record field symbol has the @workflow:CorrelationKey annotation.
-     *
-     * @param field the record field symbol
-     * @return true if the field has @CorrelationKey annotation
-     */
-    private boolean hasCorrelationKeyAnnotation(RecordFieldSymbol field) {
-        for (AnnotationSymbol annotation : field.annotations()) {
-            Optional<String> nameOpt = annotation.getName();
-            if (nameOpt.isPresent()
-                    && WorkflowConstants.CORRELATION_KEY_ANNOTATION.equals(nameOpt.get())) {
-                Optional<ModuleSymbol> moduleOpt = annotation.getModule();
-                if (moduleOpt.isPresent() && WorkflowPluginUtils.isWorkflowModule(moduleOpt.get())) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Extracts fields annotated with @workflow:CorrelationKey from a record type.
-     *
-     * @param recordType the record type symbol
-     * @return map of correlation key field names to their type symbols
-     */
-    private Map<String, TypeSymbol> extractCorrelationKeyFields(RecordTypeSymbol recordType) {
-        Map<String, TypeSymbol> correlationFields = new LinkedHashMap<>();
-
-        for (Map.Entry<String, RecordFieldSymbol> entry : recordType.fieldDescriptors().entrySet()) {
-            RecordFieldSymbol field = entry.getValue();
-            if (hasCorrelationKeyAnnotation(field)) {
-                correlationFields.put(entry.getKey(), field.typeDescriptor());
-            }
-        }
-
-        return correlationFields;
-    }
-
-    /**
-     * Extracts signal types from the events record type.
-     * <p>
-     * The events record contains future<T> fields where T is the signal type.
-     *
-     * @param eventsType the events record type symbol
-     * @return list of signal record type symbols
-     */
-    private List<RecordTypeSymbol> extractSignalTypes(TypeSymbol eventsType) {
-        List<RecordTypeSymbol> signalTypes = new ArrayList<>();
-
-        TypeSymbol resolvedEventsType = WorkflowPluginUtils.resolveTypeReference(eventsType);
-        if (!(resolvedEventsType instanceof RecordTypeSymbol eventsRecordType)) {
-            return signalTypes;
-        }
-
-        for (RecordFieldSymbol field : eventsRecordType.fieldDescriptors().values()) {
-            TypeSymbol fieldType = WorkflowPluginUtils.resolveTypeReference(field.typeDescriptor());
-
-            // Field should be future<T>
-            if (fieldType.typeKind() == TypeDescKind.FUTURE) {
-                // Get the type parameter of the future
-                if (fieldType instanceof io.ballerina.compiler.api.symbols.FutureTypeSymbol futureType) {
-                    Optional<TypeSymbol> typeParam = futureType.typeParameter();
-                    if (typeParam.isPresent()) {
-                        TypeSymbol signalType = WorkflowPluginUtils.resolveTypeReference(typeParam.get());
-                        if (signalType instanceof RecordTypeSymbol) {
-                            signalTypes.add((RecordTypeSymbol) signalType);
-                        }
-                    }
-                }
-            }
-        }
-
-        return signalTypes;
-    }
-
-    /**
-     * Compares two type symbols for equality.
-     *
-     * @param type1 the first type
-     * @param type2 the second type
-     * @return true if the types are equal
-     */
-    private boolean typesAreEqual(TypeSymbol type1, TypeSymbol type2) {
-        // Compare by signature for simplicity
-        return type1.signature().equals(type2.signature());
     }
 
     /**
@@ -796,14 +607,6 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                                    WorkflowDiagnostic diagnostic) {
         DiagnosticInfo diagnosticInfo = new DiagnosticInfo(
                 diagnostic.getCode(), diagnostic.getMessage(), diagnostic.getSeverity());
-        context.reportDiagnostic(DiagnosticFactory.createDiagnostic(diagnosticInfo,
-                functionNode.functionName().location()));
-    }
-
-    private void reportDiagnostic(SyntaxNodeAnalysisContext context, FunctionDefinitionNode functionNode,
-                                   WorkflowDiagnostic diagnostic, Object... args) {
-        DiagnosticInfo diagnosticInfo = new DiagnosticInfo(
-                diagnostic.getCode(), diagnostic.getMessage(args), diagnostic.getSeverity());
         context.reportDiagnostic(DiagnosticFactory.createDiagnostic(diagnosticInfo,
                 functionNode.functionName().location()));
     }

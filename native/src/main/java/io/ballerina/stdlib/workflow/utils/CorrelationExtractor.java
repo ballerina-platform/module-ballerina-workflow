@@ -18,32 +18,18 @@
 
 package io.ballerina.stdlib.workflow.utils;
 
-import io.ballerina.runtime.api.flags.SymbolFlags;
-import io.ballerina.runtime.api.types.Field;
-import io.ballerina.runtime.api.types.RecordType;
-import io.ballerina.runtime.api.types.ReferenceType;
-import io.ballerina.runtime.api.types.Type;
-import io.ballerina.runtime.api.utils.StringUtils;
-import io.ballerina.runtime.api.values.BMap;
-import io.ballerina.runtime.api.values.BString;
-
 import java.security.SecureRandom;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.UUID;
 
 /**
- * Extracts correlation keys from workflow input and signal data.
+ * Utility class for generating workflow IDs.
  * <p>
- * Correlation keys are readonly fields in record types that are used to:
+ * Uses UUID v7 (time-ordered UUID) for workflow ID generation, providing:
  * <ul>
- *   <li>Identify workflow instances when sending signals</li>
- *   <li>Register Temporal Search Attributes for visibility queries</li>
- *   <li>Enable lookup of workflows by business identifiers</li>
+ *   <li>Uniqueness across machines and time</li>
+ *   <li>Sortability by creation time</li>
+ *   <li>No collisions even in clustered environments</li>
  * </ul>
- * <p>
- * If no readonly fields are defined, falls back to the 'id' field for
- * backward compatibility.
  *
  * @since 0.1.0
  */
@@ -53,158 +39,13 @@ public final class CorrelationExtractor {
         // Utility class, prevent instantiation
     }
 
-    /**
-     * Extracts correlation key values from input data based on the record type.
-     * <p>
-     * Only readonly fields in the record type are considered correlation keys.
-     * The 'id' field must be explicitly marked as readonly to be used for correlation.
-     *
-     * @param inputData  the input data map
-     * @param recordType the record type definition (can be null)
-     * @return map of correlation key names to values (never null, may be empty)
-     */
-    public static Map<String, Object> extractCorrelationKeys(
-            BMap<BString, Object> inputData, RecordType recordType) {
-
-        Map<String, Object> correlationKeys = new LinkedHashMap<>();
-
-        if (recordType != null) {
-            for (Map.Entry<String, Field> entry : recordType.getFields().entrySet()) {
-                Field field = entry.getValue();
-                String fieldName = entry.getKey();
-
-                // Only readonly fields are correlation keys
-                if (isReadonlyField(field)) {
-                    Object value = inputData.get(StringUtils.fromString(fieldName));
-                    if (value != null) {
-                        correlationKeys.put(fieldName, value);
-                    }
-                }
-            }
-        }
-
-        return correlationKeys;
-    }
-
-    /**
-     * Extracts correlation keys from a Ballerina BMap based on its record type.
-     * <p>
-     * This overload extracts the RecordType from the BMap itself.
-     *
-     * @param inputData the input data as a BMap
-     * @return map of correlation key names to values
-     */
-    public static Map<String, Object> extractCorrelationKeysFromMap(BMap<BString, Object> inputData) {
-        Map<String, Object> correlationKeys = new LinkedHashMap<>();
-
-        if (inputData == null) {
-            return correlationKeys;
-        }
-
-        // Try to get the record type from the BMap
-        Type type = inputData.getType();
-        RecordType recordType = null;
-
-        if (type instanceof RecordType) {
-            recordType = (RecordType) type;
-        } else if (type instanceof ReferenceType) {
-            Type referredType = ((ReferenceType) type).getReferredType();
-            if (referredType instanceof RecordType) {
-                recordType = (RecordType) referredType;
-            }
-        }
-
-        if (recordType != null) {
-            for (Map.Entry<String, Field> entry : recordType.getFields().entrySet()) {
-                Field field = entry.getValue();
-                String fieldName = entry.getKey();
-
-                if (isReadonlyField(field)) {
-                    Object value = inputData.get(StringUtils.fromString(fieldName));
-                    if (value != null) {
-                        // Convert BString to String for consistency
-                        if (value instanceof BString) {
-                            correlationKeys.put(fieldName, ((BString) value).getValue());
-                        } else {
-                            correlationKeys.put(fieldName, value);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Note: We only extract readonly fields as correlation keys
-        // The 'id' field is used for workflowId generation, not for correlation search attributes
-        // unless it's explicitly marked as readonly
-
-        return correlationKeys;
-    }
-
-    /**
-     * Extracts correlation keys from a plain Java Map (after type conversion).
-     *
-     * @param inputData  the input data as a Java Map
-     * @param recordType the record type definition (can be null)
-     * @return map of correlation key names to values
-     */
-    @SuppressWarnings("unchecked")
-    public static Map<String, Object> extractCorrelationKeysFromMap(
-            Object inputData, RecordType recordType) {
-
-        Map<String, Object> correlationKeys = new LinkedHashMap<>();
-
-        if (!(inputData instanceof Map)) {
-            return correlationKeys;
-        }
-
-        Map<String, Object> inputMap = (Map<String, Object>) inputData;
-
-        if (recordType != null) {
-            for (Map.Entry<String, Field> entry : recordType.getFields().entrySet()) {
-                Field field = entry.getValue();
-                String fieldName = entry.getKey();
-
-                if (isReadonlyField(field)) {
-                    Object value = inputMap.get(fieldName);
-                    if (value != null) {
-                        correlationKeys.put(fieldName, value);
-                    }
-                }
-            }
-        }
-
-        // Note: We only extract readonly fields as correlation keys
-        // The 'id' field is used for workflowId generation, not for correlation search attributes
-        // unless it's explicitly marked as readonly
-
-        return correlationKeys;
-    }
-
-    /**
-     * Checks if a field is marked as readonly.
-     *
-     * @param field the field to check
-     * @return true if the field is readonly
-     */
-    public static boolean isReadonlyField(Field field) {
-        return SymbolFlags.isFlagOn(field.getFlags(), SymbolFlags.READONLY);
-    }
-
     // SecureRandom for UUID v7 generation
     private static final SecureRandom RANDOM = new SecureRandom();
 
     /**
      * Generates a workflow ID using UUID v7 (time-ordered UUID).
      * <p>
-     * UUID v7 combines a Unix timestamp with random bits, providing:
-     * <ul>
-     *   <li>Uniqueness across machines and time</li>
-     *   <li>Sortability by creation time</li>
-     *   <li>No collisions even in clustered environments</li>
-     * </ul>
      * Format: UUID v7 string (e.g., "019c19e6-68f6-7e9c-ba1c-62a6e71f7802")
-     * <p>
-     * Correlation keys are stored as Temporal search attributes, not embedded in the workflow ID.
      *
      * @return workflow ID as a UUID v7 string
      */
@@ -250,88 +91,6 @@ public final class CorrelationExtractor {
     }
 
     /**
-     * Converts correlation keys to Temporal Search Attributes format.
-     * <p>
-     * Field names are capitalized to follow Temporal naming conventions
-     * (e.g., 'orderId' becomes 'OrderId').
-     *
-     * @param correlationKeys the correlation key map
-     * @return search attributes map (key -> typed value)
-     */
-    public static Map<String, Object> toSearchAttributes(Map<String, Object> correlationKeys) {
-        Map<String, Object> searchAttributes = new LinkedHashMap<>();
-
-        for (Map.Entry<String, Object> entry : correlationKeys.entrySet()) {
-            String key = entry.getKey();
-            Object value = entry.getValue();
-
-            // Temporal search attributes use "Correlation" prefix + capitalized names
-            // This matches the naming convention used in SearchAttributeRegistry
-            String searchAttrKey = "Correlation" + capitalize(key);
-
-            // Convert value to appropriate Temporal type
-            searchAttributes.put(searchAttrKey, convertToSearchAttributeValue(value));
-        }
-
-        return searchAttributes;
-    }
-
-    /**
-     * Checks if a record type has any readonly fields.
-     *
-     * @param recordType the record type to check
-     * @return true if the record has at least one readonly field
-     */
-    public static boolean hasReadonlyFields(RecordType recordType) {
-        if (recordType == null) {
-            return false;
-        }
-
-        for (Field field : recordType.getFields().values()) {
-            if (isReadonlyField(field)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Checks if a record type has an 'id' field.
-     *
-     * @param recordType the record type to check
-     * @return true if the record has an 'id' field
-     */
-    public static boolean hasIdField(RecordType recordType) {
-        if (recordType == null) {
-            return false;
-        }
-        return recordType.getFields().containsKey("id");
-    }
-
-    /**
-     * Gets the readonly field names and their types from a record type.
-     *
-     * @param recordType the record type
-     * @return map of readonly field names to their types
-     */
-    public static Map<String, Type> getReadonlyFields(RecordType recordType) {
-        Map<String, Type> readonlyFields = new LinkedHashMap<>();
-
-        if (recordType == null) {
-            return readonlyFields;
-        }
-
-        for (Map.Entry<String, Field> entry : recordType.getFields().entrySet()) {
-            Field field = entry.getValue();
-            if (isReadonlyField(field)) {
-                readonlyFields.put(entry.getKey(), field.getFieldType());
-            }
-        }
-
-        return readonlyFields;
-    }
-
-    /**
      * Capitalizes the first letter of a string.
      *
      * @param s the string to capitalize
@@ -342,19 +101,5 @@ public final class CorrelationExtractor {
             return s;
         }
         return Character.toUpperCase(s.charAt(0)) + s.substring(1);
-    }
-
-    /**
-     * Converts a Ballerina value to a Temporal Search Attribute value.
-     *
-     * @param value the value to convert
-     * @return the converted value
-     */
-    private static Object convertToSearchAttributeValue(Object value) {
-        if (value instanceof BString) {
-            return ((BString) value).getValue();
-        }
-        // Primitive types (Long, Double, Boolean) are compatible with Temporal
-        return value;
     }
 }

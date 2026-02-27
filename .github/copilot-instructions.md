@@ -17,7 +17,7 @@ A Ballerina standard library module providing durable workflow orchestration via
 
 **Singleton Worker**: One workflow SDK instance per JVM, initialized at module load via configurable variables. No Listener pattern - use `registerProcess()` + `startWorker()`.
 
-**Annotations**: `@Workflow`, `@Activity`, and `@CorrelationKey` (for marking correlation fields on record types).
+**Annotations**: `@Workflow` and `@Activity`.
 
 **Context Client Class**: `workflow:Context` is a client class with `callActivity` as a remote method. Users **must** call activities via `ctx->callActivity(activityFunc, args...)`. Direct activity function calls are not allowed. Parameters use `map<anydata>` type.
 
@@ -39,7 +39,7 @@ function processName(
 ```
 
 - **Context** (`workflow:Context`): Client class as first parameter. **Required** if calling activities. Provides `callActivity` remote method.
-- **Input**: Workflow input data. If using correlation-based lookup via `searchWorkflow()`, must have `@workflow:CorrelationKey` annotated `readonly` fields.
+- **Input**: Workflow input data (`anydata` subtype).
 - **Events**: Optional record with `future<T>` fields for receiving signals. Wait using `check events.event1`.
 
 ### Activity Functions
@@ -92,7 +92,6 @@ function processWithErrorHandling(workflow:Context ctx, Input input) returns Out
 ### Type Mappings (Ballerina ↔ Java ↔ Temporal)
 - `map<anydata>` → `BMap<BString, Object>` (use `PredefinedTypes.TYPE_ANYDATA`)
 - `function` → `BFunctionPointer` / `FPValue` (set `StrandMetadata` before calling)
-- Workflow inputs with events must have `@workflow:CorrelationKey` `readonly` fields for correlation
 
 ### Native Code Patterns
 When calling Ballerina methods from Java:
@@ -195,16 +194,13 @@ mtlsKey = "/path/to/client.key"
 | WORKFLOW_107 | callActivity target not @Activity | Calling non-activity via ctx->callActivity() |
 | WORKFLOW_108 | Direct activity call | Direct call to @Activity function (must use ctx->callActivity()) |
 | WORKFLOW_112 | Ambiguous signal types (warning) | Multiple signals with same structure in workflow definition |
-| WORKFLOW_113 | Input not record type | Process input must be record type for correlation |
-| WORKFLOW_114 | Missing correlation key | Signal missing @CorrelationKey field present in input |
-| WORKFLOW_115 | Correlation type mismatch | @CorrelationKey field type differs between input and signal |
-| WORKFLOW_116 | Events need correlation | Process with events lacks @CorrelationKey fields |
-| WORKFLOW_117 | CorrelationKey not readonly | @CorrelationKey field must also be declared as readonly |
 
 ## Common Pitfalls
 - Register all test processes in `@test:BeforeSuite` - registry cannot be cleared with singleton pattern
 - Process functions must be deterministic - no I/O, use activities instead
-- Workflows with events (signals) should have `@workflow:CorrelationKey` `readonly` fields in input if correlation-based lookup is needed via `searchWorkflow()`
 - Don't mix Listener pattern (deprecated) with singleton pattern
 - **Never use Java blocking calls** in workflow code (causes `PotentialDeadlockException`)
 - Signal waiting uses `TemporalFutureValue.getAndSetWaited()` to intercept Ballerina's `wait` and use `Workflow.await()` instead of blocking `CompletableFuture.get()`
+
+## Agent Workflow Rules
+- **Do NOT automatically commit and push** changes. Always leave committing and pushing to the user unless explicitly asked to do so.

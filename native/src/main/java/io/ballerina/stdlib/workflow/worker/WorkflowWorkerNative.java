@@ -46,6 +46,7 @@ import io.temporal.common.SearchAttributeKey;
 import io.temporal.common.converter.EncodedValues;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import io.temporal.serviceclient.WorkflowServiceStubsOptions;
+import io.temporal.testing.TestWorkflowEnvironment;
 import io.temporal.worker.Worker;
 import io.temporal.worker.WorkerFactory;
 import io.temporal.worker.WorkerOptions;
@@ -94,10 +95,12 @@ public final class WorkflowWorkerNative {
     private static volatile WorkerFactory workerFactory;
     private static volatile Worker singletonWorker;
     private static volatile String taskQueue;
+    private static volatile TestWorkflowEnvironment testEnvironment;
 
     // Flags for singleton state
     private static final AtomicBoolean initialized = new AtomicBoolean(false);
     private static final AtomicBoolean started = new AtomicBoolean(false);
+    private static volatile boolean inMemoryMode = false;
 
     // Store workflow module for creating Context objects
     private static Module workflowModule;
@@ -233,6 +236,57 @@ public final class WorkflowWorkerNative {
     }
 
     /**
+     * Initialize an in-memory workflow worker using Temporal's TestWorkflowEnvironment.
+     * This mode does not require an external server. Workflows are not persisted
+     * and will be lost on restart. Signal-based communication (sendData) and
+     * correlation-based search (searchWorkflow) are not supported.
+     *
+     * @return null on success, error on failure
+     */
+    public static Object initInMemoryWorker() {
+        if (!initialized.compareAndSet(false, true)) {
+            LOGGER.debug("Singleton worker already initialized");
+            return null;
+        }
+
+        try {
+            inMemoryMode = true;
+            taskQueue = "BALLERINA_WORKFLOW_TASK_QUEUE";
+
+            LOGGER.debug("Initializing in-memory workflow worker with TestWorkflowEnvironment");
+
+            // Create the in-memory test environment
+            testEnvironment = TestWorkflowEnvironment.newInstance();
+
+            // Extract components from the test environment
+            workflowClient = testEnvironment.getWorkflowClient();
+            workerFactory = testEnvironment.getWorkerFactory();
+            serviceStubs = testEnvironment.getWorkflowServiceStubs();
+
+            // Create worker with default options
+            WorkerOptions workerOptions = WorkerOptions.newBuilder()
+                    .setMaxConcurrentWorkflowTaskExecutionSize(100)
+                    .setMaxConcurrentActivityExecutionSize(100)
+                    .build();
+            singletonWorker = testEnvironment.newWorker(taskQueue, workerOptions);
+
+            // Register dynamic workflow and activity adapters
+            singletonWorker.registerWorkflowImplementationTypes(BallerinaWorkflowAdapter.class);
+            singletonWorker.registerActivitiesImplementations(new BallerinaActivityAdapter());
+
+            LOGGER.debug("In-memory workflow worker initialized successfully");
+            return null;
+
+        } catch (Exception e) {
+            initialized.set(false);
+            inMemoryMode = false;
+            LOGGER.error("Failed to initialize in-memory worker: {}", e.getMessage(), e);
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to initialize in-memory workflow worker: " + e.getMessage()));
+        }
+    }
+
+    /**
      * Register a workflow process with the singleton worker.
      * Called from Ballerina code for each workflow process.
      *
@@ -342,20 +396,26 @@ public final class WorkflowWorkerNative {
         try {
             LOGGER.debug("Starting singleton worker for task queue: {}", taskQueue);
 
-            // Start the worker factory in a background thread
-            Thread workerThread = new Thread(() -> {
-                try {
-                    workerFactory.start();
-                } catch (Exception e) {
-                    LOGGER.error("Worker factory failed: {}", e.getMessage(), e);
-                }
-            }, "temporal-worker-" + taskQueue);
+            if (inMemoryMode && testEnvironment != null) {
+                // In-memory mode: use TestWorkflowEnvironment.start()
+                testEnvironment.start();
+                LOGGER.debug("In-memory worker started successfully");
+            } else {
+                // Normal mode: Start the worker factory in a background thread
+                Thread workerThread = new Thread(() -> {
+                    try {
+                        workerFactory.start();
+                    } catch (Exception e) {
+                        LOGGER.error("Worker factory failed: {}", e.getMessage(), e);
+                    }
+                }, "temporal-worker-" + taskQueue);
 
-            workerThread.setDaemon(false);
-            workerThread.start();
+                workerThread.setDaemon(false);
+                workerThread.start();
 
-            // Give it a moment to initialize
-            Thread.sleep(100);
+                // Give it a moment to initialize
+                Thread.sleep(100);
+            }
 
             LOGGER.debug("Singleton worker started successfully");
             return null;
@@ -381,13 +441,20 @@ public final class WorkflowWorkerNative {
         try {
             LOGGER.debug("Stopping singleton worker...");
 
-            if (workerFactory != null) {
-                workerFactory.shutdown();
-                workerFactory.awaitTermination(10, TimeUnit.SECONDS);
-            }
+            if (inMemoryMode && testEnvironment != null) {
+                // In-memory mode: use TestWorkflowEnvironment.close()
+                testEnvironment.close();
+                testEnvironment = null;
+                LOGGER.debug("In-memory worker closed");
+            } else {
+                if (workerFactory != null) {
+                    workerFactory.shutdown();
+                    workerFactory.awaitTermination(10, TimeUnit.SECONDS);
+                }
 
-            if (serviceStubs != null) {
-                serviceStubs.shutdown();
+                if (serviceStubs != null) {
+                    serviceStubs.shutdown();
+                }
             }
 
             started.set(false);
@@ -417,6 +484,15 @@ public final class WorkflowWorkerNative {
      */
     public static String getTaskQueue() {
         return taskQueue;
+    }
+
+    /**
+     * Check if the worker is running in in-memory mode.
+     *
+     * @return true if in-memory mode is active
+     */
+    public static boolean isInMemoryMode() {
+        return inMemoryMode;
     }
 
     /**

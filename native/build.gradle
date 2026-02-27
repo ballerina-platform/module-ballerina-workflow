@@ -33,6 +33,12 @@ dependencies {
     // Temporal SDK for durable workflow execution
     implementation "io.temporal:temporal-sdk:${temporalSdkVersion}"
     
+    // Temporal Testing SDK (for IN_MEMORY mode - embedded test server)
+    implementation "io.temporal:temporal-testing:${temporalSdkVersion}"
+    
+    // Temporal Testing SDK for in-memory workflow server (IN_MEMORY mode)
+    implementation "io.temporal:temporal-testing:${temporalSdkVersion}"
+    
     // Tally metrics library (required by Temporal SDK)
     implementation "com.uber.m3:tally-core:${tallyVersion}"
     

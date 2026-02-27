@@ -70,8 +70,10 @@ isolated function initSingletonWorker() returns error? {
         }
         WorkflowConfig config = workflowConfig;
         if config is InMemoryConfig {
-            // In-memory mode: no external server needed
-            return error("In-memory workflow mode is not yet implemented");
+            // In-memory mode: use embedded test server, no external server needed
+            check initInMemoryWorkerNative();
+            workerStarted = true;
+            return;
         }
         // Extract connection parameters based on deployment mode
         string url;
@@ -134,4 +136,14 @@ isolated function initWorkerNative(
 ) returns error? = @java:Method {
     'class: "io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative",
     name: "initSingletonWorker"
+} external;
+
+# Initializes an in-memory workflow worker using an embedded test server.
+# No external server connection is required. Workflows are not persisted
+# and signal-based communication is not supported.
+#
+# + return - An error if initialization fails, otherwise nil
+isolated function initInMemoryWorkerNative() returns error? = @java:Method {
+    'class: "io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative",
+    name: "initInMemoryWorker"
 } external;

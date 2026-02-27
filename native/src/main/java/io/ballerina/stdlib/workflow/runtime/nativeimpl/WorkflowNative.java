@@ -134,6 +134,12 @@ public final class WorkflowNative {
      */
     public static Object sendData(Environment env, BFunctionPointer workflowFunction, 
             BString workflowId, BString dataName, Object data) {
+        // Block sendData in IN_MEMORY mode
+        if (WorkflowWorkerNative.isInMemoryMode()) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("sendData is not supported in IN_MEMORY mode. " +
+                            "Use LOCAL, CLOUD, or SELF_HOSTED mode for signal-based communication."));
+        }
         return env.yieldAndRun(() -> {
             CompletableFuture<Object> balFuture = new CompletableFuture<>();
 
@@ -181,6 +187,12 @@ public final class WorkflowNative {
      */
     public static Object searchWorkflow(Environment env, BFunctionPointer workflowFunction,
             BMap<BString, Object> correlationKeys) {
+        // Block searchWorkflow in IN_MEMORY mode
+        if (WorkflowWorkerNative.isInMemoryMode()) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("searchWorkflow is not supported in IN_MEMORY mode. " +
+                            "Use LOCAL, CLOUD, or SELF_HOSTED mode for correlation-based workflow search."));
+        }
         return env.yieldAndRun(() -> {
             CompletableFuture<Object> balFuture = new CompletableFuture<>();
 

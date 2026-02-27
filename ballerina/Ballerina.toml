@@ -29,6 +29,12 @@ groupId = "io.temporal"
 artifactId = "temporal-serviceclient"
 version = "1.32.0"
 
+# Temporal Testing SDK (for IN_MEMORY mode)
+[[platform.java21.dependency]]
+groupId = "io.temporal"
+artifactId = "temporal-testing"
+version = "1.32.0"
+
 # Nexus RPC (required by Temporal SDK)
 [[platform.java21.dependency]]
 groupId = "io.nexusrpc"

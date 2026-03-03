@@ -108,7 +108,8 @@ isolated function initSingletonWorker() returns error? {
         }
         check initWorkerNative(url, namespace, workerCfg.taskQueue,
                 workerCfg.maxConcurrentWorkflows, workerCfg.maxConcurrentActivities,
-                apiKey, mtlsCert, mtlsKey);
+                apiKey, mtlsCert, mtlsKey,
+                workerCfg.defaultActivityRetryPolicy);
         workerStarted = true;
     }
 }
@@ -123,6 +124,7 @@ isolated function initSingletonWorker() returns error? {
 # + apiKey - API key for authentication (empty string if not used)
 # + mtlsCert - Path to mTLS certificate file (empty string if not used)
 # + mtlsKey - Path to mTLS private key file (empty string if not used)
+# + defaultRetryPolicy - Default activity retry policy
 # + return - An error if initialization fails, otherwise nil
 isolated function initWorkerNative(
         string url,
@@ -132,7 +134,8 @@ isolated function initWorkerNative(
         int maxConcurrentActivities,
         string apiKey,
         string mtlsCert,
-        string mtlsKey
+        string mtlsKey,
+        ActivityRetryPolicy defaultRetryPolicy
 ) returns error? = @java:Method {
     'class: "io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative",
     name: "initSingletonWorker"

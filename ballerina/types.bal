@@ -84,10 +84,13 @@ public type WorkflowConfig LocalConfig|CloudConfig|SelfHostedConfig|InMemoryConf
 # + taskQueue - The task queue for workflow execution (default: "BALLERINA_WORKFLOW_TASK_QUEUE")
 # + maxConcurrentWorkflows - Maximum number of concurrent workflow executions (default: 100)
 # + maxConcurrentActivities - Maximum number of concurrent activity executions (default: 100)
+# + defaultActivityRetryPolicy - Default retry policy applied to all activity executions
+#                                unless overridden per-call via `ActivityOptions.retryPolicy`
 public type WorkerConfig record {|
     string taskQueue = "BALLERINA_WORKFLOW_TASK_QUEUE";
     int maxConcurrentWorkflows = 100;
     int maxConcurrentActivities = 100;
+    ActivityRetryPolicy defaultActivityRetryPolicy = {};
 |};
 
 # Authentication configuration for workflow server connections.
@@ -119,6 +122,34 @@ type ProcessRegistration record {
 # Information about all registered workflows.
 # This is a map where keys are process names and values are their registration info.
 type WorkflowRegistry map<ProcessRegistration>;
+
+# Retry policy for activity execution.
+# Controls how the workflow engine retries failed activity executions.
+#
+# + initialIntervalInSeconds - Initial delay before the first retry attempt (default: 1 second)
+# + backoffCoefficient - Multiplier applied to the interval after each retry (default: 2.0)
+# + maximumIntervalInSeconds - Maximum delay between retries (optional, no cap if not set)
+# + maximumAttempts - Maximum number of retry attempts (default: 1, meaning no retries)
+public type ActivityRetryPolicy record {|
+    int initialIntervalInSeconds = 1;
+    decimal backoffCoefficient = 2.0;
+    int maximumIntervalInSeconds?;
+    int maximumAttempts = 1;
+|};
+
+# Options for activity execution via `callActivity`.
+# Allows configuring retry behavior and error handling semantics per activity call.
+#
+# + retryPolicy - Retry policy for the activity (optional, uses the global default
+#                 from `WorkerConfig.defaultActivityRetryPolicy` if not set)
+# + failOnError - If `true` (default), an error returned by the activity function is treated
+#                 as a failure, triggering engine retries based on the retry policy.
+#                 If `false`, an error is treated as a normal completion value and no
+#                 retries are attempted.
+public type ActivityOptions record {|
+    ActivityRetryPolicy retryPolicy?;
+    boolean failOnError = true;
+|};
 
 # Information about an activity invocation (for testing/introspection).
 # + activityName - The name of the activity that was invoked

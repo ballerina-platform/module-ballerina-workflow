@@ -27,6 +27,7 @@ import io.ballerina.runtime.api.values.BObject;
 import io.ballerina.runtime.api.values.BString;
 import io.ballerina.runtime.api.values.BTypedesc;
 import io.ballerina.stdlib.workflow.utils.TypesUtil;
+import io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative;
 import io.temporal.workflow.Workflow;
 
 import java.time.Duration;
@@ -57,6 +58,10 @@ public final class WorkflowContextNative {
         // Utility class, prevent instantiation
     }
 
+    // Key used to mark a call configuration map passed as the last activity argument
+    private static final String CALL_CONFIG_MARKER = "__callConfig__";
+    private static final String FAIL_ON_ERROR_KEY = "failOnError";
+
     /**
      * Execute an activity function within the workflow context.
      * <p>
@@ -66,15 +71,22 @@ public final class WorkflowContextNative {
      * <p>
      * The method uses dependent typing - the return type is determined by the typedesc
      * parameter and the result is converted using cloneWithType.
+     * <p>
+     * By default, if the activity function returns an error, the activity is treated as
+     * failed and the engine will retry based on the configured retry policy. Setting
+     * {@code failOnError} to {@code false} in the options causes errors to be returned
+     * as normal completion values without triggering retries.
      *
      * @param self the Context BObject (self reference from Ballerina)
      * @param activityFunction the activity function to execute
      * @param args the Parameters record containing arguments to pass to the activity
+     * @param options optional ActivityOptions record with retry policy and failOnError config
      * @param typedesc the expected return type descriptor for dependent typing
      * @return the result of the activity execution converted to the expected type, or an error
      */
+    @SuppressWarnings("unchecked")
     public static Object callActivity(BObject self, BFunctionPointer activityFunction, 
-            BMap<BString, Object> args, BTypedesc typedesc) {
+            BMap<BString, Object> args, Object options, BTypedesc typedesc) {
         try {
             // Get the activity name from the function pointer
             String simpleActivityName = activityFunction.getType().getName();
@@ -93,16 +105,66 @@ public final class WorkflowContextNative {
             }
             Object[] javaArgs = argsList.toArray();
 
-            // Use Temporal's activity stub to execute the activity
-            io.temporal.activity.ActivityOptions activityOptions = io.temporal.activity.ActivityOptions.newBuilder()
-                    .setStartToCloseTimeout(java.time.Duration.ofMinutes(5))
-                    .build();
+            // Parse ActivityOptions from the Ballerina record
+            boolean failOnError = true;
+            io.temporal.common.RetryOptions retryOptions = null;
 
+            if (options != null) {
+                BMap<BString, Object> optionsMap = (BMap<BString, Object>) options;
+                
+                // Extract failOnError flag (default: true)
+                Object failOnErrorVal = optionsMap.get(StringUtils.fromString(FAIL_ON_ERROR_KEY));
+                if (failOnErrorVal instanceof Boolean) {
+                    failOnError = (Boolean) failOnErrorVal;
+                }
+                
+                // Extract per-call retry policy if provided
+                Object retryPolicyVal = optionsMap.get(StringUtils.fromString("retryPolicy"));
+                if (retryPolicyVal instanceof BMap) {
+                    @SuppressWarnings("unchecked")
+                    BMap<BString, Object> retryMap = (BMap<BString, Object>) retryPolicyVal;
+                    retryOptions = WorkflowWorkerNative.parseRetryPolicy(retryMap);
+                }
+            }
+
+            // Fall back to global default retry policy when no per-call policy is specified
+            if (retryOptions == null) {
+                retryOptions = WorkflowWorkerNative.getDefaultActivityRetryOptions();
+            }
+
+            io.temporal.activity.ActivityOptions.Builder optionsBuilder = 
+                    io.temporal.activity.ActivityOptions.newBuilder()
+                        .setStartToCloseTimeout(java.time.Duration.ofMinutes(5));
+
+            if (retryOptions != null) {
+                optionsBuilder.setRetryOptions(retryOptions);
+            }
+
+            // When failOnError is false, set max attempts to 1 to prevent retries
+            // since the caller wants errors returned as normal values
+            if (!failOnError) {
+                optionsBuilder.setRetryOptions(
+                        io.temporal.common.RetryOptions.newBuilder()
+                                .setMaximumAttempts(1)
+                                .build());
+            }
+
+            io.temporal.activity.ActivityOptions activityOptions = optionsBuilder.build();
             io.temporal.workflow.ActivityStub activityStub =
                     Workflow.newUntypedActivityStub(activityOptions);
 
+            // Pass the failOnError flag to the activity adapter as a call config map
+            // appended to the activity arguments
+            Map<String, Object> callConfig = new HashMap<>();
+            callConfig.put(CALL_CONFIG_MARKER, true);
+            callConfig.put(FAIL_ON_ERROR_KEY, failOnError);
+            
+            Object[] argsWithConfig = new Object[javaArgs.length + 1];
+            System.arraycopy(javaArgs, 0, argsWithConfig, 0, javaArgs.length);
+            argsWithConfig[javaArgs.length] = callConfig;
+
             // Execute the activity through Temporal's activity mechanism with the full name
-            Object result = activityStub.execute(fullActivityName, Object.class, javaArgs);
+            Object result = activityStub.execute(fullActivityName, Object.class, argsWithConfig);
 
             // Convert result back to Ballerina type
             Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(result);
@@ -112,11 +174,16 @@ public final class WorkflowContextNative {
             return TypesUtil.cloneWithType(ballerinaResult, targetType);
 
         } catch (io.temporal.failure.ActivityFailure e) {
-            // Activity failed - extract the cause
+            // Activity failed - extract the original error message from the cause
             Throwable cause = e.getCause();
-            String errorMsg = cause != null ? cause.getMessage() : e.getMessage();
+            String errorMsg;
+            if (cause instanceof io.temporal.failure.ApplicationFailure appFailure) {
+                errorMsg = appFailure.getOriginalMessage();
+            } else {
+                errorMsg = cause != null ? cause.getMessage() : e.getMessage();
+            }
             return ErrorCreator.createError(
-                    StringUtils.fromString("Activity execution failed: " + errorMsg));
+                    StringUtils.fromString(errorMsg));
         } catch (Exception e) {
             return ErrorCreator.createError(
                     StringUtils.fromString("Activity execution failed: " + e.getMessage()));

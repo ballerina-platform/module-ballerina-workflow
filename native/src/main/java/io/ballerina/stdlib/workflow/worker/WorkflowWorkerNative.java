@@ -99,6 +99,9 @@ public final class WorkflowWorkerNative {
     private static final AtomicBoolean started = new AtomicBoolean(false);
     private static volatile boolean inMemoryMode = false;
 
+    // Global default activity retry policy (set from WorkerConfig.defaultActivityRetryPolicy)
+    private static volatile io.temporal.common.RetryOptions defaultActivityRetryOptions;
+
     // Store workflow module for creating Context objects
     private static Module workflowModule;
 
@@ -132,8 +135,10 @@ public final class WorkflowWorkerNative {
      * @param apiKey API key for authentication (empty string if not used)
      * @param mtlsCert Path to mTLS certificate file (empty string if not used)
      * @param mtlsKey Path to mTLS private key file (empty string if not used)
+     * @param defaultRetryPolicy Default activity retry policy from WorkerConfig
      * @return null on success, error on failure
      */
+    @SuppressWarnings("unchecked")
     public static Object initSingletonWorker(
             BString url,
             BString namespace,
@@ -142,7 +147,8 @@ public final class WorkflowWorkerNative {
             long maxConcurrentActivities,
             BString apiKey,
             BString mtlsCert,
-            BString mtlsKey) {
+            BString mtlsKey,
+            BMap<BString, Object> defaultRetryPolicy) {
 
         if (!initialized.compareAndSet(false, true)) {
             LOGGER.debug("Singleton worker already initialized");
@@ -192,10 +198,18 @@ public final class WorkflowWorkerNative {
             WorkflowServiceStubsOptions stubsOptions = stubsBuilder.build();
             serviceStubs = WorkflowServiceStubs.newServiceStubs(stubsOptions);
 
+            // Create a DataConverter with a custom FailureConverter that replaces
+            // "JavaSDK" source with "BallerinaSDK" in failure protos
+            io.temporal.common.converter.DataConverter dataConverter =
+                    io.temporal.common.converter.DefaultDataConverter.newDefaultInstance()
+                            .withFailureConverter(
+                                    new io.ballerina.stdlib.workflow.utils.BallerinaFailureConverter());
+
             // Create workflow client
             io.temporal.client.WorkflowClientOptions clientOptions =
                     io.temporal.client.WorkflowClientOptions.newBuilder()
                             .setNamespace(ns)
+                            .setDataConverter(dataConverter)
                             .build();
             workflowClient = WorkflowClient.newInstance(serviceStubs, clientOptions);
 
@@ -210,7 +224,10 @@ public final class WorkflowWorkerNative {
 
             singletonWorker = workerFactory.newWorker(taskQueue, workerOptions);
 
-
+            // Parse and store global default activity retry policy
+            defaultActivityRetryOptions = parseRetryPolicy(defaultRetryPolicy);
+            LOGGER.debug("Default activity retry policy: maxAttempts={}", 
+                    defaultActivityRetryOptions.getMaximumAttempts());
 
             // Register dynamic workflow and activity adapters eagerly.
             // This must happen before workerFactory.start() is called.
@@ -250,8 +267,22 @@ public final class WorkflowWorkerNative {
 
             LOGGER.debug("Initializing in-memory workflow worker with TestWorkflowEnvironment");
 
-            // Create the in-memory test environment
-            testEnvironment = TestWorkflowEnvironment.newInstance();
+            // Create a DataConverter with a custom FailureConverter that replaces
+            // "JavaSDK" source with "BallerinaSDK" in failure protos
+            io.temporal.common.converter.DataConverter dataConverter =
+                    io.temporal.common.converter.DefaultDataConverter.newDefaultInstance()
+                            .withFailureConverter(
+                                    new io.ballerina.stdlib.workflow.utils.BallerinaFailureConverter());
+
+            // Create the in-memory test environment with custom data converter
+            io.temporal.testing.TestEnvironmentOptions testOptions =
+                    io.temporal.testing.TestEnvironmentOptions.newBuilder()
+                            .setWorkflowClientOptions(
+                                    io.temporal.client.WorkflowClientOptions.newBuilder()
+                                            .setDataConverter(dataConverter)
+                                            .build())
+                            .build();
+            testEnvironment = TestWorkflowEnvironment.newInstance(testOptions);
 
             // Extract components from the test environment
             workflowClient = testEnvironment.getWorkflowClient();
@@ -264,6 +295,13 @@ public final class WorkflowWorkerNative {
                     .setMaxConcurrentActivityExecutionSize(100)
                     .build();
             singletonWorker = testEnvironment.newWorker(taskQueue, workerOptions);
+
+            // Set default activity retry options for in-memory mode (matches Ballerina defaults)
+            defaultActivityRetryOptions = io.temporal.common.RetryOptions.newBuilder()
+                    .setInitialInterval(java.time.Duration.ofSeconds(1))
+                    .setBackoffCoefficient(2.0)
+                    .setMaximumAttempts(1)
+                    .build();
 
             // Register dynamic workflow and activity adapters
             singletonWorker.registerWorkflowImplementationTypes(BallerinaWorkflowAdapter.class);
@@ -531,6 +569,49 @@ public final class WorkflowWorkerNative {
     }
 
     /**
+     * Gets the global default activity retry options configured via WorkerConfig.
+     *
+     * @return the default retry options, or null if not configured
+     */
+    public static io.temporal.common.RetryOptions getDefaultActivityRetryOptions() {
+        return defaultActivityRetryOptions;
+    }
+
+    /**
+     * Parses a Ballerina ActivityRetryPolicy BMap into Temporal RetryOptions.
+     *
+     * @param retryMap the Ballerina retry policy record
+     * @return the parsed RetryOptions
+     */
+    @SuppressWarnings("unchecked")
+    public static io.temporal.common.RetryOptions parseRetryPolicy(BMap<BString, Object> retryMap) {
+        io.temporal.common.RetryOptions.Builder retryBuilder = io.temporal.common.RetryOptions.newBuilder();
+
+        Object initialInterval = retryMap.get(StringUtils.fromString("initialIntervalInSeconds"));
+        if (initialInterval instanceof Long) {
+            retryBuilder.setInitialInterval(java.time.Duration.ofSeconds((Long) initialInterval));
+        }
+
+        Object backoff = retryMap.get(StringUtils.fromString("backoffCoefficient"));
+        if (backoff instanceof io.ballerina.runtime.api.values.BDecimal) {
+            retryBuilder.setBackoffCoefficient(
+                    ((io.ballerina.runtime.api.values.BDecimal) backoff).floatValue());
+        }
+
+        Object maxInterval = retryMap.get(StringUtils.fromString("maximumIntervalInSeconds"));
+        if (maxInterval instanceof Long) {
+            retryBuilder.setMaximumInterval(java.time.Duration.ofSeconds((Long) maxInterval));
+        }
+
+        Object maxAttempts = retryMap.get(StringUtils.fromString("maximumAttempts"));
+        if (maxAttempts instanceof Long) {
+            retryBuilder.setMaximumAttempts((int) (long) (Long) maxAttempts);
+        }
+
+        return retryBuilder.build();
+    }
+
+    /**
      * Convert Java types to Ballerina types.
      *
      * @param javaValue the Java value to convert
@@ -766,9 +847,10 @@ public final class WorkflowWorkerNative {
                     io.temporal.failure.ApplicationFailure failure =
                             io.temporal.failure.ApplicationFailure.newFailure(
                                     errorMsg,
-                                    "BallerinaWorkflowNotRegistered"
+                                    "error"
                             );
                     failure.setNonRetryable(true);
+                    failure.setStackTrace(new StackTraceElement[0]);
                     throw failure;
                 }
 
@@ -851,25 +933,14 @@ public final class WorkflowWorkerNative {
 
                 // Check if workflow returned an error - this should fail the workflow execution
                 if (result instanceof BError err) {
-                    String errorMsg = err.getMessage();
-                    Object errorDetails = convertBallerinaToJavaType(err.getDetails());
-
                     if (!isReplaying) {
-                        LOGGER.error("[JWorkflowAdapter] Workflow {} returned error: {}", workflowType, errorMsg);
+                        LOGGER.error("[JWorkflowAdapter] Workflow {} returned error: {}", workflowType,
+                                err.getMessage());
                     }
 
-                    // Build a Ballerina-friendly error message
-                    String ballerinaErrorMsg = String.format("Workflow '%s' failed: %s", workflowType, errorMsg);
-
-                    // Create ApplicationFailure
-                    io.temporal.failure.ApplicationFailure failure =
-                            io.temporal.failure.ApplicationFailure.newFailure(
-                                    ballerinaErrorMsg,
-                                    "BallerinaWorkflowError",
-                                    errorDetails
-                            );
-
-                    // Mark as non-retryable
+                    // Convert the full BError chain into an ApplicationFailure chain
+                    // so the Temporal UI shows a structured cause/details hierarchy.
+                    io.temporal.failure.ApplicationFailure failure = berrorToApplicationFailure(err);
                     failure.setNonRetryable(true);
 
                     throw failure;
@@ -900,18 +971,19 @@ public final class WorkflowWorkerNative {
                 }
 
                 // Wrap unexpected exceptions in ApplicationFailure to avoid workflow task retry loop
-                e.printStackTrace(System.err);
+                LOGGER.error("[JWorkflowAdapter] Workflow {} encountered an unexpected error",
+                        workflowType, e);
 
-                // Create detailed error message with exception type and message
-                String detailedErrorMsg = String.format("Workflow '%s' encountered an error: %s - %s",
-                        workflowType, e.getClass().getSimpleName(), e.getMessage());
+                String errorMsg = String.format("Workflow '%s' encountered an unexpected error: %s",
+                        workflowType, e.getMessage());
 
                 io.temporal.failure.ApplicationFailure failure =
                         io.temporal.failure.ApplicationFailure.newFailure(
-                                detailedErrorMsg,
-                                "BallerinaWorkflowExecutionError"
+                                errorMsg,
+                                "error"
                         );
                 failure.setNonRetryable(true);
+                failure.setStackTrace(new StackTraceElement[0]);
 
                 throw failure;
             }
@@ -995,9 +1067,10 @@ public final class WorkflowWorkerNative {
                 io.temporal.failure.ApplicationFailure failure =
                         io.temporal.failure.ApplicationFailure.newFailure(
                                 errorMsg,
-                                "BallerinaModuleNotInitialized"
+                                "error"
                         );
                 failure.setNonRetryable(true);
+                failure.setStackTrace(new StackTraceElement[0]);
                 throw failure;
             }
 
@@ -1025,13 +1098,79 @@ public final class WorkflowWorkerNative {
     }
 
     /**
+     * Converts a Ballerina {@link BError} (with optional cause chain) into an
+     * {@link io.temporal.failure.ApplicationFailure} chain suitable for the
+     * Temporal Failure proto.
+     * <p>
+     * Each BError produces an {@code ApplicationFailure} with:
+     * <ul>
+     *   <li>{@code message} – the BError message</li>
+     *   <li>{@code type} – the supplied {@code typeName}</li>
+     *   <li>{@code details} – the BError detail record (omitted when empty)</li>
+     *   <li>{@code cause} – recursively converted from
+     *       {@link BError#getCause()}</li>
+     * </ul>
+     * Stack traces are suppressed so the Temporal UI stays Ballerina-centric.
+     *
+     * @param err      the Ballerina error to convert
+     * @param typeName the {@code type} string for the ApplicationFailure
+     */
+    @SuppressWarnings("unchecked")
+    static io.temporal.failure.ApplicationFailure berrorToApplicationFailure(BError err,
+                                                                            String typeName) {
+        // Convert detail record – only include when non-empty so the Temporal
+        // UI does not show a hollow {"payloads":[{}]} entry.
+        BMap<?, ?> detailMap = (BMap<?, ?>) err.getDetails();
+        boolean hasDetails = detailMap != null && !detailMap.isEmpty();
+        Object details = hasDetails ? TypesUtil.convertBallerinaToJavaType(detailMap) : null;
+
+        // Recursively convert the cause chain
+        BError balCause = (BError) err.getCause();
+        io.temporal.failure.ApplicationFailure failure;
+        if (balCause != null) {
+            io.temporal.failure.ApplicationFailure causeFailure =
+                    berrorToApplicationFailure(balCause, typeName);
+            failure = hasDetails
+                    ? io.temporal.failure.ApplicationFailure.newFailureWithCause(
+                            err.getMessage(), typeName, causeFailure, details)
+                    : io.temporal.failure.ApplicationFailure.newFailureWithCause(
+                            err.getMessage(), typeName, causeFailure);
+        } else {
+            failure = hasDetails
+                    ? io.temporal.failure.ApplicationFailure.newFailure(
+                            err.getMessage(), typeName, details)
+                    : io.temporal.failure.ApplicationFailure.newFailure(
+                            err.getMessage(), typeName);
+        }
+        failure.setStackTrace(new StackTraceElement[0]);
+        return failure;
+    }
+
+    /**
+     * Convenience overload that uses an empty type string.
+     */
+    static io.temporal.failure.ApplicationFailure berrorToApplicationFailure(BError err) {
+        return berrorToApplicationFailure(err, "");
+    }
+
+    /**
      * Dynamic activity implementation that routes activity calls to registered Ballerina functions.
      * Uses Temporal's DynamicActivity interface for true dynamic routing without predefined method
      * signatures.
+     * <p>
+     * Supports a call configuration map appended as the last argument by {@code callActivity}.
+     * The config map contains a {@code __callConfig__} marker and a {@code failOnError} flag.
+     * When {@code failOnError} is {@code true} (default), a BError result causes the activity
+     * to throw an {@link io.temporal.failure.ApplicationFailure}, triggering Temporal retries.
+     * When {@code false}, the error is serialized and returned as a normal completion value.
      */
     public static class BallerinaActivityAdapter implements DynamicActivity {
 
+        private static final String CALL_CONFIG_MARKER = "__callConfig__";
+        private static final String FAIL_ON_ERROR_KEY = "failOnError";
+
         @Override
+        @SuppressWarnings("unchecked")
         public Object execute(EncodedValues args) {
             // Get activity name from Temporal's Activity.getExecutionContext()
             io.temporal.activity.ActivityExecutionContext activityContext =
@@ -1062,6 +1201,22 @@ public final class WorkflowWorkerNative {
                     break;
                 }
             }
+
+            // Extract call configuration from the last argument if present
+            boolean failOnError = true; // default behavior
+            if (!argsList.isEmpty()) {
+                Object lastArg = argsList.get(argsList.size() - 1);
+                if (lastArg instanceof Map<?, ?> configMap 
+                        && Boolean.TRUE.equals(configMap.get(CALL_CONFIG_MARKER))) {
+                    Object failOnErrorVal = ((Map<String, Object>) configMap).get(FAIL_ON_ERROR_KEY);
+                    if (failOnErrorVal instanceof Boolean) {
+                        failOnError = (Boolean) failOnErrorVal;
+                    }
+                    // Remove the config map from args before passing to the activity function
+                    argsList.remove(argsList.size() - 1);
+                }
+            }
+
             Object[] javaArgs = argsList.toArray();
 
             // Convert Java arguments to Ballerina types
@@ -1075,9 +1230,18 @@ public final class WorkflowWorkerNative {
             fpValue.metadata = new StrandMetadata(true, fpValue.metadata.properties());
             Object result = activityFunction.call(ballerinaRuntime, ballerinaArgs);
 
-            // Convert result back to Java types for Temporal
-            // BError will be converted to a serializable error representation
+            // Handle BError results based on failOnError configuration
+            if (result instanceof BError bError) {
+                if (failOnError) {
+                    // Convert the BError directly into an ApplicationFailure so the
+                    // Temporal UI shows the original Ballerina error message, details,
+                    // and cause chain without any extra wrapping.
+                    throw berrorToApplicationFailure(bError, "ActivityFailed");
+                }
+                // failOnError is false - serialize error as normal completion value
+            }
 
+            // Convert result back to Java types for Temporal
             return convertBallerinaToJavaType(result);
         }
     }

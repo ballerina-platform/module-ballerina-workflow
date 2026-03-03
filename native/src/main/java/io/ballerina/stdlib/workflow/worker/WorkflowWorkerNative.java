@@ -35,11 +35,13 @@ import io.ballerina.runtime.internal.values.FPValue;
 import io.ballerina.stdlib.workflow.context.SignalAwaitWrapper;
 import io.ballerina.stdlib.workflow.context.WorkflowContextNative;
 import io.ballerina.stdlib.workflow.registry.EventInfo;
+import io.ballerina.stdlib.workflow.runtime.WorkflowRuntime;
 import io.ballerina.stdlib.workflow.utils.EventExtractor;
 import io.ballerina.stdlib.workflow.utils.EventFutureCreator;
 import io.ballerina.stdlib.workflow.utils.TypesUtil;
 import io.temporal.activity.DynamicActivity;
 import io.temporal.client.WorkflowClient;
+import io.temporal.client.WorkflowStub;
 import io.temporal.common.converter.EncodedValues;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import io.temporal.serviceclient.WorkflowServiceStubsOptions;
@@ -1169,6 +1171,11 @@ public final class WorkflowWorkerNative {
         private static final String CALL_CONFIG_MARKER = "__callConfig__";
         private static final String FAIL_ON_ERROR_KEY = "failOnError";
 
+        // Built-in implicit activity names
+        public static final String BUILTIN_RUN = "__workflow_run";
+        public static final String BUILTIN_SEND_DATA = "__workflow_sendData";
+        public static final String BUILTIN_GET_RESULT = "__workflow_getResult";
+
         @Override
         @SuppressWarnings("unchecked")
         public Object execute(EncodedValues args) {
@@ -1176,6 +1183,17 @@ public final class WorkflowWorkerNative {
             io.temporal.activity.ActivityExecutionContext activityContext =
                     io.temporal.activity.Activity.getExecutionContext();
             String activityName = activityContext.getInfo().getActivityType();
+
+            // Handle built-in implicit activities
+            if (BUILTIN_RUN.equals(activityName)) {
+                return executeBuiltInRun(args);
+            }
+            if (BUILTIN_SEND_DATA.equals(activityName)) {
+                return executeBuiltInSendData(args);
+            }
+            if (BUILTIN_GET_RESULT.equals(activityName)) {
+                return executeBuiltInGetResult(args);
+            }
 
             // Look up the registered Ballerina function for this activity
             BFunctionPointer activityFunction = ACTIVITY_REGISTRY.get(activityName);
@@ -1243,6 +1261,74 @@ public final class WorkflowWorkerNative {
 
             // Convert result back to Java types for Temporal
             return convertBallerinaToJavaType(result);
+        }
+
+        /**
+         * Built-in implicit activity: starts a new workflow instance.
+         * <p>
+         * Args layout: processName (String), input (Object, may be null).
+         */
+        private Object executeBuiltInRun(EncodedValues args) {
+            String processName = args.get(0, String.class);
+            Object input = args.get(1, Object.class);
+            return WorkflowRuntime.getInstance().createInstance(processName, input);
+        }
+
+        /**
+         * Built-in implicit activity: sends data (signal) to a running workflow.
+         * <p>
+         * Args layout: workflowId (String), dataName (String), data (Object).
+         */
+        private Object executeBuiltInSendData(EncodedValues args) {
+            String workflowId = args.get(0, String.class);
+            String dataName = args.get(1, String.class);
+            Object data = args.get(2, Object.class);
+            WorkflowRuntime.getInstance().sendSignalToWorkflow(workflowId, dataName, data);
+            return null;
+        }
+
+        /**
+         * Built-in implicit activity: gets a workflow execution result.
+         * <p>
+         * Args layout: workflowId (String), timeoutSeconds (int).
+         * Returns a Map with workflowId, status, result, errorMessage.
+         */
+        @SuppressWarnings("unchecked")
+        private Object executeBuiltInGetResult(EncodedValues args) {
+            String workflowId = args.get(0, String.class);
+            int timeoutSeconds = args.get(1, Integer.class);
+
+            io.temporal.client.WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                throw new RuntimeException("Workflow client not initialized");
+            }
+
+            WorkflowStub stub = client.newUntypedWorkflowStub(workflowId);
+
+            Object result = null;
+            String status;
+            String errorMessage = null;
+
+            try {
+                result = stub.getResult(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS,
+                        Object.class);
+                status = "COMPLETED";
+            } catch (io.temporal.client.WorkflowFailedException e) {
+                status = "FAILED";
+                errorMessage = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
+            } catch (java.util.concurrent.TimeoutException e) {
+                status = "RUNNING";
+            } catch (Exception e) {
+                status = "FAILED";
+                errorMessage = e.getMessage();
+            }
+
+            java.util.Map<String, Object> info = new java.util.HashMap<>();
+            info.put("workflowId", workflowId);
+            info.put("status", status);
+            info.put("result", result);
+            info.put("errorMessage", errorMessage);
+            return info;
         }
     }
 }

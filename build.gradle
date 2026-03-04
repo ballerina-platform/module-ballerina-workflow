@@ -324,11 +324,21 @@ task startSharedTestServer {
         // No external server found - start Temporal dev server via CLI
         def temporalBinary = findTemporalCli()
         if (temporalBinary == null) {
-            throw new GradleException(
-                "Temporal CLI not found in PATH. Please install it:\n" +
-                "  macOS:   brew install temporal\n" +
-                "  Linux:   curl -sSf https://temporal.download/cli | sh\n" +
-                "  Windows: Download from https://github.com/temporalio/cli/releases")
+            // Temporal CLI not found - fall back to IN_MEMORY mode
+            logger.lifecycle("=" * 60)
+            logger.lifecycle("Temporal CLI not found in PATH")
+            logger.lifecycle("Falling back to IN_MEMORY mode (no external server)")
+            logger.lifecycle("Install Temporal CLI for LOCAL mode testing:")
+            logger.lifecycle("  macOS:   brew install temporal")
+            logger.lifecycle("  Linux:   curl -sSf https://temporal.download/cli | sh")
+            logger.lifecycle("=" * 60)
+
+            // Write IN_MEMORY Config.toml for both test suites
+            writeInMemoryTestConfig("${project(':workflow-ballerina').projectDir}/tests/Config.toml")
+            writeInMemoryTestConfig("${project(':workflow-integration-tests').projectDir}/tests/Config.toml")
+
+            testServerStarted = true  // Mark as "started" to prevent re-entry
+            return
         }
 
         logger.lifecycle("Starting Temporal dev server on port ${testServerPort}...")
@@ -396,11 +406,11 @@ task startSharedTestServer {
     }
 }
 
-// Helper method to write test Config.toml
+// Helper method to write test Config.toml with LOCAL mode (for real Temporal server)
 def writeTestConfig(String path, String serverUrl, boolean isExternal) {
     def configFile = new File(path)
     configFile.parentFile.mkdirs()
-    configFile.text = """# Auto-generated test configuration
+    configFile.text = """# Auto-generated test configuration (LOCAL mode - Temporal server)
 
 [ballerina.workflow.workflowConfig]
 mode = "LOCAL"
@@ -411,6 +421,17 @@ namespace = "default"
 taskQueue = "BALLERINA_WORKFLOW_TASK_QUEUE"
 maxConcurrentWorkflows = 100
 maxConcurrentActivities = 100
+"""
+}
+
+// Helper method to write test Config.toml with IN_MEMORY mode (no external server)
+def writeInMemoryTestConfig(String path) {
+    def configFile = new File(path)
+    configFile.parentFile.mkdirs()
+    configFile.text = """# Auto-generated test configuration (IN_MEMORY mode - no external server needed)
+
+[ballerina.workflow.workflowConfig]
+mode = "IN_MEMORY"
 """
 }
 

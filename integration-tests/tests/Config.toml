@@ -1,4 +1,4 @@
-# Auto-generated test configuration
+# Auto-generated test configuration (LOCAL mode - Temporal server)
 
 [ballerina.workflow.workflowConfig]
 mode = "LOCAL"

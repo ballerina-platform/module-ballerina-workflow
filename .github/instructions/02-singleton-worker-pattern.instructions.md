@@ -25,7 +25,7 @@ public type LocalConfig record {|
     "LOCAL" mode = "LOCAL";
     string url = "localhost:7233";
     string namespace = "default";
-    WorkerConfig params = {};
+    SchedulerConfig scheduler = {};
 |};
 
 public type CloudConfig record {|
@@ -33,7 +33,7 @@ public type CloudConfig record {|
     string url;
     string namespace;
     AuthConfig auth;
-    WorkerConfig params = {};
+    SchedulerConfig scheduler = {};
 |};
 
 public type SelfHostedConfig record {|
@@ -41,14 +41,14 @@ public type SelfHostedConfig record {|
     string url;
     string namespace = "default";
     AuthConfig? auth = ();
-    WorkerConfig params = {};
+    SchedulerConfig scheduler = {};
 |};
 
 public type InMemoryConfig record {|
     "IN_MEMORY" mode = "IN_MEMORY";
 |};
 
-public type WorkerConfig record {|
+public type SchedulerConfig record {|
     string taskQueue = "BALLERINA_WORKFLOW_TASK_QUEUE";
     int maxConcurrentWorkflows = 100;
     int maxConcurrentActivities = 100;
@@ -70,42 +70,44 @@ configurable WorkflowConfig workflowConfig = {mode: "LOCAL"};
 
 #### Module Initialization ([module.bal](ballerina/module.bal))
 ```ballerina
-isolated boolean workerStarted = false;
+isolated boolean programStarted = false;
 
 # Module initialization - called automatically at module load
 function init() returns error? {
     initModule();                    // Capture module reference
-    check initSingletonWorker();     // Initialize worker
+    check initWorkflowRuntime();     // Initialize workflow runtime
 }
 
-# Initialize the singleton worker with configured settings
-isolated function initSingletonWorker() returns error? {
+# Initialize the workflow runtime with configured settings
+isolated function initWorkflowRuntime() returns error? {
     lock {
-        if workerStarted {
+        if programStarted {
             return;
         }
         WorkflowConfig config = workflowConfig;
         if config is InMemoryConfig {
-            return error("In-memory workflow mode is not yet implemented");
+            check initInMemoryProgramNative();
+            programStarted = true;
+            return;
         }
         // Extract connection parameters based on deployment mode
         string url;
         string namespace;
-        WorkerConfig workerCfg;
+        SchedulerConfig schedulerCfg;
         string apiKey = "";
         string mtlsCert = "";
         string mtlsKey = "";
         if config is CloudConfig {
             url = config.url;
             namespace = config.namespace;
-            workerCfg = config.params;
+            schedulerCfg = config.scheduler;
             apiKey = config.auth.apiKey ?: "";
             mtlsCert = config.auth.mtlsCert ?: "";
             mtlsKey = config.auth.mtlsKey ?: "";
         } else if config is SelfHostedConfig {
             url = config.url;
             namespace = config.namespace;
-            workerCfg = config.params;
+            schedulerCfg = config.scheduler;
             if config.auth is AuthConfig {
                 AuthConfig auth = <AuthConfig>config.auth;
                 apiKey = auth.apiKey ?: "";
@@ -113,15 +115,16 @@ isolated function initSingletonWorker() returns error? {
                 mtlsKey = auth.mtlsKey ?: "";
             }
         } else {
-            LocalConfig localCfg = config;
+            LocalConfig localCfg = <LocalConfig>config;
             url = localCfg.url;
             namespace = localCfg.namespace;
-            workerCfg = localCfg.params;
+            schedulerCfg = localCfg.scheduler;
         }
-        check initWorkerNative(url, namespace, workerCfg.taskQueue,
-                workerCfg.maxConcurrentWorkflows, workerCfg.maxConcurrentActivities,
-                apiKey, mtlsCert, mtlsKey);
-        workerStarted = true;
+        check initProgramNative(url, namespace, schedulerCfg.taskQueue,
+                schedulerCfg.maxConcurrentWorkflows, schedulerCfg.maxConcurrentActivities,
+                apiKey, mtlsCert, mtlsKey,
+                schedulerCfg.defaultActivityRetryPolicy);
+        programStarted = true;
     }
 }
 ```
@@ -135,7 +138,7 @@ mode = "LOCAL"
 url = "localhost:7233"
 namespace = "default"
 
-[ballerina.workflow.workflowConfig.params]
+[ballerina.workflow.workflowConfig.scheduler]
 taskQueue = "my-task-queue"
 maxConcurrentWorkflows = 50
 maxConcurrentActivities = 50
@@ -151,7 +154,7 @@ namespace = "my-ns.my-account"
 [ballerina.workflow.workflowConfig.auth]
 apiKey = "my-api-key"
 
-[ballerina.workflow.workflowConfig.params]
+[ballerina.workflow.workflowConfig.scheduler]
 taskQueue = "my-task-queue"
 ```
 
@@ -166,7 +169,7 @@ namespace = "production"
 mtlsCert = "/path/to/client.pem"
 mtlsKey = "/path/to/client.key"
 
-[ballerina.workflow.workflowConfig.params]
+[ballerina.workflow.workflowConfig.scheduler]
 taskQueue = "my-task-queue"
 ```
 

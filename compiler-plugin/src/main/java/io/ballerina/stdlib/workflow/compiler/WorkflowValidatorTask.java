@@ -78,6 +78,8 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
             validateCallActivityUsage(functionNode, context);
             // Validate no direct @Activity function calls are made
             validateNoDirectActivityCalls(functionNode, context);
+            // Validate no time:utcNow() calls are made (non-deterministic)
+            validateNoUtcNowCalls(functionNode, context);
         }
 
         // Check if function has @Activity annotation
@@ -506,6 +508,63 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                     WorkflowDiagnostic.WORKFLOW_111.getSeverity());
             context.reportDiagnostic(DiagnosticFactory.createDiagnostic(diagnosticInfo,
                     node.arguments().get(0).location()));
+        }
+    }
+
+    /**
+     * Validates that no time:utcNow() calls are made within @Workflow functions.
+     * time:utcNow() is non-deterministic and should not be used inside workflows.
+     * Users should use activity:currentTime() instead.
+     */
+    private void validateNoUtcNowCalls(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context) {
+        UtcNowCallValidator validator = new UtcNowCallValidator(context);
+        functionNode.functionBody().accept(validator);
+    }
+
+    /**
+     * Node visitor that detects calls to time:utcNow() inside workflow functions.
+     */
+    private static class UtcNowCallValidator extends NodeVisitor {
+        private final SyntaxNodeAnalysisContext context;
+        private final SemanticModel semanticModel;
+        private static final String TIME_MODULE_ORG = "ballerina";
+        private static final String TIME_MODULE_NAME = "time";
+        private static final String UTC_NOW_FUNCTION = "utcNow";
+
+        UtcNowCallValidator(SyntaxNodeAnalysisContext context) {
+            this.context = context;
+            this.semanticModel = context.semanticModel();
+        }
+
+        @Override
+        public void visit(FunctionCallExpressionNode callNode) {
+            Optional<Symbol> symbolOpt = semanticModel.symbol(callNode);
+            if (symbolOpt.isPresent() && symbolOpt.get().kind() == SymbolKind.FUNCTION) {
+                FunctionSymbol funcSymbol = (FunctionSymbol) symbolOpt.get();
+                if (isTimeUtcNow(funcSymbol)) {
+                    DiagnosticInfo diagnosticInfo = new DiagnosticInfo(
+                            WorkflowDiagnostic.WORKFLOW_113.getCode(),
+                            WorkflowDiagnostic.WORKFLOW_113.getMessage(),
+                            WorkflowDiagnostic.WORKFLOW_113.getSeverity());
+                    context.reportDiagnostic(DiagnosticFactory.createDiagnostic(diagnosticInfo,
+                            callNode.functionName().location()));
+                }
+            }
+            // Continue visiting child nodes
+            callNode.arguments().forEach(arg -> arg.accept(this));
+        }
+
+        private boolean isTimeUtcNow(FunctionSymbol funcSymbol) {
+            if (!UTC_NOW_FUNCTION.equals(funcSymbol.getName().orElse(""))) {
+                return false;
+            }
+            var moduleOpt = funcSymbol.getModule();
+            if (moduleOpt.isEmpty()) {
+                return false;
+            }
+            var moduleSymbol = moduleOpt.get();
+            return TIME_MODULE_ORG.equals(moduleSymbol.id().orgName())
+                    && TIME_MODULE_NAME.equals(moduleSymbol.id().moduleName());
         }
     }
 

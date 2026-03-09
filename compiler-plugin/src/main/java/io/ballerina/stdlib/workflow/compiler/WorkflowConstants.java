@@ -33,6 +33,11 @@ public final class WorkflowConstants {
     public static final String PACKAGE_ORG = "ballerina";
     public static final String PACKAGE_NAME = "workflow";
 
+    // Submodule names and aliases
+    public static final String INTERNAL_MODULE_NAME = "internal";
+    public static final String INTERNAL_MODULE_NAME_QUOTED = "'internal";
+    public static final String INTERNAL_MODULE_ALIAS = "wfInternal";
+
     // Annotation names
     public static final String PROCESS_ANNOTATION = "Workflow";
     public static final String ACTIVITY_ANNOTATION = "Activity";

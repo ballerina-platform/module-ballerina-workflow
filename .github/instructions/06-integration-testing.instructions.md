@@ -52,7 +52,7 @@ mode = "LOCAL"
 url = "localhost:7233"
 namespace = "default"
 
-[ballerina.workflow.workflowConfig.params]
+[ballerina.workflow.workflowConfig.scheduler]
 taskQueue = "BALLERINA_WORKFLOW_TASK_QUEUE"
 maxConcurrentWorkflows = 100
 maxConcurrentActivities = 100

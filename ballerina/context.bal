@@ -15,14 +15,12 @@
 // under the License.
 
 import ballerina/jballerina.java;
-import ballerina/time;
 
 # Workflow execution context providing workflow APIs.
 # This is a client object that provides access to workflow operations.
 #
 # This client provides:
 # - Activity execution via `callActivity` remote method
-# - Durable sleep operations
 # - Workflow state queries (replaying status, workflow ID, workflow type)
 #
 # Use `check ctx->callActivity(myActivity, {"arg1": val1, "arg2": val2})` to execute activities.
@@ -76,22 +74,6 @@ public client class Context {
         name: "callActivity"
     } external;
 
-    # Durable sleep that survives workflow restarts.
-    #
-    # Unlike regular sleep, this is persisted and will continue counting
-    # even if the workflow is replayed or the worker restarts.
-    #
-    # + duration - Duration to sleep
-    # + return - Error if sleep fails
-    public isolated function sleep(time:Duration duration) returns error? {
-        // Convert Duration to milliseconds
-        decimal totalSeconds = <decimal>duration.hours * 3600 + 
-                               <decimal>duration.minutes * 60 + 
-                               duration.seconds;
-        int millis = <int>(totalSeconds * 1000);
-        return sleepNative(self.nativeContext, millis);
-    }
-
     # Check if the workflow is currently replaying history.
     #
     # Useful for skipping side effects that should only happen on first execution.
@@ -118,14 +100,6 @@ public client class Context {
 }
 
 // Native function declarations
-
-isolated function sleepNative(
-        handle contextHandle,
-        int millis
-) returns error? = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.context.WorkflowContextNative",
-    name: "sleepMillis"
-} external;
 
 isolated function isReplayingNative(handle contextHandle) returns boolean = @java:Method {
     'class: "io.ballerina.stdlib.workflow.context.WorkflowContextNative",

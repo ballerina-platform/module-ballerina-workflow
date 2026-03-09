@@ -22,6 +22,7 @@ import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.IdentifierToken;
 import io.ballerina.compiler.syntax.tree.ImportDeclarationNode;
 import io.ballerina.compiler.syntax.tree.ImportOrgNameNode;
+import io.ballerina.compiler.syntax.tree.ImportPrefixNode;
 import io.ballerina.compiler.syntax.tree.ModuleMemberDeclarationNode;
 import io.ballerina.compiler.syntax.tree.ModulePartNode;
 import io.ballerina.compiler.syntax.tree.ModuleVariableDeclarationNode;
@@ -77,7 +78,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             ModulePartNode updatedRootNode = transformDocument(rootNode, workflowContext);
 
             // Add import if needed
-            updatedRootNode = addWorkflowImportIfMissing(updatedRootNode);
+            updatedRootNode = addWorkflowInternalImportIfMissing(updatedRootNode);
 
             // Update the syntax tree
             SyntaxTree syntaxTree = module.document(documentId).syntaxTree().modifyWith(updatedRootNode);
@@ -129,7 +130,8 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         String activitiesArg = processInfo.activityMap().isEmpty() ? "()" : mapLiteral.toString();
 
         String registerStatement = String.format(
-                "boolean _ = check workflow:registerProcess(%s, \"%s\", %s);",
+                "boolean _ = check %s:registerWorkflow(%s, \"%s\", %s);",
+                WorkflowConstants.INTERNAL_MODULE_ALIAS,
                 processInfo.functionName(),
                 processInfo.functionName(),
                 activitiesArg
@@ -138,26 +140,26 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         return (ModuleVariableDeclarationNode) NodeParser.parseModuleMemberDeclaration(registerStatement);
     }
 
-    private ModulePartNode addWorkflowImportIfMissing(ModulePartNode rootNode) {
-        boolean hasWorkflowImport = false;
+    private ModulePartNode addWorkflowInternalImportIfMissing(ModulePartNode rootNode) {
+        boolean hasInternalImport = false;
 
         for (ImportDeclarationNode importNode : rootNode.imports()) {
-            if (isWorkflowImportNode(importNode)) {
-                hasWorkflowImport = true;
+            if (isWorkflowInternalImportNode(importNode)) {
+                hasInternalImport = true;
                 break;
             }
         }
 
-        if (!hasWorkflowImport) {
-            ImportDeclarationNode workflowImport = createWorkflowImportNode();
-            NodeList<ImportDeclarationNode> imports = rootNode.imports().add(workflowImport);
+        if (!hasInternalImport) {
+            ImportDeclarationNode internalImport = createWorkflowInternalImportNode();
+            NodeList<ImportDeclarationNode> imports = rootNode.imports().add(internalImport);
             return rootNode.modify().withImports(imports).apply();
         }
 
         return rootNode;
     }
 
-    private boolean isWorkflowImportNode(ImportDeclarationNode importNode) {
+    private boolean isWorkflowInternalImportNode(ImportDeclarationNode importNode) {
         if (importNode.orgName().isEmpty()) {
             return false;
         }
@@ -166,13 +168,14 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             return false;
         }
         SeparatedNodeList<IdentifierToken> moduleNames = importNode.moduleName();
-        if (moduleNames.isEmpty()) {
+        if (moduleNames.size() < 2) {
             return false;
         }
-        return WorkflowConstants.PACKAGE_NAME.equals(moduleNames.get(0).text());
+        return WorkflowConstants.PACKAGE_NAME.equals(moduleNames.get(0).text())
+                && WorkflowConstants.INTERNAL_MODULE_NAME_QUOTED.equals(moduleNames.get(1).text());
     }
 
-    private ImportDeclarationNode createWorkflowImportNode() {
+    private ImportDeclarationNode createWorkflowInternalImportNode() {
         Token importKeyword = NodeFactory.createToken(SyntaxKind.IMPORT_KEYWORD,
                 NodeFactory.createEmptyMinutiaeList(),
                 NodeFactory.createMinutiaeList(NodeFactory.createWhitespaceMinutiae(" ")));
@@ -181,12 +184,25 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         Token slashToken = NodeFactory.createToken(SyntaxKind.SLASH_TOKEN);
         ImportOrgNameNode importOrgNameToken = NodeFactory.createImportOrgNameNode(orgNameToken, slashToken);
 
-        IdentifierToken moduleNameNode = NodeFactory.createIdentifierToken(WorkflowConstants.PACKAGE_NAME);
-        SeparatedNodeList<IdentifierToken> moduleName = NodeFactory.createSeparatedNodeList(moduleNameNode);
+        // Module name: workflow.'internal
+        IdentifierToken workflowToken = NodeFactory.createIdentifierToken(WorkflowConstants.PACKAGE_NAME);
+        Token dotToken = NodeFactory.createToken(SyntaxKind.DOT_TOKEN);
+        IdentifierToken internalToken = NodeFactory.createIdentifierToken(
+                "'" + WorkflowConstants.INTERNAL_MODULE_NAME);
+        SeparatedNodeList<IdentifierToken> moduleName = NodeFactory.createSeparatedNodeList(
+                workflowToken, dotToken, internalToken);
+
+        // Prefix alias: as wfInternal
+        Token asKeyword = NodeFactory.createToken(SyntaxKind.AS_KEYWORD,
+                NodeFactory.createMinutiaeList(NodeFactory.createWhitespaceMinutiae(" ")),
+                NodeFactory.createMinutiaeList(NodeFactory.createWhitespaceMinutiae(" ")));
+        Token prefixToken = NodeFactory.createIdentifierToken(WorkflowConstants.INTERNAL_MODULE_ALIAS);
+        ImportPrefixNode importPrefix = NodeFactory.createImportPrefixNode(asKeyword, prefixToken);
+
         Token semicolonToken = NodeFactory.createToken(SyntaxKind.SEMICOLON_TOKEN);
 
-        return NodeFactory.createImportDeclarationNode(importKeyword, importOrgNameToken, moduleName, null,
-                semicolonToken);
+        return NodeFactory.createImportDeclarationNode(importKeyword, importOrgNameToken, moduleName,
+                importPrefix, semicolonToken);
     }
 
     /**

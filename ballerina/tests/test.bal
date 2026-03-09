@@ -15,6 +15,7 @@
 // under the License.
 
 import ballerina/test;
+import ballerina/workflow.'internal as wfInternal;
 
 // Note: Module-level tests focus on registration and introspection.
 // These tests work with the lazy gRPC connection (no active workflow server needed).
@@ -128,48 +129,48 @@ function simpleWorkflowProcess(string input) returns string|error {
 @test:BeforeSuite
 function setupTests() returns error? {
     // Register all test processes once. This matches how the compiler plugin
-    // generates registerProcess calls at module init time in real applications.
+    // generates registerWorkflow calls at module init time in real applications.
     
     // Basic process registration
-    _ = check registerProcess(testProcessFunction, "test-process");
+    _ = check wfInternal:registerWorkflow(testProcessFunction, "test-process");
     
     // Process with activities
     map<function> activities1 = {
         "testActivityFunction": testActivityFunction,
         "testActivityFunction2": testActivityFunction2
     };
-    _ = check registerProcess(processWithActivities, "process-with-activities", activities1);
+    _ = check wfInternal:registerWorkflow(processWithActivities, "process-with-activities", activities1);
     
     // Process with events (named record type)
-    _ = check registerProcess(processWithEvents, "process-with-events");
+    _ = check wfInternal:registerWorkflow(processWithEvents, "process-with-events");
     
     // Process with single event
-    _ = check registerProcess(processWithContextAndEvents, "process-single-event");
+    _ = check wfInternal:registerWorkflow(processWithContextAndEvents, "process-single-event");
     
     // Process without events (to verify empty events list)
-    _ = check registerProcess(testProcessFunction, "no-events-process");
+    _ = check wfInternal:registerWorkflow(testProcessFunction, "no-events-process");
     
     // Process with both activities and events
     map<function> activities2 = {
         "testActivityFunction": testActivityFunction
     };
-    _ = check registerProcess(processWithEvents, "process-activities-events", activities2);
+    _ = check wfInternal:registerWorkflow(processWithEvents, "process-activities-events", activities2);
     
     // Inline record event processes
-    _ = check registerProcess(processWithInlineEvents, "inline-multi-events");
-    _ = check registerProcess(processWithSingleInlineEvent, "inline-single-event");
-    _ = check registerProcess(processWithMixedInlineEvents, "inline-mixed-events");
-    _ = check registerProcess(processWithInlineEventsNoContext, "inline-no-context");
+    _ = check wfInternal:registerWorkflow(processWithInlineEvents, "inline-multi-events");
+    _ = check wfInternal:registerWorkflow(processWithSingleInlineEvent, "inline-single-event");
+    _ = check wfInternal:registerWorkflow(processWithMixedInlineEvents, "inline-mixed-events");
+    _ = check wfInternal:registerWorkflow(processWithInlineEventsNoContext, "inline-no-context");
     
     // Inline record with activities
     map<function> activities3 = {
         "testActivityFunction": testActivityFunction,
         "testActivityFunction2": testActivityFunction2
     };
-    _ = check registerProcess(processWithInlineEvents, "inline-with-activities", activities3);
+    _ = check wfInternal:registerWorkflow(processWithInlineEvents, "inline-with-activities", activities3);
     
     // Process for run tests
-    _ = check registerProcess(simpleWorkflowProcess, "simple-workflow");
+    _ = check wfInternal:registerWorkflow(simpleWorkflowProcess, "simple-workflow");
 }
 
 // ============================================================================
@@ -193,7 +194,7 @@ function testRegisterProcess() returns error? {
 function testRegisterProcessDuplicate() returns error? {
     // Attempt to register a process with the same name that was already registered
     // This should fail because "test-process" was registered in @BeforeSuite
-    boolean|error result = registerProcess(testProcessFunction, "test-process");
+    boolean|error result = wfInternal:registerWorkflow(testProcessFunction, "test-process");
     test:assertTrue(result is error, "Duplicate registration should fail");
 }
 

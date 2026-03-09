@@ -20,12 +20,12 @@
 # + mode - Deployment mode identifier (always "LOCAL")
 # + url - Server URL (default: "localhost:7233")
 # + namespace - Workflow namespace (default: "default")
-# + params - Worker configuration parameters
+# + scheduler - Scheduler configuration parameters
 public type LocalConfig record {|
     "LOCAL" mode = "LOCAL";
     string url = "localhost:7233";
     string namespace = "default";
-    WorkerConfig params = {};
+    SchedulerConfig scheduler = {};
 |};
 
 # Configuration for connecting to a managed cloud deployment.
@@ -35,13 +35,13 @@ public type LocalConfig record {|
 # + url - Cloud server URL (e.g., "<namespace>.<account>.tmprl.cloud:7233")
 # + namespace - Cloud namespace (e.g., "<namespace>.<account>")
 # + auth - Authentication configuration (required for cloud)
-# + params - Worker configuration parameters
+# + scheduler - Scheduler configuration parameters
 public type CloudConfig record {|
     "CLOUD" mode;
     string url;
     string namespace;
     AuthConfig auth;
-    WorkerConfig params = {};
+    SchedulerConfig scheduler = {};
 |};
 
 # Configuration for connecting to a self-hosted server deployment.
@@ -51,13 +51,13 @@ public type CloudConfig record {|
 # + url - Server URL (e.g., "temporal.mycompany.com:7233")
 # + namespace - Workflow namespace (default: "default")
 # + auth - Optional authentication configuration
-# + params - Worker configuration parameters
+# + scheduler - Scheduler configuration parameters
 public type SelfHostedConfig record {|
     "SELF_HOSTED" mode;
     string url;
     string namespace = "default";
     AuthConfig? auth = ();
-    WorkerConfig params = {};
+    SchedulerConfig scheduler = {};
 |};
 
 # Configuration for an in-memory workflow engine.
@@ -79,14 +79,14 @@ public type InMemoryConfig record {|
 # - `IN_MEMORY` - Lightweight in-memory engine (no persistence)
 public type WorkflowConfig LocalConfig|CloudConfig|SelfHostedConfig|InMemoryConfig;
 
-# Worker configuration parameters.
+# Scheduler configuration parameters.
 #
 # + taskQueue - The task queue for workflow execution (default: "BALLERINA_WORKFLOW_TASK_QUEUE")
 # + maxConcurrentWorkflows - Maximum number of concurrent workflow executions (default: 100)
 # + maxConcurrentActivities - Maximum number of concurrent activity executions (default: 100)
 # + defaultActivityRetryPolicy - Default retry policy applied to all activity executions
 #                                unless overridden per-call via `ActivityOptions.retryPolicy`
-public type WorkerConfig record {|
+public type SchedulerConfig record {|
     string taskQueue = "BALLERINA_WORKFLOW_TASK_QUEUE";
     int maxConcurrentWorkflows = 100;
     int maxConcurrentActivities = 100;
@@ -141,7 +141,7 @@ public type ActivityRetryPolicy record {|
 # Allows configuring retry behavior and error handling semantics per activity call.
 #
 # + retryPolicy - Retry policy for the activity (optional, uses the global default
-#                 from `WorkerConfig.defaultActivityRetryPolicy` if not set)
+#                 from `SchedulerConfig.defaultActivityRetryPolicy` if not set)
 # + failOnError - If `true` (default), an error returned by the activity function is treated
 #                 as a failure, triggering engine retries based on the retry policy.
 #                 If `false`, an error is treated as a normal completion value and no

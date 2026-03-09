@@ -71,6 +71,10 @@ public enum WorkflowDiagnostic {
     WORKFLOW_112("WORKFLOW_112",
             "The process '%s' has structurally equivalent signal types '%s' and '%s'. "
                     + "Signal types in the events record should have distinct structures",
+            DiagnosticSeverity.WARNING),
+    WORKFLOW_113("WORKFLOW_113",
+            "Using 'time:utcNow()' inside a @Workflow function is non-deterministic. "
+                    + "Use 'activity:currentTime()' instead",
             DiagnosticSeverity.WARNING);
 
     private final String code;

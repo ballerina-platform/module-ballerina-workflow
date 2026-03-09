@@ -3,6 +3,6 @@ mode = "LOCAL"
 url = "localhost:7233"
 namespace = "default"
 
-[ballerina.workflow.workflowConfig.params]
+[ballerina.workflow.workflowConfig.scheduler]
 taskQueue = "CRM_SYNC_QUEUE"
 maxConcurrentWorkflows = 100

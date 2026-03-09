@@ -46,56 +46,39 @@ public isolated function sendData(function workflow, string workflowId, string d
     'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative"
 } external;
 
-# Registers a workflow process function with the singleton worker.
-#
-# Makes the process available for execution when `run` is called.
-# The process is registered with the singleton worker that was created at
-# module initialization time. This function should be called during
-# application initialization to register all workflow processes.
-#
-# + processFunction - The process function to register (must be annotated with @Workflow)
-# + processName - The unique name to register the process under
-# + activities - Optional map of activity function pointers used by the process
-# + return - `true` if registration was successful, or an error if registration fails
-public isolated function registerProcess(function processFunction, string processName, map<function>? activities = ()) returns boolean|error = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative",
-    name: "registerProcessWithWorker"
-} external;
-
-
 // Internal functions
 
-# Starts the singleton worker after all processes have been registered.
-# This must be called after all registerProcess calls are complete.
-# The worker will begin polling for workflow and activity tasks.
+# Starts the workflow runtime after all workflows have been registered.
+# This must be called after all registerWorkflow calls are complete.
+# The workflow runtime will begin polling for workflow and activity tasks.
 #
 # + return - An error if starting fails, otherwise nil
-isolated function startWorker() returns error? = @java:Method {
+isolated function startWorkflowRuntime() returns error? = @java:Method {
     'class: "io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative",
     name: "startSingletonWorker"
 } external;
 
-# Stops the singleton worker gracefully.
+# Stops the workflow runtime gracefully.
 # Any in-progress workflows will be allowed to complete their current tasks.
 #
 # + return - An error if stopping fails, otherwise nil
-isolated function stopWorker() returns error? = @java:Method {
+isolated function stopWorkflowRuntime() returns error? = @java:Method {
     'class: "io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative",
     name: "stopSingletonWorker"
 } external;
 
-# Returns information about all registered workflow processes and their activities.
+# Returns information about all registered workflows and their activities.
 #
 # This function is useful for testing and runtime introspection to verify
-# that workflow processes have been properly registered with their activities.
+# that workflows have been properly registered with their activities.
 #
-# + return - A map of process names to their registration information, or an error
+# + return - A map of workflow names to their registration information, or an error
 isolated function getRegisteredWorkflows() returns WorkflowRegistry|error {
     return getRegisteredWorkflowsNative();
 }
 
 # Native implementation to get registered workflows.
-# + return - A map of process names to their registration information, or an error
+# + return - A map of workflow names to their registration information, or an error
 isolated function getRegisteredWorkflowsNative() returns WorkflowRegistry|error = @java:Method {
     'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative",
     name: "getRegisteredWorkflows"

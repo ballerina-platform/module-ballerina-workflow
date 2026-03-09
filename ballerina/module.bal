@@ -16,16 +16,16 @@
 
 import ballerina/jballerina.java;
 
-# Flag indicating whether the singleton worker has been started.
-isolated boolean workerStarted = false;
+# Flag indicating whether the singleton program has been started.
+isolated boolean programStarted = false;
 
 # Module initialization function.
-# This captures the module reference and initializes the singleton worker.
+# This captures the module reference and initializes the program.
 #
 # + return - An error if initialization fails, otherwise nil
 function init() returns error? {
     initModule();
-    check initSingletonWorker();
+    check initWorkflowRuntime();
 }
 
 listener WorkflowListener _workflowListener = new;
@@ -39,15 +39,15 @@ class WorkflowListener {
     }
 
     public function 'start() returns error? {
-        check startWorker();
+        check startWorkflowRuntime();
     }
 
     public function gracefulStop() returns error? {
-        check stopWorker();
+        check stopWorkflowRuntime();
     }
 
     public function immediateStop() returns error? {
-        check stopWorker();
+        check stopWorkflowRuntime();
     }
 }
 
@@ -58,41 +58,41 @@ function initModule() = @java:Method {
     name: "setModule"
 } external;
 
-# Initializes the singleton workflow worker with the configured settings.
-# This creates the workflow client and worker that will be shared across
+# Initializes the workflow program with the configured settings.
+# This creates the workflow client and program that will be shared across
 # all workflow executions in this runtime.
 #
 # + return - An error if initialization fails, otherwise nil
-isolated function initSingletonWorker() returns error? {
+isolated function initWorkflowRuntime() returns error? {
     lock {
-        if workerStarted {
+        if programStarted {
             return;
         }
         WorkflowConfig config = workflowConfig;
         if config is InMemoryConfig {
             // In-memory mode: use embedded test server, no external server needed
-            check initInMemoryWorkerNative();
-            workerStarted = true;
+            check initInMemoryProgramNative();
+            programStarted = true;
             return;
         }
         // Extract connection parameters based on deployment mode
         string url;
         string namespace;
-        WorkerConfig workerCfg;
+        SchedulerConfig schedulerCfg;
         string apiKey = "";
         string mtlsCert = "";
         string mtlsKey = "";
         if config is CloudConfig {
             url = config.url;
             namespace = config.namespace;
-            workerCfg = config.params;
+            schedulerCfg = config.scheduler;
             apiKey = config.auth.apiKey ?: "";
             mtlsCert = config.auth.mtlsCert ?: "";
             mtlsKey = config.auth.mtlsKey ?: "";
         } else if config is SelfHostedConfig {
             url = config.url;
             namespace = config.namespace;
-            workerCfg = config.params;
+            schedulerCfg = config.scheduler;
             if config.auth is AuthConfig {
                 AuthConfig auth = <AuthConfig>config.auth;
                 apiKey = auth.apiKey ?: "";
@@ -104,17 +104,17 @@ isolated function initSingletonWorker() returns error? {
             LocalConfig localCfg = <LocalConfig>config;
             url = localCfg.url;
             namespace = localCfg.namespace;
-            workerCfg = localCfg.params;
+            schedulerCfg = localCfg.scheduler;
         }
-        check initWorkerNative(url, namespace, workerCfg.taskQueue,
-                workerCfg.maxConcurrentWorkflows, workerCfg.maxConcurrentActivities,
+        check initProgramNative(url, namespace, schedulerCfg.taskQueue,
+                schedulerCfg.maxConcurrentWorkflows, schedulerCfg.maxConcurrentActivities,
                 apiKey, mtlsCert, mtlsKey,
-                workerCfg.defaultActivityRetryPolicy);
-        workerStarted = true;
+                schedulerCfg.defaultActivityRetryPolicy);
+        programStarted = true;
     }
 }
 
-# Native function to initialize the singleton worker.
+# Native function to initialize the singleton program.
 #
 # + url - The workflow server URL
 # + namespace - The workflow namespace
@@ -126,7 +126,7 @@ isolated function initSingletonWorker() returns error? {
 # + mtlsKey - Path to mTLS private key file (empty string if not used)
 # + defaultRetryPolicy - Default activity retry policy
 # + return - An error if initialization fails, otherwise nil
-isolated function initWorkerNative(
+isolated function initProgramNative(
         string url,
         string namespace,
         string taskQueue,
@@ -141,13 +141,13 @@ isolated function initWorkerNative(
     name: "initSingletonWorker"
 } external;
 
-# Initializes an in-memory workflow worker using an embedded test server.
+# Initializes an in-memory workflow program using an embedded test server.
 # No external server connection is required. Workflows are not persisted
 # and are lost on restart. Signal-based communication is supported when
 # the workflow ID is known.
 #
 # + return - An error if initialization fails, otherwise nil
-isolated function initInMemoryWorkerNative() returns error? = @java:Method {
+isolated function initInMemoryProgramNative() returns error? = @java:Method {
     'class: "io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative",
     name: "initInMemoryWorker"
 } external;

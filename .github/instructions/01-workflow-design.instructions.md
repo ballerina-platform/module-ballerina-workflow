@@ -38,8 +38,8 @@ public isolated function sendData(function workflow, string workflowId,
 public isolated function searchWorkflow(function workflow, map<anydata> correlationKeys)
     returns string|error;
 
-# Register a process with the singleton worker
-public isolated function registerProcess(function processFunction, string processName, 
+# Register a workflow with the singleton program (in workflow.'internal submodule)
+public isolated function registerWorkflow(function workflowFunction, string workflowName, 
     map<function>? activities = ()) returns boolean|error;
 ```
 
@@ -78,7 +78,7 @@ public client class Context {
 - Validates activity function parameters and return types are `anydata` subtypes
 
 #### WorkflowCodeModifier ([WorkflowCodeModifier.java](compiler-plugin/src/main/java/io/ballerina/stdlib/workflow/compiler/WorkflowCodeModifier.java))
-- Auto-generates `registerProcess()` calls for each `@Workflow` function at module level
+- Auto-generates `registerWorkflow()` calls for each `@Workflow` function at module level
 - Extracts activity functions used in each process
 
 ### 3. Native Layer ([native/](native/))
@@ -212,6 +212,6 @@ function processWithEvents(
 - Workflows handle errors properly with Ballerina error semantics
 
 ✅ **Code Generation:**
-- Compiler plugin auto-generates `registerProcess()` calls for each `@Workflow` function
+- Compiler plugin auto-generates `registerWorkflow()` calls for each `@Workflow` function
 - Generated code includes activity map for each process
 - Build succeeds without manual registration code

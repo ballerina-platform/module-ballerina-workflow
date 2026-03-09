@@ -8,6 +8,14 @@ repository = "https://github.com/ballerina-platform/module-ballerina-workflow"
 license = ["Apache-2.0"]
 distribution = "2201.13.0"
 
+[[package.modules]]
+name = "workflow.internal"
+export = true
+
+[[package.modules]]
+name = "workflow.activity"
+export = true
+
 [platform.java21]
 graalvmCompatible = false
 

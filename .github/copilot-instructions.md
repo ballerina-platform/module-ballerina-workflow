@@ -15,7 +15,7 @@ A Ballerina standard library module providing durable workflow orchestration via
 
 **Dynamic Workflow/Activity Adapters**: All workflows route through `BallerinaWorkflowAdapter` (implements `DynamicWorkflow`), all activities through `BallerinaActivityAdapter` (implements `DynamicActivity`). See [WorkflowWorkerNative.java](native/src/main/java/io/ballerina/stdlib/workflow/worker/WorkflowWorkerNative.java).
 
-**Singleton Worker**: One workflow SDK instance per JVM, initialized at module load via configurable variables. No Listener pattern - use `registerProcess()` + `startWorker()`.
+**Singleton Program**: One workflow SDK instance per JVM, initialized at module load via configurable variables. No Listener pattern - use `registerWorkflow()` (internal) + `startWorkflowRuntime()`.
 
 **Annotations**: `@Workflow` and `@Activity`.
 
@@ -24,7 +24,7 @@ A Ballerina standard library module providing durable workflow orchestration via
 **Compiler Plugin Validation**: The plugin at [WorkflowCompilerPlugin.java](compiler-plugin/src/main/java/io/ballerina/stdlib/workflow/compiler/WorkflowCompilerPlugin.java) performs validation:
 1. Validates that `ctx->callActivity()` calls use functions with `@Activity` annotation (produces `WORKFLOW_107` error otherwise)
 2. Validates that `@Activity` functions are not called directly inside `@Workflow` functions (produces `WORKFLOW_108` error)
-3. Auto-generates `registerProcess()` call at module level for each `@Workflow` function
+3. Auto-generates `registerWorkflow()` call at module level for each `@Workflow` function
 
 ## Key Conventions
 
@@ -155,7 +155,7 @@ mode = "LOCAL"
 url = "localhost:7233"
 namespace = "default"
 
-[ballerina.workflow.workflowConfig.params]
+[ballerina.workflow.workflowConfig.scheduler]
 taskQueue = "BALLERINA_WORKFLOW_TASK_QUEUE"
 maxConcurrentWorkflows = 100
 ```

@@ -3,5 +3,5 @@ mode = "LOCAL"
 url = "localhost:7233"
 namespace = "default"
 
-[ballerina.workflow.workflowConfig.params]
+[ballerina.workflow.workflowConfig.scheduler]
 taskQueue = "ORDER_PAYMENT_QUEUE"

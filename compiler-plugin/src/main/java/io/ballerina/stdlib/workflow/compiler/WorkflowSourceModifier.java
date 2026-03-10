@@ -172,7 +172,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             return false;
         }
         return WorkflowConstants.PACKAGE_NAME.equals(moduleNames.get(0).text())
-                && WorkflowConstants.INTERNAL_MODULE_NAME_QUOTED.equals(moduleNames.get(1).text());
+                && WorkflowConstants.INTERNAL_MODULE_NAME.equals(moduleNames.get(1).text());
     }
 
     private ImportDeclarationNode createWorkflowInternalImportNode() {
@@ -184,11 +184,11 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         Token slashToken = NodeFactory.createToken(SyntaxKind.SLASH_TOKEN);
         ImportOrgNameNode importOrgNameToken = NodeFactory.createImportOrgNameNode(orgNameToken, slashToken);
 
-        // Module name: workflow.'internal
+        // Module name: workflow.internal
         IdentifierToken workflowToken = NodeFactory.createIdentifierToken(WorkflowConstants.PACKAGE_NAME);
         Token dotToken = NodeFactory.createToken(SyntaxKind.DOT_TOKEN);
         IdentifierToken internalToken = NodeFactory.createIdentifierToken(
-                "'" + WorkflowConstants.INTERNAL_MODULE_NAME);
+                WorkflowConstants.INTERNAL_MODULE_NAME);
         SeparatedNodeList<IdentifierToken> moduleName = NodeFactory.createSeparatedNodeList(
                 workflowToken, dotToken, internalToken);
 

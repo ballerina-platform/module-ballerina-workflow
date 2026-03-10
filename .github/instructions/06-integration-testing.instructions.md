@@ -87,7 +87,7 @@ Key aspects:
 4. ballerinaTest Task
    ├─> Executes: bal test --offline in integration-tests/
    ├─> Ballerina reads Config.toml (url = localhost:7233)
-   ├─> Module init() creates worker connected to dev server
+   ├─> Module init() connects to dev server
    ├─> Tests execute workflows against dev server
    ├─> Parses test_results.json for failures
    └─> Throws GradleException if any tests failed
@@ -124,15 +124,7 @@ The `startSharedTestServer` task checks port 7233 first. If a server is already 
 - Supports `ListWorkflowExecutions` for correlation-based signal routing
 - Includes HTTP activity tests (GET, POST, PUT, PATCH, DELETE, auth, XML responses)
 - Includes builtin activity tests (sleep, currentTime, isReplaying, getWorkflowId, getWorkflowType)
-- Example: Test workflow start, signal sending, completion
-```ballerina
-@test:Config {}
-function testWorkflowExecution() returns error? {
-    string wfId = check workflow:run(orderProcess, {id: "order-1"});
-    check workflow:sendData(orderProcess, wfId, "approval", {id: "order-1", approved: true});
-    // Wait and verify result
-}
-```
+- See [integration-tests/tests/](integration-tests/tests/) for test examples using `workflow:run()`, `workflow:sendData()`, and `workflow:getWorkflowResult()`
 
 ### Compiler Plugin Tests (compiler-plugin-tests/)
 - Tests compile-time validations

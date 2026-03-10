@@ -106,8 +106,13 @@ version = "1.68.2"
 # Protobuf dependencies
 [[platform.java21.dependency]]
 groupId = "com.google.protobuf"
+artifactId = "protobuf-java"
+version = "3.25.5"
+
+[[platform.java21.dependency]]
+groupId = "com.google.protobuf"
 artifactId = "protobuf-java-util"
-version = "3.25.8"
+version = "3.25.5"
 
 # Google proto status (required by gRPC for StatusProto)
 [[platform.java21.dependency]]

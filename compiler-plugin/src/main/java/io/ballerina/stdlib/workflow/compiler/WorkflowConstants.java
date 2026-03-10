@@ -35,7 +35,6 @@ public final class WorkflowConstants {
 
     // Submodule names and aliases
     public static final String INTERNAL_MODULE_NAME = "internal";
-    public static final String INTERNAL_MODULE_NAME_QUOTED = "'internal";
     public static final String INTERNAL_MODULE_ALIAS = "wfInternal";
 
     // Annotation names

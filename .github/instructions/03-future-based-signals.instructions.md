@@ -12,45 +12,7 @@ The workflow module implements a **Future-based approach** where signal listener
 
 ### 1. Ballerina Layer
 
-#### User Experience
-Workflows receive signals via a record parameter with `future<T>` fields:
-
-```ballerina
-@workflow:Workflow
-function orderProcess(
-    workflow:Context ctx,
-    OrderInput input,
-    // Framework injects futures automatically based on field names
-    record {|
-        future<ApprovalSignal> approval;  // Field name = signal name
-        future<PaymentSignal> payment;
-    |} events
-) returns OrderResult|error {
-    // Wait for approval signal (field name maps to Temporal signal name)
-    ApprovalSignal decision = check wait events.approval;
-
-    if decision.status {
-        // Wait for payment only if approved
-        PaymentSignal payParams = check wait events.payment;
-        return processPayment(payParams);
-    }
-
-    return { status: "REJECTED" };
-}
-```
-
-#### Signal Types
-```ballerina
-type ApprovalSignal record {|
-    string approverId;
-    boolean status;
-|};
-
-type PaymentSignal record {|
-    string txnId;
-    decimal amount;
-|};
-```
+Workflows receive signals via a record parameter with `future<T>` fields. Field names directly map to Temporal signal names. See examples in [integration-tests/](integration-tests/) (e.g., workflow files using events records).
 
 ### 2. Native Layer
 
@@ -59,202 +21,33 @@ Location: [TemporalFutureValue.java](native/src/main/java/io/ballerina/stdlib/wo
 
 **Purpose**: Bridges Temporal's `CompletablePromise` to Ballerina's `FutureValue`, enabling use of Ballerina's `wait` keyword without triggering Temporal's deadlock detection.
 
-**The Deadlock Problem:**
-```
-Ballerina's wait action:
-1. Calls future.getAndSetWaited()
-2. Directly calls future.completableFuture.get() → BLOCKS Java thread!
+**The Deadlock Problem**: Ballerina's `wait` action calls `future.getAndSetWaited()` and then `completableFuture.get()` which blocks the Java thread, triggering Temporal's `PotentialDeadlockException`. Temporal expects `Workflow.await()` for cooperative yielding during replay.
 
-Problem: CompletableFuture.get() blocks, triggering Temporal's PotentialDeadlockException
-Temporal expects: Workflow.await() for cooperative yielding during replay
-```
-
-**The Solution:**
-```java
-public class TemporalFutureValue extends FutureValue {
-    private final CompletablePromise<SignalData> promise;
-    private final String signalName;
-    private final Type constraintType;
-
-    // Intercept BEFORE Ballerina calls completableFuture.get()
-    @Override
-    public boolean getAndSetWaited() {
-        // Use Temporal's await (cooperative blocking, replay-safe)
-        ensureSignalReady();
-        return false;  // Allow multiple waits
-    }
-    
-    private void ensureSignalReady() {
-        if (!this.completableFuture.isDone()) {
-            LOGGER.debug("Waiting for signal '{}' using Temporal await", signalName);
-            // This yields control properly during replay
-            Workflow.await(() -> this.completableFuture.isDone());
-        }
-    }
-    
-    // Set up callback to complete Java CompletableFuture when signal arrives
-    private void setupPromiseCallback() {
-        promise.thenApply(signalData -> {
-            Object ballerinaData = TypesUtil.convertJavaToBallerinaType(signalData.getData());
-            Object result = TypesUtil.cloneWithType(ballerinaData, constraintType);
-            this.completableFuture.complete(result);  // Unblock wait
-            return result;
-        });
-    }
-}
-```
-
-**Key Design Points:**
-1. **Intercepts `getAndSetWaited()`**: Called by Ballerina's `AsyncUtils.handleWait()` before accessing `completableFuture`
-2. **Uses `Workflow.await()`**: Temporal-safe blocking that yields during replay
-3. **Completes CompletableFuture**: When signal arrives, callback completes the Java future
-4. **Non-blocking get()**: By the time `completableFuture.get()` is called, future is already complete
+**The Solution**: `TemporalFutureValue` extends `FutureValue` and overrides:
+- `getAndSetWaited()` — intercepts before Ballerina calls `completableFuture.get()`, calls `Workflow.await(() -> completableFuture.isDone())` for Temporal-safe cooperative blocking, returns `false` to allow multiple waits
+- `setupPromiseCallback()` — when signal arrives via `CompletablePromise`, converts data to Ballerina type via `TypesUtil` and completes the Java `CompletableFuture`
 
 #### EventFutureCreator.java
 Location: [EventFutureCreator.java](native/src/main/java/io/ballerina/stdlib/workflow/utils/EventFutureCreator.java)
 
 **Purpose**: Creates the events record with `TemporalFutureValue` objects for each signal field.
-
-```java
-public class EventFutureCreator {
-    public static BMap<BString, Object> createEventsRecord(
-            RecordType eventsRecordType,
-            SignalAwaitWrapper signalWrapper,
-            Scheduler scheduler) {
-
-        Map<String, Field> fields = eventsRecordType.getFields();
-        BMap<BString, Object> eventsRecord = ValueCreator.createRecordValue(eventsRecordType);
-
-        for (Map.Entry<String, Field> entry : fields.entrySet()) {
-            String fieldName = entry.getKey();
-            Type constraintType = extractConstraintType(field.getFieldType());
-
-            // Create TemporalFutureValue for this signal
-            TemporalFutureValue futureValue = createTemporalFutureValue(
-                fieldName, signalWrapper, constraintType, scheduler);
-
-            // Add to events record
-            eventsRecord.put(StringUtils.fromString(fieldName), futureValue);
-        }
-
-        return eventsRecord;
-    }
-
-    private static TemporalFutureValue createTemporalFutureValue(
-            String signalName,
-            SignalAwaitWrapper signalWrapper,
-            Type constraintType,
-            Scheduler scheduler) {
-        
-        // Create Temporal CompletablePromise
-        CompletablePromise<SignalData> promise = signalWrapper.registerSignal(signalName);
-        
-        // Wrap in TemporalFutureValue
-        return new TemporalFutureValue(promise, signalName, constraintType, scheduler);
-    }
-}
-```
+- `createEventsRecord(RecordType, SignalAwaitWrapper, Scheduler)` — iterates over record fields, creates a `TemporalFutureValue` for each, returns a populated `BMap` record
 
 #### SignalAwaitWrapper.java
 Location: [SignalAwaitWrapper.java](native/src/main/java/io/ballerina/stdlib/workflow/context/SignalAwaitWrapper.java)
 
 **Purpose**: Manages Temporal signal registration and promise lifecycle.
-
-```java
-public class SignalAwaitWrapper {
-    private final Map<String, CompletablePromise<SignalData>> signalPromises = new HashMap<>();
-
-    public CompletablePromise<SignalData> registerSignal(String signalName) {
-        CompletablePromise<SignalData> promise = Workflow.newPromise();
-        signalPromises.put(signalName, promise);
-        return promise;
-    }
-
-    public void handleSignal(String signalName, Object data) {
-        CompletablePromise<SignalData> promise = signalPromises.get(signalName);
-        if (promise != null && !promise.isCompleted()) {
-            promise.complete(new SignalData(signalName, data));
-        }
-    }
-
-    public record SignalData(String signalName, Object data) {
-    }
-}
-```
+- `registerSignal(String signalName)` — creates a `Workflow.newPromise()` and stores it
+- `recordSignal(String signalName, Object data)` — completes the promise when signal arrives
 
 #### BallerinaWorkflowAdapter Signal Registration
 In [WorkflowWorkerNative.java](native/src/main/java/io/ballerina/stdlib/workflow/worker/WorkflowWorkerNative.java):
-
-```java
-public static class BallerinaWorkflowAdapter implements DynamicWorkflow {
-    private final SignalAwaitWrapper signalWrapper;
-    
-    public BallerinaWorkflowAdapter() {
-        this.signalWrapper = new SignalAwaitWrapper();
-        
-        // Register dynamic signal handler
-        Workflow.registerListener(new DynamicSignalHandler() {
-            @Override
-            public void signal(String signalName, EncodedValues encodedArgs) {
-                Object[] args = extractArgs(encodedArgs);
-                Object data = args.length > 0 ? args[0] : null;
-                signalWrapper.handleSignal(signalName, data);
-            }
-        });
-    }
-    
-    @Override
-    public Object execute(EncodedValues args) {
-        // 1. Get process function from registry
-        String workflowType = Workflow.getInfo().getWorkflowType();
-        BFunctionPointer processFunc = PROCESS_REGISTRY.get(workflowType);
-        
-        // 2. Extract input data
-        Object input = extractWorkflowInput(args);
-        
-        // 3. Create Context
-        BObject context = createWorkflowContext();
-        
-        // 4. Check if process has events parameter
-        List<String> eventNames = EVENT_REGISTRY.get(workflowType);
-        BMap<BString, Object> eventsRecord = null;
-        
-        if (eventNames != null && !eventNames.isEmpty()) {
-            // Get events record type from function signature
-            RecordType eventsType = extractEventsRecordType(processFunc);
-            // Create events record with TemporalFutureValue objects
-            eventsRecord = EventFutureCreator.createEventsRecord(
-                eventsType, signalWrapper, ballerinaRuntime.getScheduler());
-        }
-        
-        // 5. Invoke Ballerina function
-        Object[] ballerinaArgs = eventsRecord != null
-            ? new Object[]{context, input, eventsRecord}
-            : new Object[]{context, input};
-            
-        return processFunc.call(ballerinaRuntime, ballerinaArgs);
-    }
-}
-```
+- Constructor creates `SignalAwaitWrapper` and registers a `DynamicSignalHandler` with Temporal
+- `execute()` checks `EVENT_REGISTRY` for event names, uses `EventFutureCreator.createEventsRecord()` to build the events record, passes it to the Ballerina function
 
 ### 3. Compiler Plugin Layer
 
-The compiler plugin has **no direct involvement** in signal handling - it only validates the events parameter signature:
-
-```java
-// WorkflowValidatorTask.java
-private void validateProcessFunction(FunctionDefinitionNode node, SyntaxNodeAnalysisContext context) {
-    // Validate: (Context?, anydata, record{future<T>...}?) signature
-    // Third parameter must be record type with future fields
-    if (hasEventsParameter) {
-        TypeSymbol eventsType = getEventsParameterType();
-        if (eventsType.typeKind() == TypeDescKind.RECORD) {
-            RecordTypeSymbol recordType = (RecordTypeSymbol) eventsType;
-            // Validate all fields are future<anydata> subtypes
-        }
-    }
-}
-```
+The compiler plugin (in [WorkflowValidatorTask.java](compiler-plugin/src/main/java/io/ballerina/stdlib/workflow/compiler/WorkflowValidatorTask.java)) validates the events parameter signature — the third parameter must be a record type where all fields are `future<anydata>` subtypes.
 
 ## Execution Flow
 
@@ -285,7 +78,7 @@ private void validateProcessFunction(FunctionDefinitionNode node, SyntaxNodeAnal
 4. Signal Arrives (External)
    └─> workflow:sendData(processFunc, workflowId, "approval", eventData)
        └─> Temporal delivers signal → DynamicSignalHandler.signal()
-           └─> signalWrapper.handleSignal("approval", data)
+           └─> signalWrapper.recordSignal("approval", data)
                ├─> promise.complete(SignalData) → Temporal promise complete
                └─> promise.thenApply() callback
                    ├─> Convert data to Ballerina type
@@ -303,20 +96,12 @@ private void validateProcessFunction(FunctionDefinitionNode node, SyntaxNodeAnal
 
 ## Success Criteria
 
-✅ **Compilation:**
 - Process functions with events parameter compile successfully
 - Events record type validated (all fields must be `future<anydata>` subtypes)
-- Signal field names are valid identifiers
-
-✅ **Runtime Behavior:**
-- `wait signals.fieldName` successfully blocks until signal arrives
+- `wait events.fieldName` successfully blocks until signal arrives
 - Signal data is correctly converted to Ballerina type matching `future<T>` constraint
 - Multiple signals can be waited in any order
-- Waiting for same signal multiple times returns same value
 - No `PotentialDeadlockException` from Temporal
-- No `UnableToAcquireLockException` from Ballerina
-
-✅ **Replay Behavior:**
 - Signals replay deterministically (same order, same values)
 - `Workflow.await()` properly yields during replay
 - Completed signals return immediately during replay (no re-waiting)

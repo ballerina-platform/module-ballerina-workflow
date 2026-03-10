@@ -1,14 +1,14 @@
 # Ballerina Workflow Module - AI Coding Instructions
 
 ## Project Overview
-A Ballerina standard library module providing durable workflow orchestration via Temporal SDK. The module uses a **singleton worker pattern** with a compiler plugin that transforms annotated functions.
+A Ballerina standard library module providing durable workflow orchestration via Temporal SDK. The module uses a compiler plugin that transforms annotated functions and a Temporal scheduler that manages one SDK instance per JVM.
 
 ## Architecture
 
 ### Module Structure
 - `ballerina/` - Core Ballerina module (types, annotations, context, public API)
   - `modules/internal/` - Internal registration functions (`registerWorkflow()`) called by compiler-generated code
-- `native/` - Java native implementation (Temporal SDK integration, worker management)
+- `native/` - Java native implementation (Temporal SDK integration, scheduler management)
 - `compiler-plugin/` - Validates `@Workflow`/`@Activity` annotations, transforms activity calls
 - `compiler-plugin-tests/` - Compiler plugin test suite
 
@@ -16,7 +16,7 @@ A Ballerina standard library module providing durable workflow orchestration via
 
 **Dynamic Workflow/Activity Adapters**: All workflows route through `BallerinaWorkflowAdapter` (implements `DynamicWorkflow`), all activities through `BallerinaActivityAdapter` (implements `DynamicActivity`). See [WorkflowWorkerNative.java](native/src/main/java/io/ballerina/stdlib/workflow/worker/WorkflowWorkerNative.java).
 
-**Singleton Program**: One workflow SDK instance per JVM, initialized at module load via configurable variables. No Listener pattern - use `registerWorkflow()` (internal) + `startWorkflowRuntime()`.
+**Temporal Scheduler**: One workflow SDK instance per JVM, initialized at module load via configurable variables. No Listener pattern - use `registerWorkflow()` (internal) + `startWorkflowRuntime()`.
 
 **Annotations**: `@Workflow` and `@Activity`.
 
@@ -186,7 +186,7 @@ mtlsKey = "/path/to/client.key"
 ## Version Requirements
 - **Ballerina**: 2201.13.0
 - **Java**: 21
-- **Temporal SDK**: 1.32.0 (with matching gRPC 1.58.1)
+- **Temporal SDK**: 1.32.0 (with matching gRPC 1.68.2)
 
 ## Compiler Plugin Error Codes
 
@@ -198,17 +198,13 @@ mtlsKey = "/path/to/client.key"
 | WORKFLOW_113 | Non-deterministic time call | Using `time:utcNow()` inside `@Workflow` function (use `ctx.currentTime()` instead) |
 
 ## Common Pitfalls
-- Register all test processes in `@test:BeforeSuite` - registry cannot be cleared with singleton pattern
+- Register all test processes in `@test:BeforeSuite` - registry cannot be cleared after initialization
 - Process functions must be deterministic - no I/O, use activities instead
-- Don't mix Listener pattern (deprecated) with singleton pattern
 - **Never use Java blocking calls** in workflow code (causes `PotentialDeadlockException`)
 - Signal waiting uses `TemporalFutureValue.getAndSetWaited()` to intercept Ballerina's `wait` and use `Workflow.await()` instead of blocking `CompletableFuture.get()`
 - **Typed records lose specificity** through Temporal JSON serialization — `BasicAuth`, `BearerAuth`, `map<string>` all become `map<anydata>`. Use field-presence checks (`authMap.hasKey("username")`) instead of type guards
 - **Ballerina `xml` type** cannot be serialized by Temporal's Jackson-based persistence. Convert XML to `string` before returning from activities
 - **Use `ctx.currentTime()`** instead of `time:utcNow()` inside workflow functions for deterministic time (compiler plugin produces WORKFLOW_113 error otherwise)
-- Don't mix Listener pattern (deprecated) with singleton pattern
-- **Never use Java blocking calls** in workflow code (causes `PotentialDeadlockException`)
-- Signal waiting uses `TemporalFutureValue.getAndSetWaited()` to intercept Ballerina's `wait` and use `Workflow.await()` instead of blocking `CompletableFuture.get()`
 
 ## Agent Workflow Rules
 - **Do NOT automatically commit and push** changes. Always leave committing and pushing to the user unless explicitly asked to do so.

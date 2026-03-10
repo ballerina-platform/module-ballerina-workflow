@@ -10,7 +10,7 @@
 | # | Topic | File | Coverage |
 |---|-------|------|----------|
 | 01 | Workflow Design | [01-workflow-design.instructions.md](01-workflow-design.instructions.md) | Annotations, Context, Activities, Process signatures |
-| 02 | Singleton Worker Pattern | [02-singleton-worker-pattern.instructions.md](02-singleton-worker-pattern.instructions.md) | Worker lifecycle, configuration, initialization |
+| 02 | Temporal Scheduler | [02-temporal-scheduler.instructions.md](02-temporal-scheduler.instructions.md) | Scheduler lifecycle, configuration, initialization |
 | 03 | Future-Based Signals | [03-future-based-signals.instructions.md](03-future-based-signals.instructions.md) | TemporalFutureValue, signal handling, deadlock avoidance |
 | 04 | Dynamic Workflow Implementation | [04-dynamic-workflow-implementation.instructions.md](04-dynamic-workflow-implementation.instructions.md) | BallerinaWorkflowAdapter, dynamic routing, execution flow |
 | 05 | Explicit sendData API | [05-optional-signal-name.instructions.md](05-optional-signal-name.instructions.md) | sendData with required params, searchWorkflow, SendEventValidatorTask |

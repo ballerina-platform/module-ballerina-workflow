@@ -23,323 +23,39 @@ This module provides a Ballerina integration for Temporal using Dynamic Workflow
 #### WorkflowWorkerNative.java
 Location: [WorkflowWorkerNative.java](native/src/main/java/io/ballerina/stdlib/workflow/worker/WorkflowWorkerNative.java)
 
-**Registries:**
-```java
-// Static registry to store process functions (workflow type to BFunctionPointer)
-private static final Map<String, BFunctionPointer> PROCESS_REGISTRY = new ConcurrentHashMap<>();
+**Registries** — static `ConcurrentHashMap` fields:
+- `PROCESS_REGISTRY` — maps workflow type name → `BFunctionPointer`
+- `ACTIVITY_REGISTRY` — maps activity name → `BFunctionPointer`
+- `EVENT_REGISTRY` — maps process name → list of event field names
 
-// Static registry to store activity implementations (activity name to BFunctionPointer)
-private static final Map<String, BFunctionPointer> ACTIVITY_REGISTRY = new ConcurrentHashMap<>();
+**`BallerinaWorkflowAdapter`** (inner class, implements `DynamicWorkflow`):
+- Constructor registers `DynamicSignalHandler` and `DynamicQueryHandler` with Temporal via `Workflow.registerListener()`
+- `execute(EncodedValues args)` performs these steps:
+  1. Gets `workflowType` from `Workflow.getInfo()`
+  2. Looks up process function from `PROCESS_REGISTRY`
+  3. Extracts workflow arguments from Temporal's `EncodedValues`
+  4. Upserts correlation keys as search attributes (for workflow discovery)
+  5. Checks function signature for `Context` and events parameters via `EventExtractor`
+  6. Builds args array: optional `Context` + input + optional events record (via `EventFutureCreator.createEventsRecord()`)
+  7. Invokes the Ballerina function via `BFunctionPointer.call()`
+  8. Converts `BError` to `ApplicationFailure`, converts result to Java type
 
-// Static registry to store event names per process (process name to list of event names)
-private static final Map<String, List<String>> EVENT_REGISTRY = new ConcurrentHashMap<>();
-
-// Legacy service registry for backward compatibility
-private static final Map<String, BObject> SERVICE_REGISTRY = new ConcurrentHashMap<>();
-```
-
-**Dynamic Workflow Adapter:**
-```java
-public static class BallerinaWorkflowAdapter implements DynamicWorkflow {
-    private BObject serviceObject;  // For backward compatibility
-    private String workflowType;
-    private final SignalAwaitWrapper signalWrapper = new SignalAwaitWrapper();
-    private static final Logger LOGGER = Workflow.getLogger(BallerinaWorkflowAdapter.class);
-    
-    public BallerinaWorkflowAdapter() {
-        // 1. Register dynamic signal handler
-        Workflow.registerListener((DynamicSignalHandler) (signalName, encodedArgs) -> {
-            LOGGER.debug("Signal received: {}", signalName);
-            
-            // Extract signal data
-            Map<String, Object> signalData = extractSignalData(encodedArgs);
-            
-            // Optionally invoke remote method handler if service object exists
-            Object signalResult = null;
-            boolean remoteMethodInvoked = false;
-            
-            if (this.serviceObject != null) {
-                try {
-                    Object ballerinaSignalData = convertJavaToBallerinaType(signalData);
-                    signalResult = ballerinaRuntime.callMethod(
-                        this.serviceObject, signalName,
-                        new StrandMetadata(true, Collections.emptyMap()),
-                        new Object[]{ballerinaSignalData}
-                    );
-                    remoteMethodInvoked = true;
-                } catch (Exception e) {
-                    LOGGER.debug("No remote method '{}' found", signalName);
-                }
-            }
-            
-            // Record signal in wrapper (for future completion)
-            Object resultToRecord = remoteMethodInvoked ? signalResult : signalData;
-            signalWrapper.recordSignal(signalName, resultToRecord);
-        });
-        
-        // 2. Register dynamic query handler
-        Workflow.registerListener((DynamicQueryHandler) (queryName, encodedArgs) -> {
-            if (this.serviceObject == null) {
-                throw new IllegalStateException("Query called before workflow execution");
-            }
-            
-            Object result = ballerinaRuntime.callMethod(
-                this.serviceObject, queryName,
-                new StrandMetadata(true, Collections.emptyMap()),
-                new Object[0]  // Currently supports no-arg queries
-            );
-            
-            if (result instanceof BError) {
-                throw new IllegalStateException("Query failed: " + ((BError)result).getMessage());
-            }
-            
-            return convertBallerinaToJavaType(result);
-        });
-    }
-    
-    @Override
-    public Object execute(EncodedValues args) {
-        try {
-            // 1. Get workflow type from Temporal
-            WorkflowInfo info = Workflow.getInfo();
-            this.workflowType = info.getWorkflowType();
-            boolean isReplaying = Workflow.isReplaying();
-            
-            // 2. Get registered process function
-            BFunctionPointer processFunction = PROCESS_REGISTRY.get(workflowType);
-            BObject templateService = SERVICE_REGISTRY.get(workflowType);  // Fallback
-            
-            if (processFunction == null && templateService == null) {
-                ApplicationFailure failure = ApplicationFailure.newFailure(
-                    "Workflow '" + workflowType + "' is not registered",
-                    "BallerinaWorkflowNotRegistered"
-                );
-                failure.setNonRetryable(true);
-                throw failure;
-            }
-            
-            // 3. Extract workflow arguments
-            Object[] workflowArgs = extractWorkflowArguments(args);
-            
-            // 4. Upsert correlation keys as search attributes (for workflow discovery)
-            if (processFunction != null && workflowArgs.length > 0) {
-                Object firstArg = workflowArgs[0];
-                if (firstArg instanceof BMap) {
-                    upsertCorrelationSearchAttributes((BMap)firstArg, isReplaying);
-                }
-            }
-            
-            // 5. Check function signature for Context and Events parameters
-            boolean hasContext = processFunction != null && 
-                EventExtractor.hasContextParameter(processFunction);
-            RecordType eventsRecordType = processFunction != null ?
-                EventExtractor.getEventsRecordType(processFunction) : null;
-            boolean hasEvents = eventsRecordType != null;
-            
-            // 6. Build arguments array
-            List<Object> argsList = new ArrayList<>();
-            
-            // Add Context as first argument if needed
-            if (hasContext) {
-                BObject contextObj = createWorkflowContext();
-                argsList.add(contextObj);
-            }
-            
-            // Add workflow input arguments
-            for (Object arg : workflowArgs) {
-                argsList.add(arg);
-            }
-            
-            // Add events record with TemporalFutureValue for each signal
-            if (hasEvents) {
-                Scheduler scheduler = getSchedulerFromRuntime();
-                BMap<BString, Object> eventsRecord = EventFutureCreator.createEventsRecord(
-                    eventsRecordType, signalWrapper, scheduler);
-                argsList.add(eventsRecord);
-            }
-            
-            Object[] ballerinaArgs = argsList.toArray();
-            
-            // 7. Invoke the workflow function or service
-            Object result;
-            if (processFunction != null) {
-                // New pattern: Call function directly
-                FPValue fpValue = (FPValue) processFunction;
-                fpValue.metadata = new StrandMetadata(true, fpValue.metadata.properties());
-                result = processFunction.call(ballerinaRuntime, ballerinaArgs);
-            } else {
-                // Old pattern: Create service instance and call execute()
-                this.serviceObject = createServiceInstance(templateService);
-                result = ballerinaRuntime.callMethod(
-                    serviceObject, "execute",
-                    new StrandMetadata(true, Collections.emptyMap()),
-                    ballerinaArgs
-                );
-            }
-            
-            // 8. Handle errors
-            if (result instanceof BError err) {
-                ApplicationFailure failure = ApplicationFailure.newFailure(
-                    "Workflow '" + workflowType + "' failed: " + err.getMessage(),
-                    "BallerinaWorkflowError",
-                    convertBallerinaToJavaType(err.getDetails())
-                );
-                failure.setNonRetryable(true);
-                throw failure;
-            }
-            
-            // 9. Convert result to Java type for Temporal
-            return convertBallerinaToJavaType(result);
-            
-        } catch (TemporalFailure e) {
-            throw e;  // Re-throw Temporal failures as-is
-        } catch (Exception e) {
-            // Check for expected shutdown errors
-            if (isDestroyWorkflowThreadError(e)) {
-                throw e;  // Expected during shutdown
-            }
-            
-            // Wrap unexpected exceptions
-            ApplicationFailure failure = ApplicationFailure.newFailure(
-                "Workflow '" + workflowType + "' encountered error: " + e.getMessage(),
-                "BallerinaWorkflowExecutionError"
-            );
-            failure.setNonRetryable(true);
-            throw failure;
-        }
-    }
-}
-```
-
-**Dynamic Activity Adapter (Named Args Map Pattern):**
-
-Activity arguments are passed through Temporal as a **named map** (`Map<String, Object>`) rather than a positional array. This avoids misalignment when optional parameters are omitted. The adapter reconstructs positional arguments by matching map keys to the function's parameter names using `FunctionType.getParameters()`.
-
-```java
-public static class BallerinaActivityAdapter implements DynamicActivity {
-    @Override
-    public Object execute(EncodedValues args) {
-        // 1. Get activity name from Temporal context
-        String activityName = Activity.getExecutionContext().getInfo().getActivityType();
-        
-        // 2. Get registered activity function
-        BFunctionPointer activityFunction = ACTIVITY_REGISTRY.get(activityName);
-        
-        // 3. Decode [namedArgsMap, callConfigMap] from Temporal
-        Map<String, Object> namedArgs = args.get(0, Map.class);
-        
-        // 4. Extract call configuration (failOnError flag)
-        boolean failOnError = true;
-        try {
-            Map<String, Object> callConfigMap = args.get(1, Map.class);
-            if (callConfigMap != null && Boolean.TRUE.equals(callConfigMap.get(CALL_CONFIG_MARKER))) {
-                Object failOnErrorVal = callConfigMap.get(FAIL_ON_ERROR_KEY);
-                if (failOnErrorVal instanceof Boolean) {
-                    failOnError = (Boolean) failOnErrorVal;
-                }
-            }
-        } catch (Exception e) { /* No call config available */ }
-        
-        // 5. Reconstruct positional args from named map using parameter metadata
-        FunctionType funcType = (FunctionType) activityFunction.getType();
-        Parameter[] params = funcType.getParameters();
-        
-        // Find last provided parameter index (trailing absent params use defaults)
-        int lastProvidedIndex = -1;
-        for (int i = 0; i < params.length; i++) {
-            if (namedArgs.containsKey(params[i].name)) {
-                lastProvidedIndex = i;
-            }
-        }
-        
-        // Build positional args, filling gaps with null for intermediate absent params
-        List<Object> orderedArgs = new ArrayList<>();
-        for (int i = 0; i <= lastProvidedIndex; i++) {
-            String paramName = params[i].name;
-            if (namedArgs.containsKey(paramName)) {
-                orderedArgs.add(convertJavaToBallerinaType(namedArgs.get(paramName)));
-            } else {
-                orderedArgs.add(null);
-            }
-        }
-        
-        // 6. Invoke the activity function
-        FPValue fpValue = (FPValue) activityFunction;
-        fpValue.metadata = new StrandMetadata(true, fpValue.metadata.properties());
-        Object result = activityFunction.call(ballerinaRuntime, orderedArgs.toArray());
-        
-        // 7. Handle errors based on failOnError
-        if (result instanceof BError bError) {
-            if (failOnError) {
-                throw berrorToApplicationFailure(bError, "ActivityFailed");
-            }
-            // failOnError=false: return error as normal completion value
-        }
-        
-        return convertBallerinaToJavaType(result);
-    }
-}
-```
+**`BallerinaActivityAdapter`** (inner class, implements `DynamicActivity`):
+- `execute(EncodedValues args)` receives `[namedArgsMap, callConfigMap]` from Temporal
+- Reconstructs positional args from the named map using `FunctionType.getParameters()` order
+- Sets `StrandMetadata` on the `FPValue` before calling
+- Converts result back to Java type for Temporal persistence
 
 #### WorkflowContextNative.java
 Location: [WorkflowContextNative.java](native/src/main/java/io/ballerina/stdlib/workflow/context/WorkflowContextNative.java)
 
 Implements the `workflow:Context` client class remote methods:
-```java
-// Called from Ballerina: ctx->callActivity(activityFunc, {"arg1": val1}, options = {...})
-public static Object callActivity(BObject self, BFunctionPointer activityFunction,
-        BMap<BString, Object> args, Object options, BTypedesc typedesc) {
-    // 1. Extract activity name and build full name (workflowType.activityName)
-    String simpleActivityName = activityFunction.getType().getName();
-    String workflowType = Workflow.getInfo().getWorkflowType();
-    String fullActivityName = workflowType + "." + simpleActivityName;
-    
-    // 2. Convert BMap args to Java Map for Temporal serialization
-    //    Named map avoids positional misalignment with optional params
-    Map<String, Object> namedArgs = TypesUtil.convertBMapToMap(args);
-    
-    // 3. Parse options (failOnError, retryPolicy)
-    boolean failOnError = true;
-    RetryOptions retryOptions = null;
-    if (options != null) {
-        BMap<BString, Object> optionsMap = (BMap<BString, Object>) options;
-        // Extract failOnError and retryPolicy from options...
-    }
-    
-    // 4. Build ActivityOptions with timeout and retry policy
-    ActivityOptions activityOptions = ActivityOptions.newBuilder()
-        .setStartToCloseTimeout(Duration.ofMinutes(5))
-        .setRetryOptions(retryOptions)
-        .build();
-    ActivityStub stub = Workflow.newUntypedActivityStub(activityOptions);
-    
-    // 5. Build call config map for the adapter
-    Map<String, Object> callConfig = new HashMap<>();
-    callConfig.put(CALL_CONFIG_MARKER, true);
-    callConfig.put(FAIL_ON_ERROR_KEY, failOnError);
-    
-    // 6. Execute activity - passes [namedArgs, callConfig] as two Temporal args
-    Object result = stub.execute(fullActivityName, Object.class,
-            new Object[] { namedArgs, callConfig });
-    
-    // 7. Convert result back to Ballerina type using typedesc
-    Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(result);
-    return TypesUtil.cloneWithType(ballerinaResult, typedesc.getDescribingType());
-}
-```
-
-Additional Context methods:
-```java
-// Deterministic time - returns same value during replays
-public static long currentTimeMillis(Object contextHandle) {
-    return Workflow.currentTimeMillis();
-}
-
-// Replay detection
-public static boolean isReplaying(Object contextHandle) {
-    return Workflow.isReplaying();
-}
-```
+- `callActivity(BObject, BFunctionPointer, BMap<BString, Object>, Object, BTypedesc)` — builds full activity name (`workflowType.activityName`), converts `BMap` args to a `Map<String, Object>` for Temporal, parses `ActivityOptions` (failOnError, retryPolicy), executes via `ActivityStub`, converts result back using `typedesc`
+- `currentTimeMillis(Object)` — delegates to `Workflow.currentTimeMillis()` for deterministic time
+- `isReplaying(Object)` — delegates to `Workflow.isReplaying()`
+- `sleep(BObject, BMap)` — delegates to `Workflow.sleep()` for deterministic sleep
+- `getWorkflowId(BObject)` — returns `Workflow.getInfo().getWorkflowId()`
+- `getWorkflowType(BObject)` — returns `Workflow.getInfo().getWorkflowType()`
 
 ### 3. Compiler Plugin Layer
 
@@ -416,38 +132,13 @@ The compiler plugin has **limited involvement** in dynamic workflow implementati
 
 ## Success Criteria
 
-✅ **Registration:**
-- Process functions successfully registered in PROCESS_REGISTRY
-- Activity functions successfully registered in ACTIVITY_REGISTRY with qualified names
-- Dynamic adapters registered exactly once per worker
-
-✅ **Workflow Execution:**
-- `BallerinaWorkflowAdapter` routes to correct process function via PROCESS_REGISTRY
-- Context parameter injected when signature requires it
-- Events record injected when signature requires it
-- Workflow input arguments correctly extracted and passed
-- Return values correctly converted to Java types for Temporal
-- Ballerina errors converted to `ApplicationFailure` and fail workflow
-
-✅ **Activity Execution:**
-- `BallerinaActivityAdapter` routes to correct activity function via ACTIVITY_REGISTRY
-- Activity arguments correctly extracted and converted
-- Activity return values correctly converted
-- Activity errors propagate to workflow as exceptions
-
-✅ **Signal Handling:**
-- Dynamic signal handler receives all signals
-- Signals recorded in per-instance `SignalAwaitWrapper`
-- Signal data correctly converted to Ballerina types
-- Optional remote method invocation works for service objects
-
-✅ **Query Handling:**
-- Dynamic query handler routes to service object methods
-- Query results correctly converted to Java types
-- Query errors fail the query operation
-
-✅ **Replay Safety:**
-- Each replay creates new `BallerinaWorkflowAdapter` instance
-- Signal wrapper correctly handles replay scenarios
-- No shared state between workflow executions
+- Process functions successfully registered in `PROCESS_REGISTRY`
+- Activity functions registered in `ACTIVITY_REGISTRY` with qualified names (`workflowType.activityName`)
+- Dynamic adapters registered exactly once per Temporal worker
+- `BallerinaWorkflowAdapter` routes to correct process function
+- Context and events parameters injected when signature requires them
+- `BallerinaActivityAdapter` reconstructs positional args from named map correctly
+- Activity errors propagate to workflow as exceptions (when `failOnError=true`)
+- Signal handler receives all signals and records them in per-instance `SignalAwaitWrapper`
+- Each replay creates a new `BallerinaWorkflowAdapter` instance (no shared state)
 - Deterministic execution during replay

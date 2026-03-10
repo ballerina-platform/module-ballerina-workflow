@@ -15,7 +15,7 @@
 // under the License.
 
 import ballerina/test;
-import ballerina/workflow.'internal as wfInternal;
+import ballerina/workflow.internal as wfInternal;
 
 // Note: Module-level tests focus on registration and introspection.
 // These tests work with the lazy gRPC connection (no active workflow server needed).

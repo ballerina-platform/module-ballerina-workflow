@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
-- New `ballerina/workflow.'internal` submodule containing internal registration APIs used by the
+- New `ballerina/workflow.internal` submodule containing internal registration APIs used by the
   compiler plugin. Not intended for direct use by application code.
 - Added `ctx.currentTime() returns time:Utc` method to the `Context` client class — returns
   the current workflow time as reported by the workflow engine. This value is deterministic
@@ -26,7 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - **[Breaking]** Removed `workflow:registerProcess()` from the public API — this function was an
   internal API used by the compiler plugin code generation. It has been moved to the
-  `ballerina/workflow.'internal` submodule as `registerWorkflow()`. User code
+  `ballerina/workflow.internal` submodule as `registerWorkflow()`. User code
   and compiler plugin-generated code should not call this function directly.
 
 

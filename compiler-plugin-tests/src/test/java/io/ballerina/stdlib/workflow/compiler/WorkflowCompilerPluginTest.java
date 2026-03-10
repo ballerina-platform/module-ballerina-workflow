@@ -97,7 +97,34 @@ public class WorkflowCompilerPluginTest {
                         + getDiagnosticMessages(diagnosticResult));
     }
 
+    @Test(groups = "valid")
+    public void testValidActivityTypedescDependent() {
+        String packagePath = "valid_activity_typedesc_dependent";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for dependently-typed activity with inferred typedesc default. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
     // ===== Invalid test cases - Validation errors =====
+
+    @Test(groups = "invalid")
+    public void testInvalidActivityTypedescDefault() {
+        String packagePath = "invalid_activity_typedesc_default";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for activity with explicitly defaultable typedesc param");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_114);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidActivityTypedescRequired() {
+        String packagePath = "invalid_activity_typedesc_required";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for activity with required typedesc param");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_114);
+    }
 
     @Test(groups = "invalid")
     public void testInvalidActivityParam() {

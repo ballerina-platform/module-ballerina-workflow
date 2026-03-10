@@ -27,6 +27,7 @@ import io.ballerina.runtime.api.creators.ValueCreator;
 import io.ballerina.runtime.api.types.FunctionType;
 import io.ballerina.runtime.api.types.Parameter;
 import io.ballerina.runtime.api.types.RecordType;
+import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BFunctionPointer;
@@ -1075,8 +1076,7 @@ public final class WorkflowWorkerNative {
             io.temporal.workflow.WorkflowInfo temporalInfo = Workflow.getInfo();
             Object contextInfo = WorkflowContextNative.createContext(
                     temporalInfo.getWorkflowId(),
-                    temporalInfo.getWorkflowType(),
-                    new HashMap<>() // correlation data
+                    temporalInfo.getWorkflowType()
             );
 
             // Wrap in HandleValue for Ballerina
@@ -1244,13 +1244,22 @@ public final class WorkflowWorkerNative {
             // parameters don't cause misalignment (e.g. when only url and auth
             // are provided but method/headers/payload are skipped).
             FunctionType funcType = (FunctionType) activityFunction.getType();
-            Parameter[] params = funcType.getParameters();
+            Parameter[] allParams = funcType.getParameters();
+
+            // Filter out typedesc parameters — they carry type metadata only
+            // and are excluded from workflow history serialization by the compiler plugin.
+            List<Parameter> dataParams = new ArrayList<>();
+            for (Parameter p : allParams) {
+                if (p.type.getTag() != TypeTags.TYPEDESC_TAG) {
+                    dataParams.add(p);
+                }
+            }
 
             // Find the last parameter that is present in the map so we can
             // omit trailing absent params (FPValue.call fills defaults for those).
             int lastProvidedIndex = -1;
-            for (int i = 0; i < params.length; i++) {
-                if (namedArgs.containsKey(params[i].name)) {
+            for (int i = 0; i < dataParams.size(); i++) {
+                if (namedArgs.containsKey(dataParams.get(i).name)) {
                     lastProvidedIndex = i;
                 }
             }
@@ -1258,7 +1267,7 @@ public final class WorkflowWorkerNative {
             // Build positional Ballerina args up to the last provided param
             List<Object> orderedArgs = new ArrayList<>();
             for (int i = 0; i <= lastProvidedIndex; i++) {
-                String paramName = params[i].name;
+                String paramName = dataParams.get(i).name;
                 if (namedArgs.containsKey(paramName)) {
                     orderedArgs.add(convertJavaToBallerinaType(namedArgs.get(paramName)));
                 } else {

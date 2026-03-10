@@ -55,10 +55,11 @@ import java.util.concurrent.TimeUnit;
  * This class provides the native implementations for the external functions
  * defined in the Ballerina workflow module:
  * <ul>
- *   <li>callActivity - Execute an activity within a workflow</li>
- *   <li>run - Start a new workflow</li>
- *   <li>sendData - Send data to a running workflow</li>
- *   <li>registerWorkflow - Register a workflow function with the runtime</li>
+ *   <li>run - Start a new workflow execution</li>
+ *   <li>sendData - Send signal data to a running workflow</li>
+ *   <li>getRegisteredWorkflows - List all registered workflow functions</li>
+ *   <li>getWorkflowResult - Wait for and retrieve a workflow's result</li>
+ *   <li>getWorkflowInfo - Get current status/info of a workflow execution</li>
  * </ul>
  *
  * @since 0.1.0

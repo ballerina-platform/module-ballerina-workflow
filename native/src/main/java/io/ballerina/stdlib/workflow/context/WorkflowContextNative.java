@@ -189,11 +189,10 @@ public final class WorkflowContextNative {
      *
      * @param workflowId the workflow ID
      * @param workflowType the workflow type name
-     * @param correlationData initial correlation data
      * @return a ContextInfo object
      */
-    public static Object createContext(String workflowId, String workflowType, Map<String, Object> correlationData) {
-        return new ContextInfo(workflowId, workflowType, correlationData);
+    public static Object createContext(String workflowId, String workflowType) {
+        return new ContextInfo(workflowId, workflowType);
     }
 
     /**
@@ -278,72 +277,9 @@ public final class WorkflowContextNative {
     /**
      * Context information holder. Stores workflow-specific context information.
      *
-     * @param workflowId      the workflow ID
-     * @param workflowType    the workflow type
-     * @param correlationData the correlation data
+     * @param workflowId   the workflow ID
+     * @param workflowType the workflow type
      */
-        public record ContextInfo(String workflowId, String workflowType, Map<String, Object> correlationData) {
-            /**
-             * Creates a new ContextInfo.
-             *
-             * @param workflowId      the workflow ID
-             * @param workflowType    the workflow type
-             * @param correlationData the correlation data
-             */
-            public ContextInfo(String workflowId, String workflowType, Map<String, Object> correlationData) {
-                this.workflowId = workflowId;
-                this.workflowType = workflowType;
-                this.correlationData = correlationData != null ? new HashMap<>(correlationData) : new HashMap<>();
-            }
-
-            /**
-             * Gets the workflow ID.
-             *
-             * @return the workflow ID
-             */
-            @Override
-            public String workflowId() {
-                return workflowId;
-            }
-
-            /**
-             * Gets the workflow type.
-             *
-             * @return the workflow type
-             */
-            @Override
-            public String workflowType() {
-                return workflowType;
-            }
-
-            /**
-             * Gets the correlation data.
-             *
-             * @return the correlation data map
-             */
-            @Override
-            public Map<String, Object> correlationData() {
-                return correlationData;
-            }
-
-            /**
-             * Adds correlation data.
-             *
-             * @param key   the key
-             * @param value the value
-             */
-            public void addCorrelationData(String key, Object value) {
-                correlationData.put(key, value);
-            }
-
-            /**
-             * Gets a correlation value.
-             *
-             * @param key the key
-             * @return the value, or null if not found
-             */
-            public Object getCorrelationValue(String key) {
-                return correlationData.get(key);
-            }
-        }
+    public record ContextInfo(String workflowId, String workflowType) {
+    }
 }

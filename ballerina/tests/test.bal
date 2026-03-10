@@ -15,6 +15,7 @@
 // under the License.
 
 import ballerina/test;
+import ballerina/jballerina.java;
 import ballerina/workflow.internal as wfInternal;
 
 // Note: Module-level tests focus on registration and introspection.
@@ -55,6 +56,21 @@ function testActivityFunction(string input) returns string|error {
 @Activity
 function testActivityFunction2(int value) returns int|error {
     return value * 2;
+}
+
+// Dependently-typed external activity with inferred typedesc default <>.
+// This is the only supported pattern for typedesc in @Activity functions.
+@Activity
+function testDependentActivity(string data, typedesc<anydata> targetType = <>) returns targetType|error = @java:Method {
+    'class: "io.ballerina.stdlib.workflow.test.TestNatives",
+    name: "convertData"
+} external;
+
+// Workflow calling the dependently-typed activity.
+@Workflow
+function processWithDependentActivity(Context ctx, string input) returns string|error {
+    string result = check ctx->callActivity(testDependentActivity, {"data": input});
+    return result;
 }
 
 // Test process that calls activities using Context client.
@@ -171,6 +187,13 @@ function setupTests() returns error? {
     
     // Process for run tests
     _ = check wfInternal:registerWorkflow(simpleWorkflowProcess, "simple-workflow");
+
+    // Process with dependently-typed external activity
+    map<function> dependentActivities = {
+        "testDependentActivity": testDependentActivity
+    };
+    _ = check wfInternal:registerWorkflow(processWithDependentActivity, "dependent-activity-process",
+            dependentActivities);
 }
 
 // ============================================================================
@@ -232,8 +255,8 @@ function testGetRegisteredWorkflows() returns error? {
     // Verify we can retrieve all registered workflows
     WorkflowRegistry registry = check getRegisteredWorkflows();
     
-    // We registered 12 processes in @BeforeSuite
-    test:assertTrue(registry.length() >= 12, "Should have at least 12 processes registered");
+    // We registered 13 processes in @BeforeSuite
+    test:assertTrue(registry.length() >= 13, "Should have at least 13 processes registered");
     
     // Verify some key processes are present
     test:assertTrue(registry.hasKey("test-process"), "Should have test-process");
@@ -419,6 +442,34 @@ function testInlineRecordWithActivities() returns error? {
     if processInfo is ProcessRegistration {
         test:assertEquals(processInfo.activities.length(), 2, "Should have 2 activities");
         test:assertEquals(processInfo.events.length(), 2, "Should have 2 events");
+    }
+}
+
+// ============================================================================
+// Typedesc Parameter Tests
+// ============================================================================
+// Only dependently-typed activities with inferred typedesc default <> are
+// supported. The typedesc parameter is excluded from workflow history
+// serialization by the compiler plugin and filtered at runtime by
+// BallerinaActivityAdapter. Non-dependent typedesc patterns (explicit
+// default, required) produce compiler error WORKFLOW_114.
+
+@test:Config {groups: ["unit"]}
+function testDependentActivityRegistration() returns error? {
+    // Dependently-typed activity: typedesc<anydata> targetType = <>
+    // The typedesc param should be transparent to registration.
+    WorkflowRegistry registry = check getRegisteredWorkflows();
+    test:assertTrue(registry.hasKey("dependent-activity-process"),
+            "Process with dependent-typed activity should be in registry");
+
+    ProcessRegistration? processInfo = registry["dependent-activity-process"];
+    test:assertTrue(processInfo is ProcessRegistration, "Process info should exist");
+
+    if processInfo is ProcessRegistration {
+        test:assertEquals(processInfo.name, "dependent-activity-process");
+        test:assertEquals(processInfo.activities.length(), 1, "Should have 1 activity");
+        test:assertEquals(processInfo.activities[0], "testDependentActivity",
+                "Should have testDependentActivity");
     }
 }
 

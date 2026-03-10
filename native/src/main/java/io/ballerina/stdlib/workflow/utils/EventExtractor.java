@@ -327,8 +327,6 @@ public final class EventExtractor {
 
     /**
      * Gets the input parameter type from a process function.
-     * <p>
-     * This is used to extract correlation keys (readonly fields) from the input type.
      *
      * @param processFunction the process function pointer
      * @return the input RecordType, or null if input is not a record
@@ -349,8 +347,6 @@ public final class EventExtractor {
 
     /**
      * Gets the signal record type for a specific signal name from a process function.
-     * <p>
-     * This is used to extract correlation keys from signal data when sending events.
      *
      * @param processFunction the process function pointer
      * @param signalName the name of the signal field in the events record
@@ -637,7 +633,7 @@ public final class EventExtractor {
             // and all required fields are present in event data
             for (String key : eventDataKeys) {
                 if (!allFieldNames.contains(key) && !"id".equals(key)) {
-                    // Event has a key not in the record (ignore "id" as it's for correlation)
+                    // Event has a key not in the record
                     return false;
                 }
             }

@@ -75,7 +75,12 @@ public enum WorkflowDiagnostic {
     WORKFLOW_113("WORKFLOW_113",
             "Using 'time:utcNow()' inside a @Workflow function is non-deterministic. "
                     + "Use 'ctx.currentTime()' instead",
-            DiagnosticSeverity.WARNING);
+            DiagnosticSeverity.WARNING),
+    WORKFLOW_114("WORKFLOW_114",
+            "@Activity function has an unsupported typedesc parameter. "
+                    + "Only dependently-typed functions with inferred default '<>' are allowed "
+                    + "(e.g., typedesc<anydata> t = <>)",
+            DiagnosticSeverity.ERROR);
 
     private final String code;
     private final String message;

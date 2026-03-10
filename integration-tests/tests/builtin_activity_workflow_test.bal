@@ -77,9 +77,9 @@ function testSleepWithTimeAdvancement() returns error? {
         map<anydata> result = <map<anydata>>execInfo.result;
         int beforeSleep = <int>(check result["beforeSleep"]);
         int afterSleep = <int>(check result["afterSleep"]);
-        // After sleeping 2 seconds, the workflow time should have advanced
-        test:assertTrue(afterSleep >= beforeSleep,
-            "Workflow time after sleep should be >= time before sleep");
+        // time:Utc[0] is epoch seconds, so after sleeping 2s the difference should be >= 2
+        test:assertTrue((afterSleep - beforeSleep) >= 2,
+            "Workflow time should advance by at least 2 seconds after sleep");
     } else {
         test:assertFail("Expected map<anydata> result");
     }

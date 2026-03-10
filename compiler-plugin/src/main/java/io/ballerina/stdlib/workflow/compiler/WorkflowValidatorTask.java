@@ -28,6 +28,7 @@ import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.api.symbols.TypeDescKind;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
+import io.ballerina.compiler.syntax.tree.DefaultableParameterNode;
 import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
 import io.ballerina.compiler.syntax.tree.FunctionCallExpressionNode;
@@ -35,6 +36,7 @@ import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.MappingConstructorExpressionNode;
 import io.ballerina.compiler.syntax.tree.MappingFieldNode;
 import io.ballerina.compiler.syntax.tree.NodeVisitor;
+import io.ballerina.compiler.syntax.tree.ParameterNode;
 import io.ballerina.compiler.syntax.tree.PositionalArgumentNode;
 import io.ballerina.compiler.syntax.tree.RemoteMethodCallActionNode;
 import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
@@ -220,13 +222,12 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
     /**
      * Validates @Activity function signature.
      * <ul>
-     *   <li>All parameters must be subtypes of anydata or typedesc</li>
+     *   <li>All parameters must be subtypes of anydata</li>
+     *   <li>typedesc parameters are only allowed for dependently-typed external
+     *       functions with inferred default {@code <>}. Required or explicitly
+     *       defaultable typedesc parameters are rejected.</li>
      *   <li>Return type must be subtype of anydata|error</li>
      * </ul>
-     * <p>
-     * {@code typedesc} parameters are allowed for dependently-typed activities
-     * (e.g., built-in REST call). They are not serialised by the workflow engine
-     * and are excluded from {@code callActivity} argument matching.
      */
     private void validateActivityFunction(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context) {
         SemanticModel semanticModel = context.semanticModel();
@@ -239,14 +240,26 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         FunctionSymbol functionSymbol = (FunctionSymbol) symbolOpt.get();
         FunctionTypeSymbol typeSymbol = functionSymbol.typeDescriptor();
 
-        // Validate all parameters are subtypes of anydata (typedesc params are also allowed)
+        // Validate all parameters are subtypes of anydata.
+        // typedesc parameters are only allowed for dependently-typed functions
+        // (i.e., with inferred default <>).
         Optional<List<ParameterSymbol>> paramsOpt = typeSymbol.params();
         if (paramsOpt.isPresent()) {
-            for (ParameterSymbol param : paramsOpt.get()) {
-                TypeSymbol paramType = param.typeDescriptor();
+            List<ParameterSymbol> params = paramsOpt.get();
+            SeparatedNodeList<ParameterNode> syntaxParams =
+                    functionNode.functionSignature().parameters();
+
+            for (int i = 0; i < params.size(); i++) {
+                TypeSymbol paramType = params.get(i).typeDescriptor();
                 if (paramType.typeKind() == TypeDescKind.TYPEDESC) {
-                    // typedesc parameters are allowed — they carry type metadata,
-                    // not data, and are excluded from workflow history serialization.
+                    // Only allow typedesc if it uses the inferred default <>
+                    // (dependently-typed function). Reject required or
+                    // explicitly defaultable typedesc params.
+                    if (!isInferredTypedescDefault(syntaxParams, i)) {
+                        reportDiagnostic(context, functionNode,
+                                WorkflowDiagnostic.WORKFLOW_114);
+                        return;
+                    }
                     continue;
                 }
                 if (!WorkflowPluginUtils.isSubtypeOfAnydata(paramType, semanticModel)) {
@@ -264,6 +277,24 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                 reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_104);
             }
         }
+    }
+
+    /**
+     * Checks whether the syntax-tree parameter at {@code index} is a
+     * {@link DefaultableParameterNode} whose default expression is the
+     * inferred typedesc default {@code <>}.
+     */
+    private static boolean isInferredTypedescDefault(
+            SeparatedNodeList<ParameterNode> syntaxParams, int index) {
+        if (index >= syntaxParams.size()) {
+            return false;
+        }
+        ParameterNode paramNode = syntaxParams.get(index);
+        if (paramNode instanceof DefaultableParameterNode defaultParam) {
+            return defaultParam.expression().kind()
+                    == SyntaxKind.INFERRED_TYPEDESC_DEFAULT;
+        }
+        return false;
     }
 
     /**

@@ -1,0 +1,30 @@
+# nginx mTLS proxy for Temporal auth integration tests.
+#
+# Starts an nginx container with two listeners:
+#   Port 7235 — mutual TLS (used by SELF_HOSTED + mTLS test variant)
+#   Port 7236 — one-way TLS (used by CLOUD + API-key test variant)
+#
+# Both listeners proxy to the Temporal dev server at host port 7233.
+#
+# Prerequisites
+#   1. Temporal dev server already running on host port 7233.
+#   2. Certificates generated (CERTS_DIR passed via env var, default ./certs).
+#
+# Usage (via Gradle):
+#   ./gradlew generateMtlsTestCerts startTlsTestProxy
+#   ./gradlew :workflow-integration-tests:ballerinaAuthVariantTest
+#   ./gradlew stopTlsTestProxy
+#
+# Manual usage:
+#   CERTS_DIR=/path/to/certs docker compose -f docker-compose-mtls.yml up -d
+#   docker compose -f docker-compose-mtls.yml down
+
+services:
+  nginx-tls-proxy:
+    image: nginx:alpine
+    container_name: temporal-tls-proxy
+    network_mode: host          # Shares the host network — 127.0.0.1 == host
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${CERTS_DIR:-./certs}:/etc/nginx/certs:ro
+    restart: "no"

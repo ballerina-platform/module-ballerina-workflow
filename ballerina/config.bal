@@ -55,6 +55,13 @@ configurable string? authMtlsCert = ();
 # Ignored in LOCAL and IN_MEMORY modes.
 configurable string? authMtlsKey = ();
 
+# Path to the CA certificate file (PEM format) used to verify the server's TLS certificate.
+# Set this when the Temporal server uses a certificate from a private or self-signed CA
+# that is not in the JVM's default trust store.
+# Applicable to CLOUD mode (API key over TLS) and SELF_HOSTED mode (TLS or mTLS).
+# Ignored in LOCAL and IN_MEMORY modes.
+configurable string? authCaCert = ();
+
 # Task queue name for workflow and activity polling.
 # Each workflow program should use a unique task queue to avoid conflicts.
 # Ignored in IN_MEMORY mode.

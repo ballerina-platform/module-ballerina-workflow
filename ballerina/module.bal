@@ -159,10 +159,11 @@ isolated function initWorkflowRuntime() returns error? {
         string effectiveApiKey = currentMode == LOCAL ? "" : (currentApiKey ?: "");
         string effectiveMtlsCert = currentMode == LOCAL ? "" : (currentMtlsCert ?: "");
         string effectiveMtlsKey = currentMode == LOCAL ? "" : (currentMtlsKey ?: "");
+        string effectiveCaCert = currentMode == LOCAL ? "" : (authCaCert ?: "");
 
         check initProgramNative(currentUrl, namespace, taskQueue,
                 concurrentWorkflows, concurrentActivities,
-                effectiveApiKey, effectiveMtlsCert, effectiveMtlsKey,
+                effectiveApiKey, effectiveMtlsCert, effectiveMtlsKey, effectiveCaCert,
                 defaultRetryPolicy);
         programStarted = true;
     }
@@ -178,6 +179,7 @@ isolated function initWorkflowRuntime() returns error? {
 # + apiKey - API key for authentication (empty string if not used)
 # + mtlsCert - Path to mTLS certificate file (empty string if not used)
 # + mtlsKey - Path to mTLS private key file (empty string if not used)
+# + caCert - Path to CA certificate for server trust (empty string to use JVM default trust store)
 # + defaultRetryPolicy - Default activity retry policy
 # + return - An error if initialization fails, otherwise nil
 isolated function initProgramNative(
@@ -189,6 +191,7 @@ isolated function initProgramNative(
         string apiKey,
         string mtlsCert,
         string mtlsKey,
+        string caCert,
         ActivityRetryPolicy defaultRetryPolicy
 ) returns error? = @java:Method {
     'class: "io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative",

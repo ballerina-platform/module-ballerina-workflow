@@ -151,6 +151,157 @@ test {
     dependsOn(ballerinaTest)
 }
 
+// ============================================================================
+// Auth Variant Integration Tests
+// Runs the integration test suite with different deployment modes to cover
+// authentication code paths that are not exercised by the default LOCAL mode.
+//
+// Variants 1 & 2 (always run): use the plain Temporal dev server on port 7233
+//   - Variant 1: SELF_HOSTED mode, no auth → covers SELF_HOSTED init path
+//   - Variant 2: CLOUD mode, no auth → covers CLOUD mode init path
+//
+// Variant 3: SELF_HOSTED + API key (requires TLS proxy, skipped if not available)
+//   Connects to nginx TLS proxy on port 7236 → covers authApiKey + TLS setup code
+//
+// Variant 4: SELF_HOSTED + mTLS (requires mTLS proxy, skipped if not available)
+//   Connects to nginx mTLS proxy on port 7235 → covers authMtlsCert/Key + mTLS code
+//
+// The TLS proxy variants require:
+//   1. Temporal dev server on port 7233 (started by :startSharedTestServer)
+//   2. nginx Docker proxy with generated certs (started by :startTlsTestProxy)
+//   3. Generated test certificates in build/test-certs/
+//
+// Usage:
+//   ./gradlew :workflow-integration-tests:ballerinaAuthVariantTest
+//   ./gradlew :workflow-integration-tests:ballerinaAuthVariantTest -PskipTlsTests
+// ============================================================================
+
+def writeCoverageToDir(File srcReport, String variantName) {
+    if (srcReport.exists()) {
+        def destDir = new File("${project.rootDir}/build/coverage")
+        destDir.mkdirs()
+        new File(destDir, "${variantName}-coverage-report.xml").text = srcReport.text
+        logger.lifecycle("  Coverage saved: build/coverage/${variantName}-coverage-report.xml")
+    }
+}
+
+def verifyTestResults(File testResultFile, String variantLabel) {
+    if (!testResultFile.exists()) {
+        logger.warn("  Warning: test results file not found for '${variantLabel}'")
+        return
+    }
+    def slurper = new groovy.json.JsonSlurper()
+    def results = slurper.parse(testResultFile)
+    def failed = results.failed ?: 0
+    def total = results.totalTests ?: 0
+    def passed = results.passed ?: 0
+    logger.lifecycle("  ${variantLabel}: ${passed}/${total} passed, ${failed} failed")
+    if (failed > 0) {
+        throw new GradleException("Auth variant tests failed for '${variantLabel}': ${failed} of ${total} tests failed.")
+    }
+}
+
+def runBallerinaTests(String label) {
+    exec {
+        workingDir project.projectDir
+        environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
+        commandLine 'sh', '-c', "${distributionBinPath}/bal test ${testCoverageParam} --offline"
+    }
+    verifyTestResults(file("${project.projectDir}/target/report/test_results.json"), label)
+    writeCoverageToDir(file("${project.projectDir}/target/report/workflow_tests/coverage-report.xml"),
+            label.toLowerCase().replace(" ", "-").replace("+", "-"))
+}
+
+def writeAuthConfig(String tomlPath, Map cfg) {
+    def lines = [
+        "# Integration test configuration — ${cfg.label}",
+        "[ballerina.workflow]",
+        "mode = \"${cfg.mode}\"",
+        "url = \"${cfg.url}\"",
+        "namespace = \"${cfg.namespace ?: 'default'}\"",
+        "taskQueue = \"BALLERINA_WORKFLOW_TASK_QUEUE\"",
+        "maxConcurrentWorkflows = 100",
+        "maxConcurrentActivities = 100"
+    ]
+    if (cfg.authApiKey)    lines << "authApiKey = \"${cfg.authApiKey}\""
+    if (cfg.authMtlsCert) lines << "authMtlsCert = \"${cfg.authMtlsCert}\""
+    if (cfg.authMtlsKey)  lines << "authMtlsKey = \"${cfg.authMtlsKey}\""
+    if (cfg.authCaCert)   lines << "authCaCert = \"${cfg.authCaCert}\""
+    new File(tomlPath).text = lines.join('\n') + '\n'
+}
+
+task ballerinaAuthVariantTest {
+    description = 'Runs integration tests with auth config variants to increase code coverage'
+    group = 'verification'
+    dependsOn(":${packageName}-ballerina:build")
+    dependsOn(updateTomlFiles)
+    dependsOn(":startSharedTestServer")
+    dependsOn(compileJava)
+    dependsOn(processResources)
+    dependsOn(compileTestJava)
+    dependsOn(processTestResources)
+    dependsOn(jar)
+
+    doLast {
+        if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+            logger.lifecycle("Auth variant tests skipped on Windows (Unix only).")
+            return
+        }
+
+        def configFile = file("${project.projectDir}/tests/Config.toml")
+        def certsDir = file("${project.rootDir}/build/test-certs")
+        def tlsProxyRunning = false
+
+        // Detect TLS proxy availability (port 7235 = mTLS, port 7236 = TLS-only)
+        try {
+            def s = new java.net.Socket(); s.connect(new java.net.InetSocketAddress("localhost", 7235), 500); s.close()
+            tlsProxyRunning = true
+        } catch (Exception ignored) {}
+
+        def skipTls = project.hasProperty("skipTlsTests") || !tlsProxyRunning
+
+        // Define auth variants
+        def variants = [
+            [mode: "SELF_HOSTED", url: "localhost:7233", label: "SELF_HOSTED (no auth)",
+             variantKey: "self-hosted-no-auth"],
+            [mode: "CLOUD", url: "localhost:7233", label: "CLOUD (no auth, dev-server)",
+             variantKey: "cloud-no-auth"]
+        ]
+
+        if (!skipTls) {
+            logger.lifecycle("TLS proxy detected — also running TLS auth variants.")
+            def caCertPath = "${certsDir}/ca.crt".replace('\\', '/')
+            def clientCertPath = "${certsDir}/client.crt".replace('\\', '/')
+            def clientKeyPath  = "${certsDir}/client.key".replace('\\', '/')
+            variants += [
+                [mode: "CLOUD", url: "localhost:7236",
+                 authApiKey: "test-coverage-api-key", authCaCert: caCertPath,
+                 label: "CLOUD (API key over TLS)", variantKey: "cloud-api-key"],
+                [mode: "SELF_HOSTED", url: "localhost:7235",
+                 authMtlsCert: clientCertPath, authMtlsKey: clientKeyPath, authCaCert: caCertPath,
+                 label: "SELF_HOSTED (mTLS)", variantKey: "self-hosted-mtls"]
+            ]
+        } else {
+            logger.lifecycle("TLS proxy not running (or -PskipTlsTests). Skipping TLS auth variants.")
+            logger.lifecycle("To run TLS variants: ./gradlew generateMtlsTestCerts startTlsTestProxy ballerinaAuthVariantTest")
+        }
+
+        variants.each { variant ->
+            logger.lifecycle("=" * 60)
+            logger.lifecycle("Auth variant: ${variant.label}")
+            writeAuthConfig("${project.projectDir}/tests/Config.toml", variant)
+            runBallerinaTests(variant.label)
+        }
+
+        // Restore LOCAL mode config for subsequent tasks
+        writeAuthConfig("${project.projectDir}/tests/Config.toml", [
+            mode: "LOCAL", url: "localhost:7233", label: "LOCAL (restored after variant tests)"
+        ])
+        logger.lifecycle("=" * 60)
+        logger.lifecycle("Auth variant tests complete. Coverage reports in build/coverage/")
+    }
+}
+
 build.dependsOn ":${packageName}-ballerina:build"
 build.dependsOn ":${packageName}-compiler-plugin:build"
 test.dependsOn ":${packageName}-ballerina:build"

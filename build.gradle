@@ -236,6 +236,11 @@ def testServerStarted = false
 def testServerPort = 7233
 def usingExternalServer = false
 
+// TLS proxy state (nginx Docker container for auth coverage tests)
+def tlsProxyStarted   = false
+def mtlsDockerDir     = file("${project.rootDir}/docker/temporal-mtls")
+def mtlsCertsDir      = file("${project.buildDir}/test-certs")
+
 // Helper: check if a server is running on a given port
 def isServerRunning = { String host, int port ->
     try {
@@ -290,13 +295,134 @@ def stopTestServerIfRunning = {
     testServerStarted = false
 }
 
+// Helper: stop the nginx TLS proxy container
+def stopTlsProxyIfRunning = {
+    if (!tlsProxyStarted) return
+    try {
+        logger.lifecycle("Stopping nginx TLS proxy container...")
+        def proc = ['docker', 'compose', '-f',
+                    "${mtlsDockerDir}/docker-compose-mtls.yml", 'down'].execute()
+        proc.waitFor()
+        tlsProxyStarted = false
+        logger.lifecycle("TLS proxy container stopped.")
+    } catch (Exception e) {
+        logger.warn("Error stopping TLS proxy: ${e.message}")
+    }
+}
+
+// Helper: check Docker is available
+def findDockerCli = {
+    try {
+        def proc = ['docker', '--version'].execute()
+        proc.waitFor()
+        return proc.exitValue() == 0
+    } catch (Exception ignored) { return false }
+}
+
 // Register a build listener to stop the server after build completes
 gradle.buildFinished { result ->
     if (testServerStarted) {
         logger.lifecycle("Build finished - stopping Temporal dev server...")
         stopTestServerIfRunning()
     }
+    if (tlsProxyStarted) {
+        logger.lifecycle("Build finished - stopping TLS proxy container...")
+        stopTlsProxyIfRunning()
+    }
 }
+
+// ============================================================================
+// mTLS / TLS Proxy for Auth Coverage Tests
+// Starts an nginx Docker container with two TLS listeners in front of the
+// Temporal dev server on port 7233:
+//   Port 7235 — mutual TLS (mTLS): for SELF_HOSTED + mTLS test variant
+//   Port 7236 — one-way TLS:       for CLOUD + API-key test variant
+
+// Generate self-signed certificates for the mTLS/TLS proxy
+task generateMtlsTestCerts {
+    description = 'Generates self-signed CA, server, and client certificates for auth coverage tests'
+    group = 'verification'
+    outputs.dir mtlsCertsDir
+
+    doLast {
+        if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+            logger.lifecycle("generateMtlsTestCerts skipped on Windows (requires openssl).")
+            return
+        }
+        if (mtlsCertsDir.exists() && new File(mtlsCertsDir, 'client.crt').exists()) {
+            logger.lifecycle("Test certificates already present at ${mtlsCertsDir} — skipping generation.")
+            return
+        }
+        mtlsCertsDir.mkdirs()
+        def script = file("${mtlsDockerDir}/generate-certs.sh")
+        exec {
+            commandLine 'sh', script.absolutePath, mtlsCertsDir.absolutePath
+        }
+    }
+}
+
+// Start the nginx TLS proxy Docker container
+task startTlsTestProxy {
+    description = 'Starts an nginx Docker container with mTLS (7235) and TLS (7236) listeners for auth tests'
+    group = 'verification'
+    dependsOn 'generateMtlsTestCerts'
+
+    doLast {
+        if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+            logger.lifecycle("startTlsTestProxy skipped on Windows.")
+            return
+        }
+        if (!findDockerCli()) {
+            logger.warn("Docker not found — TLS proxy will not be started. TLS auth variants will be skipped.")
+            return
+        }
+        // Check if proxy is already running
+        if (isServerRunning("localhost", 7235)) {
+            logger.lifecycle("TLS proxy already running on port 7235 — reusing.")
+            tlsProxyStarted = true
+            return
+        }
+        logger.lifecycle("Starting nginx TLS proxy (ports 7235/7236 → 7233)...")
+        def env = System.getenv().findAll { it.key.startsWith("PATH") }
+        def proc = new ProcessBuilder(
+                'docker', 'compose',
+                '-f', "${mtlsDockerDir}/docker-compose-mtls.yml".toString(),
+                'up', '-d', '--force-recreate')
+            .directory(mtlsDockerDir)
+            .redirectErrorStream(true)
+            .start()
+        proc.environment().put("CERTS_DIR", mtlsCertsDir.absolutePath)
+        proc.waitFor()
+        if (proc.exitValue() != 0) {
+            logger.warn("nginx container failed to start:\n${proc.inputStream.text}")
+            return
+        }
+        // Wait for ports to be ready
+        def maxWait = 15
+        def waited = 0
+        while (waited < maxWait) {
+            Thread.sleep(500)
+            waited++
+            if (isServerRunning("localhost", 7235) && isServerRunning("localhost", 7236)) {
+                tlsProxyStarted = true
+                logger.lifecycle("TLS proxy ready after ${waited * 0.5}s (ports 7235/7236).")
+                return
+            }
+        }
+        logger.warn("TLS proxy did not become ready within ${maxWait / 2}s — TLS tests may fail.")
+    }
+}
+
+// Stop the nginx TLS proxy Docker container
+task stopTlsTestProxy {
+    description = 'Stops the nginx TLS proxy container'
+    group = 'verification'
+
+    doLast {
+        stopTlsProxyIfRunning()
+    }
+}
+
 
 // Start shared test server - used by integration tests
 task startSharedTestServer {
@@ -395,38 +521,40 @@ task stopSharedTestServer {
 // ============================================================================
 
 task mergeCoverageReports {
-    description = 'Merges Ballerina coverage reports from module and integration tests'
+    description = 'Merges Ballerina coverage reports from module tests, integration tests, and auth variant tests'
     group = 'verification'
     
     dependsOn ':workflow-ballerina:test'
     dependsOn ':workflow-integration-tests:test'
     
     doLast {
-        def moduleReport = file("${project(':workflow-ballerina').projectDir}/target/report/workflow/coverage-report.xml")
+        def moduleReport      = file("${project(':workflow-ballerina').projectDir}/target/report/workflow/coverage-report.xml")
         def integrationReport = file("${project(':workflow-integration-tests').projectDir}/target/report/workflow_tests/coverage-report.xml")
-        def mergedReportDir = file("${project.buildDir}/coverage")
-        def mergedReport = file("${mergedReportDir}/merged-coverage-report.xml")
+        def mergedReportDir   = file("${project.buildDir}/coverage")
+        def mergedReport      = file("${mergedReportDir}/merged-coverage-report.xml")
         
         mergedReportDir.mkdirs()
         
         logger.lifecycle("Merging coverage reports...")
-        logger.lifecycle("  Module tests: ${moduleReport.exists() ? 'found' : 'not found'}")
+        logger.lifecycle("  Module tests:      ${moduleReport.exists() ? 'found' : 'not found'}")
         logger.lifecycle("  Integration tests: ${integrationReport.exists() ? 'found' : 'not found'}")
         
         if (moduleReport.exists() && integrationReport.exists()) {
-            // Simple merge: Copy module report as base, then we can use external tools for proper merge
-            // For now, copy module report as the primary and log integration report location
             mergedReport.text = moduleReport.text
-            
-            // Copy integration report alongside for reference
+
+            // Copy integration report
             def integrationCopy = file("${mergedReportDir}/integration-coverage-report.xml")
             integrationCopy.text = integrationReport.text
-            
-            logger.lifecycle("Coverage reports copied to: ${mergedReportDir}")
-            logger.lifecycle("  - merged-coverage-report.xml (from module tests)")
-            logger.lifecycle("  - integration-coverage-report.xml (from integration tests)")
-            logger.lifecycle("")
-            logger.lifecycle("To view combined coverage in IDEs, configure both report locations.")
+
+            // Log any auth variant reports already saved to the coverage dir
+            mergedReportDir.listFiles()?.findAll { it.name.endsWith("-coverage-report.xml") &&
+                    it.name != 'merged-coverage-report.xml' &&
+                    it.name != 'integration-coverage-report.xml' }?.each {
+                logger.lifecycle("  Auth variant:      ${it.name}")
+            }
+
+            logger.lifecycle("Coverage reports in: ${mergedReportDir}")
+            logger.lifecycle("Upload all *-coverage-report.xml files to codecov for full coverage.")
         } else {
             logger.warn("Could not merge coverage reports - one or more reports missing")
         }

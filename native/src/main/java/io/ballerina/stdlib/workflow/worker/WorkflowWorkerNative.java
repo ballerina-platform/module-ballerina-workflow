@@ -145,8 +145,9 @@ public final class WorkflowWorkerNative {
      * @param maxConcurrentWorkflows Maximum concurrent workflow executions
      * @param maxConcurrentActivities Maximum concurrent activity executions
      * @param apiKey API key for authentication (empty string if not used)
-     * @param mtlsCert Path to mTLS certificate file (empty string if not used)
-     * @param mtlsKey Path to mTLS private key file (empty string if not used)
+     * @param mtlsCert Path to mTLS client certificate file (empty string if not used)
+     * @param mtlsKey Path to mTLS client private key file (empty string if not used)
+     * @param caCert Path to CA certificate for server trust (empty string to use JVM default trust store)
      * @param defaultRetryPolicy Default activity retry policy from WorkerConfig
      * @return null on success, error on failure
      */
@@ -160,6 +161,7 @@ public final class WorkflowWorkerNative {
             BString apiKey,
             BString mtlsCert,
             BString mtlsKey,
+            BString caCert,
             BMap<BString, Object> defaultRetryPolicy) {
 
         if (!initialized.compareAndSet(false, true)) {
@@ -174,6 +176,7 @@ public final class WorkflowWorkerNative {
             String apiKeyValue = apiKey.getValue();
             String mtlsCertPath = mtlsCert.getValue();
             String mtlsKeyPath = mtlsKey.getValue();
+            String caCertPath = caCert.getValue();
 
             LOGGER.debug("Initializing singleton workflow worker - URL: {}, Namespace: {}, TaskQueue: {}",
                     serverUrl, ns, taskQueue);
@@ -182,28 +185,44 @@ public final class WorkflowWorkerNative {
             WorkflowServiceStubsOptions.Builder stubsBuilder = WorkflowServiceStubsOptions.newBuilder()
                     .setTarget(serverUrl);
 
-            // Configure mTLS if certificate and key are provided
-            if (!mtlsCertPath.isEmpty() && !mtlsKeyPath.isEmpty()) {
-                try (InputStream certStream = new FileInputStream(mtlsCertPath);
-                     InputStream keyStream = new FileInputStream(mtlsKeyPath)) {
-                    io.grpc.netty.shaded.io.netty.handler.ssl.SslContext sslContext =
-                            io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder.forClient()
-                                    .keyManager(certStream, keyStream)
-                                    .build();
-                    stubsBuilder.setSslContext(sslContext);
+            boolean hasMtls = !mtlsCertPath.isEmpty() && !mtlsKeyPath.isEmpty();
+            boolean hasCaCert = !caCertPath.isEmpty();
+            boolean hasApiKey = !apiKeyValue.isEmpty();
+
+            // Configure TLS/mTLS when needed (client cert and/or custom server CA)
+            if (hasMtls || hasCaCert) {
+                try {
+                    io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder sslBuilder =
+                            io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder.forClient();
+                    if (hasMtls) {
+                        try (InputStream certStream = new FileInputStream(mtlsCertPath);
+                             InputStream keyStream = new FileInputStream(mtlsKeyPath)) {
+                            sslBuilder.keyManager(certStream, keyStream);
+                        }
+                        LOGGER.debug("mTLS client certificate configured: {}", mtlsCertPath);
+                    }
+                    if (hasCaCert) {
+                        try (InputStream caStream = new FileInputStream(caCertPath)) {
+                            sslBuilder.trustManager(caStream);
+                        }
+                        LOGGER.debug("Custom CA certificate configured: {}", caCertPath);
+                    }
+                    stubsBuilder.setSslContext(sslBuilder.build());
                     stubsBuilder.setEnableHttps(true);
-                    LOGGER.debug("mTLS configured with cert: {} and key: {}", mtlsCertPath, mtlsKeyPath);
                 } catch (IOException e) {
                     initialized.set(false);
                     return ErrorCreator.createError(
-                            StringUtils.fromString("Failed to configure mTLS: " + e.getMessage()));
+                            StringUtils.fromString("Failed to configure TLS/mTLS: " + e.getMessage()));
                 }
             }
 
             // Configure API key authentication if provided
-            if (!apiKeyValue.isEmpty()) {
+            if (hasApiKey) {
                 stubsBuilder.addApiKey(() -> apiKeyValue);
-                stubsBuilder.setEnableHttps(true);
+                if (!hasMtls && !hasCaCert) {
+                    // API key over default JVM TLS (public CA trust store)
+                    stubsBuilder.setEnableHttps(true);
+                }
                 LOGGER.debug("API key authentication configured");
             }
 

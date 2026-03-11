@@ -43,11 +43,43 @@ jobs:
         run: |
           ./gradlew build
 
+      - name: Run Auth Variant Integration Tests (SELF_HOSTED + CLOUD)
+        env:
+          packageUser: ${{ github.actor }}
+          packagePAT: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./gradlew :workflow-integration-tests:ballerinaAuthVariantTest
+
+      - name: Generate mTLS Test Certificates
+        run: ./gradlew generateMtlsTestCerts
+
+      - name: Start nginx TLS Proxy (mTLS + TLS)
+        run: ./gradlew startTlsTestProxy
+
+      - name: Run mTLS + API-key Auth Variant Tests
+        env:
+          packageUser: ${{ github.actor }}
+          packagePAT: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./gradlew :workflow-integration-tests:ballerinaAuthVariantTest
+
+      - name: Stop nginx TLS Proxy
+        if: always()
+        run: ./gradlew stopTlsTestProxy
+
       - name: Generate CodeCov Report
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: ballerina-platform/${{ github.event.repository.name }}
+          files: |
+            ballerina/target/report/workflow/coverage-report.xml
+            integration-tests/target/report/workflow_tests/coverage-report.xml
+            build/coverage/self-hosted-no-auth-coverage-report.xml
+            build/coverage/cloud-no-auth-coverage-report.xml
+            build/coverage/cloud-api-key-coverage-report.xml
+            build/coverage/self-hosted-mtls-coverage-report.xml
+          fail_ci_if_error: false
 
   windows-build:
     name: Build on Windows

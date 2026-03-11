@@ -67,6 +67,16 @@ isolated function stopWorkflowRuntime() returns error? = @java:Method {
     name: "stopSingletonWorker"
 } external;
 
+# Stops the workflow runtime immediately (forceful shutdown).
+# In-flight workflow and activity tasks are interrupted rather than drained.
+# Waits for threads to exit before returning.
+#
+# + return - An error if stopping fails, otherwise nil
+isolated function stopWorkflowRuntimeNow() returns error? = @java:Method {
+    'class: "io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative",
+    name: "stopSingletonWorkerNow"
+} external;
+
 # Returns information about all registered workflows and their activities.
 #
 # This function is useful for testing and runtime introspection to verify

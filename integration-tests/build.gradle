@@ -203,6 +203,10 @@ def verifyTestResults(File testResultFile, String variantLabel) {
 }
 
 def runBallerinaTests = { String label, String variantKey ->
+    // Delete stale report artifacts so a crashed test run's leftovers cannot be misread
+    def reportDir = file("${project.projectDir}/target/report")
+    new File(reportDir, 'test_results.json').delete()
+    new File("${reportDir}/workflow_tests", 'coverage-report.xml').delete()
     exec {
         workingDir project.projectDir
         environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
@@ -261,12 +265,12 @@ task ballerinaAuthVariantTest {
 
         def skipTls = project.hasProperty("skipTlsTests") || !tlsProxyRunning
 
-        // Define auth variants
+        // Define auth variants. Only modes that pass initWorkflowRuntime() validation
+        // are included here. CLOUD mode requires authentication, so there is no CLOUD
+        // no-auth variant — that combination is rejected by the runtime before connecting.
         def variants = [
             [mode: "SELF_HOSTED", url: "localhost:7233", label: "SELF_HOSTED (no auth)",
-             variantKey: "self-hosted-no-auth"],
-            [mode: "CLOUD", url: "localhost:7233", label: "CLOUD (no auth, dev-server)",
-             variantKey: "cloud-no-auth"]
+             variantKey: "self-hosted-no-auth"]
         ]
 
         if (!skipTls) {

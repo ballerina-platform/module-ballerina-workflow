@@ -20,7 +20,7 @@ The workflow module manages a Temporal scheduler ensuring:
 Defined in [config.bal](ballerina/config.bal) as flat `configurable` variables:
 - `mode` — deployment mode enum: `LOCAL`, `CLOUD`, `SELF_HOSTED`, or `IN_MEMORY`
 - `url`, `namespace` — server connection parameters
-- `authApiKey`, `authMtlsCert`, `authMtlsKey` — authentication (`string?` optional, used by CLOUD/SELF_HOSTED modes)
+- `authApiKey`, `authMtlsCert`, `authMtlsKey`, `authCaCert` — authentication (`string?` optional, used by CLOUD/SELF_HOSTED modes)
 - `taskQueue`, `maxConcurrentWorkflows`, `maxConcurrentActivities` — scheduler parameters
 - `activityRetryInitialInterval`, `activityRetryBackoffCoefficient`, `activityRetryMaximumInterval`, `activityRetryMaximumAttempts` — default activity retry policy
 
@@ -77,11 +77,12 @@ Location: [WorkflowWorkerNative.java](native/src/main/java/io/ballerina/stdlib/w
 **Scheduler state** — static volatile fields for `WorkflowServiceStubs`, `WorkflowClient`, `WorkerFactory`, `Worker`, and `taskQueue`. Thread safety via `AtomicBoolean` flags (`initialized`, `started`, `dynamicWorkflowRegistered`, `dynamicActivityRegistered`).
 
 **Key methods:**
-- `initSingletonWorker(BString url, BString namespace, BString taskQueue, long maxWorkflows, long maxActivities, BString apiKey, BString mtlsCert, BString mtlsKey, BMap retryPolicy)` — creates gRPC connection, `WorkflowClient`, `WorkerFactory`, and `Worker` with the configured task queue and concurrency limits. Auth strings are empty when not configured (Ballerina layer coalesces `()` → `""` before calling native). Configures mTLS or API key auth when provided.
+- `initSingletonWorker(BString url, BString namespace, BString taskQueue, long maxWorkflows, long maxActivities, BString apiKey, BString mtlsCert, BString mtlsKey, BString caCert, BMap retryPolicy)` — creates gRPC connection, `WorkflowClient`, `WorkerFactory`, and `Worker` with the configured task queue and concurrency limits. Auth strings are empty when not configured (Ballerina layer coalesces `()` → `""` before calling native). Configures mTLS or API key auth when provided; `caCert` path is used to build a custom SSL trust store when the server's certificate is from a private CA.
 - `initInMemoryWorker()` — creates an in-memory test scheduler (no external Temporal server needed)
 - `registerWorkflow(Environment, BFunctionPointer workflowFunc, BString workflowName, Object activities)` — stores workflow in `PROCESS_REGISTRY`, activities in `ACTIVITY_REGISTRY`, registers `BallerinaWorkflowAdapter` and `BallerinaActivityAdapter` (once each)
 - `startSingletonWorker()` — calls `workerFactory.start()` to begin polling the task queue
-- `stopSingletonWorker()` — calls `workerFactory.shutdown()` and `serviceStubs.shutdown()`
+- `stopSingletonWorker()` — calls `workerFactory.shutdown()` (graceful drain) and `serviceStubs.shutdown()`
+- `stopSingletonWorkerNow()` — calls `workerFactory.shutdownNow()` (forceful interrupt) followed by `awaitTermination()`
 
 ### 3. Compiler Plugin Layer
 

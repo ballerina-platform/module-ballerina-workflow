@@ -351,7 +351,12 @@ task generateMtlsTestCerts {
             logger.lifecycle("generateMtlsTestCerts skipped on Windows (requires openssl).")
             return
         }
-        if (mtlsCertsDir.exists() && new File(mtlsCertsDir, 'client.crt').exists()) {
+        if (mtlsCertsDir.exists()
+                && new File(mtlsCertsDir, 'ca.crt').exists()
+                && new File(mtlsCertsDir, 'server.crt').exists()
+                && new File(mtlsCertsDir, 'server.key').exists()
+                && new File(mtlsCertsDir, 'client.crt').exists()
+                && new File(mtlsCertsDir, 'client.key').exists()) {
             logger.lifecycle("Test certificates already present at ${mtlsCertsDir} — skipping generation.")
             return
         }
@@ -396,6 +401,7 @@ task startTlsTestProxy {
         proc.waitFor()
         if (proc.exitValue() != 0) {
             logger.warn("nginx container failed to start:\n${proc.inputStream.text}")
+            stopTlsProxyIfRunning()
             return
         }
         // Wait for ports to be ready
@@ -405,15 +411,16 @@ task startTlsTestProxy {
             Thread.sleep(500)
             waited++
             if (isServerRunning("localhost", 7235) && isServerRunning("localhost", 7236)) {
-        // Mark this build as the proxy owner so stopTlsProxyIfRunning can tear it down
-        // even if tlsProxyStarted flag is stale (e.g. across Gradle invocations).
-        new File(mtlsDockerDir, '.tls-proxy-owned').text = String.valueOf(ProcessHandle.current().pid())
-        tlsProxyStarted = true
-        logger.lifecycle("TLS proxy ready after ${waited * 0.5}s (ports 7235/7236).")
+                // Mark this build as the proxy owner so stopTlsProxyIfRunning can tear it down
+                // even if tlsProxyStarted flag is stale (e.g. across Gradle invocations).
+                new File(mtlsDockerDir, '.tls-proxy-owned').text = String.valueOf(ProcessHandle.current().pid())
+                tlsProxyStarted = true
+                logger.lifecycle("TLS proxy ready after ${waited * 0.5}s (ports 7235/7236).")
                 return
             }
         }
         logger.warn("TLS proxy did not become ready within ${maxWait / 2}s — TLS tests may fail.")
+        stopTlsProxyIfRunning()
     }
 }
 

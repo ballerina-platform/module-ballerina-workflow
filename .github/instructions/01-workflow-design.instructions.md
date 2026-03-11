@@ -38,13 +38,13 @@ The Ballerina Workflow module provides durable workflow orchestration via Tempor
 
 #### WorkflowCompilerPlugin ([WorkflowCompilerPlugin.java](compiler-plugin/src/main/java/io/ballerina/stdlib/workflow/compiler/WorkflowCompilerPlugin.java))
 - Registers analysis and code modification tasks
-- Validates `@Workflow` and `@Activity` function signatures
+- Validates `@workflow:Workflow` and `@workflow:Activity` function signatures
 
 #### WorkflowValidatorTask ([WorkflowValidatorTask.java](compiler-plugin/src/main/java/io/ballerina/stdlib/workflow/compiler/WorkflowValidatorTask.java))
 - **WORKFLOW_107**: Validates `ctx->callActivity()` calls use `@Activity` functions
 - **WORKFLOW_108**: Prevents direct calls to `@Activity` functions inside `@Workflow`
 - **WORKFLOW_114**: Validates that `typedesc` parameters in `@Activity` functions use the inferred-default form `typedesc<anydata> t = <>` — explicit defaults and required typedesc params are rejected
-- Validates workflow function signature: `(Context?, anydata, record{future<T>...}?)`
+- Validates workflow function signature: `(Context?, anydata?, record{future<T>...}?)`
 - Validates activity function parameters and return types are `anydata` subtypes
 - Skips typedesc parameters when validating `callActivity` argument counts (typedesc is not passed via the args map)
 
@@ -73,13 +73,13 @@ Location: [WorkflowNative.java](native/src/main/java/io/ballerina/stdlib/workflo
 ## Usage Patterns
 
 ### Workflow Function Signature
-`@Workflow` functions follow this parameter order (see examples in [integration-tests/](integration-tests/)):
+`@workflow:Workflow` functions follow this parameter order (see examples in [integration-tests/](integration-tests/)):
 1. `workflow:Context ctx` — optional, must be first if calling activities
-2. `T input` — input data (`anydata` subtype)
+2. `T input?` — optional input data (`anydata` subtype)
 3. `record {| future<U> event1; ... |} events` — optional event futures
 
 ### Activity Function Signature
-`@Activity` functions accept `anydata` parameters and return `anydata|error`. See examples in [integration-tests/](integration-tests/).
+`@workflow:Activity` functions accept `anydata` parameters and return `anydata|error`. See examples in [integration-tests/](integration-tests/).
 
 **Dependently-typed activities** are also supported. A `typedesc<anydata>` parameter with the inferred default `<>` enables the caller to specify the expected return type:
 

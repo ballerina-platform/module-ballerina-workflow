@@ -170,14 +170,13 @@ those branches.
 | Variant | Mode | URL | Notes |
 |---------|------|-----|-------|
 | SELF_HOSTED no-auth | `SELF_HOSTED` | `localhost:7233` | Covers `SELF_HOSTED` mode branch in `initWorkflowRuntime()` |
-| CLOUD no-auth | `CLOUD` | `localhost:7233` | Covers `CLOUD` mode branch; dev server ignores missing auth |
 
 ### Tier 2 — Requires nginx Docker proxy (run when Docker available)
 
 | Variant | Mode | Port | Auth | Notes |
 |---------|------|------|------|-------|
 | CLOUD + API key | `CLOUD` | 7236 (one-way TLS) | `authApiKey` | Covers API key channel setup in `WorkflowWorkerNative.java` |
-| SELF_HOSTED + mTLS | `SELF_HOSTED` | 7235 (mutual TLS) | `authMtlsCert/Key/CaCert` | Covers mTLS SslContext setup |
+| SELF_HOSTED + mTLS | `SELF_HOSTED` | 7235 (mutual TLS) | `authMtlsCert/Key/authCaCert` | Covers mTLS SslContext setup |
 
 ### Docker Proxy Architecture (Tier 2)
 

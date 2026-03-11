@@ -42,15 +42,17 @@ class WorkflowListener {
         check startWorkflowRuntime();
     }
 
-    // Both gracefulStop and immediateStop call stopWorkflowRuntime() identically.
-    // Temporal's WorkerFactory.shutdown() performs a graceful drain by default;
-    // there is no separate force-kill API in the Temporal Java SDK at this abstraction level.
+    // gracefulStop calls stopWorkflowRuntime() which invokes workerFactory.shutdown() —
+    // a cooperative drain that lets in-flight workflow/activity tasks complete.
+    // immediateStop calls stopWorkflowRuntimeNow() which invokes workerFactory.shutdownNow() —
+    // a forceful interrupt that cancels in-flight tasks, followed by awaitTermination()
+    // to ensure the JVM threads exit before the process continues.
     public function gracefulStop() returns error? {
         check stopWorkflowRuntime();
     }
 
     public function immediateStop() returns error? {
-        check stopWorkflowRuntime();
+        check stopWorkflowRuntimeNow();
     }
 }
 
@@ -91,9 +93,10 @@ isolated function initWorkflowRuntime() returns error? {
         }
 
         // Validate authentication for CLOUD (must have apiKey or mTLS)
-        string? currentApiKey = authApiKey;
-        string? currentMtlsCert = authMtlsCert;
-        string? currentMtlsKey = authMtlsKey;
+        // Treat empty string as absent so "authApiKey = \"\"" is equivalent to not set.
+        string? currentApiKey = authApiKey == "" ? () : authApiKey;
+        string? currentMtlsCert = authMtlsCert == "" ? () : authMtlsCert;
+        string? currentMtlsKey = authMtlsKey == "" ? () : authMtlsKey;
         if currentMode == CLOUD {
             if currentApiKey is () && (currentMtlsCert is () || currentMtlsKey is ()) {
                 return error("CLOUD mode requires authentication: "
@@ -101,9 +104,8 @@ isolated function initWorkflowRuntime() returns error? {
             }
         }
 
-        // Validate mTLS pair completeness (both or neither)
-        if (currentMtlsCert is string && currentMtlsKey is ())
-                || (currentMtlsCert is () && currentMtlsKey is string) {
+        // Validate mTLS pair completeness (both or neither) when at least one is provided
+        if currentMtlsCert is () != currentMtlsKey is () {
             return error("Both 'authMtlsCert' and 'authMtlsKey' must be provided together");
         }
 
@@ -114,8 +116,16 @@ isolated function initWorkflowRuntime() returns error? {
             return error("'maxConcurrentWorkflows' must be a positive integer, got "
                     + concurrentWorkflows.toString());
         }
+        if concurrentWorkflows > 2147483647 {
+            return error("'maxConcurrentWorkflows' must not exceed 2147483647 (Integer.MAX_VALUE), got "
+                    + concurrentWorkflows.toString());
+        }
         if concurrentActivities <= 0 {
             return error("'maxConcurrentActivities' must be a positive integer, got "
+                    + concurrentActivities.toString());
+        }
+        if concurrentActivities > 2147483647 {
+            return error("'maxConcurrentActivities' must not exceed 2147483647 (Integer.MAX_VALUE), got "
                     + concurrentActivities.toString());
         }
 

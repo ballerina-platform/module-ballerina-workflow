@@ -521,6 +521,50 @@ public final class WorkflowWorkerNative {
     }
 
     /**
+     * Forcefully stops the singleton workflow worker by interrupting in-flight tasks.
+     * Uses {@code WorkerFactory.shutdownNow()} instead of the graceful {@code shutdown()},
+     * then awaits termination to ensure all JVM threads exit before returning.
+     * In-memory mode falls back to {@link #stopSingletonWorker()} (TestWorkflowEnvironment
+     * does not distinguish between graceful and immediate shutdown).
+     *
+     * @return null on success, error on failure
+     */
+    public static Object stopSingletonWorkerNow() {
+        if (!started.get()) {
+            return null;
+        }
+
+        try {
+            LOGGER.debug("Force-stopping singleton worker (shutdownNow)...");
+
+            if (inMemoryMode && testEnvironment != null) {
+                // In-memory mode: TestWorkflowEnvironment has no shutdownNow API; close() is sufficient.
+                testEnvironment.close();
+                testEnvironment = null;
+                LOGGER.debug("In-memory worker closed (immediate)");
+            } else {
+                if (workerFactory != null) {
+                    workerFactory.shutdownNow();
+                    workerFactory.awaitTermination(10, TimeUnit.SECONDS);
+                }
+
+                if (serviceStubs != null) {
+                    serviceStubs.shutdown();
+                }
+            }
+
+            started.set(false);
+            LOGGER.debug("Singleton worker force-stopped");
+            return null;
+
+        } catch (Exception e) {
+            LOGGER.error("Error force-stopping worker: {}", e.getMessage(), e);
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to force-stop worker: " + e.getMessage()));
+        }
+    }
+
+    /**
      * Get the singleton WorkflowClient for starting workflows.
      *
      * @return the WorkflowClient or null if not initialized

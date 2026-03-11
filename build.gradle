@@ -358,7 +358,7 @@ task generateMtlsTestCerts {
         mtlsCertsDir.mkdirs()
         def script = file("${mtlsDockerDir}/generate-certs.sh")
         exec {
-            commandLine 'sh', script.absolutePath, mtlsCertsDir.absolutePath
+            commandLine 'bash', script.absolutePath, mtlsCertsDir.absolutePath
         }
     }
 }

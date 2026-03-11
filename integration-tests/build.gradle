@@ -201,7 +201,7 @@ def verifyTestResults(File testResultFile, String variantLabel) {
     }
 }
 
-def runBallerinaTests(String label) {
+def runBallerinaTests = { String label ->
     exec {
         workingDir project.projectDir
         environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"

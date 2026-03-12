@@ -277,7 +277,8 @@ task ballerinaAuthVariantTest {
         // are included here. CLOUD mode requires authentication, so there is no CLOUD
         // no-auth variant — that combination is rejected by the runtime before connecting.
         def variants = tlsOnly ? [] : [
-             variantKey: "self-hosted-no-auth"]
+            [mode: "SELF_HOSTED", url: "localhost:7233", label: "SELF_HOSTED (no auth)",
+                     variantKey: "self-hosted-no-auth"]
         ]
 
         if (!skipTls) {

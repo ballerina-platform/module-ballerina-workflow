@@ -71,6 +71,7 @@ jobs:
           slug: ballerina-platform/${{ github.event.repository.name }}
           files: |
             ballerina/target/report/workflow/coverage-report.xml
+            integration-tests/target/report/workflow_tests/coverage-report.xml
             build/coverage/self-hosted-no-auth-coverage-report.xml
             build/coverage/cloud-api-key-coverage-report.xml
             build/coverage/self-hosted-mtls-coverage-report.xml

@@ -33,7 +33,7 @@ def ballerinaTomlFilePlaceHolder = new File("${project.rootDir}/build-config/res
 def ballerinaTomlFile = new File("$project.projectDir/Ballerina.toml")
 def ballerinaDist = "${project.rootDir}/target/ballerina-runtime"
 def distributionBinPath = "${ballerinaDist}/bin"
-def testCoverageParam = "--code-coverage --coverage-format=xml --includes=io.ballerina.stdlib.workflow.*:ballerina.workflow*"
+def testCoverageParam = "--code-coverage --coverage-format=xml --includes=io.ballerina.lib.workflow.*:ballerina.workflow*"
 
 def stripBallerinaExtensionVersion(String extVersion) {
     if (extVersion.matches(project.ext.timestampedVersionRegex)) {
@@ -269,13 +269,16 @@ task ballerinaAuthVariantTest {
         } catch (Exception ignored) {}
 
         def skipTls = project.hasProperty("skipTlsTests") || !tlsProxyRunning
+        // When -PtlsOnlyVariants is set (e.g. in CI's second pass after starting the TLS proxy),
+        // skip the no-auth base variant to avoid running it twice and inflating CI time.
+        def tlsOnly = project.hasProperty("tlsOnlyVariants")
 
         // Define auth variants. Only modes that pass initWorkflowRuntime() validation
         // are included here. CLOUD mode requires authentication, so there is no CLOUD
         // no-auth variant — that combination is rejected by the runtime before connecting.
-        def variants = [
+        def variants = tlsOnly ? [] : [
             [mode: "SELF_HOSTED", url: "localhost:7233", label: "SELF_HOSTED (no auth)",
-             variantKey: "self-hosted-no-auth"]
+                     variantKey: "self-hosted-no-auth"]
         ]
 
         if (!skipTls) {

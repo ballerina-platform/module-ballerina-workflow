@@ -27,7 +27,7 @@ import ballerina/jballerina.java;
 # + input - Optional workflow input data. If nil, the workflow is created with no input.
 # + return - The unique workflow ID as a string, or an error if the workflow fails to start
 public isolated function run(function processFunction, map<anydata>? input = ()) returns string|error = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative",
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
     name: "run"
 } external;
 
@@ -43,7 +43,7 @@ public isolated function run(function processFunction, map<anydata>? input = ())
 # + data - The data to send to the workflow
 # + return - An error if sending fails, otherwise nil
 public isolated function sendData(function workflow, string workflowId, string dataName, anydata data) returns error? = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative"
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative"
 } external;
 
 // Internal functions
@@ -54,7 +54,7 @@ public isolated function sendData(function workflow, string workflowId, string d
 #
 # + return - An error if starting fails, otherwise nil
 isolated function startWorkflowRuntime() returns error? = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative",
+    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
     name: "startSingletonWorker"
 } external;
 
@@ -63,7 +63,7 @@ isolated function startWorkflowRuntime() returns error? = @java:Method {
 #
 # + return - An error if stopping fails, otherwise nil
 isolated function stopWorkflowRuntime() returns error? = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative",
+    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
     name: "stopSingletonWorker"
 } external;
 
@@ -73,7 +73,7 @@ isolated function stopWorkflowRuntime() returns error? = @java:Method {
 #
 # + return - An error if stopping fails, otherwise nil
 isolated function stopWorkflowRuntimeNow() returns error? = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative",
+    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
     name: "stopSingletonWorkerNow"
 } external;
 
@@ -90,7 +90,7 @@ isolated function getRegisteredWorkflows() returns WorkflowRegistry|error {
 # Native implementation to get registered workflows.
 # + return - A map of workflow names to their registration information, or an error
 isolated function getRegisteredWorkflowsNative() returns WorkflowRegistry|error = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative",
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
     name: "getRegisteredWorkflows"
 } external;
 
@@ -102,7 +102,7 @@ isolated function getRegisteredWorkflowsNative() returns WorkflowRegistry|error 
 # + timeoutSeconds - Maximum time to wait for the workflow to complete
 # + return - The workflow execution info including result, or an error
 public isolated function getWorkflowResult(string workflowId, int timeoutSeconds = 30) returns WorkflowExecutionInfo|error = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative"
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative"
 } external;
 
 # Gets information about a workflow execution without waiting for completion.
@@ -112,5 +112,5 @@ public isolated function getWorkflowResult(string workflowId, int timeoutSeconds
 # + workflowId - The ID of the workflow to get info for
 # + return - The workflow execution info, or an error
 public isolated function getWorkflowInfo(string workflowId) returns WorkflowExecutionInfo|error = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.runtime.nativeimpl.WorkflowNative"
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative"
 } external;

@@ -70,7 +70,7 @@ ballerina {
     packageOrganization = packageOrg
     module = packageName
     langVersion = ballerinaLangVersion
-    testCoverageParam = "--code-coverage --coverage-format=xml --includes=io.ballerina.stdlib.workflow.*:ballerina.workflow*"
+    testCoverageParam = "--code-coverage --coverage-format=xml --includes=io.ballerina.lib.workflow.*:ballerina.workflow*"
 }
 
 publishing {

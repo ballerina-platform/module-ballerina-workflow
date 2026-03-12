@@ -62,7 +62,7 @@ function testActivityFunction2(int value) returns int|error {
 // This is the only supported pattern for typedesc in @Activity functions.
 @Activity
 function testDependentActivity(string data, typedesc<anydata> targetType = <>) returns targetType|error = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.test.TestNatives",
+    'class: "io.ballerina.lib.workflow.test.TestNatives",
     name: "convertData"
 } external;
 

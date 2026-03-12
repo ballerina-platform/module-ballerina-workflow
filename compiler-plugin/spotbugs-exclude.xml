@@ -26,38 +26,38 @@
 
     <!-- Exclude visitor pattern related false positives -->
     <Match>
-        <Class name="io.ballerina.stdlib.workflow.compiler.ProcessFunctionAnalysisTask$ActivityCallCollector"/>
+        <Class name="io.ballerina.lib.workflow.compiler.ProcessFunctionAnalysisTask$ActivityCallCollector"/>
         <Bug pattern="NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE"/>
     </Match>
 
     <Match>
-        <Class name="io.ballerina.stdlib.workflow.compiler.WorkflowSourceModifier$WorkflowTreeModifier"/>
+        <Class name="io.ballerina.lib.workflow.compiler.WorkflowSourceModifier$WorkflowTreeModifier"/>
         <Bug pattern="NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE"/>
     </Match>
 
     <!-- Exclude EI and EI2 patterns for compiler plugin classes that share state intentionally -->
     <Match>
-        <Class name="io.ballerina.stdlib.workflow.compiler.ProcessFunctionAnalysisTask"/>
+        <Class name="io.ballerina.lib.workflow.compiler.ProcessFunctionAnalysisTask"/>
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
     </Match>
 
     <Match>
-        <Class name="io.ballerina.stdlib.workflow.compiler.ProcessFunctionInfo"/>
+        <Class name="io.ballerina.lib.workflow.compiler.ProcessFunctionInfo"/>
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
     </Match>
 
     <Match>
-        <Class name="io.ballerina.stdlib.workflow.compiler.WorkflowCodeModifier"/>
+        <Class name="io.ballerina.lib.workflow.compiler.WorkflowCodeModifier"/>
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
     </Match>
 
     <Match>
-        <Class name="io.ballerina.stdlib.workflow.compiler.WorkflowModifierContext"/>
+        <Class name="io.ballerina.lib.workflow.compiler.WorkflowModifierContext"/>
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
     </Match>
 
     <Match>
-        <Class name="io.ballerina.stdlib.workflow.compiler.WorkflowSourceModifier"/>
+        <Class name="io.ballerina.lib.workflow.compiler.WorkflowSourceModifier"/>
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
     </Match>
 </FindBugsFilter>

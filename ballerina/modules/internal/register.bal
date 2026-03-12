@@ -27,6 +27,6 @@ import ballerina/jballerina.java;
 # + activities - Optional map of activity function pointers used by the workflow
 # + return - `true` if registration was successful, or an error if registration fails
 public isolated function registerWorkflow(function workflowFunction, string workflowName, map<function>? activities = ()) returns boolean|error = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative",
+    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
     name: "registerWorkflow"
 } external;

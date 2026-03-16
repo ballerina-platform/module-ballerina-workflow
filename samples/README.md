@@ -198,11 +198,6 @@ Each sample uses a different port. Change in `main.bal` if needed:
 service /... on new http:Listener(9090) {  // Change port here
 ```
 
-## Learn More
-
-- [Workflow Module Documentation](../../ballerina/README.md)
-- [Architecture Design](../../README.md)
-- [Instruction Files](../../.github/instructions/)
 
 ## Contributing
 

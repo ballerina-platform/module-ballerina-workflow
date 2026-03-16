@@ -59,7 +59,7 @@ class WorkflowListener {
 # Initializes the workflow module.
 # This captures the module reference for creating Ballerina record values in native code.
 function initModule() = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.ModuleUtils",
+    'class: "io.ballerina.lib.workflow.ModuleUtils",
     name: "setModule"
 } external;
 
@@ -201,7 +201,7 @@ isolated function initProgramNative(
         string caCert,
         ActivityRetryPolicy defaultRetryPolicy
 ) returns error? = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative",
+    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
     name: "initSingletonWorker"
 } external;
 
@@ -212,6 +212,6 @@ isolated function initProgramNative(
 #
 # + return - An error if initialization fails, otherwise nil
 isolated function initInMemoryProgramNative() returns error? = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative",
+    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
     name: "initInMemoryWorker"
 } external;

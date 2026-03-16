@@ -31,7 +31,7 @@
     
     <!-- Inconsistent sync in simple initialized flag -->
     <Match>
-        <Class name="io.ballerina.stdlib.workflow.runtime.WorkflowRuntime" />
+        <Class name="io.ballerina.lib.workflow.runtime.WorkflowRuntime" />
         <Bug pattern="IS2_INCONSISTENT_SYNC" />
     </Match>
     
@@ -42,32 +42,32 @@
     
     <!-- Lazy initialization is intentional for test server singleton -->
     <Match>
-        <Class name="io.ballerina.stdlib.workflow.testing.TestServerNative" />
+        <Class name="io.ballerina.lib.workflow.testing.TestServerNative" />
         <Bug pattern="LI_LAZY_INIT_STATIC" />
     </Match>
     
     <!-- System.exit is intentional for CLI commands (main, checkStatus) -->
     <Match>
-        <Class name="io.ballerina.stdlib.workflow.testing.TestServerNative" />
+        <Class name="io.ballerina.lib.workflow.testing.TestServerNative" />
         <Bug pattern="DM_EXIT" />
     </Match>
     
     <!-- Private methods in WorkflowRuntime reserved for future use (correlation support) -->
     <Match>
-        <Class name="io.ballerina.stdlib.workflow.runtime.WorkflowRuntime" />
+        <Class name="io.ballerina.lib.workflow.runtime.WorkflowRuntime" />
         <Bug pattern="UPM_UNCALLED_PRIVATE_METHOD" />
     </Match>
     
     <!-- Private methods in BallerinaWorkflowAdapter reserved for future use (correlation support) -->
     <Match>
-        <Class name="io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative$BallerinaWorkflowAdapter" />
+        <Class name="io.ballerina.lib.workflow.worker.WorkflowWorkerNative$BallerinaWorkflowAdapter" />
         <Bug pattern="UPM_UNCALLED_PRIVATE_METHOD" />
     </Match>
 
     <!-- Vacuous instanceof in berrorToApplicationFailure: getCause() returns Throwable,
          but SpotBugs infers it is always BError. The check is intentional for safety. -->
     <Match>
-        <Class name="io.ballerina.stdlib.workflow.worker.WorkflowWorkerNative" />
+        <Class name="io.ballerina.lib.workflow.worker.WorkflowWorkerNative" />
         <Method name="berrorToApplicationFailure" />
         <Bug pattern="BC_VACUOUS_INSTANCEOF" />
     </Match>

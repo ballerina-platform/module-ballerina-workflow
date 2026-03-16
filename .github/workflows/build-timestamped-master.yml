@@ -57,7 +57,9 @@ jobs:
         run: |
           # Start proxy and run tests in a single Gradle invocation so the proxy
           # remains alive for the test phase (gradle.buildFinished tears it down after).
-          ./gradlew startTlsTestProxy :workflow-integration-tests:ballerinaAuthVariantTest
+          # -PtlsOnlyVariants skips the no-auth base variant to avoid running it
+          # twice (it already ran in the previous step).
+          ./gradlew startTlsTestProxy :workflow-integration-tests:ballerinaAuthVariantTest -PtlsOnlyVariants
 
       - name: Generate CodeCov Report
         uses: codecov/codecov-action@v5
@@ -68,7 +70,6 @@ jobs:
             ballerina/target/report/workflow/coverage-report.xml
             integration-tests/target/report/workflow_tests/coverage-report.xml
             build/coverage/self-hosted-no-auth-coverage-report.xml
-            build/coverage/cloud-no-auth-coverage-report.xml
             build/coverage/cloud-api-key-coverage-report.xml
             build/coverage/self-hosted-mtls-coverage-report.xml
           fail_ci_if_error: false

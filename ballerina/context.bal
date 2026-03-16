@@ -71,7 +71,7 @@ public client class Context {
     remote isolated function callActivity(function activityFunction, map<anydata> args = {},
             typedesc<anydata> T = <>, *ActivityOptions options) 
             returns T|error = @java:Method {
-        'class: "io.ballerina.stdlib.workflow.context.WorkflowContextNative",
+        'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
         name: "callActivity"
     } external;
 
@@ -158,26 +158,26 @@ public client class Context {
 // Native function declarations
 
 isolated function sleepContextNative(handle contextHandle, int millis) returns error? = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.context.WorkflowContextNative",
+    'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
     name: "sleepMillis"
 } external;
 
 isolated function currentTimeMillisContextNative(handle contextHandle) returns int = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.context.WorkflowContextNative",
+    'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
     name: "currentTimeMillis"
 } external;
 
 isolated function isReplayingNative(handle contextHandle) returns boolean = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.context.WorkflowContextNative",
+    'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
     name: "isReplaying"
 } external;
 
 isolated function getWorkflowIdNative(handle contextHandle) returns string|error = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.context.WorkflowContextNative",
+    'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
     name: "getWorkflowId"
 } external;
 
 isolated function getWorkflowTypeNative(handle contextHandle) returns string|error = @java:Method {
-    'class: "io.ballerina.stdlib.workflow.context.WorkflowContextNative",
+    'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
     name: "getWorkflowType"
 } external;

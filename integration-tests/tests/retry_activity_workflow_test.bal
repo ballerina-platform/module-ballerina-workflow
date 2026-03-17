@@ -17,7 +17,7 @@
 // ================================================================================
 // RETRY ACTIVITY WORKFLOW - TESTS
 // ================================================================================
-// Tests for activity retry behavior and failOnError options.
+// Tests for activity retry behavior and retryOnError options.
 
 import ballerina/test;
 import ballerina/workflow;
@@ -26,23 +26,23 @@ import ballerina/workflow;
     groups: ["integration"]
 }
 function testDefaultFailOnError() returns error? {
-    // Default behavior: failOnError=true, maximumAttempts=1 (no retries)
-    // Activity always fails → workflow should FAIL immediately
+    // Default behavior: retryOnError=false, error returned as value — `check` propagates it
+    // Activity always fails → workflow should FAIL immediately without any Temporal retries
     string testId = uniqueId("retry-default-fail");
     RetryActivityInput input = {id: testId, mode: "default_fail"};
     string workflowId = check workflow:run(retryDefaultFailWorkflow, input);
     
     workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
     
-    test:assertEquals(execInfo.status, "FAILED", 
-        "Workflow should fail when activity fails with default failOnError=true and maximumAttempts=1");
+    test:assertEquals(execInfo.status, "FAILED",
+        "Workflow should fail when activity fails with default retryOnError=false (error propagated via check)");
 }
 
 @test:Config {
     groups: ["integration"]
 }
 function testFailOnErrorFalse() returns error? {
-    // failOnError=false: activity error is treated as normal completion
+    // retryOnError=false (explicit): activity error is returned as a normal value, no retries
     // Workflow should COMPLETE because the error is handled as a value
     string testId = uniqueId("retry-fail-on-error-false");
     RetryActivityInput input = {id: testId, mode: "fail_on_error_false"};
@@ -50,9 +50,9 @@ function testFailOnErrorFalse() returns error? {
     
     workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
     
-    test:assertEquals(execInfo.status, "COMPLETED", 
-        "Workflow should complete when failOnError=false (error treated as value)");
-    test:assertTrue((<string>execInfo.result).startsWith("Handled error:"), 
+    test:assertEquals(execInfo.status, "COMPLETED",
+        "Workflow should complete when retryOnError=false (error treated as value)");
+    test:assertTrue((<string>execInfo.result).startsWith("Handled error:"),
         "Result should show error was handled as a value");
 }
 
@@ -60,8 +60,8 @@ function testFailOnErrorFalse() returns error? {
     groups: ["integration"]
 }
 function testCustomRetryPolicy() returns error? {
-    // Custom retry policy: maximumAttempts=3, activity always fails
-    // Workflow should FAIL after 3 attempts are exhausted
+    // Custom retry options: retryOnError=true, maxRetries=3, activity always fails
+    // Workflow should FAIL after 3 retries are exhausted
     string testId = uniqueId("retry-custom-policy");
     RetryActivityInput input = {id: testId, mode: "custom_retry"};
     string workflowId = check workflow:run(retryCustomPolicyWorkflow, input);
@@ -108,7 +108,7 @@ function testFailWithErrorCause() returns error? {
     groups: ["integration"]
 }
 function testHandleErrorWithDetails() returns error? {
-    // failOnError=false with an error that has details
+    // retryOnError=false with an error that has details
     // Workflow should COMPLETE because the error is handled as a value
     string testId = uniqueId("retry-handle-details");
     RetryActivityInput input = {id: testId, mode: "handle_details"};
@@ -117,7 +117,7 @@ function testHandleErrorWithDetails() returns error? {
     workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
 
     test:assertEquals(execInfo.status, "COMPLETED",
-        "Workflow should complete when failOnError=false with detailed error");
+        "Workflow should complete when retryOnError=false with detailed error");
     test:assertTrue((<string>execInfo.result).startsWith("Handled:"),
         "Result should show error was handled as a value");
 }
@@ -126,7 +126,7 @@ function testHandleErrorWithDetails() returns error? {
     groups: ["integration"]
 }
 function testHandleErrorWithCause() returns error? {
-    // failOnError=false with an error that has a cause chain
+    // retryOnError=false with an error that has a cause chain
     // Workflow should COMPLETE because the error is handled as a value
     string testId = uniqueId("retry-handle-cause");
     RetryActivityInput input = {id: testId, mode: "handle_cause"};
@@ -135,7 +135,87 @@ function testHandleErrorWithCause() returns error? {
     workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
 
     test:assertEquals(execInfo.status, "COMPLETED",
-        "Workflow should complete when failOnError=false with cause chain error");
+        "Workflow should complete when retryOnError=false with cause chain error");
     test:assertTrue((<string>execInfo.result).startsWith("Handled:"),
         "Result should show error was handled as a value");
+}
+
+// ================================================================================
+// RETRY EXHAUSTION SCENARIOS
+// ================================================================================
+
+@test:Config {
+    groups: ["integration"]
+}
+function testRetryExhaustUnhandled() returns error? {
+    // Scenario A — Unhandled: activity always fails, retried 2 times (3 total attempts).
+    // After exhaustion the error propagates via `check` — workflow transitions to FAILED.
+    // No subsequent steps execute.
+    string testId = uniqueId("retry-exhaust-unhandled");
+    RetryActivityInput input = {id: testId, mode: "exhaust_unhandled"};
+    string workflowId = check workflow:run(retryExhaustUnhandledWorkflow, input);
+
+    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 60);
+
+    test:assertEquals(execInfo.status, "FAILED",
+        "Scenario A: workflow must FAIL when retries are exhausted and error is unhandled");
+    test:assertTrue(execInfo.errorMessage != () && (<string>execInfo.errorMessage).includes("exhaust unhandled"),
+        "Error message should carry the original activity error text");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testRetryExhaustFallback() returns error? {
+    // Scenario B1 — Fallback: primary activity is retried 2 times and always fails.
+    // Workflow catches the exhaustion error and runs a secondary fallback activity.
+    // Workflow should COMPLETE via the fallback path.
+    string testId = uniqueId("retry-exhaust-fallback");
+    RetryActivityInput input = {id: testId, mode: "exhaust_fallback"};
+    string workflowId = check workflow:run(retryExhaustFallbackWorkflow, input);
+
+    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 60);
+
+    test:assertEquals(execInfo.status, "COMPLETED",
+        "Scenario B1: workflow must COMPLETE via the fallback activity after primary exhausts retries");
+    test:assertTrue((<string>execInfo.result).startsWith("Fallback:"),
+        "Result should indicate the fallback path was taken");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testRetryExhaustCompensation() returns error? {
+    // Scenario B2 — Compensation (Saga): step 1 commits, step 2 exhausts retries.
+    // Workflow catches the exhaustion error, runs a compensation activity to undo step 1,
+    // and completes with a compensated outcome.
+    string testId = uniqueId("retry-exhaust-compensate");
+    RetryActivityInput input = {id: testId, mode: "exhaust_compensate"};
+    string workflowId = check workflow:run(retryExhaustCompensateWorkflow, input);
+
+    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 60);
+
+    test:assertEquals(execInfo.status, "COMPLETED",
+        "Scenario B2: workflow must COMPLETE after running compensation activity (Saga pattern)");
+    test:assertTrue((<string>execInfo.result).includes("Compensated"),
+        "Result should confirm the compensation activity ran");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testRetryExhaustGracefulCompletion() returns error? {
+    // Scenario B3 — Graceful completion: non-critical notification activity exhausts retries.
+    // The core business step succeeds. The workflow catches the notification failure,
+    // skips it, and still completes successfully.
+    string testId = uniqueId("retry-exhaust-graceful");
+    RetryActivityInput input = {id: testId, mode: "exhaust_graceful"};
+    string workflowId = check workflow:run(retryExhaustGracefulWorkflow, input);
+
+    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 60);
+
+    test:assertEquals(execInfo.status, "COMPLETED",
+        "Scenario B3: workflow must COMPLETE even though the non-critical activity exhausted retries");
+    test:assertTrue((<string>execInfo.result).includes("notification skipped"),
+        "Result should note that the non-critical step was gracefully skipped");
 }

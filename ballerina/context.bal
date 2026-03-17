@@ -46,27 +46,29 @@ public client class Context {
     # The return type is inferred from the calling context, so the result is
     # automatically converted to the expected type without manual casting.
     #
-    # By default, if the activity function returns an error, it is treated as a failure
-    # and the engine will retry the activity based on the retry policy. To treat errors
-    # as normal completion values, set `failOnError` to `false` in the options.
+    # By default (`retryOnError = false`), any error returned by the activity is passed
+    # back to the workflow as a normal return value so that workflow logic can handle it
+    # explicitly. Set `retryOnError = true` to enable Temporal's retry policy; when all
+    # retries are exhausted the error propagates and the workflow fails unless it is caught.
     #
     # Example:
     # ```ballerina
-    # // Basic activity call (errors cause failure + retry by default)
-    # string result = check ctx->callActivity(sendEmailActivity, {email: recipientEmail, subject: subject});
+    # // Default: error returned as value — workflow handles it
+    # string|error result = ctx->callActivity(chargeCardActivity, {amount: total});
+    # if result is error {
+    #     return handlePaymentFailure(result);
+    # }
     #
-    # // With custom retry policy
-    # string result = check ctx->callActivity(sendEmailActivity, {email: recipientEmail}, 
-    #     options = {retryPolicy: {maximumAttempts: 3, initialIntervalInSeconds: 2}});
-    #
-    # // Treat errors as normal completion (no retry on error)
-    # string|error result = ctx->callActivity(riskyActivity, {data: input}, options = {failOnError: false});
+    # // Opt in to automatic retries (3 retries, 2-second initial delay)
+    # // On exhaustion the error propagates; use `check` to let the workflow fail
+    # string result = check ctx->callActivity(sendEmailActivity, {email: addr},
+    #     retryOnError = true, maxRetries = 3, retryDelay = 2.0);
     # ```
     #
     # + activityFunction - The activity function to execute (must be annotated with @Activity)
     # + args - Map containing the arguments to pass to the activity function
-    # + options - Optional activity options for retry policy and error handling behavior
     # + T - The expected return type (inferred from context or explicitly specified)
+    # + options - Activity options (retryOnError, maxRetries, retryDelay, retryBackoff, maxRetryDelay)
     # + return - The result of the activity execution cast to type T, or an error if execution fails
     remote isolated function callActivity(function activityFunction, map<anydata> args = {},
             typedesc<anydata> T = <>, *ActivityOptions options) 

@@ -73,9 +73,9 @@ function successActivity(string name) returns string|error {
 @workflow:Workflow
 function errorHandlingWorkflow(workflow:Context ctx, ErrorHandlingInput input) returns string|error {
     if input.shouldFail {
-        // Use failOnError: false to treat error as a normal completion value (no retries)
+        // Use retryOnError=false (default) to treat error as a normal completion value (no retries)
         string|error result = ctx->callActivity(failingActivity, {"reason": "Intentional failure"},
-                        failOnError = false);
+                        retryOnError = false);
         if result is error {
             return "Activity error caught: " + result.message();
         }

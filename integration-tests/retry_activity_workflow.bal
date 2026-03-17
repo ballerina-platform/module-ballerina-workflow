@@ -18,10 +18,10 @@
 // RETRY ACTIVITY WORKFLOW
 // ================================================================================
 //
-// This workflow demonstrates the activity retry behavior and failOnError options.
-// - Default: errors cause activity failure (Temporal retries)
-// - failOnError: false treats errors as normal completion values
-// - Custom retry policies control retry behavior
+// This workflow demonstrates the activity retry behavior and retryOnError options.
+// - Default (retryOnError=false): errors are returned as normal values, no Temporal retries
+// - retryOnError=true: errors trigger Temporal retries up to maxRetries times
+// - Custom retry options (maxRetries, retryDelay, retryBackoff, maxRetryDelay) control retry behavior
 //
 // ================================================================================
 
@@ -34,7 +34,7 @@ import ballerina/workflow;
 # Input for retry activity workflow.
 #
 # + id - The workflow identifier
-# + mode - Test mode: "default_fail", "fail_on_error_false", "custom_retry"
+# + mode - Test mode: "default_fail", "retry_on_error_true", "custom_retry"
 type RetryActivityInput record {|
     string id;
     string mode;
@@ -95,54 +95,74 @@ function alwaysSucceedActivity(string value) returns string|error {
     return "Success: " + value;
 }
 
+# Compensation activity — undoes a previously completed step.
+# Simulates a rollback or undo operation in a Saga pattern.
+#
+# + reason - The reason the compensation is being triggered
+# + return - Compensation result or error
+@workflow:Activity
+function compensateActivity(string reason) returns string|error {
+    return "Compensated: " + reason;
+}
+
+# Non-critical activity used to test graceful-completion degradation.
+# Always fails, but its failure is intentionally ignored by the workflow.
+#
+# + label - An identifier for the notification
+# + return - Always returns an error
+@workflow:Activity
+function nonCriticalActivity(string label) returns string|error {
+    return error("Non-critical failure for: " + label);
+}
+
 // ================================================================================
 // WORKFLOW DEFINITIONS
 // ================================================================================
 
-# Workflow that tests default failOnError behavior (true) with default retry policy.
-# With the default retry policy (maximumAttempts=1), the activity runs once and fails.
-# The workflow should fail immediately since no retries are configured.
+# Workflow that tests default behavior (retryOnError=false, errors returned as values).
+# With the default settings, the activity error is propagated to the caller via `check`
+# and the workflow fails immediately — no Temporal-level retries are attempted.
 #
 # + ctx - The workflow context for calling activities
 # + input - The workflow input
 # + return - Result or error
 @workflow:Workflow
 function retryDefaultFailWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
-    // Default behavior: failOnError=true, maximumAttempts=1 (no retries)
-    // Activity will fail on first attempt and workflow should fail
+    // Default: retryOnError=false, error returned as value — `check` propagates it as workflow failure
     string result = check ctx->callActivity(alwaysFailActivity, {"message": "test failure"});
     return result;
 }
 
-# Workflow that tests failOnError=false behavior.
-# The activity error should be returned as a normal value without retries.
+# Workflow that tests retryOnError=true behavior then handles the final failure.
+# The activity error should propagate as workflow failure when retries are exhausted.
+# Here we explicitly pass retryOnError=false so the error is returned as a value.
 #
 # + ctx - The workflow context for calling activities
 # + input - The workflow input
 # + return - Result or error
 @workflow:Workflow
 function retryFailOnErrorFalseWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
-    // failOnError=false: error is treated as a normal completion value
+    // retryOnError=false (explicit): error is returned as a normal value — no Temporal retries
     string|error result = ctx->callActivity(alwaysFailActivity, {"message": "soft failure"},
-                    failOnError = false);
+                    retryOnError = false);
     if result is error {
-        // Error was returned as a value, not a failure - handle gracefully
+        // Error was returned as a value, not a failure — handle gracefully
         return "Handled error: " + result.message();
     }
     return result;
 }
 
-# Workflow that tests custom retry policy with failOnError=true.
-# The activity will fail and workflow should fail after custom retry policy is exhausted.
+# Workflow that tests custom retry options with retryOnError=true.
+# The activity always fails, so the workflow should fail after maxRetries are exhausted.
 #
 # + ctx - The workflow context for calling activities
 # + input - The workflow input
 # + return - Result or error
 @workflow:Workflow
 function retryCustomPolicyWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
-    // Custom retry policy: max 3 attempts with 1 second initial interval
-    string result = check ctx->callActivity(alwaysFailActivity, {"message": "custom retry"}, maximumAttempts = 3,
-                initialIntervalInSeconds = 1, backoffCoefficient = 1.5);
+    // retryOnError=true with custom options: 3 retries, 1-second initial delay, 1.5x backoff
+    string result = check ctx->callActivity(alwaysFailActivity, {"message": "custom retry"},
+                retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 1.5);
     return result;
 }
 
@@ -174,7 +194,7 @@ function retryFailWithCauseWorkflow(workflow:Context ctx, RetryActivityInput inp
     return result;
 }
 
-# Workflow that tests failOnError=false with an error that has details.
+# Workflow that tests retryOnError=false with an error that has details.
 # The error details should be accessible on the Ballerina side.
 #
 # + ctx - The workflow context for calling activities
@@ -183,14 +203,14 @@ function retryFailWithCauseWorkflow(workflow:Context ctx, RetryActivityInput inp
 @workflow:Workflow
 function retryHandleDetailsWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
     string|error result = ctx->callActivity(failWithDetailsActivity,
-        {"orderId": "ORD-99999", "errorCode": 5002}, failOnError = false);
+        {"orderId": "ORD-99999", "errorCode": 5002}, retryOnError = false);
     if result is error {
         return "Handled: " + result.message();
     }
     return result;
 }
 
-# Workflow that tests failOnError=false with an error that has a cause.
+# Workflow that tests retryOnError=false with an error that has a cause.
 # The error message should be accessible on the Ballerina side.
 #
 # + ctx - The workflow context for calling activities
@@ -199,9 +219,108 @@ function retryHandleDetailsWorkflow(workflow:Context ctx, RetryActivityInput inp
 @workflow:Workflow
 function retryHandleCauseWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
     string|error result = ctx->callActivity(failWithCauseActivity,
-        {"operation": "updateInventory"}, failOnError = false);
+        {"operation": "updateInventory"}, retryOnError = false);
     if result is error {
         return "Handled: " + result.message();
     }
     return result;
+}
+
+// ================================================================================
+// RETRY EXHAUSTION SCENARIOS
+// ================================================================================
+//
+// The following four workflows each demonstrate what happens after a Temporal retry
+// policy is fully exhausted (retryOnError=true, maxRetries > 0, activity always fails).
+//
+// Scenario A — Unhandled: the ActivityFailure propagates up; workflow transitions to FAILED.
+// Scenario B1 — Fallback: a secondary activity is tried when the primary is exhausted.
+// Scenario B2 — Compensation (Saga): a compensating activity undoes prior committed work.
+// Scenario B3 — Graceful completion: the failed activity was non-critical; workflow completes.
+
+# Scenario A — Unhandled retry exhaustion.
+# The activity is retried twice (maxRetries=2) and always fails.
+# The error is NOT caught, so it propagates via `check` and the workflow
+# transitions to FAILED. No subsequent steps execute.
+#
+# + ctx - The workflow context for calling activities
+# + input - The workflow input
+# + return - Result or error
+@workflow:Workflow
+function retryExhaustUnhandledWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
+    // retryOnError=true: Temporal retries the activity up to maxRetries times.
+    // After exhaustion, the error propagates to the workflow via `check`.
+    string result = check ctx->callActivity(alwaysFailActivity, {"message": "exhaust unhandled"},
+            retryOnError = true, maxRetries = 2, retryDelay = 1.0);
+    // This line is never reached when the activity always fails.
+    return result;
+}
+
+# Scenario B1 — Fallback activity after retry exhaustion.
+# The primary activity is retried twice and always fails. The failure is
+# caught and a fallback (secondary) activity is executed instead.
+# The workflow completes successfully via the fallback path.
+#
+# + ctx - The workflow context for calling activities
+# + input - The workflow input
+# + return - Result or error
+@workflow:Workflow
+function retryExhaustFallbackWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
+    // Try the primary activity with 2 retries.
+    string|error primaryResult = ctx->callActivity(alwaysFailActivity, {"message": "primary failed"},
+            retryOnError = true, maxRetries = 2, retryDelay = 1.0);
+    if primaryResult is error {
+        // Primary exhausted — fall back to a secondary activity.
+        string fallbackResult = check ctx->callActivity(alwaysSucceedActivity, {"value": "fallback"});
+        return "Fallback: " + fallbackResult;
+    }
+    return primaryResult;
+}
+
+# Scenario B2 — Compensation (Saga pattern) after retry exhaustion.
+# Step 1 (pre-commit) succeeds. Step 2 is retried twice and always fails.
+# On exhaustion, a compensation activity is executed to undo Step 1,
+# and the workflow completes with a compensated result.
+#
+# + ctx - The workflow context for calling activities
+# + input - The workflow input
+# + return - Result or error
+@workflow:Workflow
+function retryExhaustCompensateWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
+    // Step 1: pre-commit succeeds.
+    string step1 = check ctx->callActivity(alwaysSucceedActivity, {"value": "step1-commit"});
+
+    // Step 2: always fails after 2 retries — need to undo step 1.
+    string|error step2Result = ctx->callActivity(alwaysFailActivity, {"message": "step2 failed"},
+            retryOnError = true, maxRetries = 2, retryDelay = 1.0);
+    if step2Result is error {
+        // Compensate step 1 by running the undo activity.
+        string compensation = check ctx->callActivity(compensateActivity,
+                {"reason": "step2 exhausted retries"});
+        return "Compensated after step1=" + step1 + "; " + compensation;
+    }
+    return step1 + " + " + step2Result;
+}
+
+# Scenario B3 — Graceful completion when a non-critical activity fails.
+# The notification activity is retried once and always fails, but it is
+# not required for the business outcome. The workflow catches the error,
+# skips the non-critical step, and completes successfully.
+#
+# + ctx - The workflow context for calling activities
+# + input - The workflow input
+# + return - Result or error
+@workflow:Workflow
+function retryExhaustGracefulWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
+    // Core business step — must succeed.
+    string coreResult = check ctx->callActivity(alwaysSucceedActivity, {"value": "core-step"});
+
+    // Non-critical notification — retried once; failure is tolerated.
+    string|error notifyResult = ctx->callActivity(nonCriticalActivity, {"label": "notify-user"},
+            retryOnError = true, maxRetries = 1, retryDelay = 1.0);
+    if notifyResult is error {
+        // Log (via return value) that the notification was skipped, but still complete.
+        return coreResult + " (notification skipped: " + notifyResult.message() + ")";
+    }
+    return coreResult + " + " + notifyResult;
 }

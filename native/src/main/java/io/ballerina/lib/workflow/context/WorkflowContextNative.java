@@ -19,7 +19,6 @@
 package io.ballerina.lib.workflow.context;
 
 import io.ballerina.lib.workflow.utils.TypesUtil;
-import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
 import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.utils.StringUtils;
@@ -58,7 +57,7 @@ public final class WorkflowContextNative {
 
     // Key used to mark a call configuration map passed as the last activity argument
     private static final String CALL_CONFIG_MARKER = "__callConfig__";
-    private static final String FAIL_ON_ERROR_KEY = "failOnError";
+    private static final String RETRY_ON_ERROR_KEY = "retryOnError";
 
     /**
      * Execute an activity function within the workflow context.
@@ -70,15 +69,15 @@ public final class WorkflowContextNative {
      * The method uses dependent typing - the return type is determined by the typedesc
      * parameter and the result is converted using cloneWithType.
      * <p>
-     * By default, if the activity function returns an error, the activity is treated as
-     * failed and the engine will retry based on the configured retry policy. Setting
-     * {@code failOnError} to {@code false} in the options causes errors to be returned
-     * as normal completion values without triggering retries.
+     * By default ({@code retryOnError = false}), if the activity function returns an error,
+     * it is passed back to the workflow as a normal return value. Setting
+     * {@code retryOnError} to {@code true} enables Temporal retries based on the per-call
+     * policy ({@code maxRetries}, {@code retryDelay}, {@code retryBackoff}, {@code maxRetryDelay}).
      *
      * @param self the Context BObject (self reference from Ballerina)
      * @param activityFunction the activity function to execute
      * @param args the map<anydata> args containing arguments to pass to the activity
-     * @param options optional ActivityOptions record with retry policy and failOnError config
+     * @param options ActivityOptions record with retryOnError, maxRetries, retryDelay, retryBackoff, maxRetryDelay
      * @param typedesc the expected return type descriptor for dependent typing
      * @return the result of the activity execution converted to the expected type, or an error
      */
@@ -102,54 +101,38 @@ public final class WorkflowContextNative {
             Map<String, Object> namedArgs = TypesUtil.convertBMapToMap(args);
 
             // Parse ActivityOptions from the included record param
-            boolean failOnError = true;
-            io.temporal.common.RetryOptions retryOptions = null;
+            boolean retryOnError = false;
 
-            // Extract failOnError flag (default: true)
-            Object failOnErrorVal = options.get(StringUtils.fromString(FAIL_ON_ERROR_KEY));
-            if (failOnErrorVal instanceof Boolean) {
-                failOnError = (Boolean) failOnErrorVal;
-            }
-            
-            // Extract per-call retry policy if provided
-            Object retryPolicyVal = options.get(StringUtils.fromString("retryPolicy"));
-            if (retryPolicyVal instanceof BMap) {
-                @SuppressWarnings("unchecked")
-                BMap<BString, Object> retryMap = (BMap<BString, Object>) retryPolicyVal;
-                retryOptions = WorkflowWorkerNative.parseRetryPolicy(retryMap);
+            // Extract retryOnError flag (default: false — errors are returned as values)
+            Object retryOnErrorVal = options.get(StringUtils.fromString(RETRY_ON_ERROR_KEY));
+            if (retryOnErrorVal instanceof Boolean) {
+                retryOnError = (Boolean) retryOnErrorVal;
             }
 
-            // Fall back to global default retry policy when no per-call policy is specified
-            if (retryOptions == null) {
-                retryOptions = WorkflowWorkerNative.getDefaultActivityRetryOptions();
-            }
-
-            io.temporal.activity.ActivityOptions.Builder optionsBuilder = 
+            io.temporal.activity.ActivityOptions.Builder optionsBuilder =
                     io.temporal.activity.ActivityOptions.newBuilder()
                         .setStartToCloseTimeout(java.time.Duration.ofMinutes(5));
 
-            if (retryOptions != null) {
-                optionsBuilder.setRetryOptions(retryOptions);
-            }
-
-            // When failOnError is false, set max attempts to 1 to prevent retries
-            // since the caller wants errors returned as normal values
-            if (!failOnError) {
+            if (!retryOnError) {
+                // retryOnError=false: disable Temporal retries so errors surface as return values
                 optionsBuilder.setRetryOptions(
                         io.temporal.common.RetryOptions.newBuilder()
                                 .setMaximumAttempts(1)
                                 .build());
+            } else {
+                // retryOnError=true: build retry policy from per-call flat fields
+                optionsBuilder.setRetryOptions(buildPerCallRetryOptions(options));
             }
 
             io.temporal.activity.ActivityOptions activityOptions = optionsBuilder.build();
             io.temporal.workflow.ActivityStub activityStub =
                     Workflow.newUntypedActivityStub(activityOptions);
 
-            // Pass the failOnError flag to the activity adapter as a call config map
+            // Pass the retryOnError flag to the activity adapter as a call config map
             // The adapter receives [namedArgs, callConfig] as Temporal arguments
             Map<String, Object> callConfig = new HashMap<>();
             callConfig.put(CALL_CONFIG_MARKER, true);
-            callConfig.put(FAIL_ON_ERROR_KEY, failOnError);
+            callConfig.put(RETRY_ON_ERROR_KEY, retryOnError);
 
             // Execute the activity through Temporal's activity mechanism with the full name
             Object result = activityStub.execute(fullActivityName, Object.class,
@@ -177,6 +160,59 @@ public final class WorkflowContextNative {
             return ErrorCreator.createError(
                     StringUtils.fromString("Activity execution failed: " + e.getMessage()));
         }
+    }
+
+    /**
+     * Builds a Temporal {@link io.temporal.common.RetryOptions} from the flat per-call
+     * {@code ActivityOptions} fields ({@code maxRetries}, {@code retryDelay},
+     * {@code retryBackoff}, {@code maxRetryDelay}).
+     *
+     * @param options the ActivityOptions BMap passed to callActivity
+     * @return RetryOptions configured from the per-call fields
+     */
+    private static io.temporal.common.RetryOptions buildPerCallRetryOptions(
+            BMap<BString, Object> options) {
+        io.temporal.common.RetryOptions.Builder builder =
+                io.temporal.common.RetryOptions.newBuilder();
+
+        // maxRetries → maximumAttempts (maxRetries=0 means 1 total attempt, no retries)
+        Object maxRetriesVal = options.get(StringUtils.fromString("maxRetries"));
+        int maxRetries = 0;
+        if (maxRetriesVal instanceof Long longVal) {
+            maxRetries = Math.toIntExact(longVal);
+        }
+        builder.setMaximumAttempts(maxRetries + 1);
+
+        // retryDelay → initialInterval (decimal seconds)
+        Object retryDelayVal = options.get(StringUtils.fromString("retryDelay"));
+        if (retryDelayVal instanceof io.ballerina.runtime.api.values.BDecimal bDecimal) {
+            double delaySeconds = bDecimal.floatValue();
+            if (delaySeconds > 0) {
+                builder.setInitialInterval(
+                        java.time.Duration.ofMillis((long) (delaySeconds * 1000)));
+            }
+        }
+
+        // retryBackoff → backoffCoefficient
+        Object retryBackoffVal = options.get(StringUtils.fromString("retryBackoff"));
+        if (retryBackoffVal instanceof io.ballerina.runtime.api.values.BDecimal bDecimal) {
+            double backoff = bDecimal.floatValue();
+            if (backoff >= 1.0) {
+                builder.setBackoffCoefficient(backoff);
+            }
+        }
+
+        // maxRetryDelay → maximumInterval (optional, decimal seconds)
+        Object maxRetryDelayVal = options.get(StringUtils.fromString("maxRetryDelay"));
+        if (maxRetryDelayVal instanceof io.ballerina.runtime.api.values.BDecimal bDecimal) {
+            double maxDelaySeconds = bDecimal.floatValue();
+            if (maxDelaySeconds > 0) {
+                builder.setMaximumInterval(
+                        java.time.Duration.ofMillis((long) (maxDelaySeconds * 1000)));
+            }
+        }
+
+        return builder.build();
     }
 
     /**

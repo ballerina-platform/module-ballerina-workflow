@@ -1262,15 +1262,15 @@ public final class WorkflowWorkerNative {
      * signatures.
      * <p>
      * Supports a call configuration map appended as the last argument by {@code callActivity}.
-     * The config map contains a {@code __callConfig__} marker and a {@code failOnError} flag.
-     * When {@code failOnError} is {@code true} (default), a BError result causes the activity
+     * The config map contains a {@code __callConfig__} marker and a {@code retryOnError} flag.
+     * When {@code retryOnError} is {@code true}, a BError result causes the activity
      * to throw an {@link io.temporal.failure.ApplicationFailure}, triggering Temporal retries.
-     * When {@code false}, the error is serialized and returned as a normal completion value.
+     * When {@code false} (default), the error is serialized and returned as a normal completion value.
      */
     public static class BallerinaActivityAdapter implements DynamicActivity {
 
         private static final String CALL_CONFIG_MARKER = "__callConfig__";
-        private static final String FAIL_ON_ERROR_KEY = "failOnError";
+        private static final String RETRY_ON_ERROR_KEY = "retryOnError";
 
         // Built-in implicit activity names
         public static final String BUILTIN_RUN = "workflow:run";
@@ -1322,15 +1322,15 @@ public final class WorkflowWorkerNative {
             }
 
             // Extract call configuration from the second argument
-            boolean failOnError = true; // default behavior
+            boolean retryOnError = false; // default: errors are returned as values
             try {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> callConfigMap = args.get(1, Map.class);
                 if (callConfigMap != null
                         && Boolean.TRUE.equals(callConfigMap.get(CALL_CONFIG_MARKER))) {
-                    Object failOnErrorVal = callConfigMap.get(FAIL_ON_ERROR_KEY);
-                    if (failOnErrorVal instanceof Boolean) {
-                        failOnError = (Boolean) failOnErrorVal;
+                    Object retryOnErrorVal = callConfigMap.get(RETRY_ON_ERROR_KEY);
+                    if (retryOnErrorVal instanceof Boolean) {
+                        retryOnError = (Boolean) retryOnErrorVal;
                     }
                 }
             } catch (Exception e) {
@@ -1405,15 +1405,15 @@ public final class WorkflowWorkerNative {
             fpValue.metadata = new StrandMetadata(true, fpValue.metadata.properties());
             Object result = activityFunction.call(ballerinaRuntime, ballerinaArgs);
 
-            // Handle BError results based on failOnError configuration
+            // Handle BError results based on retryOnError configuration
             if (result instanceof BError bError) {
-                if (failOnError) {
+                if (retryOnError) {
                     // Convert the BError directly into an ApplicationFailure so the
                     // Temporal UI shows the original Ballerina error message, details,
                     // and cause chain without any extra wrapping.
                     throw berrorToApplicationFailure(bError, "ActivityFailed");
                 }
-                // failOnError is false - serialize error as normal completion value
+                // retryOnError is false - serialize error as normal completion value
             }
 
             // Convert result back to Java types for Temporal

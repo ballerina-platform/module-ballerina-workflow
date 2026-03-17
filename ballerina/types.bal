@@ -27,19 +27,12 @@ public enum Mode {
     IN_MEMORY
 }
 
-# Retry policy for activity execution.
-# Controls how the workflow engine retries failed activity executions.
-# All interval and attempt values must be positive integers.
-#
-# + initialIntervalInSeconds - Initial delay before the first retry attempt (default: 1 second).
-#                              Must be a positive integer.
-# + backoffCoefficient - Multiplier applied to the interval after each retry (default: 2.0).
-#                        Must be greater than or equal to 1.0.
-# + maximumIntervalInSeconds - Maximum delay between retries (optional, no cap if not set).
-#                              Must be a positive integer when specified.
-# + maximumAttempts - Maximum number of retry attempts (default: 1, meaning no retries).
-#                    Must be a positive integer (0 means unlimited retries).
-public type ActivityRetryPolicy record {|
+# Internal retry policy used to pass module-level defaults to the native layer.
+# + initialIntervalInSeconds - Initial delay before the first retry attempt in seconds
+# + backoffCoefficient - Multiplier applied to the interval after each retry
+# + maximumIntervalInSeconds - Optional cap on the delay between retries in seconds
+# + maximumAttempts - Maximum number of Temporal-level attempts (1 = no retries)
+type ActivityRetryPolicy record {|
     int initialIntervalInSeconds = 1;
     decimal backoffCoefficient = 2.0;
     int maximumIntervalInSeconds?;
@@ -47,15 +40,29 @@ public type ActivityRetryPolicy record {|
 |};
 
 # Options for activity execution via `callActivity`.
-# Allows configuring retry behavior and error handling semantics per activity call.
 #
-# + failOnError - If `true` (default), an error returned by the activity function is treated
-#                 as a failure, triggering engine retries based on the retry policy.
-#                 If `false`, an error is treated as a normal completion value and no
-#                 retries are attempted.
+# + retryOnError - If `true`, retry policy is applied when the activity fails:
+#                  the engine retries the activity up to `maxRetries` times before
+#                  propagating the failure to the workflow. Set to `false` (default)
+#                  to receive any error as a normal return value so that the workflow
+#                  can handle it with its own logic, without any automatic retries.
+# + maxRetries - Number of times to retry the activity on failure (only used when
+#               `retryOnError = true`). `0` means no retries — the activity runs
+#               exactly once and its failure immediately propagates to the workflow.
+# + retryDelay - Initial delay in seconds before the first retry (default: 1.0).
+#               Only used when `retryOnError = true` and `maxRetries > 0`.
+# + retryBackoff - Multiplier applied to `retryDelay` after each attempt (default: 2.0).
+#                 `1.0` means a fixed interval; `2.0` doubles the delay each time.
+#                 Only used when `retryOnError = true` and `maxRetries > 0`.
+# + maxRetryDelay - Optional cap on the delay between retries, in seconds.
+#                  Prevents exponential backoff from growing without limit.
+#                  Only used when `retryOnError = true` and `maxRetries > 0`.
 public type ActivityOptions record {|
-    *ActivityRetryPolicy;
-    boolean failOnError = true;
+    boolean retryOnError = false;
+    int maxRetries = 0;
+    decimal retryDelay = 1.0;
+    decimal retryBackoff = 2.0;
+    decimal maxRetryDelay?;
 |};
 
 # Information about a registered workflow process.

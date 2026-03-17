@@ -16,6 +16,8 @@
  * under the License.
  */
 
+import org.apache.tools.ant.taskdefs.condition.Os
+
 plugins {
     id 'com.github.spotbugs'
     id 'net.researchgate.release'

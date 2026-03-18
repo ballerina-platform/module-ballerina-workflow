@@ -373,4 +373,42 @@ public class WorkflowCompilerPluginTest {
                 "Expected no errors when sendData is called with all required params. Errors: "
                         + getDiagnosticMessages(diagnosticResult));
     }
+
+    // ===== callRemoteActivity / callResourceActivity validation test cases =====
+
+    @Test(groups = "valid")
+    public void testValidCallRemoteActivity() {
+        String packagePath = "valid_call_remote_activity";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for valid callRemoteActivity and callResourceActivity. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidCallRemoteActivityNoMethod() {
+        String packagePath = "invalid_call_remote_activity_no_method";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for callRemoteActivity with nonexistent method");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_116);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidCallRemoteActivityNotClient() {
+        String packagePath = "invalid_call_remote_activity_not_client";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for callRemoteActivity with non-client object");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_115);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidCallResourceActivityNoMethod() {
+        String packagePath = "invalid_call_resource_activity_no_method";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for callResourceActivity with nonexistent resource method");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_120);
+    }
 }

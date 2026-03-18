@@ -32,6 +32,7 @@ import io.temporal.workflow.Workflow;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Native implementation for workflow context operations.
@@ -58,6 +59,41 @@ public final class WorkflowContextNative {
     // Key used to mark a call configuration map passed as the last activity argument
     private static final String CALL_CONFIG_MARKER = "__callConfig__";
     private static final String RETRY_ON_ERROR_KEY = "retryOnError";
+
+    // Activity kind markers for remote and resource activities
+    public static final String ACTIVITY_KIND_KEY = "__activityKind__";
+    public static final String ACTIVITY_KIND_REMOTE = "remote";
+    public static final String ACTIVITY_KIND_RESOURCE = "resource";
+    public static final String METHOD_NAME_KEY = "__methodName__";
+    public static final String ACCESSOR_KEY = "__accessor__";
+    public static final String RESOURCE_PATH_KEY = "__resourcePath__";
+
+    // Prefix used for remote/resource activity names
+    public static final String REMOTE_ACTIVITY_PREFIX = "__remote__";
+    public static final String RESOURCE_ACTIVITY_PREFIX = "__resource__";
+
+    // Key used to pass the per-invocation ID through Temporal's callConfig
+    public static final String INVOCATION_ID_KEY = "__invocationId__";
+
+    // Ephemeral map of active invocations: invocationId → client BObject.
+    // Entries are inserted immediately before the Temporal activity call and
+    // removed either by the activity adapter (on fresh execution) or by the
+    // workflow thread (after activityStub.execute() returns during replay).
+    // This is NOT a long-lived cache – each entry exists only for the duration
+    // of a single activity dispatch and is always cleaned up.
+    static final ConcurrentHashMap<String, BObject> PENDING_INVOCATIONS =
+            new ConcurrentHashMap<>();
+
+    /**
+     * Consumes (retrieves and removes) the client object for a pending invocation.
+     * Designed for one-shot use by the activity adapter.
+     *
+     * @param invocationId the unique invocation ID passed through callConfig
+     * @return the client BObject, or null if not found
+     */
+    public static BObject consumeInvocation(String invocationId) {
+        return PENDING_INVOCATIONS.remove(invocationId);
+    }
 
     /**
      * Execute an activity function within the workflow context.
@@ -160,6 +196,186 @@ public final class WorkflowContextNative {
             return ErrorCreator.createError(
                     StringUtils.fromString("Activity execution failed: " + e.getMessage()));
         }
+    }
+
+    /**
+     * Execute a remote method on a client object as a workflow activity.
+     * <p>
+     * This method enables calling remote methods on client objects (e.g., HTTP clients)
+     * as workflow activities. Since remote methods cannot be passed as function pointers,
+     * the client object and method name are provided separately.
+     *
+     * @param self the Context BObject (self reference from Ballerina)
+     * @param connection the client BObject whose remote method should be invoked
+     * @param remoteMethodName the name of the remote method to call
+     * @param args the map containing arguments to pass to the remote method
+     * @param typedesc the expected return type descriptor for dependent typing
+     * @param options ActivityOptions record with retryOnError, maxRetries, etc.
+     * @return the result of the activity execution converted to the expected type, or an error
+     */
+    public static Object callRemoteActivity(BObject self, BObject connection,
+            BString remoteMethodName, BMap<BString, Object> args,
+            BTypedesc typedesc, BMap<BString, Object> options) {
+        // Use Temporal's deterministic randomUUID (replays identically)
+        String invocationId = Workflow.randomUUID().toString();
+        try {
+            String methodName = remoteMethodName.getValue();
+            String workflowType = Workflow.getInfo().getWorkflowType();
+            String fullActivityName = workflowType + "." + REMOTE_ACTIVITY_PREFIX + methodName;
+
+            // Register the connection for this specific invocation.
+            // The adapter consumes (removes) it on fresh execution; we remove it
+            // below in the finally block to handle replay (adapter not called).
+            PENDING_INVOCATIONS.put(invocationId, connection);
+
+            Map<String, Object> namedArgs = TypesUtil.convertBMapToMap(args);
+            boolean retryOnError = extractRetryOnError(options);
+
+            io.temporal.activity.ActivityOptions activityOptions = buildActivityOptions(retryOnError, options);
+            io.temporal.workflow.ActivityStub activityStub =
+                    Workflow.newUntypedActivityStub(activityOptions);
+
+            // Pass the invocation ID so the adapter can look up the connection
+            // from the passed parameter rather than any external cache.
+            Map<String, Object> callConfig = new HashMap<>();
+            callConfig.put(CALL_CONFIG_MARKER, true);
+            callConfig.put(RETRY_ON_ERROR_KEY, retryOnError);
+            callConfig.put(ACTIVITY_KIND_KEY, ACTIVITY_KIND_REMOTE);
+            callConfig.put(METHOD_NAME_KEY, methodName);
+            callConfig.put(INVOCATION_ID_KEY, invocationId);
+
+            Object result = activityStub.execute(fullActivityName, Object.class,
+                    new Object[]{namedArgs, callConfig});
+
+            Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(result);
+            Type targetType = typedesc.getDescribingType();
+            return TypesUtil.cloneWithType(ballerinaResult, targetType);
+
+        } catch (io.temporal.failure.ActivityFailure e) {
+            return handleActivityFailure(e);
+        } catch (Exception e) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Remote activity execution failed: " + e.getMessage()));
+        } finally {
+            // Always clean up – on replay the adapter is never called, so the
+            // entry would otherwise linger. remove() is a no-op if already consumed.
+            PENDING_INVOCATIONS.remove(invocationId);
+        }
+    }
+
+    /**
+     * Execute a resource method on a client object as a workflow activity.
+     * <p>
+     * This method enables calling resource methods on client objects (e.g., HTTP clients)
+     * as workflow activities. Since resource methods cannot be passed as function pointers,
+     * the client object, accessor, and resource path are provided separately.
+     *
+     * @param self the Context BObject (self reference from Ballerina)
+     * @param connection the client BObject whose resource method should be invoked
+     * @param accessor the HTTP accessor (e.g., "get", "post", "put", "delete")
+     * @param resourcePath the resource path (e.g., "/api/users")
+     * @param args the map containing arguments to pass to the resource method
+     * @param typedesc the expected return type descriptor for dependent typing
+     * @param options ActivityOptions record with retryOnError, maxRetries, etc.
+     * @return the result of the activity execution converted to the expected type, or an error
+     */
+    public static Object callResourceActivity(BObject self, BObject connection,
+            BString accessor, BString resourcePath, BMap<BString, Object> args,
+            BTypedesc typedesc, BMap<BString, Object> options) {
+        // Use Temporal's deterministic randomUUID (replays identically)
+        String invocationId = Workflow.randomUUID().toString();
+        try {
+            String accessorStr = accessor.getValue();
+            String pathStr = resourcePath.getValue();
+            String workflowType = Workflow.getInfo().getWorkflowType();
+            String fullActivityName = workflowType + "." + RESOURCE_ACTIVITY_PREFIX
+                    + accessorStr + "$" + pathStr.replace("/", "$");
+
+            // Register the connection for this specific invocation.
+            // The adapter consumes (removes) it on fresh execution; we remove it
+            // below in the finally block to handle replay (adapter not called).
+            PENDING_INVOCATIONS.put(invocationId, connection);
+
+            Map<String, Object> namedArgs = TypesUtil.convertBMapToMap(args);
+            boolean retryOnError = extractRetryOnError(options);
+
+            io.temporal.activity.ActivityOptions activityOptions = buildActivityOptions(retryOnError, options);
+            io.temporal.workflow.ActivityStub activityStub =
+                    Workflow.newUntypedActivityStub(activityOptions);
+
+            // Pass the invocation ID so the adapter can look up the connection
+            // from the passed parameter rather than any external cache.
+            Map<String, Object> callConfig = new HashMap<>();
+            callConfig.put(CALL_CONFIG_MARKER, true);
+            callConfig.put(RETRY_ON_ERROR_KEY, retryOnError);
+            callConfig.put(ACTIVITY_KIND_KEY, ACTIVITY_KIND_RESOURCE);
+            callConfig.put(ACCESSOR_KEY, accessorStr);
+            callConfig.put(RESOURCE_PATH_KEY, pathStr);
+            callConfig.put(INVOCATION_ID_KEY, invocationId);
+
+            Object result = activityStub.execute(fullActivityName, Object.class,
+                    new Object[]{namedArgs, callConfig});
+
+            Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(result);
+            Type targetType = typedesc.getDescribingType();
+            return TypesUtil.cloneWithType(ballerinaResult, targetType);
+
+        } catch (io.temporal.failure.ActivityFailure e) {
+            return handleActivityFailure(e);
+        } catch (Exception e) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Resource activity execution failed: " + e.getMessage()));
+        } finally {
+            // Always clean up – on replay the adapter is never called, so the
+            // entry would otherwise linger. remove() is a no-op if already consumed.
+            PENDING_INVOCATIONS.remove(invocationId);
+        }
+    }
+
+    /**
+     * Extracts the retryOnError flag from the options map.
+     */
+    private static boolean extractRetryOnError(BMap<BString, Object> options) {
+        Object retryOnErrorVal = options.get(StringUtils.fromString(RETRY_ON_ERROR_KEY));
+        if (retryOnErrorVal instanceof Boolean) {
+            return (Boolean) retryOnErrorVal;
+        }
+        return false;
+    }
+
+    /**
+     * Builds Temporal ActivityOptions from the Ballerina options record.
+     */
+    private static io.temporal.activity.ActivityOptions buildActivityOptions(
+            boolean retryOnError, BMap<BString, Object> options) {
+        io.temporal.activity.ActivityOptions.Builder optionsBuilder =
+                io.temporal.activity.ActivityOptions.newBuilder()
+                        .setStartToCloseTimeout(java.time.Duration.ofMinutes(5));
+
+        if (!retryOnError) {
+            optionsBuilder.setRetryOptions(
+                    io.temporal.common.RetryOptions.newBuilder()
+                            .setMaximumAttempts(1)
+                            .build());
+        } else {
+            optionsBuilder.setRetryOptions(buildPerCallRetryOptions(options));
+        }
+
+        return optionsBuilder.build();
+    }
+
+    /**
+     * Handles an ActivityFailure exception by extracting the error message.
+     */
+    private static Object handleActivityFailure(io.temporal.failure.ActivityFailure e) {
+        Throwable cause = e.getCause();
+        String errorMsg;
+        if (cause instanceof io.temporal.failure.ApplicationFailure appFailure) {
+            errorMsg = appFailure.getOriginalMessage();
+        } else {
+            errorMsg = cause != null ? cause.getMessage() : e.getMessage();
+        }
+        return ErrorCreator.createError(StringUtils.fromString(errorMsg));
     }
 
     /**

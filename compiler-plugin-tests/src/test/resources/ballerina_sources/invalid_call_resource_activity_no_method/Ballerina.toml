@@ -1,0 +1,8 @@
+[package]
+org = "test"
+name = "invalid_call_resource_activity_no_method"
+version = "0.1.0"
+distribution = "2201.13.0"
+
+[build-options]
+observabilityIncluded = false

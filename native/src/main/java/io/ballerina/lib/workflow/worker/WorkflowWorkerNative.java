@@ -33,9 +33,13 @@ import io.ballerina.runtime.api.concurrent.StrandMetadata;
 import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
 import io.ballerina.runtime.api.types.FunctionType;
+import io.ballerina.runtime.api.types.MethodType;
+import io.ballerina.runtime.api.types.NetworkObjectType;
+import io.ballerina.runtime.api.types.ObjectType;
 import io.ballerina.runtime.api.types.Parameter;
 import io.ballerina.runtime.api.types.PredefinedTypes;
 import io.ballerina.runtime.api.types.RecordType;
+import io.ballerina.runtime.api.types.ResourceMethodType;
 import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BError;
@@ -43,7 +47,11 @@ import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BObject;
 import io.ballerina.runtime.api.values.BString;
+import io.ballerina.runtime.internal.BalRuntime;
+import io.ballerina.runtime.internal.scheduling.Scheduler;
+import io.ballerina.runtime.internal.scheduling.Strand;
 import io.ballerina.runtime.internal.values.FPValue;
+import io.ballerina.runtime.internal.values.ObjectValue;
 import io.temporal.activity.DynamicActivity;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowStub;
@@ -1301,6 +1309,16 @@ public final class WorkflowWorkerNative {
             }
 
             // Look up the registered Ballerina function for this activity
+            // First check if this is a remote or resource activity (client-based)
+            boolean isClientActivity = activityName.contains("."
+                    + WorkflowContextNative.REMOTE_ACTIVITY_PREFIX)
+                    || activityName.contains("."
+                    + WorkflowContextNative.RESOURCE_ACTIVITY_PREFIX);
+
+            if (isClientActivity) {
+                return executeClientActivity(activityName, args);
+            }
+
             BFunctionPointer activityFunction = ACTIVITY_REGISTRY.get(activityName);
             if (activityFunction == null) {
                 String errorMsg = "Activity not registered: " + activityName +
@@ -1417,6 +1435,216 @@ public final class WorkflowWorkerNative {
             }
 
             // Convert result back to Java types for Temporal
+            return convertBallerinaToJavaType(result);
+        }
+
+        /**
+         * Executes a remote or resource method on a client object as a Temporal activity.
+         * <p>
+         * Retrieves the client object from the static client registry, extracts method
+         * metadata from the call config, reconstructs positional arguments from the
+         * named args map, and invokes the method via the Ballerina runtime.
+         *
+         * @param activityName the full activity name (includes remote/resource prefix)
+         * @param args         the encoded values from Temporal [namedArgsMap, callConfigMap]
+         * @return the activity result as a Java object for Temporal serialization
+         */
+        @SuppressWarnings("unchecked")
+        private Object executeClientActivity(String activityName, EncodedValues args) {
+            // Decode named args and call config first to extract the invocation ID
+            Map<String, Object> namedArgs = args.get(0, Map.class);
+            if (namedArgs == null) {
+                namedArgs = new HashMap<>();
+            }
+
+            boolean retryOnError = false;
+            String activityKind = null;
+            String methodName = null;
+            String accessor = null;
+            String resourcePath = null;
+            String invocationId = null;
+
+            try {
+                Map<String, Object> callConfigMap = args.get(1, Map.class);
+                if (callConfigMap != null
+                        && Boolean.TRUE.equals(callConfigMap.get(CALL_CONFIG_MARKER))) {
+                    Object retryOnErrorVal = callConfigMap.get(RETRY_ON_ERROR_KEY);
+                    if (retryOnErrorVal instanceof Boolean) {
+                        retryOnError = (Boolean) retryOnErrorVal;
+                    }
+                    activityKind = (String) callConfigMap.get(
+                            WorkflowContextNative.ACTIVITY_KIND_KEY);
+                    methodName = (String) callConfigMap.get(
+                            WorkflowContextNative.METHOD_NAME_KEY);
+                    accessor = (String) callConfigMap.get(
+                            WorkflowContextNative.ACCESSOR_KEY);
+                    resourcePath = (String) callConfigMap.get(
+                            WorkflowContextNative.RESOURCE_PATH_KEY);
+                    invocationId = (String) callConfigMap.get(
+                            WorkflowContextNative.INVOCATION_ID_KEY);
+                }
+            } catch (Exception e) {
+                // No call config available
+            }
+
+            // Retrieve and immediately consume the client for this invocation.
+            // The invocation ID was passed through Temporal serialization (callConfig)
+            // so this lookup depends entirely on the passed parameter, not any cache.
+            if (invocationId == null) {
+                throw new RuntimeException(
+                        "Missing invocation ID for client activity: " + activityName +
+                        ". callConfig must include '" + WorkflowContextNative.INVOCATION_ID_KEY + "'.");
+            }
+            BObject clientObject = WorkflowContextNative.consumeInvocation(invocationId);
+            if (clientObject == null) {
+                throw new RuntimeException(
+                        "Client object not found for invocation ID: " + invocationId +
+                        " (activity: " + activityName + "). The client connection was not " +
+                        "registered for this invocation or was already consumed.");
+            }
+
+            // Determine the method to call on the client object
+            String callMethodName;
+            if (WorkflowContextNative.ACTIVITY_KIND_RESOURCE.equals(activityKind)
+                    && accessor != null && resourcePath != null) {
+                // Resource method: encode as $<accessor>$<path_segment1>$<path_segment2>...
+                // e.g., "/api/users" with accessor "get" → "$get$api$users"
+                StringBuilder methodBuilder = new StringBuilder("$").append(accessor);
+                String normalizedPath = resourcePath.startsWith("/")
+                        ? resourcePath.substring(1) : resourcePath;
+                if (!normalizedPath.isEmpty()) {
+                    String[] segments = normalizedPath.split("/");
+                    for (String segment : segments) {
+                        methodBuilder.append("$").append(segment);
+                    }
+                }
+                callMethodName = methodBuilder.toString();
+            } else if (methodName != null) {
+                // Remote method: use method name directly
+                callMethodName = methodName;
+            } else {
+                throw new RuntimeException(
+                        "Cannot determine method name for client activity: " + activityName);
+            }
+
+            // Build positional args by matching named args to the method's
+            // parameter declarations.  This guarantees correct argument order
+            // regardless of Map iteration order (HashMap gives no ordering).
+            //
+            // For remote methods: look up via ObjectType.getMethods()
+            // For resource methods: look up via NetworkObjectType.getResourceMethods()
+            Object[] ballerinaArgs;
+            MethodType targetMethod = null;
+            boolean isResource = WorkflowContextNative.ACTIVITY_KIND_RESOURCE
+                    .equals(activityKind);
+
+            try {
+                ObjectType objType = (ObjectType) clientObject.getOriginalType();
+
+                if (isResource && objType instanceof NetworkObjectType netObjType) {
+                    // Resource methods are only accessible via
+                    // NetworkObjectType.getResourceMethods()
+                    for (ResourceMethodType rm : netObjType.getResourceMethods()) {
+                        if (callMethodName.equals(rm.getName())) {
+                            targetMethod = rm;
+                            break;
+                        }
+                    }
+                } else {
+                    // Remote/regular methods are in ObjectType.getMethods()
+                    for (MethodType m : objType.getMethods()) {
+                        if (callMethodName.equals(m.getName())) {
+                            targetMethod = m;
+                            break;
+                        }
+                    }
+                }
+
+                if (targetMethod != null) {
+                    Parameter[] allParams = targetMethod.getType().getParameters();
+
+                    // Determine the last parameter index we must fill: the
+                    // rightmost position where a named arg is provided or a
+                    // typedesc parameter needs a BTypedesc<anydata> injection.
+                    int lastRequiredIndex = -1;
+                    for (int i = 0; i < allParams.length; i++) {
+                        if (allParams[i].type.getTag() == TypeTags.TYPEDESC_TAG
+                                || namedArgs.containsKey(allParams[i].name)) {
+                            lastRequiredIndex = i;
+                        }
+                    }
+
+                    List<Object> orderedArgs = new ArrayList<>();
+                    for (int i = 0; i <= lastRequiredIndex; i++) {
+                        Parameter p = allParams[i];
+                        if (p.type.getTag() == TypeTags.TYPEDESC_TAG) {
+                            // Inject BTypedesc<anydata> so dependent-typed
+                            // methods (e.g. http:Client) return anydata.
+                            orderedArgs.add(ValueCreator.createTypedescValue(
+                                    PredefinedTypes.TYPE_ANYDATA));
+                        } else if (namedArgs.containsKey(p.name)) {
+                            orderedArgs.add(
+                                    convertJavaToBallerinaType(namedArgs.get(p.name)));
+                        } else {
+                            // Defaultable parameter not provided — null
+                            // triggers the Ballerina runtime default value.
+                            orderedArgs.add(null);
+                        }
+                    }
+                    ballerinaArgs = orderedArgs.toArray();
+                } else {
+                    // Method not found by name — fall back to map iteration
+                    // order (best effort for dynamic dispatch).
+                    List<Object> argValues = new ArrayList<>();
+                    for (Map.Entry<String, Object> entry : namedArgs.entrySet()) {
+                        argValues.add(convertJavaToBallerinaType(entry.getValue()));
+                    }
+                    ballerinaArgs = argValues.toArray();
+                }
+            } catch (ClassCastException e) {
+                // Type lookup failed — fall back to map iteration order.
+                List<Object> argValues = new ArrayList<>();
+                for (Map.Entry<String, Object> entry : namedArgs.entrySet()) {
+                    argValues.add(convertJavaToBallerinaType(entry.getValue()));
+                }
+                ballerinaArgs = argValues.toArray();
+            }
+
+            // Execute the method on the client object.
+            // Runtime.callMethod() supports remote methods but NOT resource
+            // methods on client types (the Scheduler's getObjectMethodType()
+            // only searches resource methods for service types).  For resource
+            // methods we bypass the public API and call the BObject directly
+            // using a fresh Strand from the scheduler.
+            Object result;
+            if (isResource) {
+                BalRuntime balRuntime = (BalRuntime) ballerinaRuntime;
+                Scheduler scheduler = balRuntime.scheduler;
+                Strand strand = new Strand(scheduler, "resource_activity",
+                        null, true, java.util.Collections.emptyMap(), null);
+                try {
+                    result = ((ObjectValue) clientObject)
+                            .call(strand, callMethodName, ballerinaArgs);
+                } finally {
+                    strand.done();
+                }
+            } else {
+                result = ballerinaRuntime.callMethod(
+                        clientObject,
+                        callMethodName,
+                        new StrandMetadata(true, java.util.Collections.emptyMap()),
+                        ballerinaArgs
+                );
+            }
+
+            // Handle BError results based on retryOnError configuration
+            if (result instanceof BError bError) {
+                if (retryOnError) {
+                    throw berrorToApplicationFailure(bError, "ActivityFailed");
+                }
+                // retryOnError is false - serialize error as normal completion value
+            }
+
             return convertBallerinaToJavaType(result);
         }
 

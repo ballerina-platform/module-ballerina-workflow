@@ -136,7 +136,9 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
         }
 
         /**
-         * Visit remote method call actions to detect ctx->callActivity(activityFunc, args) pattern.
+         * Visit remote method call actions to detect ctx->callActivity(activityFunc, args),
+         * ctx->callRemoteActivity(client, "method", args), and
+         * ctx->callResourceActivity(client, "accessor", "path", args) patterns.
          */
         @Override
         public void visit(RemoteMethodCallActionNode remoteCallNode) {

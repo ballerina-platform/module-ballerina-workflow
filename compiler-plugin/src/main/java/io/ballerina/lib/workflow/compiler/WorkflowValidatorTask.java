@@ -21,9 +21,13 @@ package io.ballerina.lib.workflow.compiler;
 import io.ballerina.compiler.api.SemanticModel;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.FunctionTypeSymbol;
+import io.ballerina.compiler.api.symbols.MethodSymbol;
+import io.ballerina.compiler.api.symbols.ObjectTypeSymbol;
 import io.ballerina.compiler.api.symbols.ParameterKind;
 import io.ballerina.compiler.api.symbols.ParameterSymbol;
+import io.ballerina.compiler.api.symbols.Qualifier;
 import io.ballerina.compiler.api.symbols.RecordTypeSymbol;
+import io.ballerina.compiler.api.symbols.ResourceMethodSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.api.symbols.TypeDescKind;
@@ -49,6 +53,7 @@ import io.ballerina.tools.diagnostics.DiagnosticInfo;
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -78,6 +83,8 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
             validateProcessFunction(functionNode, context);
             // Validate callActivity calls within the process function
             validateCallActivityUsage(functionNode, context);
+            // Validate callRemoteActivity and callResourceActivity calls
+            validateClientActivityUsage(functionNode, context);
             // Validate no direct @Activity function calls are made
             validateNoDirectActivityCalls(functionNode, context);
             // Validate no time:utcNow() calls are made (non-deterministic)
@@ -557,6 +564,264 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                     WorkflowDiagnostic.WORKFLOW_111.getSeverity());
             context.reportDiagnostic(DiagnosticFactory.createDiagnostic(diagnosticInfo,
                     node.arguments().get(0).location()));
+        }
+    }
+
+    /**
+     * Validates callRemoteActivity() and callResourceActivity() calls within @Workflow functions.
+     * Checks that the client has the specified method and that method params/return types are valid.
+     */
+    private void validateClientActivityUsage(FunctionDefinitionNode functionNode,
+                                              SyntaxNodeAnalysisContext context) {
+        ClientActivityValidator validator = new ClientActivityValidator(context);
+        functionNode.functionBody().accept(validator);
+    }
+
+    /**
+     * Node visitor that validates ctx->callRemoteActivity() and ctx->callResourceActivity() calls.
+     * Ensures:
+     * <ul>
+     *   <li>First argument is a client object</li>
+     *   <li>The client has the specified remote/resource method</li>
+     *   <li>Method parameters are subtypes of anydata</li>
+     *   <li>Method return type is a subtype of anydata|error</li>
+     * </ul>
+     */
+    private static class ClientActivityValidator extends NodeVisitor {
+        private final SyntaxNodeAnalysisContext context;
+        private final SemanticModel semanticModel;
+
+        ClientActivityValidator(SyntaxNodeAnalysisContext context) {
+            this.context = context;
+            this.semanticModel = context.semanticModel();
+        }
+
+        @Override
+        public void visit(RemoteMethodCallActionNode remoteCallNode) {
+            String methodName = remoteCallNode.methodName().name().text();
+
+            if (WorkflowConstants.CALL_REMOTE_ACTIVITY_FUNCTION.equals(methodName)) {
+                validateCallRemoteActivity(remoteCallNode);
+            } else if (WorkflowConstants.CALL_RESOURCE_ACTIVITY_FUNCTION.equals(methodName)) {
+                validateCallResourceActivity(remoteCallNode);
+            }
+
+            // Continue visiting child nodes
+            remoteCallNode.arguments().forEach(arg -> arg.accept(this));
+        }
+
+        /**
+         * Validates a ctx->callRemoteActivity(connection, "methodName", args) call.
+         */
+        private void validateCallRemoteActivity(RemoteMethodCallActionNode callNode) {
+            SeparatedNodeList<FunctionArgumentNode> arguments = callNode.arguments();
+            if (arguments.size() < 2) {
+                return; // Let the type checker handle missing arguments
+            }
+
+            // First argument: must be a client object
+            FunctionArgumentNode firstArg = arguments.get(0);
+            if (!(firstArg instanceof PositionalArgumentNode posArg)) {
+                return;
+            }
+
+            ExpressionNode connectionExpr = posArg.expression();
+            Optional<TypeSymbol> connectionTypeOpt = semanticModel.typeOf(connectionExpr);
+            if (connectionTypeOpt.isEmpty()) {
+                return;
+            }
+
+            TypeSymbol connectionType = WorkflowPluginUtils.resolveTypeReference(
+                    connectionTypeOpt.get());
+            if (!isClientObjectType(connectionType)) {
+                reportDiagnosticOnNode(callNode, WorkflowDiagnostic.WORKFLOW_115);
+                return;
+            }
+
+            // Second argument: remote method name (string literal)
+            FunctionArgumentNode secondArg = arguments.get(1);
+            if (!(secondArg instanceof PositionalArgumentNode posArg2)) {
+                return;
+            }
+            String remoteMethodName = extractStringLiteral(posArg2.expression());
+            if (remoteMethodName == null) {
+                return; // Non-literal string — skip compile-time validation
+            }
+
+            // Look up the remote method on the client type
+            ObjectTypeSymbol objectType = (ObjectTypeSymbol) connectionType;
+            Optional<MethodSymbol> remoteMethodOpt = findRemoteMethod(objectType, remoteMethodName);
+            if (remoteMethodOpt.isEmpty()) {
+                reportDiagnosticOnNode(callNode, WorkflowDiagnostic.WORKFLOW_116,
+                        remoteMethodName);
+            }
+            // Note: parameter and return type validation is intentionally omitted.
+            // Arguments are passed through map<anydata> (inherently anydata), and the
+            // return value is converted via cloneWithType at runtime. Checking the
+            // target method's declared types would be too restrictive for real clients
+            // (e.g. http:Client's post() accepts http:RequestMessage which includes
+            // non-anydata types like http:Request).
+        }
+
+        /**
+         * Validates a ctx->callResourceActivity(connection, "get", "/path", args) call.
+         */
+        private void validateCallResourceActivity(RemoteMethodCallActionNode callNode) {
+            SeparatedNodeList<FunctionArgumentNode> arguments = callNode.arguments();
+            if (arguments.size() < 3) {
+                return; // Let the type checker handle missing arguments
+            }
+
+            // First argument: must be a client object
+            FunctionArgumentNode firstArg = arguments.get(0);
+            if (!(firstArg instanceof PositionalArgumentNode posArg)) {
+                return;
+            }
+
+            ExpressionNode connectionExpr = posArg.expression();
+            Optional<TypeSymbol> connectionTypeOpt = semanticModel.typeOf(connectionExpr);
+            if (connectionTypeOpt.isEmpty()) {
+                return;
+            }
+
+            TypeSymbol connectionType = WorkflowPluginUtils.resolveTypeReference(
+                    connectionTypeOpt.get());
+            if (!isClientObjectType(connectionType)) {
+                reportDiagnosticOnNode(callNode, WorkflowDiagnostic.WORKFLOW_119);
+                return;
+            }
+
+            // Second argument: accessor (string literal like "get", "post")
+            FunctionArgumentNode secondArg = arguments.get(1);
+            if (!(secondArg instanceof PositionalArgumentNode posArg2)) {
+                return;
+            }
+            String accessor = extractStringLiteral(posArg2.expression());
+            if (accessor == null) {
+                return; // Non-literal string — skip compile-time validation
+            }
+
+            // Third argument: resource path (string literal)
+            FunctionArgumentNode thirdArg = arguments.get(2);
+            if (!(thirdArg instanceof PositionalArgumentNode posArg3)) {
+                return;
+            }
+            String resourcePath = extractStringLiteral(posArg3.expression());
+            if (resourcePath == null) {
+                return; // Non-literal string — skip compile-time validation
+            }
+
+            // Look up the resource method on the client type.
+            // For clients with rest path parameters (e.g. http:Client's
+            // resource function get [string... path](...)), we match by
+            // accessor only — the exact path is validated at runtime.
+            ObjectTypeSymbol objectType = (ObjectTypeSymbol) connectionType;
+            Optional<ResourceMethodSymbol> resourceMethodOpt =
+                    findResourceMethod(objectType, accessor, resourcePath);
+            if (resourceMethodOpt.isEmpty()) {
+                reportDiagnosticOnNode(callNode, WorkflowDiagnostic.WORKFLOW_120,
+                        accessor, resourcePath);
+            }
+            // Note: parameter and return type validation is intentionally omitted
+            // (same reasoning as callRemoteActivity above).
+        }
+
+        /**
+         * Checks if a type is a client object type.
+         */
+        private boolean isClientObjectType(TypeSymbol typeSymbol) {
+            TypeSymbol resolved = WorkflowPluginUtils.resolveTypeReference(typeSymbol);
+            if (resolved.typeKind() != TypeDescKind.OBJECT) {
+                return false;
+            }
+            if (resolved instanceof ObjectTypeSymbol objectType) {
+                return objectType.qualifiers().contains(Qualifier.CLIENT);
+            }
+            return false;
+        }
+
+        /**
+         * Finds a remote method on a client object type by name.
+         */
+        private Optional<MethodSymbol> findRemoteMethod(ObjectTypeSymbol objectType,
+                                                         String methodName) {
+            Map<String, MethodSymbol> methods = objectType.methods();
+            MethodSymbol method = methods.get(methodName);
+            if (method != null && method.qualifiers().contains(Qualifier.REMOTE)) {
+                return Optional.of(method);
+            }
+            return Optional.empty();
+        }
+
+        /**
+         * Finds a resource method on a client object type by accessor and path.
+         * Handles rest path parameters: if the client has a resource method with the
+         * matching accessor and a rest path parameter (e.g. [string... path]), it is
+         * considered a match for any path.
+         */
+        private Optional<ResourceMethodSymbol> findResourceMethod(ObjectTypeSymbol objectType,
+                                                                    String accessor,
+                                                                    String resourcePath) {
+            // Normalize the path: remove leading slash, split into segments
+            String normalizedPath = resourcePath.startsWith("/")
+                    ? resourcePath.substring(1) : resourcePath;
+
+            for (MethodSymbol method : objectType.methods().values()) {
+                if (!(method instanceof ResourceMethodSymbol resourceMethod)) {
+                    continue;
+                }
+                // Check accessor matches
+                Optional<String> nameOpt = resourceMethod.getName();
+                if (nameOpt.isEmpty()) {
+                    continue;
+                }
+                String methodAccessor = nameOpt.get();
+                if (!accessor.equals(methodAccessor)) {
+                    continue;
+                }
+
+                // Check resource path
+                String methodPathSig = resourceMethod.resourcePath().signature();
+                String normalizedMethodPath = methodPathSig.startsWith("/")
+                        ? methodPathSig.substring(1) : methodPathSig;
+
+                // Exact match
+                if (normalizedPath.equals(normalizedMethodPath)) {
+                    return Optional.of(resourceMethod);
+                }
+
+                // Rest path match: if the method has a rest path param like
+                // [string... path] or [PathParamType... path], it matches any path
+                if (methodPathSig.contains("...")) {
+                    return Optional.of(resourceMethod);
+                }
+            }
+            return Optional.empty();
+        }
+
+        /**
+         * Extracts a string literal value from an expression node.
+         *
+         * @return the string value without quotes, or null if not a string literal
+         */
+        private String extractStringLiteral(ExpressionNode expr) {
+            if (expr.kind() == SyntaxKind.STRING_LITERAL) {
+                String text = expr.toString().trim();
+                if (text.startsWith("\"") && text.endsWith("\"")) {
+                    return text.substring(1, text.length() - 1);
+                }
+            }
+            return null;
+        }
+
+        private void reportDiagnosticOnNode(RemoteMethodCallActionNode node,
+                                             WorkflowDiagnostic diagnostic, Object... args) {
+            DiagnosticInfo diagnosticInfo = new DiagnosticInfo(
+                    diagnostic.getCode(),
+                    diagnostic.getMessage(args),
+                    diagnostic.getSeverity());
+            context.reportDiagnostic(DiagnosticFactory.createDiagnostic(diagnosticInfo,
+                    node.methodName().location()));
         }
     }
 

@@ -77,6 +77,69 @@ public client class Context {
         name: "callActivity"
     } external;
 
+    # Executes a remote method on a client object as a workflow activity.
+    #
+    # Use this when you want to call a remote method on a client object (e.g., an HTTP client)
+    # as a workflow activity. Since remote methods cannot be passed as function pointers,
+    # this method takes the client object and method name as separate parameters.
+    #
+    # The return type is inferred from the calling context, so the result is
+    # automatically converted to the expected type without manual casting.
+    #
+    # Example:
+    # ```ballerina
+    # http:Client httpClient = check new ("http://localhost:8080");
+    #
+    # // Call remote method as activity
+    # json result = check ctx->callRemoteActivity(httpClient, "post",
+    #     {path: "/api/users", message: {name: "Alice"}});
+    # ```
+    #
+    # + connection - The client object whose remote method should be invoked
+    # + remoteMethodName - The name of the remote method to call
+    # + args - Map containing the arguments to pass to the remote method
+    # + T - The expected return type (inferred from context or explicitly specified)
+    # + options - Activity options (retryOnError, maxRetries, retryDelay, retryBackoff, maxRetryDelay)
+    # + return - The result of the activity execution cast to type T, or an error if execution fails
+    remote isolated function callRemoteActivity(client object {} connection, string remoteMethodName,
+            map<anydata> args = {}, typedesc<anydata> T = <>, *ActivityOptions options)
+            returns T|error = @java:Method {
+        'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
+        name: "callRemoteActivity"
+    } external;
+
+    # Executes a resource method on a client object as a workflow activity.
+    #
+    # Use this when you want to call a resource method on a client object (e.g., an HTTP client)
+    # as a workflow activity. Since resource methods cannot be passed as function pointers,
+    # this method takes the client object, accessor, and resource path as separate parameters.
+    #
+    # The return type is inferred from the calling context, so the result is
+    # automatically converted to the expected type without manual casting.
+    #
+    # Example:
+    # ```ballerina
+    # http:Client httpClient = check new ("http://localhost:8080");
+    #
+    # // Call resource method as activity
+    # json users = check ctx->callResourceActivity(httpClient, "get", "/api/users");
+    # ```
+    #
+    # + connection - The client object whose resource method should be invoked
+    # + accessor - The HTTP accessor (e.g., "get", "post", "put", "delete")
+    # + resourcePath - The resource path (e.g., "/api/users")
+    # + args - Map containing the arguments to pass to the resource method
+    # + T - The expected return type (inferred from context or explicitly specified)
+    # + options - Activity options (retryOnError, maxRetries, retryDelay, retryBackoff, maxRetryDelay)
+    # + return - The result of the activity execution cast to type T, or an error if execution fails
+    remote isolated function callResourceActivity(client object {} connection, string accessor,
+            string resourcePath, map<anydata> args = {}, typedesc<anydata> T = <>,
+            *ActivityOptions options)
+            returns T|error = @java:Method {
+        'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
+        name: "callResourceActivity"
+    } external;
+
     # Performs a durable sleep within the workflow.
     #
     # This sleep is **persisted by the workflow engine** and will survive program

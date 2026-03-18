@@ -80,6 +80,32 @@ public enum WorkflowDiagnostic {
             "@Activity function has an unsupported typedesc parameter. "
                     + "Only dependently-typed functions with inferred default '<>' are allowed "
                     + "(e.g., typedesc<anydata> t = <>)",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_115("WORKFLOW_115",
+            "The first argument of 'callRemoteActivity' must be a client object",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_116("WORKFLOW_116",
+            "The client object does not have a remote method named '%s'",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_117("WORKFLOW_117",
+            "Remote method '%s' has non-anydata parameter '%s'. "
+                    + "Only anydata parameters are supported for activity methods",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_118("WORKFLOW_118",
+            "Remote method '%s' return type must be a subtype of 'anydata' or 'error'",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_119("WORKFLOW_119",
+            "The first argument of 'callResourceActivity' must be a client object",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_120("WORKFLOW_120",
+            "The client object does not have a resource method with accessor '%s' and path '%s'",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_121("WORKFLOW_121",
+            "Resource method '%s %s' has non-anydata parameter '%s'. "
+                    + "Only anydata parameters are supported for activity methods",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_122("WORKFLOW_122",
+            "Resource method '%s %s' return type must be a subtype of 'anydata' or 'error'",
             DiagnosticSeverity.ERROR);
 
     private final String code;

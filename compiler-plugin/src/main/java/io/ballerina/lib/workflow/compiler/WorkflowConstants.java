@@ -43,6 +43,8 @@ public final class WorkflowConstants {
 
     // Function names
     public static final String CALL_ACTIVITY_FUNCTION = "callActivity";
+    public static final String CALL_REMOTE_ACTIVITY_FUNCTION = "callRemoteActivity";
+    public static final String CALL_RESOURCE_ACTIVITY_FUNCTION = "callResourceActivity";
 
     // Type names
     public static final String CONTEXT_TYPE = "Context";

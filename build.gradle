@@ -109,6 +109,12 @@ task build {
     dependsOn(':workflow-examples:build')
 }
 
+task verifyExamples {
+    description = 'Build examples and run a runtime smoke test to catch regressions'
+    dependsOn(':workflow-examples:build')
+    dependsOn(':workflow-examples:test')
+}
+
 // ============================================================================
 // Temporal CLI Dev Server for Testing
 // Uses 'temporal server start-dev' which supports full Visibility API

@@ -8,14 +8,14 @@ When a primary activity exhausts its retries, capture the error as a value and c
 
 - The goal can be achieved by more than one means (e.g., email → SMS, primary API → backup API, real-time service → cached result).
 - The primary is preferred but not required — a fallback result is acceptable to the business.
-- You want Temporal to automatically retry transient failures on the primary before the workflow even knows about the failure.
+- You want the workflow engine to automatically retry transient failures on the primary before the workflow even knows about the failure.
 
 ## Code Pattern
 
 ```ballerina
 @workflow:Workflow
 function sendNotification(workflow:Context ctx, NotificationInput input) returns string|error {
-    // Try the primary with Temporal retries for transient failures
+    // Try the primary with retries for transient failures
     string|error emailResult = ctx->callActivity(sendEmail,
             {"to": input.email, "message": input.message},
             retryOnError = true, maxRetries = 2, retryDelay = 1.0, retryBackoff = 2.0);

@@ -25,7 +25,7 @@ bal run
 
 Expected output:
 
-```
+```text
 Workflow started with ID: <uuid>
 Checking inventory for laptop, quantity: 2
 Reserving 2 unit(s) of laptop for order ORD-001
@@ -53,9 +53,9 @@ Then run the example:
 bal run
 ```
 
-## Building with the local module
+## Running with the local module
 
-To build this example against local changes to the `ballerina/workflow` module, use the
+To run this example against local changes to the `ballerina/workflow` module, use the
 build script from the `examples/` directory:
 
 ```bash

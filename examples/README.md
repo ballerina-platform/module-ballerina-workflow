@@ -6,12 +6,12 @@ The `ballerina/workflow` library provides practical examples illustrating usage 
 |---------|-------------|
 | [get-started](get-started/) | Introductory example: define a workflow, call activities, run with `workflow:run()` |
 | [error-propagation](error-propagation/) | Propagate an activity error to the caller with `check` — workflow transitions to Failed |
-| [error-fallback](error-fallback/) | Fall back to a secondary activity when the primary exhausts its Temporal retries |
+| [error-fallback](error-fallback/) | Fall back to a secondary activity when the primary exhausts its retries |
 | [error-compensation](error-compensation/) | Saga pattern: run compensating activities to undo committed steps when a later step fails |
 | [graceful-completion](graceful-completion/) | Tolerate failures in non-critical activities and complete the workflow successfully |
-| [human-in-the-loop](human-in-the-loop/) | Forward recovery: pause the workflow after failure and wait for a human decision signal |
+| [human-in-the-loop](human-in-the-loop/) | Forward recovery: pause the workflow after failure and wait for a human decision |
 | [order-processing](order-processing/) | HTTP service that starts an order workflow and polls for results |
-| [order-with-payment](order-with-payment/) | Order workflow that pauses and waits for a payment confirmation signal |
+| [order-with-payment](order-with-payment/) | Order workflow that pauses and waits for a payment confirmation |
 | [crm-sync](crm-sync/) | CRM contact sync workflow triggered by HTTP webhook events |
 
 ## Prerequisites
@@ -20,7 +20,13 @@ The `ballerina/workflow` library provides practical examples illustrating usage 
 
 ## Running an example
 
-Execute the following commands to build an example from the source:
+First, change into the example directory:
+
+```bash
+cd examples/<example-name>
+```
+
+Then execute the following commands:
 
 * To build an example:
 
@@ -48,6 +54,8 @@ The examples directory is a Gradle subproject (`:workflow-examples`). To build a
 
 Alternatively, use the shell scripts to build or run all examples:
 
+**On Unix/macOS:**
+
 * To build all the examples:
 
     ```bash
@@ -58,4 +66,18 @@ Alternatively, use the shell scripts to build or run all examples:
 
     ```bash
     ./build.sh run
+    ```
+
+**On Windows:**
+
+* To build all the examples:
+
+    ```bat
+    build.bat build
+    ```
+
+* To run all the examples:
+
+    ```bat
+    build.bat run
     ```

@@ -46,7 +46,15 @@ if errorlevel 1 (
 :: Push the package to the local repository
 cd /d "%BAL_HOME_DIR%"
 call bal pack
+if errorlevel 1 (
+    echo Error: "bal pack" failed.
+    exit /b 1
+)
 call bal push --repository=local
+if errorlevel 1 (
+    echo Error: "bal push --repository=local" failed.
+    exit /b 1
+)
 
 :: Remove the cache directories in the repositories
 for /d %%D in ("%BAL_CENTRAL_DIR%\cache-*") do (
@@ -64,12 +72,14 @@ if not exist "%BAL_CENTRAL_DIR%\bala\ballerina\%BAL_PACKAGE_NAME%" (
 :: Update the central repository
 set BAL_DESTINATION_DIR=%BAL_CENTRAL_DIR%\bala\ballerina\%BAL_PACKAGE_NAME%
 set BAL_SOURCE_DIR=%USERPROFILE%\.ballerina\repositories\local\bala\ballerina\%BAL_PACKAGE_NAME%
+if not exist "%BAL_SOURCE_DIR%" (
+    echo Error: Source directory "%BAL_SOURCE_DIR%" does not exist. Pack/push may have failed.
+    exit /b 1
+)
 if exist "%BAL_DESTINATION_DIR%" (
     rmdir /s /q "%BAL_DESTINATION_DIR%"
 )
-if exist "%BAL_SOURCE_DIR%" (
-    xcopy /e /i "%BAL_SOURCE_DIR%" "%BAL_DESTINATION_DIR%"
-)
+xcopy /e /i "%BAL_SOURCE_DIR%" "%BAL_DESTINATION_DIR%"
 echo Successfully updated the local central repositories
 
 echo %BAL_DESTINATION_DIR%

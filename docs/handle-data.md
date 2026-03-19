@@ -1,17 +1,17 @@
-# Handle Data Events
+# Handle Data
 
-Workflows can receive external data while running using future-based event handling. This allows a workflow to pause and wait for signals — such as approvals, payments, or user actions — before continuing execution.
+Workflows can receive external data while running using future-based data handling. This allows a workflow to pause and wait for data — such as approvals, payments, or user actions — before continuing execution.
 
 ## Overview
 
-1. Define event types as records
+1. Define data types as records
 2. Add an events parameter to the workflow function with `future<T>` fields
-3. Use Ballerina's `wait` keyword to pause until an event arrives
-4. Send events to running workflows using `workflow:sendData()`
+3. Use Ballerina's `wait` keyword to pause until data arrives
+4. Send data to running workflows using `workflow:sendData()`
 
-## Define Event Types
+## Define Data Types
 
-Create record types for each kind of event your workflow expects:
+Create record types for each kind of data your workflow expects:
 
 ```ballerina
 type ApprovalSignal record {|
@@ -25,11 +25,11 @@ type PaymentConfirmation record {|
 |};
 ```
 
-Event types must be subtypes of `anydata`.
+Data types must be subtypes of `anydata`.
 
 ## Add an Events Parameter
 
-Add a third parameter to your workflow function — a record with `future<T>` fields. Each field name becomes the event name:
+Add a third parameter to your workflow function — a record with `future<T>` fields. Each field name becomes the data name:
 
 ```ballerina
 @workflow:Workflow
@@ -45,11 +45,11 @@ function orderProcess(
 }
 ```
 
-The runtime automatically manages the futures and delivers events when they arrive.
+The runtime automatically manages the futures and delivers data when they arrive.
 
-## Wait for Events
+## Wait for Data
 
-Use Ballerina's `wait` keyword to pause the workflow until an event arrives:
+Use Ballerina's `wait` keyword to pause the workflow until data arrives:
 
 ```ballerina
 @workflow:Workflow
@@ -83,21 +83,21 @@ function orderProcess(
 }
 ```
 
-## Send Events to a Running Workflow
+## Send Data to a Running Workflow
 
-Use `workflow:sendData()` to deliver an event to a running workflow:
+Use `workflow:sendData()` to deliver data to a running workflow:
 
 ```ballerina
 // Start the workflow
 string workflowId = check workflow:run(orderProcess, {orderId: "ORD-001", item: "laptop"});
 
-// Send approval event (the dataName must match the field name in the events record)
+// Send approval data (the dataName must match the field name in the events record)
 check workflow:sendData(orderProcess, workflowId, "approval", {
     approverId: "manager-1",
     approved: true
 });
 
-// Send payment event
+// Send payment data
 check workflow:sendData(orderProcess, workflowId, "payment", {
     amount: 1999.99,
     transactionRef: "TXN-12345"
@@ -110,12 +110,12 @@ check workflow:sendData(orderProcess, workflowId, "payment", {
 |-----------|-------------|
 | `workflow` | The workflow function reference (must be annotated with `@Workflow`) |
 | `workflowId` | The ID of the running workflow instance (returned by `workflow:run()`) |
-| `dataName` | The event name — must match a field name in the events record |
-| `data` | The event payload — must match the type of the corresponding `future<T>` |
+| `dataName` | The data name — must match a field name in the events record |
+| `data` | The data payload — must match the type of the corresponding `future<T>` |
 
-## Expose Events via HTTP
+## Expose Data Delivery via HTTP
 
-A common pattern is to expose event delivery through HTTP endpoints:
+A common pattern is to expose data delivery through HTTP endpoints:
 
 ```ballerina
 import ballerina/http;
@@ -131,7 +131,7 @@ service /orders on new http:Listener(9090) {
         return {status: "started", workflowId: workflowId};
     }
 
-    // Send payment event to a running workflow
+    // Send payment data to a running workflow
     resource function post [string orderId]/payment(PaymentConfirmation payment) returns json|error {
         string? workflowId = activeWorkflows[orderId];
         if workflowId is () {
@@ -143,9 +143,9 @@ service /orders on new http:Listener(9090) {
 }
 ```
 
-## Conditional Event Waiting
+## Conditional Data Waiting
 
-You can wait for events conditionally. Events that are never waited on are simply ignored:
+You can wait for data conditionally. Data that is never waited on is simply ignored:
 
 ```ballerina
 @workflow:Workflow

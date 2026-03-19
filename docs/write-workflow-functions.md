@@ -36,7 +36,7 @@ All three parameters are optional. When present, they must appear in this order:
 |-----------|----------|-------------|
 | `workflow:Context ctx` | Only if using runtime APIs | Provides `callActivity`, `sleep`, `currentTime`, `isReplaying`, `getWorkflowId`, and `getWorkflowType` |
 | Input | No | Workflow input data. Must be a subtype of `anydata` |
-| Events record | No | Record with `future<T>` fields for receiving external data. See [Handle Data Events](handle-events.md) |
+| Events record | No | Record with `future<T>` fields for receiving external data. See [Handle Data](handle-data.md) |
 
 ### Return Type
 
@@ -167,5 +167,5 @@ if info.status == "RUNNING" {
 ## What's Next
 
 - [Write Activity Functions](write-activity-functions.md) — Implement activities for I/O operations
-- [Handle Data Events](handle-events.md) — Receive external signals in running workflows
+- [Handle Data](handle-data.md) — Receive external data in running workflows
 - [Handle Errors](handle-errors.md) — Error handling patterns

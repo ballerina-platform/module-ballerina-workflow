@@ -74,7 +74,7 @@ return "COMPLETED";
 
 ## Durability Under Failures
 
-Because every activity call — including the compensating activities — is a fully durable Temporal activity, the compensation steps survive worker restarts. If the process crashes mid-compensation, the workflow replays from its Event History and continues compensating from where it left off.
+Because every activity call — including the compensating activities — is a fully durable activity, the compensation steps survive worker restarts. If the process crashes mid-compensation, the workflow replays from its Event History and continues compensating from where it left off.
 
 ## What's Next
 

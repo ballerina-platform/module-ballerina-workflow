@@ -1,6 +1,6 @@
 # Pattern: Propagate — Fail the Workflow
 
-Use `check` to propagate an activity error immediately. The workflow transitions to **Failed** in Temporal, all subsequent steps are skipped, and the error is returned to whoever called `workflow:getWorkflowResult()`.
+Use `check` to propagate an activity error immediately. The workflow transitions to **Failed**, all subsequent steps are skipped, and the error is returned to whoever called `workflow:getWorkflowResult()`.
 
 > **Runnable example:** [`examples/error-propagation/`](../../examples/error-propagation/)
 
@@ -8,7 +8,7 @@ Use `check` to propagate an activity error immediately. The workflow transitions
 
 - The failed activity is a prerequisite for everything that follows (e.g., inventory check before order confirmation, authentication before any business step).
 - There is no meaningful recovery — the workflow cannot produce a useful result without this step succeeding.
-- You want the failure to be immediately visible in Temporal as a **Failed** workflow with a clear error message.
+- You want the failure to be immediately visible as a **Failed** workflow with a clear error message.
 
 ## Code Pattern
 
@@ -30,12 +30,12 @@ function processOrder(workflow:Context ctx, OrderInput input) returns OrderResul
 
 The `check` expression is the entire mechanism — it unwraps `T|error` to `T` on success, and returns the error to the caller on failure. There is no special workflow API involved.
 
-## How the Error Appears in Temporal
+## How the Error Appears in the Workflow Engine
 
 When the workflow fails via `check`:
-- Temporal records an `ActivityTaskFailed` event for the failing activity.
+- The workflow engine records an `ActivityTaskFailed` event for the failing activity.
 - It records a `WorkflowExecutionFailed` event on the workflow.
-- The full error message, type, and any detail fields are serialized into the failure payload and visible in the Temporal Web UI under **Event History**.
+- The full error message, type, and any detail fields are serialized into the failure payload and visible in the workflow engine's Web UI under **Event History**.
 
 The caller sees the failure when it calls `workflow:getWorkflowResult()`:
 
@@ -52,7 +52,7 @@ if info.status == "FAILED" {
 If the activity is transient (network call, external API), combine retries with propagation. The workflow only fails after all retries are exhausted:
 
 ```ballerina
-// Temporal retries up to 3 times; if all fail, check propagates the final error
+// The workflow engine retries up to 3 times; if all fail, check propagates the final error
 boolean _ = check ctx->callActivity(checkInventory, {"item": input.item},
         retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
 ```

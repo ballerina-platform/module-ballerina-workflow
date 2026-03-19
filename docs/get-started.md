@@ -46,7 +46,7 @@ public function main() returns error? {
 
 - **`@workflow:Workflow`** marks a function as a durable workflow. The runtime checkpoints its state and recovers from failures automatically.
 - **`workflow:run()`** starts a new workflow instance and returns a unique **workflow instance ID**.
-- **Workflow instance ID** is a unique string identifying a running workflow. Use it to query status, send events, or retrieve results.
+- **Workflow instance ID** is a unique string identifying a running workflow. Use it to query status, send data, or retrieve results.
 
 ## Configure and Run
 

@@ -92,7 +92,7 @@ check workflow:sendData(orderWithApproval, workflowId, "approval", {
 
 The field name in the events record (`approval`) maps directly to the data event name used in `sendData()`.
 
-Learn more: [Handle Data Events](handle-events.md)
+Learn more: [Handle Data](handle-data.md)
 
 ## Timer Events
 
@@ -157,5 +157,5 @@ The same workflow can be triggered from different protocols simultaneously. For 
 
 - [Write Workflow Functions](write-workflow-functions.md) — Signatures, determinism rules, and durable sleep
 - [Write Activity Functions](write-activity-functions.md) — Activity patterns and retry configuration
-- [Handle Events](handle-events.md) — Data events and event-driven patterns
+- [Handle Data](handle-data.md) — Data events and data-driven patterns
 - [Configure the Module](configure-the-module.md) — Deployment modes and server configuration

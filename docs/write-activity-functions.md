@@ -163,5 +163,5 @@ Activities are the right place for:
 
 ## What's Next
 
-- [Handle Data Events](handle-events.md) — Receive external data in running workflows
+- [Handle Data](handle-data.md) — Receive external data in running workflows
 - [Handle Errors](handle-errors.md) — Error handling patterns

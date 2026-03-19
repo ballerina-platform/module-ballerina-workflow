@@ -52,11 +52,11 @@ string result = check ctx->callActivity(sendEmail, {
 
 Learn more: [Write Activity Functions](write-activity-functions.md)
 
-## Data Events
+## External Data
 
-A **data event** delivers external data to a running workflow. Workflows can pause and wait for data events using Ballerina's `wait` keyword with future-based event records.
+Workflows can receive **external data** while running. A workflow pauses and waits for data — such as approvals, payments, or user actions — using Ballerina's `wait` keyword with future-based records.
 
-Define event types and declare them in the workflow's events parameter:
+Define data types and declare them in the workflow's events parameter:
 
 ```ballerina
 type ApprovalDecision record {|
@@ -81,7 +81,7 @@ function orderWithApproval(
 }
 ```
 
-Send a data event to a running workflow from outside:
+Send data to a running workflow from outside:
 
 ```ballerina
 check workflow:sendData(orderWithApproval, workflowId, "approval", {
@@ -90,7 +90,7 @@ check workflow:sendData(orderWithApproval, workflowId, "approval", {
 });
 ```
 
-The field name in the events record (`approval`) maps directly to the data event name used in `sendData()`.
+The field name in the events record (`approval`) maps directly to the data name used in `sendData()`.
 
 Learn more: [Handle Data](handle-data.md)
 
@@ -157,5 +157,5 @@ The same workflow can be triggered from different protocols simultaneously. For 
 
 - [Write Workflow Functions](write-workflow-functions.md) — Signatures, determinism rules, and durable sleep
 - [Write Activity Functions](write-activity-functions.md) — Activity patterns and retry configuration
-- [Handle Data](handle-data.md) — Data events and data-driven patterns
+- [Handle Data](handle-data.md) — Receiving external data and data-driven patterns
 - [Configure the Module](configure-the-module.md) — Deployment modes and server configuration

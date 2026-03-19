@@ -18,7 +18,7 @@ import ballerina/http;
 import ballerina/workflow;
 import ballerina/io;
 
-// Tracks running workflow IDs keyed by orderId so payment signals can be
+// Tracks running workflow IDs keyed by orderId so payment data can be
 // routed to the correct workflow instance.
 map<string> orderWorkflowIds = {};
 
@@ -26,18 +26,18 @@ map<string> orderWorkflowIds = {};
 # 
 # This service provides REST endpoints for:
 # - Placing new orders (which start workflows)
-# - Sending payment confirmations (which send signals to waiting workflows)
+# - Sending payment confirmations (which send data to waiting workflows)
 # - Health check monitoring
 #
 # The service demonstrates how to integrate Ballerina workflows with HTTP APIs,
-# particularly the pattern of starting a workflow and later sending signals to it.
+# particularly the pattern of starting a workflow and later sending data to it.
 service /orders on new http:Listener(9094) {
 
     # Place a new order and start the order processing workflow.
     # 
     # This endpoint initiates an asynchronous workflow that will:
     # 1. Check inventory availability
-    # 2. Wait for payment confirmation signal
+    # 2. Wait for payment confirmation data
     # 3. Complete the order once payment is received
     #
     # + request - Order request containing orderId and item name
@@ -62,10 +62,10 @@ service /orders on new http:Listener(9094) {
         };
     }
 
-    # Send payment confirmation signal to a waiting workflow.
+    # Send payment confirmation data to a waiting workflow.
     # 
-    # This endpoint sends a signal to the workflow processing the specified order.
-    # The workflow must be waiting for the payment signal, otherwise the signal
+    # This endpoint sends data to the workflow processing the specified order.
+    # The workflow must be waiting for the payment data, otherwise the data
     # will be queued or fail depending on the workflow state.
     #
     # + orderId - The order ID to send payment confirmation for
@@ -84,11 +84,11 @@ service /orders on new http:Listener(9094) {
         }
 
         // Send payment data to the waiting workflow.
-        // The field name 'paymentReceived' in the data events record determines the signal name.
+        // The field name 'paymentReceived' in the data events record determines the data name.
         PaymentConfirmation payment = {amount: paymentData.amount};
         check workflow:sendData(processOrderWithPayment, workflowId, "paymentReceived", payment);
 
-        io:println(string `Payment signal sent for order: ${orderId}`);
+        io:println(string `Payment data sent for order: ${orderId}`);
         return {
             "status": "success",
             "message": "Payment received"

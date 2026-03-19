@@ -1,6 +1,6 @@
 # Human-in-the-Loop (Forward Recovery) Example
 
-This example demonstrates **forward recovery**: when an activity fails and automated retries cannot resolve the problem, the workflow pauses and waits for a human decision signal. A reviewer can approve (trigger one final retry) or cancel the order.
+This example demonstrates **forward recovery**: when an activity fails and automated retries cannot resolve the problem, the workflow pauses and waits for a human decision. A reviewer can approve (trigger one final retry) or cancel the order.
 
 An HTTP service exposes the workflow, allowing external systems (dashboards, Slack bots, etc.) to start orders and submit review decisions via REST.
 
@@ -8,7 +8,7 @@ See the full pattern explanation in [Handle Errors — Human in the Loop](../../
 
 ## What This Example Shows
 
-- Exhausting Temporal retries with `retryOnError = true, maxRetries = 3`
+- Exhausting retries with `retryOnError = true, maxRetries = 3`
 - Pausing the workflow at a `wait events.review` after failure
 - Exposing the workflow via an HTTP service (`POST /api/orders`, `POST /api/orders/{id}/review`)
 - Workflow durability: state is preserved across worker restarts while paused
@@ -99,7 +99,7 @@ Update `Config.toml`:
 mode = "LOCAL"
 ```
 
-Start your Temporal dev server, then start the service. While the workflow is paused waiting for the review signal you can also send the signal directly from the **Temporal Web UI** (see [Handle Errors — Recovering via Temporal UI](../../docs/handle-errors.md#recovering-workflows-via-temporal-ui)).
+Start your Temporal dev server, then start the service. While the workflow is paused waiting for the review data you can also send the data directly from the **Temporal Web UI** (see [Handle Errors — Recovering via Workflow Engine UI](../../docs/handle-errors.md#recovering-workflows-via-workflow-engine-ui)).
 
 ## Building with the local module
 

@@ -185,7 +185,7 @@ function processOrder(workflow:Context ctx, OrderInput input) returns string|err
 
 When an activity fails due to a condition that code alone cannot resolve (e.g., a payment dispute, a compliance hold, an ambiguous data state), you can pause the workflow and wait for a human decision rather than failing immediately. This is called **forward recovery**: instead of rolling back, you hold state and let a person decide how to proceed.
 
-### Define the Decision Event
+### Define the Decision Type
 
 ```ballerina
 type ReviewDecision record {|
@@ -216,7 +216,7 @@ function orderProcess(
             "reason": paymentResult.message()
         });
 
-        // Workflow pauses here until a human sends the "review" event
+        // Workflow pauses here until a human sends the "review" data
         ReviewDecision decision = check wait events.review;
 
         if !decision.approved {
@@ -305,12 +305,12 @@ Termination is permanent — it marks the workflow **Terminated** and stops all 
 
 ### Send Data to a Paused Workflow
 
-If your workflow is waiting for a human-in-the-loop event (as shown above), you can send the data directly from the workflow engine's UI without going through your HTTP API:
+If your workflow is waiting for external data (as shown above), you can send the data directly from the workflow engine's UI without going through your HTTP API:
 
 1. Open the running workflow's detail view
 2. Click **Send Data**
 3. Enter the data name (must match the field name in the events record, e.g., `"review"`)
-4. Paste the JSON payload matching the event type (e.g., `{"reviewerId": "ops-1", "approved": true, "note": "manually approved"}`)
+4. Paste the JSON payload matching the data type (e.g., `{"reviewerId": "ops-1", "approved": true, "note": "manually approved"}`)
 5. Click **Send** — the workflow resumes immediately
 
 This is useful during incidents when the normal data delivery path is unavailable.
@@ -324,6 +324,6 @@ This is useful during incidents when the normal data delivery path is unavailabl
 - [Compensation Pattern](patterns/error-compensation.md) — Undo committed steps with the Saga pattern
 - [Graceful Completion](patterns/graceful-completion.md) — Tolerate non-critical failures and complete successfully
 - [Human in the Loop](patterns/human-in-the-loop.md) — Pause and wait for a human decision
-- [Handle Data](handle-data.md) — Data events, human-in-the-loop patterns
+- [Handle Data](handle-data.md) — Receiving external data, human-in-the-loop patterns
 - [Write Workflow Functions](write-workflow-functions.md) — Workflow function details
 - [Write Activity Functions](write-activity-functions.md) — Activity options and retry configuration

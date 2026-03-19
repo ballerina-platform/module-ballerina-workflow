@@ -24,7 +24,7 @@ public type OrderRequest record {|
 |};
 
 # Represents payment confirmation received for an order.
-# Used as a signal payload to confirm payment has been processed.
+# Used as a data payload to confirm payment has been processed.
 #
 # + amount - Payment amount received
 public type PaymentConfirmation record {|

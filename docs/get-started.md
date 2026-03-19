@@ -205,7 +205,7 @@ The full source for this sample is in [`examples/get-started/`](../examples/get-
 
 ## What's Next
 
-- [Key Concepts](key-concepts.md) — Understand workflows, activities, data events, and timer events
+- [Key Concepts](key-concepts.md) — Understand workflows, activities, external data, and timer events
 - [Set Up Temporal Server](set-up-temporal-server.md) — Install Temporal for persistent workflow execution
 - [Write Workflow Functions](write-workflow-functions.md) — Workflow signatures and determinism rules
 - [Write Activity Functions](write-activity-functions.md) — Activity patterns and retry configuration

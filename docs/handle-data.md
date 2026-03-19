@@ -14,7 +14,7 @@ Workflows can receive external data while running using future-based data handli
 Create record types for each kind of data your workflow expects:
 
 ```ballerina
-type ApprovalSignal record {|
+type ApprovalDecision record {|
     string approverId;
     boolean approved;
 |};
@@ -37,8 +37,8 @@ function orderProcess(
     workflow:Context ctx,
     OrderInput input,
     record {|
-        future<ApprovalSignal> approval;       // Event name: "approval"
-        future<PaymentConfirmation> payment;    // Event name: "payment"
+        future<ApprovalDecision> approval;       // Data name: "approval"
+        future<PaymentConfirmation> payment;    // Data name: "payment"
     |} events
 ) returns OrderResult|error {
     // ...
@@ -56,7 +56,7 @@ Use Ballerina's `wait` keyword to pause the workflow until data arrives:
 function orderProcess(
     workflow:Context ctx,
     OrderInput input,
-    record {| future<ApprovalSignal> approval; future<PaymentConfirmation> payment; |} events
+    record {| future<ApprovalDecision> approval; future<PaymentConfirmation> payment; |} events
 ) returns OrderResult|error {
     // Check inventory first
     boolean inStock = check ctx->callActivity(checkInventory, {"item": input.item});
@@ -66,7 +66,7 @@ function orderProcess(
     }
 
     // Wait for approval (workflow pauses here)
-    ApprovalSignal approvalData = check wait events.approval;
+    ApprovalDecision approvalData = check wait events.approval;
 
     if !approvalData.approved {
         return {orderId: input.orderId, status: "REJECTED"};
@@ -152,9 +152,9 @@ You can wait for data conditionally. Data that is never waited on is simply igno
 function conditionalProcess(
     workflow:Context ctx,
     Input input,
-    record {| future<ApprovalSignal> approval; future<PaymentConfirmation> payment; |} events
+    record {| future<ApprovalDecision> approval; future<PaymentConfirmation> payment; |} events
 ) returns Output|error {
-    ApprovalSignal decision = check wait events.approval;
+    ApprovalDecision decision = check wait events.approval;
 
     if decision.approved {
         // Only wait for payment if approved

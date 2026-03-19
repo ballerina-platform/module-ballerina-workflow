@@ -18,12 +18,12 @@ import ballerina/workflow;
 import ballerina/io;
 
 // Order Processing with Payment Workflow
-// Demonstrates future-based signal handling
+// Demonstrates future-based data handling
 
 # Process order and wait for payment confirmation
-# This workflow demonstrates signal handling:
+# This workflow demonstrates data handling:
 # 1. Checks inventory
-# 2. Waits for payment signal using future-based pattern
+# 2. Waits for payment data using future-based pattern
 # 3. Completes order after payment received
 #
 # + ctx - Workflow context for calling activities

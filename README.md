@@ -15,7 +15,7 @@ The Workflow library facilitates building stateful, durable workflows that can s
 
 - **Process Functions**: Durable workflow orchestration with automatic state persistence
 - **Activity Functions**: Reliable execution of side effects functions (I/O, API calls, etc.)
-- **Event/Signal Support**: Future-based event handling with correlation
+- **External Data Support**: Future-based data handling for receiving external data
 - **Compiler Plugin**: Compile-time validation and code generation to ensure workflow determinism
 
 ### Key Features
@@ -86,7 +86,7 @@ function processOrderWithPayment(
     // Check inventory
     check ctx->callActivity(checkInventory, {item: input.item, quantity: input.quantity});
     
-    // Wait for payment signal
+    // Wait for payment data
     PaymentEvent payment = check wait events.payment;
     
     // Complete order

@@ -74,7 +74,7 @@ Workflow functions must be **deterministic** — given the same inputs and histo
 - Call activities for I/O operations
 - Use `ctx.sleep()` for durable delays
 - Use standard control flow (`if`, `match`, `foreach`)
-- Use `wait` on event futures
+- Use `wait` on data futures
 
 **Don't:**
 - Make HTTP calls or access databases directly (use activities)

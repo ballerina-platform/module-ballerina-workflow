@@ -1,11 +1,11 @@
-# Order Processing with Payment Signal
+# Order Processing with Payment Confirmation
 
-Demonstrates order workflow waiting for payment confirmation via signals.
+Demonstrates order workflow waiting for payment confirmation via external data.
 
 ## Features
 
-- Future-based payment waiting using data events record with `future<PaymentEvent>`
-- Workflow ID based routing for payment signals
+- Future-based payment waiting using `future<PaymentEvent>`
+- Workflow ID based routing for payment data
 - Timeout handling (24 hour wait)
 - Inventory checking before payment
 
@@ -25,12 +25,12 @@ curl -X POST http://localhost:9094/orders/ORD-001/payment \
   -d '{"amount": 1500.00}'
 ```
 
-## Signal Flow
+## Data Flow
 
 ```
-Order Request → Check Inventory → Wait for Payment Signal → Complete Order
+Order Request → Check Inventory → Wait for Payment Data → Complete Order
                                        ↑
-                                  Payment Event
+                                  Payment Data
 ```
 
-Key: Uses future-based data events with `record {| future<T>...; |}` parameter.
+Key: Uses future-based external data with `record {| future<T>...; |}` parameter.

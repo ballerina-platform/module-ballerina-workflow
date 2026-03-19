@@ -43,10 +43,10 @@ function testOrderWithPaymentCompleted() returns error? {
     StartResponse startResp = check orderPaymentClient->post("/", {orderId: "TEST-PAY-001", item: "laptop"});
     test:assertNotEquals(startResp.workflowId, "", "Workflow ID should not be empty");
 
-    // Give the workflow time to start and begin waiting for the payment signal
+    // Give the workflow time to start and begin waiting for the payment data
     runtime:sleep(2);
 
-    // Send payment signal via HTTP
+    // Send payment data via HTTP
     PaymentResponse _ = check orderPaymentClient->post("/TEST-PAY-001/payment", {amount: 1999.99});
 
     WorkflowResponse result = check orderPaymentClient->get(string `/${startResp.workflowId}/result`);

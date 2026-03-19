@@ -97,13 +97,13 @@ While the workflow is waiting at `wait events.review`:
 
 ## Timeout: Escalate If No Decision Arrives
 
-> **Planned feature:** Racing a data future against a durable timer (`wait f1|f2`) is not yet supported by the workflow runtime. Until this is available, set an external deadline (e.g., a scheduled job or a separate reminder workflow) that sends a timeout event to the waiting workflow.
+> **Planned feature:** Racing a data future against a durable timer (`wait f1|f2`) is not yet supported by the workflow runtime. Until this is available, set an external deadline (e.g., a scheduled job or a separate reminder workflow) that sends a timeout to the waiting workflow.
 
 The intended pattern is to race the data future against a durable timer using Ballerina's **alternate wait** (`wait f1|f2`), which returns the result of whichever future completes first:
 
 ```ballerina
 // Illustrative only — durable timer support is planned.
-// Race the review data event against a 48-hour timeout
+// Race the review data against a 48-hour timeout
 future<ReviewDecision> reviewFuture = events.review;
 future<error?> timeoutFuture = start ctx->sleep({hours: 48});
 
@@ -126,4 +126,4 @@ if raceResult is ReviewDecision {
 
 - [Handle Errors](../handle-errors.md) — Pattern overview and comparison
 - [Compensation Pattern](error-compensation.md) — Roll back instead of escalating
-- [Handle Data](../handle-data.md) — Full reference for the data events mechanism
+- [Handle Data](../handle-data.md) — Full reference for receiving external data

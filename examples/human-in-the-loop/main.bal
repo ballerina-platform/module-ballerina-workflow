@@ -18,7 +18,7 @@
 //
 // Demonstrates forward recovery: when an activity fails and automated retry
 // cannot resolve the problem, the workflow pauses and waits for a human
-// decision signal before continuing. The workflow resumes based on the
+// decision before continuing. The workflow resumes based on the
 // reviewer's choice — approve (retry once more) or cancel.
 //
 // Start the service:
@@ -50,7 +50,7 @@ type OrderResult record {|
     string message;
 |};
 
-# Signal sent by a reviewer to decide how to handle an activity failure.
+# Data sent by a reviewer to decide how to handle an activity failure.
 #
 # + reviewerId - ID of the reviewer making the decision
 # + approved - true to retry the failed step, false to cancel the order
@@ -80,7 +80,7 @@ function chargeCard(string cardToken, decimal amount) returns string|error {
 
 # Charges a credit card for a manual retry approved by a reviewer.
 # Uses the same logic as chargeCard but modelled as a separate activity
-# so it is clearly labelled as "manual retry" in the Temporal event history.
+# so it is clearly labelled as "manual retry" in the workflow event history.
 #
 # + cardToken - The tokenized card reference
 # + amount - The amount to charge
@@ -100,7 +100,7 @@ function chargeCardManualRetry(string cardToken, decimal amount) returns string|
 @workflow:Activity
 function notifyReviewTeam(string orderId, string reason) returns string|error {
     io:println(string `[REVIEW NEEDED] Order ${orderId} payment failed: ${reason}`);
-    io:println("Review team notified. Waiting for decision signal...");
+    io:println("Review team notified. Waiting for decision...");
     return "Notified";
 }
 
@@ -110,7 +110,7 @@ function notifyReviewTeam(string orderId, string reason) returns string|error {
 
 # Processes an order with human-in-the-loop forward recovery for payment failures.
 #
-# If `chargeCard` exhausts its Temporal retries, the workflow:
+# If `chargeCard` exhausts its retries, the workflow:
 #   1. Notifies the review team via `notifyReviewTeam`
 #   2. Pauses by waiting on `events.review`
 #   3. On approval: retries the charge one more time with `chargeCardManualRetry`
@@ -129,7 +129,7 @@ function processOrder(
     record {| future<ReviewDecision> review; |} events
 ) returns OrderResult|error {
 
-    // Attempt payment with 3 Temporal retries
+    // Attempt payment with 3 retries
     string|error paymentResult = ctx->callActivity(chargeCard, {
         "cardToken": input.cardToken,
         "amount": input.amount
@@ -144,7 +144,7 @@ function processOrder(
             "reason": paymentResult.message()
         });
 
-        // Workflow durably pauses here until the "review" signal arrives
+        // Workflow durably pauses here until the "review" data arrives
         ReviewDecision decision = check wait events.review;
         io:println(string `Review decision received from ${decision.reviewerId}: approved=${decision.approved}`);
 
@@ -175,7 +175,7 @@ function processOrder(
 #
 # Endpoints:
 #   POST /api/orders              — creates a new order workflow
-#   POST /api/orders/{id}/review  — sends a reviewer decision signal
+#   POST /api/orders/{id}/review  — sends a reviewer decision
 #   GET  /api/orders/{id}         — retrieves the workflow result (blocks until complete)
 service /api on new http:Listener(8090) {
 

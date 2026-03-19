@@ -14,20 +14,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Human-in-the-Loop (Forward Recovery) Example
+// Human-in-the-Loop Example
 //
-// Demonstrates forward recovery: when an activity fails and automated retry
-// cannot resolve the problem, the workflow pauses and waits for a human
-// decision before continuing. The workflow resumes based on the
-// reviewer's choice — approve (retry once more) or cancel.
+// Demonstrates a workflow that pauses for a human decision before proceeding.
+// Every order above a configured threshold requires manager approval — the
+// workflow durably pauses until a reviewer sends their decision via the
+// HTTP API. Low-value orders are auto-approved.
 //
 // Start the service:
 //   bal run
 //
 // Then use the HTTP API to drive the workflow:
-//   POST /api/orders              — start a new order
-//   POST /api/orders/{id}/review  — send reviewer decision
-//   GET  /api/orders/{id}         — get the final result
+//   POST /api/orders               — start a new order
+//   POST /api/orders/{id}/approve  — send the approval decision
+//   GET  /api/orders/{id}          — get the final result
 
 import ballerina/http;
 import ballerina/io;
@@ -41,7 +41,6 @@ type OrderInput record {|
     string orderId;
     string item;
     decimal amount;
-    string cardToken;
 |};
 
 type OrderResult record {|
@@ -50,121 +49,129 @@ type OrderResult record {|
     string message;
 |};
 
-# Data sent by a reviewer to decide how to handle an activity failure.
+# Approval decision sent by a manager.
 #
-# + reviewerId - ID of the reviewer making the decision
-# + approved - true to retry the failed step, false to cancel the order
-# + note - Optional note explaining the decision
-type ReviewDecision record {|
-    string reviewerId;
+# + approverId - ID of the approver
+# + approved - true to approve the order, false to reject
+# + reason - Optional reason for the decision
+type ApprovalDecision record {|
+    string approverId;
     boolean approved;
-    string? note;
+    string? reason;
 |};
+
+// Orders above this threshold require human approval
+const decimal APPROVAL_THRESHOLD = 500.00;
 
 // ---------------------------------------------------------------------------
 // ACTIVITIES
 // ---------------------------------------------------------------------------
 
-# Charges a credit card for an order.
-# Simulates a transient payment gateway failure to trigger the review path.
+# Validates the order details.
 #
-# + cardToken - The tokenized card reference
-# + amount - The amount to charge
-# + return - Transaction ID or error
+# + orderId - Order identifier
+# + item - Item name
+# + amount - Order amount
+# + return - Error if validation fails
 @workflow:Activity
-function chargeCard(string cardToken, decimal amount) returns string|error {
-    io:println(string `Charging card ${cardToken} for amount ${amount}`);
-    // Simulate payment gateway down — triggers the human-in-the-loop path
-    return error("Payment gateway timeout: no response from acquirer");
+function validateOrder(string orderId, string item, decimal amount) returns error? {
+    io:println(string `[Activity] Validating order ${orderId}: ${item}, $${amount}`);
+    if amount <= 0 {
+        return error("Invalid amount: must be positive");
+    }
 }
 
-# Charges a credit card for a manual retry approved by a reviewer.
-# Uses the same logic as chargeCard but modelled as a separate activity
-# so it is clearly labelled as "manual retry" in the workflow event history.
-#
-# + cardToken - The tokenized card reference
-# + amount - The amount to charge
-# + return - Transaction ID or error
-@workflow:Activity
-function chargeCardManualRetry(string cardToken, decimal amount) returns string|error {
-    io:println(string `Manual retry: charging card ${cardToken} for amount ${amount}`);
-    // Second attempt — simulate recovery (gateway is back)
-    return string `TXN-MANUAL-${cardToken}`;
-}
-
-# Notifies the review team that a payment has failed and needs attention.
+# Notifies the approval team that a new order needs review.
 #
 # + orderId - The order identifier
-# + reason - The failure reason to include in the notification
+# + item - The item being ordered
+# + amount - The order amount
 # + return - Confirmation or error
 @workflow:Activity
-function notifyReviewTeam(string orderId, string reason) returns string|error {
-    io:println(string `[REVIEW NEEDED] Order ${orderId} payment failed: ${reason}`);
-    io:println("Review team notified. Waiting for decision...");
+function notifyApprover(string orderId, string item, decimal amount) returns string|error {
+    io:println(string `[APPROVAL NEEDED] Order ${orderId}: ${item} ($${amount}) requires manager approval`);
     return "Notified";
+}
+
+# Fulfills an approved order.
+#
+# + orderId - The order identifier
+# + item - The item to fulfill
+# + return - Fulfillment confirmation or error
+@workflow:Activity
+function fulfillOrder(string orderId, string item) returns string|error {
+    io:println(string `[Activity] Fulfilling order ${orderId}: ${item}`);
+    return string `FULFILLED-${orderId}`;
 }
 
 // ---------------------------------------------------------------------------
 // WORKFLOW
 // ---------------------------------------------------------------------------
 
-# Processes an order with human-in-the-loop forward recovery for payment failures.
+# Processes an order with human-in-the-loop approval for high-value orders.
 #
-# If `chargeCard` exhausts its retries, the workflow:
-#   1. Notifies the review team via `notifyReviewTeam`
-#   2. Pauses by waiting on `events.review`
-#   3. On approval: retries the charge one more time with `chargeCardManualRetry`
-#   4. On rejection: returns a CANCELLED result
+# 1. Validates the order
+# 2. If amount > threshold — notifies the approval team and pauses
+# 3. Waits for a manager's approval decision
+# 4. If approved (or auto-approved) — fulfills the order
+# 5. If rejected — returns REJECTED
 #
 # The workflow is fully durable while paused — worker restarts do not lose state.
 #
 # + ctx - Workflow context for calling activities
 # + input - Order details
-# + events - Record containing the review decision future
+# + events - Record containing the approval decision future
 # + return - Final order result or error
 @workflow:Workflow
 function processOrder(
     workflow:Context ctx,
     OrderInput input,
-    record {| future<ReviewDecision> review; |} events
+    record {| future<ApprovalDecision> approval; |} events
 ) returns OrderResult|error {
 
-    // Attempt payment with 3 retries
-    string|error paymentResult = ctx->callActivity(chargeCard, {
-        "cardToken": input.cardToken,
+    // Step 1: Validate the order
+    check ctx->callActivity(validateOrder, {
+        "orderId": input.orderId,
+        "item": input.item,
         "amount": input.amount
-    }, retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+    });
 
-    if paymentResult is error {
-        io:println(string `Payment failed after retries: ${paymentResult.message()}`);
-
-        // Notify the review team and pause for a human decision
-        string _ = check ctx->callActivity(notifyReviewTeam, {
+    // Step 2: Check if approval is needed
+    if input.amount > APPROVAL_THRESHOLD {
+        // Notify the approval team
+        string _ = check ctx->callActivity(notifyApprover, {
             "orderId": input.orderId,
-            "reason": paymentResult.message()
+            "item": input.item,
+            "amount": input.amount
         });
 
-        // Workflow durably pauses here until the "review" data arrives
-        ReviewDecision decision = check wait events.review;
-        io:println(string `Review decision received from ${decision.reviewerId}: approved=${decision.approved}`);
+        // Workflow durably pauses here until the "approval" data arrives
+        io:println(string `[Workflow] Waiting for approval for order: ${input.orderId}`);
+        ApprovalDecision decision = check wait events.approval;
+        io:println(string `[Workflow] Decision from ${decision.approverId}: approved=${decision.approved}`);
 
         if !decision.approved {
             return {
                 orderId: input.orderId,
-                status: "CANCELLED",
-                message: string `Cancelled by ${decision.reviewerId}: ${decision.note ?: "no note"}`
+                status: "REJECTED",
+                message: string `Rejected by ${decision.approverId}: ${decision.reason ?: "no reason given"}`
             };
         }
-
-        // Reviewer approved — attempt one manual retry
-        string retryResult = check ctx->callActivity(chargeCardManualRetry, {
-            "cardToken": input.cardToken,
-            "amount": input.amount
-        });
-        return {orderId: input.orderId, status: "COMPLETED", message: retryResult};
+    } else {
+        io:println(string `[Workflow] Order ${input.orderId} auto-approved (amount $${input.amount} <= threshold)`);
     }
 
-    return {orderId: input.orderId, status: "COMPLETED", message: paymentResult};
+    // Step 3: Fulfill the order
+    string fulfillmentId = check ctx->callActivity(fulfillOrder, {
+        "orderId": input.orderId,
+        "item": input.item
+    });
+
+    return {
+        orderId: input.orderId,
+        status: "COMPLETED",
+        message: string `Order fulfilled: ${fulfillmentId}`
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -174,9 +181,9 @@ function processOrder(
 # HTTP service that exposes the human-in-the-loop workflow over REST.
 #
 # Endpoints:
-#   POST /api/orders              — creates a new order workflow
-#   POST /api/orders/{id}/review  — sends a reviewer decision
-#   GET  /api/orders/{id}         — retrieves the workflow result (blocks until complete)
+#   POST /api/orders               — creates a new order workflow
+#   POST /api/orders/{id}/approve  — sends the approval decision
+#   GET  /api/orders/{id}          — retrieves the workflow result
 service /api on new http:Listener(8090) {
 
     # Starts a new order processing workflow.
@@ -186,12 +193,12 @@ service /api on new http:Listener(8090) {
         return {workflowId};
     }
 
-    # Sends the reviewer's decision to a paused workflow.
-    resource function post orders/[string workflowId]/review(@http:Payload ReviewDecision decision)
+    # Sends the manager's approval decision to a waiting workflow.
+    resource function post orders/[string workflowId]/approve(@http:Payload ApprovalDecision decision)
             returns record {|string status; string message;|}|error {
-        check workflow:sendData(processOrder, workflowId, "review", decision);
-        io:println(string `Review decision sent to workflow ${workflowId}`);
-        return {status: "accepted", message: "Review decision delivered to workflow"};
+        check workflow:sendData(processOrder, workflowId, "approval", decision);
+        io:println(string `Approval decision sent to workflow ${workflowId}`);
+        return {status: "accepted", message: "Approval decision delivered to workflow"};
     }
 
     # Retrieves the final result of a workflow. Blocks until the workflow completes.

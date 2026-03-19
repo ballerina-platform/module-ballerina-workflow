@@ -6,7 +6,7 @@ type StartResponse record {|
     string workflowId;
 |};
 
-type ReviewResponse record {|
+type ApproveResponse record {|
     string status;
     string message;
 |};
@@ -17,71 +17,92 @@ type WorkflowResponse record {
 };
 
 // ---------------------------------------------------------------------------
-// APPROVED PATH — reviewer approves, workflow completes via manual retry
+// HIGH-VALUE ORDER — requires approval, manager approves
 // ---------------------------------------------------------------------------
 
 @test:Config {}
-function testApprovedPath() returns error? {
+function testApprovedOrder() returns error? {
     http:Client cl = check new ("http://localhost:8090/api");
 
-    // Start a new order workflow
+    // Start a high-value order (above threshold)
     StartResponse startResp = check cl->post("/orders", {
         orderId: "ORD-TEST-001",
         item: "standing-desk",
-        amount: 799.00,
-        cardToken: "tok_visa_4242"
+        amount: 799.00
     });
     test:assertNotEquals(startResp.workflowId, "", "Workflow ID should not be empty");
 
-    // Wait for workflow to reach the review-wait point (after retries exhaust)
-    runtime:sleep(10);
+    // Wait for workflow to reach the approval wait point
+    runtime:sleep(3);
 
-    // Send approved review decision
-    ReviewResponse reviewResp = check cl->post(string `/orders/${startResp.workflowId}/review`, {
-        reviewerId: "reviewer-test-1",
+    // Approve the order
+    ApproveResponse approveResp = check cl->post(string `/orders/${startResp.workflowId}/approve`, {
+        approverId: "manager-1",
         approved: true,
-        note: "Manual gateway check passed"
+        reason: "Approved for Q2 budget"
     });
-    test:assertEquals(reviewResp.status, "accepted");
+    test:assertEquals(approveResp.status, "accepted");
 
-    // Get workflow result (blocks until complete)
+    // Get workflow result
     WorkflowResponse result = check cl->get(string `/orders/${startResp.workflowId}`);
     test:assertEquals(result.status, "COMPLETED");
     test:assertEquals(result.result.status, "COMPLETED");
     test:assertEquals(result.result.orderId, "ORD-TEST-001");
-    test:assertTrue(result.result.message.includes("TXN-MANUAL"), "Should contain manual retry transaction ID");
+    test:assertTrue(result.result.message.includes("FULFILLED"), "Should contain fulfillment ID");
 }
 
 // ---------------------------------------------------------------------------
-// CANCELLED PATH — reviewer cancels, workflow returns CANCELLED status
+// HIGH-VALUE ORDER — requires approval, manager rejects
 // ---------------------------------------------------------------------------
 
 @test:Config {}
-function testCancelledPath() returns error? {
+function testRejectedOrder() returns error? {
     http:Client cl = check new ("http://localhost:8090/api");
 
-    // Start a new order workflow
+    // Start a high-value order
     StartResponse startResp = check cl->post("/orders", {
         orderId: "ORD-TEST-002",
-        item: "standing-desk",
-        amount: 799.00,
-        cardToken: "tok_visa_4242"
+        item: "server-rack",
+        amount: 2500.00
     });
 
-    // Wait for workflow to reach the review-wait point
-    runtime:sleep(10);
+    // Wait for workflow to reach the approval wait point
+    runtime:sleep(3);
 
-    // Send cancelled review decision
-    ReviewResponse _ = check cl->post(string `/orders/${startResp.workflowId}/review`, {
-        reviewerId: "reviewer-test-2",
+    // Reject the order
+    ApproveResponse _ = check cl->post(string `/orders/${startResp.workflowId}/approve`, {
+        approverId: "manager-2",
         approved: false,
-        note: "Fraud risk"
+        reason: "Budget exceeded"
     });
 
     // Get workflow result
     WorkflowResponse result = check cl->get(string `/orders/${startResp.workflowId}`);
     test:assertEquals(result.status, "COMPLETED");
-    test:assertEquals(result.result.status, "CANCELLED");
+    test:assertEquals(result.result.status, "REJECTED");
     test:assertEquals(result.result.orderId, "ORD-TEST-002");
-    test:assertTrue(result.result.message.includes("reviewer-test-2"), "Should contain reviewer ID");
+    test:assertTrue(result.result.message.includes("manager-2"), "Should contain approver ID");
+}
+
+// ---------------------------------------------------------------------------
+// LOW-VALUE ORDER — auto-approved, no human interaction needed
+// ---------------------------------------------------------------------------
+
+@test:Config {}
+function testAutoApprovedOrder() returns error? {
+    http:Client cl = check new ("http://localhost:8090/api");
+
+    // Start a low-value order (below threshold)
+    StartResponse startResp = check cl->post("/orders", {
+        orderId: "ORD-TEST-003",
+        item: "mouse-pad",
+        amount: 25.00
+    });
+
+    // Get workflow result — should complete without approval
+    WorkflowResponse result = check cl->get(string `/orders/${startResp.workflowId}`);
+    test:assertEquals(result.status, "COMPLETED");
+    test:assertEquals(result.result.status, "COMPLETED");
+    test:assertEquals(result.result.orderId, "ORD-TEST-003");
+    test:assertTrue(result.result.message.includes("FULFILLED"), "Should contain fulfillment ID");
 }

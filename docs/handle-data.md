@@ -168,5 +168,7 @@ function conditionalProcess(
 
 ## What's Next
 
+- [Human in the Loop](patterns/human-in-the-loop.md) — Pause for a human decision (approve or reject)
+- [Forward Recovery](patterns/forward-recovery.md) — Pause for corrected data and retry a failed activity
 - [Handle Errors](handle-errors.md) — Error handling patterns
 

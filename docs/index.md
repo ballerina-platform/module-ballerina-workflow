@@ -20,12 +20,13 @@ The Ballerina Workflow module provides durable workflow orchestration for Baller
 | [Write Workflow Functions](write-workflow-functions.md) | Workflow signatures, determinism rules, durable sleep, and metadata |
 | [Write Activity Functions](write-activity-functions.md) | Activity patterns, error handling, and retry options |
 | [Handle Data](handle-data.md) | Receiving external data, waiting for human input, and sending data to running workflows |
-| [Handle Errors](handle-errors.md) | Error propagation, retry, fallback, compensation, and human-in-the-loop patterns |
+| &emsp;[Human in the Loop](patterns/human-in-the-loop.md) | Pause the workflow for a human decision (approve or reject) |
+| [Handle Errors](handle-errors.md) | Error propagation, retry, fallback, compensation patterns |
 | &emsp;[Propagate — Fail the Workflow](patterns/error-propagation.md) | Use `check` to fail immediately when a critical activity fails |
 | &emsp;[Fallback — Try an Alternative](patterns/error-fallback.md) | Try a secondary activity when the primary exhausts its retries |
 | &emsp;[Compensation (Saga)](patterns/error-compensation.md) | Undo committed steps when a later step fails |
 | &emsp;[Graceful Completion](patterns/graceful-completion.md) | Tolerate non-critical activity failures and complete successfully |
-| &emsp;[Human in the Loop](patterns/human-in-the-loop.md) | Pause and wait for a human decision (forward recovery) |
+| &emsp;[Forward Recovery](patterns/forward-recovery.md) | Pause for corrected data and retry a failed activity |
 | [Configure the Module](configure-the-module.md) | Connection settings, TLS, namespaces, and runtime options |
 
 ## Examples
@@ -35,10 +36,10 @@ The Ballerina Workflow module provides durable workflow orchestration for Baller
 | [Get Started](../examples/get-started/) | Write and run your first workflow |
 | [Order Processing](../examples/order-processing/) | HTTP service that starts an order workflow and polls for results |
 | [Order with Payment](../examples/order-with-payment/) | Order workflow that pauses and waits for a payment confirmation |
-| [CRM Sync](../examples/crm-sync/) | CRM contact sync workflow triggered by HTTP webhook events |
+| [Human in the Loop](../examples/human-in-the-loop/) | Pause the workflow for a human decision (approve or reject) |
 | [Error Propagation](../examples/error-propagation/) | Propagate an activity error to fail the workflow |
 | [Error Fallback](../examples/error-fallback/) | Fall back to a secondary activity when the primary fails |
 | [Error Compensation](../examples/error-compensation/) | Saga pattern: undo committed steps when a later step fails |
 | [Graceful Completion](../examples/graceful-completion/) | Tolerate non-critical activity failures and complete successfully |
-| [Human in the Loop](../examples/human-in-the-loop/) | Pause and wait for a human decision (forward recovery) |
+| [Forward Recovery](../examples/forward-recovery/) | Pause for corrected data and retry a failed activity |
 

@@ -1,98 +1,87 @@
-# Pattern: Human in the Loop (Forward Recovery)
+# Pattern: Human in the Loop
 
-When automated retries cannot resolve a failure — a payment dispute, a fraud alert, a compliance hold — pause the workflow and wait for a human decision before continuing. This is **forward recovery**: instead of rolling back or failing, the workflow holds its durable state and resumes the moment a reviewer sends a decision.
+Some workflow steps require a human judgement call — approvals, reviews, compliance checks. The workflow pauses durably and waits for a person to send a decision via external data, then continues based on that decision.
 
-> **Runnable example:** [`examples/human-in-the-loop/`](../../examples/human-in-the-loop/)
+> **Runnable example:** [`examples/human-in-the-loop/`](../../examples/human-in-the-loop/) — high-value orders require manager approval before fulfillment.
 
 ## When to Use
 
-- The failure requires a judgement call that code alone cannot make.
-- Rolling back is undesirable (e.g., inventory is already reserved, a physical action has occurred).
-- You want the decision itself to be part of the durable workflow history.
-- The resolution may take minutes, hours, or days — and the workflow must survive process restarts during that time.
+- A business rule requires human sign-off before proceeding (purchase approval, content review, compliance gate).
+- The decision may take minutes, hours, or days — the workflow must survive process restarts during the wait.
+- You want the decision to be part of the durable workflow history.
 
 ## Code Pattern
 
 ### Declare the Data Type and Workflow Signature
 
 ```ballerina
-type ReviewDecision record {|
-    string reviewerId;
-    boolean approved;   // true = continue; false = cancel
-    string? note;
+type ApprovalDecision record {|
+    string approverId;
+    boolean approved;
+    string? reason;
 |};
 
 @workflow:Workflow
 function processOrder(
     workflow:Context ctx,
     OrderInput input,
-    record {| future<ReviewDecision> review; |} events   // declares the "review" data name
+    record {| future<ApprovalDecision> approval; |} events
 ) returns OrderResult|error {
 ```
 
-The third parameter is the events record. Each field name (`review`) is the data name used when sending data to this workflow.
+The third parameter is the events record. Each field name (`approval`) is the data name used when sending data to this workflow.
 
-### Attempt Automation — Escalate on Failure
+### Pause for Human Approval
 
 ```ballerina
 @workflow:Workflow
 function processOrder(
     workflow:Context ctx,
     OrderInput input,
-    record {| future<ReviewDecision> review; |} events
+    record {| future<ApprovalDecision> approval; |} events
 ) returns OrderResult|error {
-    // Attempt automated payment with retries
-    string|error paymentResult = ctx->callActivity(chargeCard, {
-        "cardToken": input.cardToken,
+    // Validate and prepare
+    check ctx->callActivity(validateOrder, {...});
+
+    // Notify the approval team
+    string _ = check ctx->callActivity(notifyApprover, {
+        "orderId": input.orderId,
+        "item": input.item,
         "amount": input.amount
-    }, retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+    });
 
-    if paymentResult is error {
-        // Notify the review team and pause
-        string _ = check ctx->callActivity(notifyReviewTeam, {
-            "orderId": input.orderId,
-            "reason": paymentResult.message()
-        });
+    // Workflow pauses here — fully durable — until a human sends the "approval" data
+    ApprovalDecision decision = check wait events.approval;
 
-        // Workflow pauses here — fully durable — until a human sends the "review" data
-        ReviewDecision decision = check wait events.review;
-
-        if !decision.approved {
-            return {orderId: input.orderId, status: "CANCELLED",
-                    message: "Cancelled by " + decision.reviewerId};
-        }
-
-        // Reviewer approved — attempt one final manual retry
-        string _ = check ctx->callActivity(chargeCardManualRetry, {
-            "cardToken": input.cardToken,
-            "amount": input.amount
-        });
-        return {orderId: input.orderId, status: "COMPLETED", message: "Manual retry succeeded"};
+    if !decision.approved {
+        return {orderId: input.orderId, status: "REJECTED",
+                message: "Rejected by " + decision.approverId};
     }
 
-    return {orderId: input.orderId, status: "COMPLETED", message: paymentResult};
+    // Approved — fulfill the order
+    string fulfillmentId = check ctx->callActivity(fulfillOrder, {...});
+    return {orderId: input.orderId, status: "COMPLETED", message: fulfillmentId};
 }
 ```
 
 ### Send the Decision from an HTTP Endpoint
 
 ```ballerina
-service /orders on new http:Listener(9090) {
-    resource function post [string orderId]/review(ReviewDecision decision) returns json|error {
-        string workflowId = getWorkflowId(orderId);   // look up from your store
-        check workflow:sendData(processOrder, workflowId, "review", decision);
+service /api on new http:Listener(8090) {
+    resource function post orders/[string workflowId]/approve(ApprovalDecision decision) returns json|error {
+        check workflow:sendData(processOrder, workflowId, "approval", decision);
         return {status: "decision received"};
     }
 }
 ```
 
-`workflow:sendData` delivers the data immediately. The workflow resumes from the `wait events.review` point, carrying the `ReviewDecision` value.
+`workflow:sendData` delivers the data immediately. The workflow resumes from the `wait events.approval` point.
 
 ## Durability While Paused
 
-While the workflow is waiting at `wait events.review`:
+While the workflow is waiting at `wait events.approval`:
 - Worker process restarts do not lose the paused state — the workflow replays its Event History and returns to the `wait` point.
-- The `notifyReviewTeam` activity is not re-executed on replay — its result is already in the history.
+- The `notifyApprover` activity is not re-executed on replay — its result is already in the history.
 - The data can also be sent directly from the workflow engine's Web UI without going through your application's HTTP API (useful during incidents).
 
 ## Timeout: Escalate If No Decision Arrives
@@ -103,20 +92,19 @@ The intended pattern is to race the data future against a durable timer using Ba
 
 ```ballerina
 // Illustrative only — durable timer support is planned.
-// Race the review data against a 48-hour timeout
-future<ReviewDecision> reviewFuture = events.review;
+future<ApprovalDecision> approvalFuture = events.approval;
 future<error?> timeoutFuture = start ctx->sleep({hours: 48});
 
 // Alternate wait: returns whichever future completes first
-ReviewDecision|error? raceResult = wait reviewFuture|timeoutFuture;
+ApprovalDecision|error? raceResult = wait approvalFuture|timeoutFuture;
 
-if raceResult is ReviewDecision {
-    // Data arrived before timeout
-    ReviewDecision decision = raceResult;
+if raceResult is ApprovalDecision {
+    // Decision arrived before timeout
+    ApprovalDecision decision = raceResult;
     // ... process decision
 } else {
-    // Timeout expired (raceResult is () or error) — auto-cancel the order
-    return {orderId: input.orderId, status: "CANCELLED", message: "Review timed out"};
+    // Timeout expired — auto-reject the order
+    return {orderId: input.orderId, status: "REJECTED", message: "Approval timed out"};
 }
 ```
 
@@ -124,6 +112,6 @@ if raceResult is ReviewDecision {
 
 ## What's Next
 
-- [Handle Errors](../handle-errors.md) — Pattern overview and comparison
-- [Compensation Pattern](error-compensation.md) — Roll back instead of escalating
+- [Forward Recovery](forward-recovery.md) — Pause for corrected data and retry a failed activity
 - [Handle Data](../handle-data.md) — Full reference for receiving external data
+- [Handle Errors](../handle-errors.md) — Error handling patterns overview

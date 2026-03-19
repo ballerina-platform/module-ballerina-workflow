@@ -181,63 +181,54 @@ function processOrder(workflow:Context ctx, OrderInput input) returns string|err
 
 ---
 
-## Forward Recovery — Human in the Loop
+## Forward Recovery
 
-When an activity fails due to a condition that code alone cannot resolve (e.g., a payment dispute, a compliance hold, an ambiguous data state), you can pause the workflow and wait for a human decision rather than failing immediately. This is called **forward recovery**: instead of rolling back, you hold state and let a person decide how to proceed.
+When an activity fails due to a condition that code alone cannot resolve (e.g., a payment dispute, a compliance hold, an ambiguous data state), you can pause the workflow and wait for a human to supply **corrected data**, then retry the failed activity with the updated values. This is called **forward recovery**: instead of rolling back, you hold state and move forward once the problem is fixed.
 
-### Define the Decision Type
+### Define the Correction Type
 
 ```ballerina
-type ReviewDecision record {|
-    string reviewerId;
-    boolean approved;     // true = retry the failed step; false = cancel the order
-    string? note;
+type PaymentCorrection record {|
+    string cardToken;     // new or corrected card token
+    decimal? amount;      // nil = keep original amount
 |};
 ```
 
-### Pause and Wait After Failure
+### Pause and Wait for Corrected Data
 
 ```ballerina
 @workflow:Workflow
 function orderProcess(
     workflow:Context ctx,
     OrderInput input,
-    record {| future<ReviewDecision> review; |} events
+    record {| future<PaymentCorrection> paymentRetry; |} events
 ) returns OrderResult|error {
-    // Attempt payment with retries
-    string|error paymentResult = ctx->callActivity(chargeCard,
-            {"amount": input.amount, "cardToken": input.cardToken},
-            retryOnError = true, maxRetries = 3, retryDelay = 2.0);
+    // Attempt payment
+    string|error paymentResult = ctx->callActivity(processPayment,
+            {"cardToken": input.cardToken, "amount": input.amount});
 
     if paymentResult is error {
-        // Payment exhausted retries — notify the review team and pause
-        check ctx->callActivity(notifyReviewTeam, {
+        // Payment failed — notify the user and pause for corrected data
+        check ctx->callActivity(notifyPaymentFailure, {
             "orderId": input.orderId,
             "reason": paymentResult.message()
         });
 
-        // Workflow pauses here until a human sends the "review" data
-        ReviewDecision decision = check wait events.review;
+        // Workflow pauses here until the user sends corrected payment details
+        PaymentCorrection correction = check wait events.paymentRetry;
 
-        if !decision.approved {
-            return {
-                orderId: input.orderId,
-                status: "CANCELLED",
-                message: "Cancelled by " + decision.reviewerId + ": " + (decision.note ?: "")
-            };
-        }
-
-        // Human approved a retry — attempt payment one more time
-        string retryPayment = check ctx->callActivity(chargeCard,
-                {"amount": input.amount, "cardToken": input.cardToken});
-        return {orderId: input.orderId, status: "COMPLETED", message: retryPayment};
+        // Retry payment with corrected values
+        string txnId = check ctx->callActivity(processPayment,
+                {"cardToken": correction.cardToken,
+                 "amount": correction.amount ?: input.amount});
+        return {orderId: input.orderId, status: "COMPLETED", message: txnId};
     }
 
     return {orderId: input.orderId, status: "COMPLETED", message: paymentResult};
 }
 ```
 
-### Send the Decision from an HTTP Endpoint
+### Send Corrected Data from an HTTP Endpoint
 
 ```ballerina
 import ballerina/http;
@@ -252,21 +243,21 @@ service /orders on new http:Listener(9090) {
         return {status: "started", workflowId};
     }
 
-    // Called by a reviewer from an internal dashboard
-    resource function post [string orderId]/review(ReviewDecision decision) returns json|error {
+    // Called by the user to supply corrected payment details
+    resource function post [string orderId]/retryPayment(PaymentCorrection correction) returns json|error {
         string? workflowId = activeWorkflows[orderId];
         if workflowId is () {
             return error("No active workflow for order: " + orderId);
         }
-        check workflow:sendData(orderProcess, workflowId, "review", decision);
-        return {status: "decision received"};
+        check workflow:sendData(orderProcess, workflowId, "paymentRetry", correction);
+        return {status: "correction received"};
     }
 }
 ```
 
-While the workflow is paused waiting for `events.review`, it is fully durable. If the workflow worker restarts, the workflow replays from its history and returns to the `wait` point exactly.
+While the workflow is paused waiting for `events.paymentRetry`, it is fully durable. If the workflow worker restarts, the workflow replays from its history and returns to the `wait` point exactly.
 
-> **Pattern guide:** [patterns/human-in-the-loop.md](patterns/human-in-the-loop.md)
+> **Pattern guide:** [patterns/forward-recovery.md](patterns/forward-recovery.md)
 
 ---
 
@@ -309,8 +300,8 @@ If your workflow is waiting for external data (as shown above), you can send the
 
 1. Open the running workflow's detail view
 2. Click **Send Data**
-3. Enter the data name (must match the field name in the events record, e.g., `"review"`)
-4. Paste the JSON payload matching the data type (e.g., `{"reviewerId": "ops-1", "approved": true, "note": "manually approved"}`)
+3. Enter the data name (must match the field name in the events record, e.g., `"paymentRetry"`)
+4. Paste the JSON payload matching the data type (e.g., `{"cardToken": "tok_new_card", "amount": null}`)
 5. Click **Send** — the workflow resumes immediately
 
 This is useful during incidents when the normal data delivery path is unavailable.
@@ -323,7 +314,8 @@ This is useful during incidents when the normal data delivery path is unavailabl
 - [Fallback Pattern](patterns/error-fallback.md) — Try an alternative when the primary exhausts retries
 - [Compensation Pattern](patterns/error-compensation.md) — Undo committed steps with the Saga pattern
 - [Graceful Completion](patterns/graceful-completion.md) — Tolerate non-critical failures and complete successfully
-- [Human in the Loop](patterns/human-in-the-loop.md) — Pause and wait for a human decision
-- [Handle Data](handle-data.md) — Receiving external data, human-in-the-loop patterns
+- [Forward Recovery](patterns/forward-recovery.md) — Pause for corrected data and retry a failed activity
+- [Human in the Loop](patterns/human-in-the-loop.md) — Pause for a human decision (approve or reject)
+- [Handle Data](handle-data.md) — Receiving external data and human-in-the-loop patterns
 - [Write Workflow Functions](write-workflow-functions.md) — Workflow function details
 - [Write Activity Functions](write-activity-functions.md) — Activity options and retry configuration

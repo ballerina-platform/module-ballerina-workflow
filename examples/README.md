@@ -9,10 +9,10 @@ The `ballerina/workflow` library provides practical examples illustrating usage 
 | [error-fallback](error-fallback/) | Fall back to a secondary activity when the primary exhausts its retries |
 | [error-compensation](error-compensation/) | Saga pattern: run compensating activities to undo committed steps when a later step fails |
 | [graceful-completion](graceful-completion/) | Tolerate failures in non-critical activities and complete the workflow successfully |
-| [human-in-the-loop](human-in-the-loop/) | Forward recovery: pause the workflow after failure and wait for a human decision |
 | [order-processing](order-processing/) | HTTP service that starts an order workflow and polls for results |
 | [order-with-payment](order-with-payment/) | Order workflow that pauses and waits for a payment confirmation |
-| [crm-sync](crm-sync/) | CRM contact sync workflow triggered by HTTP webhook events |
+| [human-in-the-loop](human-in-the-loop/) | Pause the workflow for a human decision (approve or reject) |
+| [forward-recovery](forward-recovery/) | Pause for corrected data and retry a failed activity |
 
 ## Prerequisites
 

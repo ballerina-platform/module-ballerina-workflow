@@ -85,19 +85,34 @@ public final class WaitUtils {
     public static Object awaitFutures(BObject self, BArray futures, long minCount,
                                       Object timeout, BTypedesc typedesc) {
         int total = futures.size();
-        int required = (int) minCount;
 
-        if (required < 1 || required > total) {
+        // Extract unique FutureValue references using identity comparison to prevent
+        // duplicate future instances from being counted more than once.
+        java.util.IdentityHashMap<FutureValue, Boolean> seen = new java.util.IdentityHashMap<>(total);
+        FutureValue[] futureValues = new FutureValue[total];
+        int uniqueCount = 0;
+        for (int i = 0; i < total; i++) {
+            FutureValue fv = (FutureValue) futures.get(i);
+            if (seen.putIfAbsent(fv, Boolean.TRUE) == null) {
+                futureValues[uniqueCount++] = fv;
+            }
+        }
+        if (uniqueCount < total) {
+            futureValues = java.util.Arrays.copyOf(futureValues, uniqueCount);
+            total = uniqueCount;
+        }
+
+        // Validate minCount as long before casting to int to avoid truncation overflow.
+        if (minCount < 1 || minCount > total) {
             return ErrorCreator.createError(StringUtils.fromString(
-                    "Invalid minCount=" + required + " for " + total
+                    "Invalid minCount=" + minCount + " for " + total
                             + " futures: minCount must be between 1 and " + total));
         }
+        int required = (int) minCount;
 
-        // Extract FutureValue references
-        FutureValue[] futureValues = new FutureValue[total];
-        for (int i = 0; i < total; i++) {
-            futureValues[i] = (FutureValue) futures.get(i);
-        }
+        // Final aliases required for use inside lambda expressions.
+        final FutureValue[] lambdaFutures = futureValues;
+        final int lambdaRequired = required;
 
         boolean replaying = Workflow.isReplaying();
         if (!replaying) {
@@ -111,9 +126,9 @@ public final class WaitUtils {
             long timeoutMillis = durationToMillis((BMap<BString, Object>) timeoutMap);
             conditionMet = Workflow.await(
                     java.time.Duration.ofMillis(timeoutMillis),
-                    () -> countDone(futureValues) >= required);
+                    () -> countDone(lambdaFutures) >= lambdaRequired);
         } else {
-            Workflow.await(() -> countDone(futureValues) >= required);
+            Workflow.await(() -> countDone(lambdaFutures) >= lambdaRequired);
             conditionMet = true;
         }
 

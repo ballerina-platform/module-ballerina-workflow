@@ -21,6 +21,7 @@ package io.ballerina.lib.workflow.runtime;
 import io.ballerina.lib.workflow.utils.CorrelationExtractor;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
 import io.temporal.client.WorkflowClient;
+import io.temporal.client.WorkflowNotFoundException;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import org.slf4j.Logger;
@@ -215,10 +216,16 @@ public final class WorkflowRuntime {
                 workflowStub.signal(signalName);
             }
 
-            LOGGER.debug("Sent signal directly to workflow: id={}, signalName={}", 
+            LOGGER.debug("Sent signal directly to workflow: id={}, signalName={}",
                     workflowId, signalName);
             return true;
 
+        } catch (WorkflowNotFoundException e) {
+            // The workflow already completed before this signal was delivered.
+            // This is a normal race condition (e.g. alternate-wait, timeout) — not an error.
+            LOGGER.debug("Signal '{}' dropped: workflow {} has already completed",
+                    signalName, workflowId);
+            throw new RuntimeException("Failed to send signal: " + e.getMessage(), e);
         } catch (Exception e) {
             LOGGER.error("Failed to send signal to workflow {}: {}", workflowId, e.getMessage(), e);
             throw new RuntimeException("Failed to send signal: " + e.getMessage(), e);

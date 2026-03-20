@@ -34,6 +34,16 @@ if [[ ! -f "$BAL_HOME_DIR/Ballerina.toml" ]]; then
 fi
 BAL_PACKAGE_NAME=$(awk -F'"' '/^name/ {print $2}' "$BAL_HOME_DIR/Ballerina.toml")
 
+# Validate the package name before using it in any destructive operations
+if [[ -z "$BAL_PACKAGE_NAME" ]]; then
+  echo "Error: Could not read package name from Ballerina.toml"
+  exit 1
+fi
+if ! [[ "$BAL_PACKAGE_NAME" =~ ^[a-zA-Z0-9_.:-]+$ ]]; then
+  echo "Error: Invalid package name '$BAL_PACKAGE_NAME' — expected alphanumeric, underscore, dot, colon, or hyphen characters only"
+  exit 1
+fi
+
 # Push the package to the local repository
 echo "Packing and pushing the Ballerina package..."
 cd "$BAL_HOME_DIR"

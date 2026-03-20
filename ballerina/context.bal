@@ -48,7 +48,7 @@ public client class Context {
     #
     # By default (`retryOnError = false`), any error returned by the activity is passed
     # back to the workflow as a normal return value so that workflow logic can handle it
-    # explicitly. Set `retryOnError = true` to enable Temporal's retry policy; when all
+    # explicitly. Set `retryOnError = true` to enable the runtime retry policy; when all
     # retries are exhausted the error propagates and the workflow fails unless it is caught.
     #
     # Example:

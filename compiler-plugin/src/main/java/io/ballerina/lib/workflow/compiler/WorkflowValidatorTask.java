@@ -21,27 +21,38 @@ package io.ballerina.lib.workflow.compiler;
 import io.ballerina.compiler.api.SemanticModel;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.FunctionTypeSymbol;
+import io.ballerina.compiler.api.symbols.FutureTypeSymbol;
+import io.ballerina.compiler.api.symbols.ModuleSymbol;
 import io.ballerina.compiler.api.symbols.ParameterKind;
 import io.ballerina.compiler.api.symbols.ParameterSymbol;
 import io.ballerina.compiler.api.symbols.RecordTypeSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
+import io.ballerina.compiler.api.symbols.TupleTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeDescKind;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
+import io.ballerina.compiler.api.symbols.UnionTypeSymbol;
 import io.ballerina.compiler.syntax.tree.DefaultableParameterNode;
 import io.ballerina.compiler.syntax.tree.ExpressionNode;
+import io.ballerina.compiler.syntax.tree.FieldAccessExpressionNode;
+import io.ballerina.compiler.syntax.tree.ForkStatementNode;
 import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
 import io.ballerina.compiler.syntax.tree.FunctionCallExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
+import io.ballerina.compiler.syntax.tree.ListConstructorExpressionNode;
 import io.ballerina.compiler.syntax.tree.MappingConstructorExpressionNode;
 import io.ballerina.compiler.syntax.tree.MappingFieldNode;
+import io.ballerina.compiler.syntax.tree.NamedWorkerDeclarationNode;
+import io.ballerina.compiler.syntax.tree.Node;
 import io.ballerina.compiler.syntax.tree.NodeVisitor;
 import io.ballerina.compiler.syntax.tree.ParameterNode;
 import io.ballerina.compiler.syntax.tree.PositionalArgumentNode;
 import io.ballerina.compiler.syntax.tree.RemoteMethodCallActionNode;
 import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
 import io.ballerina.compiler.syntax.tree.SpecificFieldNode;
+import io.ballerina.compiler.syntax.tree.StartActionNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
+import io.ballerina.compiler.syntax.tree.WaitFieldsListNode;
 import io.ballerina.projects.plugins.AnalysisTask;
 import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
 import io.ballerina.tools.diagnostics.DiagnosticFactory;
@@ -82,6 +93,12 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
             validateNoDirectActivityCalls(functionNode, context);
             // Validate no time:utcNow() calls are made (non-deterministic)
             validateNoUtcNowCalls(functionNode, context);
+            // Validate no wait { ... } (multiple wait) is used on event futures
+            validateNoWaitMultiple(functionNode, context);
+            // Validate waitForData usage: futures from events param, type order matches
+            validateWaitForDataUsage(functionNode, context);
+            // Validate no concurrency primitives (worker/fork/start) inside @Workflow
+            validateNoConcurrencyPrimitives(functionNode, context);
         }
 
         // Check if function has @Activity annotation
@@ -674,6 +691,39 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
     }
 
     /**
+     * Validates that no {@code wait { ... }} (multiple wait) expressions are used
+     * inside @Workflow functions. The runtime does not support
+     * {@code handleWaitMultiple} for Temporal event futures. Users should use
+     * {@code wait f1}, {@code wait f1|f2}, or {@code workflow:waitForData()} instead.
+     */
+    private void validateNoWaitMultiple(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context) {
+        WaitMultipleValidator validator = new WaitMultipleValidator(context);
+        functionNode.functionBody().accept(validator);
+    }
+
+    /**
+     * Node visitor that detects {@code wait { f1, f2 }} expressions inside
+     * workflow functions and reports them as compile-time errors.
+     */
+    private static class WaitMultipleValidator extends NodeVisitor {
+        private final SyntaxNodeAnalysisContext context;
+
+        WaitMultipleValidator(SyntaxNodeAnalysisContext context) {
+            this.context = context;
+        }
+
+        @Override
+        public void visit(WaitFieldsListNode waitFieldsListNode) {
+            DiagnosticInfo diagnosticInfo = new DiagnosticInfo(
+                    WorkflowDiagnostic.WORKFLOW_115.getCode(),
+                    WorkflowDiagnostic.WORKFLOW_115.getMessage(),
+                    WorkflowDiagnostic.WORKFLOW_115.getSeverity());
+            context.reportDiagnostic(DiagnosticFactory.createDiagnostic(diagnosticInfo,
+                    waitFieldsListNode.location()));
+        }
+    }
+
+    /**
      * Validates the events parameter type - should be a record with future<anydata> fields.
      * All fields in the record must be future types.
      */
@@ -717,5 +767,278 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                 diagnostic.getCode(), diagnostic.getMessage(), diagnostic.getSeverity());
         context.reportDiagnostic(DiagnosticFactory.createDiagnostic(diagnosticInfo,
                 functionNode.functionName().location()));
+    }
+
+    // =========================================================================
+    // waitForData usage validation
+    // =========================================================================
+
+    /**
+     * Extracts the events record parameter name from a @Workflow function, or null if absent.
+     * The events parameter is the record parameter whose every field is a {@code future<T>}.
+     */
+    private String getEventsParameterName(FunctionDefinitionNode functionNode, SemanticModel semanticModel) {
+        Optional<Symbol> symbolOpt = semanticModel.symbol(functionNode);
+        if (symbolOpt.isEmpty() || symbolOpt.get().kind() != SymbolKind.FUNCTION) {
+            return null;
+        }
+        FunctionTypeSymbol typeSymbol = ((FunctionSymbol) symbolOpt.get()).typeDescriptor();
+        Optional<List<ParameterSymbol>> paramsOpt = typeSymbol.params();
+        if (paramsOpt.isEmpty()) {
+            return null;
+        }
+        for (ParameterSymbol param : paramsOpt.get()) {
+            TypeSymbol resolved = WorkflowPluginUtils.resolveTypeReference(param.typeDescriptor());
+            if (resolved.typeKind() == TypeDescKind.RECORD && resolved instanceof RecordTypeSymbol rec) {
+                boolean allFutures = !rec.fieldDescriptors().isEmpty()
+                        && rec.fieldDescriptors().values().stream()
+                        .allMatch(f -> WorkflowPluginUtils.resolveTypeReference(
+                                f.typeDescriptor()).typeKind() == TypeDescKind.FUTURE);
+                if (allFutures) {
+                    return param.getName().orElse(null);
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Validates uses of {@code workflow:waitForData()} inside a @Workflow function:
+     * <ol>
+     *   <li>Every future in the array literal must come from the workflow's events parameter
+     *       (field access on the events record).</li>
+     *   <li>When the declared return type is a tuple, each tuple element type must match
+     *       the inner type of the corresponding future.</li>
+     * </ol>
+     */
+    private void validateWaitForDataUsage(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context) {
+        String eventsParamName = getEventsParameterName(functionNode, context.semanticModel());
+        WaitForDataValidator validator = new WaitForDataValidator(context, eventsParamName);
+        functionNode.functionBody().accept(validator);
+    }
+
+    /**
+     * Node visitor that validates {@code workflow:waitForData()} calls.
+     */
+    private static class WaitForDataValidator extends NodeVisitor {
+        private final SyntaxNodeAnalysisContext context;
+        private final SemanticModel semanticModel;
+        private final String eventsParamName; // may be null if no events param
+
+        WaitForDataValidator(SyntaxNodeAnalysisContext context, String eventsParamName) {
+            this.context = context;
+            this.semanticModel = context.semanticModel();
+            this.eventsParamName = eventsParamName;
+        }
+
+        @Override
+        public void visit(FunctionCallExpressionNode callNode) {
+            if (isWaitForDataCall(callNode)) {
+                validateWaitForDataArgs(callNode);
+            }
+            callNode.arguments().forEach(arg -> arg.accept(this));
+        }
+
+        /** True if the call resolves to {@code ballerina/workflow:waitForData}. */
+        private boolean isWaitForDataCall(FunctionCallExpressionNode callNode) {
+            Optional<Symbol> symbolOpt = semanticModel.symbol(callNode);
+            if (symbolOpt.isEmpty() || symbolOpt.get().kind() != SymbolKind.FUNCTION) {
+                return false;
+            }
+            FunctionSymbol funcSymbol = (FunctionSymbol) symbolOpt.get();
+            if (!WorkflowConstants.WAIT_FOR_DATA_FUNCTION.equals(funcSymbol.getName().orElse(""))) {
+                return false;
+            }
+            Optional<ModuleSymbol> moduleOpt = funcSymbol.getModule();
+            return moduleOpt.isPresent() && WorkflowPluginUtils.isWorkflowModule(moduleOpt.get());
+        }
+
+        private void validateWaitForDataArgs(FunctionCallExpressionNode callNode) {
+            SeparatedNodeList<FunctionArgumentNode> args = callNode.arguments();
+            if (args.isEmpty()) {
+                return;
+            }
+            FunctionArgumentNode firstArg = args.get(0);
+            if (!(firstArg instanceof PositionalArgumentNode posArg)) {
+                return;
+            }
+            ExpressionNode arrayExpr = posArg.expression();
+            if (arrayExpr.kind() != SyntaxKind.LIST_CONSTRUCTOR) {
+                return;
+            }
+            ListConstructorExpressionNode listNode = (ListConstructorExpressionNode) arrayExpr;
+
+            // 1. Validate all futures come from the events parameter
+            if (eventsParamName != null) {
+                for (Node element : listNode.expressions()) {
+                    if (element instanceof ExpressionNode elemExpr
+                            && !isFutureFromEventsParam(elemExpr)) {
+                        reportFutureNotFromEvents(elemExpr);
+                    }
+                }
+            }
+
+            // 2. Validate type order against the inferred return tuple (if present)
+            validateTypeOrder(callNode, listNode);
+        }
+
+        /**
+         * Returns true when {@code expr} is a plain field access on the events parameter,
+         * e.g. {@code events.approverA}.
+         */
+        private boolean isFutureFromEventsParam(ExpressionNode expr) {
+            if (expr.kind() != SyntaxKind.FIELD_ACCESS) {
+                return false;
+            }
+            ExpressionNode receiver = ((FieldAccessExpressionNode) expr).expression();
+            return receiver.kind() == SyntaxKind.SIMPLE_NAME_REFERENCE
+                    && eventsParamName.equals(receiver.toString().trim());
+        }
+
+        /**
+         * When the call's inferred return type is a tuple whose arity equals the futures
+         * array size, verifies that each tuple element type matches the corresponding
+         * future's inner type.
+         */
+        private void validateTypeOrder(FunctionCallExpressionNode callNode,
+                                        ListConstructorExpressionNode listNode) {
+            Optional<TypeSymbol> callTypeOpt = semanticModel.typeOf(callNode);
+            if (callTypeOpt.isEmpty()) {
+                return;
+            }
+            // Strip |error to get the data type T
+            TypeSymbol dataType = stripError(callTypeOpt.get());
+            if (dataType == null) {
+                return;
+            }
+            dataType = WorkflowPluginUtils.resolveTypeReference(dataType);
+            if (dataType.typeKind() != TypeDescKind.TUPLE) {
+                return; // not a tuple — no order check needed
+            }
+            TupleTypeSymbol tupleType = (TupleTypeSymbol) dataType;
+            List<TypeSymbol> memberTypes = tupleType.memberTypeDescriptors();
+            SeparatedNodeList<Node> expressions = listNode.expressions();
+            // Only validate when arity matches (full "wait-all" typed pattern)
+            if (memberTypes.size() != expressions.size()) {
+                return;
+            }
+            for (int i = 0; i < memberTypes.size(); i++) {
+                Node element = expressions.get(i);
+                if (!(element instanceof ExpressionNode elemExpr)) {
+                    continue;
+                }
+                Optional<TypeSymbol> elemTypeOpt = semanticModel.typeOf(elemExpr);
+                if (elemTypeOpt.isEmpty()) {
+                    continue;
+                }
+                TypeSymbol elemType = WorkflowPluginUtils.resolveTypeReference(elemTypeOpt.get());
+                if (elemType.typeKind() != TypeDescKind.FUTURE) {
+                    continue;
+                }
+                Optional<TypeSymbol> innerTypeOpt = ((FutureTypeSymbol) elemType).typeParameter();
+                if (innerTypeOpt.isEmpty()) {
+                    continue;
+                }
+                TypeSymbol innerType = WorkflowPluginUtils.resolveTypeReference(innerTypeOpt.get());
+                TypeSymbol expectedType = WorkflowPluginUtils.resolveTypeReference(memberTypes.get(i));
+                // Check bidirectional subtyping (structural equivalence)
+                if (!innerType.subtypeOf(expectedType) || !expectedType.subtypeOf(innerType)) {
+                    DiagnosticInfo info = new DiagnosticInfo(
+                            WorkflowDiagnostic.WORKFLOW_117.getCode(),
+                            WorkflowDiagnostic.WORKFLOW_117.getMessage(
+                                    i, expectedType.signature(), innerType.signature()),
+                            WorkflowDiagnostic.WORKFLOW_117.getSeverity());
+                    context.reportDiagnostic(DiagnosticFactory.createDiagnostic(info, elemExpr.location()));
+                }
+            }
+        }
+
+        /**
+         * Strips {@code |error} from a union type and returns the remaining single member,
+         * or {@code null} if the result is ambiguous.
+         */
+        private static TypeSymbol stripError(TypeSymbol type) {
+            TypeSymbol resolved = WorkflowPluginUtils.resolveTypeReference(type);
+            if (resolved.typeKind() == TypeDescKind.ERROR) {
+                return null;
+            }
+            if (resolved.typeKind() != TypeDescKind.UNION) {
+                return resolved;
+            }
+            List<TypeSymbol> nonErrors = ((UnionTypeSymbol) resolved).memberTypeDescriptors().stream()
+                    .filter(m -> {
+                        TypeSymbol r = WorkflowPluginUtils.resolveTypeReference(m);
+                        return r.typeKind() != TypeDescKind.ERROR;
+                    })
+                    .toList();
+            return nonErrors.size() == 1 ? nonErrors.get(0) : null;
+        }
+
+        private void reportFutureNotFromEvents(ExpressionNode expr) {
+            DiagnosticInfo info = new DiagnosticInfo(
+                    WorkflowDiagnostic.WORKFLOW_116.getCode(),
+                    WorkflowDiagnostic.WORKFLOW_116.getMessage(),
+                    WorkflowDiagnostic.WORKFLOW_116.getSeverity());
+            context.reportDiagnostic(DiagnosticFactory.createDiagnostic(info, expr.location()));
+        }
+    }
+
+    // =========================================================================
+    // Concurrency primitive restrictions
+    // =========================================================================
+
+    /**
+     * Validates that no concurrency primitives are used inside a @Workflow function.
+     * Worker declarations, fork statements, and start actions all run code on separate
+     * strands and bypass the workflow scheduler, breaking determinism.
+     */
+    private void validateNoConcurrencyPrimitives(FunctionDefinitionNode functionNode,
+                                                  SyntaxNodeAnalysisContext context) {
+        ConcurrencyPrimitivesValidator validator = new ConcurrencyPrimitivesValidator(context);
+        functionNode.functionBody().accept(validator);
+    }
+
+    /**
+     * Node visitor that reports errors for worker declarations, fork statements, and
+     * start actions found inside @Workflow functions.
+     */
+    private static class ConcurrencyPrimitivesValidator extends NodeVisitor {
+        private final SyntaxNodeAnalysisContext context;
+
+        ConcurrencyPrimitivesValidator(SyntaxNodeAnalysisContext context) {
+            this.context = context;
+        }
+
+        @Override
+        public void visit(NamedWorkerDeclarationNode workerNode) {
+            DiagnosticInfo info = new DiagnosticInfo(
+                    WorkflowDiagnostic.WORKFLOW_118.getCode(),
+                    WorkflowDiagnostic.WORKFLOW_118.getMessage(),
+                    WorkflowDiagnostic.WORKFLOW_118.getSeverity());
+            context.reportDiagnostic(DiagnosticFactory.createDiagnostic(info,
+                    workerNode.workerKeyword().location()));
+            // Do NOT visit children — this worker body may itself contain further nodes
+            // but the outer error is sufficient; inner code is also invalid but would spam.
+        }
+
+        @Override
+        public void visit(ForkStatementNode forkNode) {
+            DiagnosticInfo info = new DiagnosticInfo(
+                    WorkflowDiagnostic.WORKFLOW_119.getCode(),
+                    WorkflowDiagnostic.WORKFLOW_119.getMessage(),
+                    WorkflowDiagnostic.WORKFLOW_119.getSeverity());
+            context.reportDiagnostic(DiagnosticFactory.createDiagnostic(info,
+                    forkNode.forkKeyword().location()));
+        }
+
+        @Override
+        public void visit(StartActionNode startNode) {
+            DiagnosticInfo info = new DiagnosticInfo(
+                    WorkflowDiagnostic.WORKFLOW_120.getCode(),
+                    WorkflowDiagnostic.WORKFLOW_120.getMessage(),
+                    WorkflowDiagnostic.WORKFLOW_120.getSeverity());
+            context.reportDiagnostic(DiagnosticFactory.createDiagnostic(info,
+                    startNode.startKeyword().location()));
+        }
     }
 }

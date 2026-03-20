@@ -225,6 +225,60 @@ public class WorkflowCompilerPluginTest {
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_111);
     }
 
+    @Test(groups = "invalid")
+    public void testInvalidWaitMultiple() {
+        String packagePath = "invalid_wait_multiple";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for wait { ... } in @Workflow function");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_115);
+    }
+
+    @Test(groups = "valid")
+    public void testValidWaitForDataTyped() {
+        String packagePath = "valid_wait_for_data_typed";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for valid typed waitForData usage. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidWaitForDataNotFromEvents() {
+        String packagePath = "invalid_wait_for_data_not_from_events";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for waitForData futures not from events parameter");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_116);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidWorkflowWithWorker() {
+        String packagePath = "invalid_workflow_worker";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for named worker declaration inside @Workflow function");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_118);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidWorkflowWithFork() {
+        String packagePath = "invalid_workflow_fork";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for fork statement inside @Workflow function");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_119);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidWorkflowWithStart() {
+        String packagePath = "invalid_workflow_start";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for start action inside @Workflow function");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_120);
+    }
+
     /**
      * Get diagnostic result for the given package path.
      * Uses runCodeGenAndModifyPlugins() to run the code modifier.

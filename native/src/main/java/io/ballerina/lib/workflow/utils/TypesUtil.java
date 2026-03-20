@@ -66,6 +66,14 @@ public final class TypesUtil {
             return null;
         }
 
+        // Already a Ballerina type - return as-is to avoid double-conversion.
+        // BMap implements java.util.Map, so we must guard against re-processing it.
+        if (javaValue instanceof BString || javaValue instanceof BArray
+                || javaValue instanceof BMap || javaValue instanceof BError
+                || javaValue instanceof BDecimal) {
+            return javaValue;
+        }
+
         // Check if this is a serialized error
         if (javaValue instanceof Map) {
             Map<String, Object> map = (Map<String, Object>) javaValue;

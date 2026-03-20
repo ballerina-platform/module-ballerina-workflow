@@ -34,6 +34,8 @@ import io.temporal.workflow.CompletablePromise;
 import io.temporal.workflow.Workflow;
 import org.slf4j.Logger;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -59,6 +61,8 @@ public final class EventFutureCreator {
      * <p>
      * The returned record can be passed as the events parameter to a workflow function.
      * Each future can be awaited using Ballerina's standard {@code wait} action.
+     * All created futures are registered as siblings of each other so that
+     * alternate wait ({@code wait f1|f2}) works correctly.
      *
      * @param eventsRecordType the record type describing the events (with future fields)
      * @param signalWrapper the SignalAwaitWrapper for creating and managing promises
@@ -74,6 +78,8 @@ public final class EventFutureCreator {
         Map<String, Field> fields = eventsRecordType.getFields();
         BMap<BString, Object> eventsRecord = ValueCreator.createRecordValue(eventsRecordType);
 
+        List<TemporalFutureValue> allFutures = new ArrayList<>(fields.size());
+
         for (Map.Entry<String, Field> entry : fields.entrySet()) {
             String fieldName = entry.getKey();
             Field field = entry.getValue();
@@ -86,11 +92,19 @@ public final class EventFutureCreator {
             TemporalFutureValue futureValue = createTemporalFutureValue(
                     fieldName, signalWrapper, constraintType, scheduler);
 
+            allFutures.add(futureValue);
+
             // Add to the events record
             eventsRecord.put(StringUtils.fromString(fieldName), futureValue);
 
             LOGGER.debug("[EventFutureCreator] Created TemporalFutureValue for event: {} (constraint type: {})",
                     fieldName, constraintType != null ? constraintType.getName() : "anydata");
+        }
+
+        // Register all futures as siblings so that alternate wait (wait f1|f2)
+        // can check whether ANY sibling signal has arrived.
+        for (TemporalFutureValue future : allFutures) {
+            future.setSiblingGroup(allFutures);
         }
 
         return eventsRecord;

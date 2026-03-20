@@ -12,6 +12,8 @@ The `ballerina/workflow` library provides practical examples illustrating usage 
 | [order-processing](order-processing/) | HTTP service that starts an order workflow and polls for results |
 | [order-with-payment](order-with-payment/) | Order workflow that pauses and waits for a payment confirmation |
 | [human-in-the-loop](human-in-the-loop/) | Pause the workflow for a human decision (approve or reject) |
+| [alternative-wait](alternative-wait/) | Race multiple data sources — first response wins (approval ladder) |
+| [wait-for-all](wait-for-all/) | Collect data from every source before proceeding (dual authorization) |
 | [forward-recovery](forward-recovery/) | Pause for corrected data and retry a failed activity |
 
 ## Prerequisites

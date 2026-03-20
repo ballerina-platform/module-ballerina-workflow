@@ -33,7 +33,7 @@ function testApprovedOrder() returns error? {
     test:assertNotEquals(startResp.workflowId, "", "Workflow ID should not be empty");
 
     // Wait for workflow to reach the approval wait point
-    runtime:sleep(3);
+    runtime:sleep(5);
 
     // Approve the order
     ApproveResponse approveResp = check cl->post(string `/orders/${startResp.workflowId}/approve`, {
@@ -67,7 +67,7 @@ function testRejectedOrder() returns error? {
     });
 
     // Wait for workflow to reach the approval wait point
-    runtime:sleep(3);
+    runtime:sleep(5);
 
     // Reject the order
     ApproveResponse _ = check cl->post(string `/orders/${startResp.workflowId}/approve`, {

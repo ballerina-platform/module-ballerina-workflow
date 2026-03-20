@@ -166,8 +166,92 @@ function conditionalProcess(
 }
 ```
 
+## Alternative Wait — First Wins
+
+When a workflow step can be satisfied by **any one** of several senders, use a single shared data channel. Multiple senders all target the same channel name — the first `sendData` call unblocks the wait, and any subsequent calls are silently ignored.
+
+A common use case is the **approval ladder**: multiple approvers are notified, and whichever responds first unblocks the workflow.
+
+```ballerina
+@workflow:Workflow
+function purchaseApproval(
+    workflow:Context ctx,
+    PurchaseInput input,
+    record {|
+        future<ApprovalDecision> approval;
+    |} events
+) returns PurchaseResult|error {
+    // Notify both approvers
+    string _ = check ctx->callActivity(notifyApprovers, {...});
+
+    // Wait once — first sendData("approval", ...) wins, rest ignored
+    ApprovalDecision decision = check wait events.approval;
+
+    if !decision.approved {
+        return {requestId: input.requestId, status: "REJECTED",
+                message: "Rejected by " + decision.approverId};
+    }
+
+    string poNumber = check ctx->callActivity(processPurchase, {...});
+    return {requestId: input.requestId, status: "APPROVED", message: poNumber};
+}
+```
+
+Both the Manager and the Director send to the same data channel — only the first response matters:
+
+```ballerina
+// Manager responds
+check workflow:sendData(purchaseApproval, workflowId, "approval", decision);
+
+// Or director responds — first call wins, second is ignored
+check workflow:sendData(purchaseApproval, workflowId, "approval", decision);
+```
+
+> **Pattern guide:** [patterns/alternative-wait.md](patterns/alternative-wait.md) &nbsp;|&nbsp; **Example:** [examples/alternative-wait/](../examples/alternative-wait/)
+
+## Wait for All — Collect Multiple Data
+
+When a workflow step requires data from **every** source before it can proceed, wait for each future sequentially. The workflow resumes only after all expected data has arrived.
+
+A common use case is **dual authorization**: both the Operations team and the Compliance team must approve a fund transfer.
+
+```ballerina
+@workflow:Workflow
+function transferApproval(
+    workflow:Context ctx,
+    TransferInput input,
+    record {|
+        future<ApprovalDecision> operationsApproval;
+        future<ApprovalDecision> complianceApproval;
+    |} events
+) returns TransferResult|error {
+    string _ = check ctx->callActivity(notifyApprovalTeams, {...});
+
+    // Wait for both — order of arrival doesn't matter
+    ApprovalDecision opsDecision = check wait events.operationsApproval;
+    ApprovalDecision compDecision = check wait events.complianceApproval;
+
+    if !opsDecision.approved || !compDecision.approved {
+        return {transferId: input.transferId, status: "REJECTED", message: "..."};
+    }
+
+    string txnRef = check ctx->callActivity(executeTransfer, {...});
+    return {transferId: input.transferId, status: "COMPLETED", message: txnRef};
+}
+```
+
+**Data arrival order does not matter.** If Compliance sends their decision before Operations, the data is stored by the runtime. When the Operations wait completes, the Compliance wait resolves immediately because the data is already available.
+
+> **Pattern guide:** [patterns/wait-for-all.md](patterns/wait-for-all.md) &nbsp;|&nbsp; **Example:** [examples/wait-for-all/](../examples/wait-for-all/)
+
+## Timeout for Waiting Data
+
+> **Planned feature.** Support for timing out data waits — for example, auto-rejecting an approval that has not arrived within 48 hours — will be added in a future release. The intended approach is to race a data future against a durable timer using Ballerina's alternate wait (`wait dataFuture|timerFuture`). Until this is available, use an external deadline (e.g., a scheduled job) that sends a timeout to the waiting workflow via `workflow:sendData()`.
+
 ## What's Next
 
+- [Alternative Wait](patterns/alternative-wait.md) — First-wins pattern (approval ladder)
+- [Wait for All](patterns/wait-for-all.md) — Collect data from multiple sources before proceeding
 - [Human in the Loop](patterns/human-in-the-loop.md) — Pause for a human decision (approve or reject)
 - [Forward Recovery](patterns/forward-recovery.md) — Pause for corrected data and retry a failed activity
 - [Handle Errors](handle-errors.md) — Error handling patterns

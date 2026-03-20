@@ -44,7 +44,7 @@ function testOrderWithPaymentCompleted() returns error? {
     test:assertNotEquals(startResp.workflowId, "", "Workflow ID should not be empty");
 
     // Give the workflow time to start and begin waiting for the payment data
-    runtime:sleep(2);
+    runtime:sleep(5);
 
     // Send payment data via HTTP
     PaymentResponse _ = check orderPaymentClient->post("/TEST-PAY-001/payment", {amount: 1999.99});
@@ -60,7 +60,7 @@ function testOrderOutOfStockNoPaymentNeeded() returns error? {
     StartResponse startResp = check orderPaymentClient->post("/", {orderId: "TEST-PAY-002", item: "keyboard"});
 
     // Wait and send payment
-    runtime:sleep(2);
+    runtime:sleep(5);
 
     PaymentResponse _ = check orderPaymentClient->post("/TEST-PAY-002/payment", {amount: 49.99});
 

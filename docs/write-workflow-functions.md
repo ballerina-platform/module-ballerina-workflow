@@ -82,6 +82,7 @@ Workflow functions must be **deterministic** — given the same inputs and histo
 - Generate random values (use activities)
 - Read system time for decisions (use `ctx.currentTime()` instead)
 - Access mutable global state
+- Use `worker`, `fork`, or `start` — see [Unsupported Language Features](#unsupported-language-features)
 
 ## Durable Sleep
 
@@ -163,6 +164,63 @@ if info.status == "RUNNING" {
     io:println("Workflow is still running");
 }
 ```
+
+## Unsupported Language Features
+
+Several Ballerina concurrency primitives are **not allowed** inside `@Workflow` functions. These constructs spawn independent execution strands that run outside the workflow scheduler, breaking the deterministic event-history replay that the runtime depends on.
+
+### Named Workers
+
+Named `worker` blocks are rejected with a compile error (`WORKFLOW_118`):
+
+```ballerina
+@workflow:Workflow
+function myWorkflow(workflow:Context ctx, Input input) returns Output|error {
+    // Compile error (WORKFLOW_118) — workers bypass the workflow scheduler
+    worker w1 {
+        int _ = doSomething();
+    }
+    // ...
+}
+```
+
+### Fork Statements
+
+`fork` statements are rejected with a compile error (`WORKFLOW_119`). Use sequential `ctx->callActivity()` calls instead — activities are individually durable and the runtime already handles parallel scheduling where possible:
+
+```ballerina
+@workflow:Workflow
+function myWorkflow(workflow:Context ctx, Input input) returns Output|error {
+    // Compile error (WORKFLOW_119) — fork is not allowed
+    fork {
+        worker w1 { int _ = doA(); }
+        worker w2 { int _ = doB(); }
+    }
+
+    // Correct — call activities in sequence; each is durably recorded
+    string resultA = check ctx->callActivity(doA, {});
+    string resultB = check ctx->callActivity(doB, {});
+}
+```
+
+### Start Actions
+
+The `start` action is rejected with a compile error (`WORKFLOW_120`). Use `ctx->callActivity()` for any work that should run asynchronously:
+
+```ballerina
+@workflow:Workflow
+function myWorkflow(workflow:Context ctx, Input input) returns Output|error {
+    // Compile error (WORKFLOW_120) — start is not allowed
+    future<int> f = start doSomething();
+
+    // Correct — use an activity
+    string result = check ctx->callActivity(doSomething, {});
+}
+```
+
+### Why These Restrictions Exist
+
+The workflow runtime records every decision a workflow makes into an event history. During failures or restarts, the workflow is **replayed** from this history to restore its exact state. Concurrency primitives (`worker`, `fork`, `start`) spawn strands that the event history does not track, so their outcomes are unpredictable on replay — producing different results from the original execution and corrupting workflow state.
 
 ## What's Next
 

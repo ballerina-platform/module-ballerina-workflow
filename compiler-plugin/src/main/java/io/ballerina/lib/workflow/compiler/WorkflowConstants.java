@@ -54,5 +54,5 @@ public final class WorkflowConstants {
     // Function names for validation
     public static final String SEND_DATA_FUNCTION = "sendData";
     public static final String RUN_FUNCTION = "run";
-    public static final String WAIT_FOR_DATA_FUNCTION = "waitForData";
+    public static final String AWAIT_METHOD = "await";
 }

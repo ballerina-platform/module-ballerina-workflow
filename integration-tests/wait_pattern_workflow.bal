@@ -20,7 +20,7 @@
 //
 // These workflows test the advanced wait patterns:
 // 1. Alternate wait (wait f1|f2) — first signal wins
-// 2. waitForData — wait for N of M futures using the library function
+// 2. ctx->await — wait for N of M futures using the context method
 //
 // ================================================================================
 
@@ -87,10 +87,10 @@ function alternateWaitWorkflow(
 }
 
 // ================================================================================
-// WAIT-ALL-DATA WORKFLOW (waitForData)
+// WAIT-ALL-DATA WORKFLOW (ctx->await)
 // ================================================================================
 
-# Workflow that waits for all approvers using waitForData.
+# Workflow that waits for all approvers using ctx->await.
 # Both must respond before the workflow proceeds.
 #
 # + ctx - Workflow context
@@ -108,7 +108,7 @@ function waitAllWorkflow(
 ) returns WaitPatternResult|error {
     io:println(string `[waitAllWorkflow] Waiting for both approvers for: ${input.id}`);
     // Typed tuple — no cloneWithType() needed
-    [WaitDecision, WaitDecision] results = check workflow:waitForData(
+    [WaitDecision, WaitDecision] results = check ctx->await(
         [events.approverA, events.approverB]
     );
     WaitDecision decisionA = results[0];
@@ -124,7 +124,7 @@ function waitAllWorkflow(
     return {status: "APPROVED", decidedBy: "both"};
 }
 
-# Workflow that uses waitForData with minCount=1 (equivalent to alternate wait).
+# Workflow that uses ctx->await with minCount=1 (equivalent to alternate wait).
 #
 # + ctx - Workflow context
 # + input - Request input
@@ -142,7 +142,7 @@ function waitOneOfThreeWorkflow(
 ) returns WaitPatternResult|error {
     io:println(string `[waitOneOfThreeWorkflow] Waiting for 1 of 3 approvers for: ${input.id}`);
     // Return 1 result typed as a single-element tuple
-    [WaitDecision] results = check workflow:waitForData(
+    [WaitDecision] results = check ctx->await(
         [events.approverA, events.approverB, events.approverC], 1
     );
     WaitDecision decision = results[0];

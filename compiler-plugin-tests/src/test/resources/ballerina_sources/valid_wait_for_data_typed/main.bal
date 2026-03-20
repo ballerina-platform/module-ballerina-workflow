@@ -35,7 +35,7 @@ type ComplianceDecision record {|
     string reviewerId;
 |};
 
-// Valid waitForData usage with dependent typing (typed tuple return)
+// Valid ctx->await usage with dependent typing (typed tuple return)
 @workflow:Workflow
 function typedWaitForDataWorkflow(
     workflow:Context ctx,
@@ -47,11 +47,11 @@ function typedWaitForDataWorkflow(
 ) returns Result|error {
     // Dependent typing: T is inferred as [ApprovalDecision, ComplianceDecision]
     [ApprovalDecision, ComplianceDecision] [appDecision, compDecision] =
-        check workflow:waitForData([events.approval, events.compliance]);
+        check ctx->await([events.approval, events.compliance]);
     return {status: "DONE", approved: appDecision.approved && compDecision.compliant};
 }
 
-// Valid waitForData with wait-any pattern (minCount=1, anydata[] return)
+// Valid ctx->await with wait-any pattern (minCount=1, anydata[] return)
 @workflow:Workflow
 function waitAnyWorkflow(
     workflow:Context ctx,
@@ -63,6 +63,6 @@ function waitAnyWorkflow(
     |} events
 ) returns Result|error {
     [ApprovalDecision] [first] =
-        check workflow:waitForData([events.approverA, events.approverB, events.approverC], 1);
+        check ctx->await([events.approverA, events.approverB, events.approverC], 1);
     return {status: "DONE", approved: first.approved};
 }

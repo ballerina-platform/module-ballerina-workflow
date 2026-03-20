@@ -95,8 +95,8 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
             validateNoUtcNowCalls(functionNode, context);
             // Validate no wait { ... } (multiple wait) is used on event futures
             validateNoWaitMultiple(functionNode, context);
-            // Validate waitForData usage: futures from events param, type order matches
-            validateWaitForDataUsage(functionNode, context);
+            // Validate ctx->await usage: futures from events param, type order matches
+            validateAwaitUsage(functionNode, context);
             // Validate no concurrency primitives (worker/fork/start) inside @Workflow
             validateNoConcurrencyPrimitives(functionNode, context);
         }
@@ -628,7 +628,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
             if (moduleOpt.isEmpty()) {
                 return false;
             }
-            var moduleSymbol = moduleOpt.get();
+            ModuleSymbol moduleSymbol = moduleOpt.get();
             return TIME_MODULE_ORG.equals(moduleSymbol.id().orgName())
                     && TIME_MODULE_NAME.equals(moduleSymbol.id().moduleName());
         }
@@ -694,7 +694,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
      * Validates that no {@code wait { ... }} (multiple wait) expressions are used
      * inside @Workflow functions. The runtime does not support
      * {@code handleWaitMultiple} for Temporal event futures. Users should use
-     * {@code wait f1}, {@code wait f1|f2}, or {@code workflow:waitForData()} instead.
+     * {@code wait f1}, {@code wait f1|f2}, or {@code ctx->await()} instead.
      */
     private void validateNoWaitMultiple(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context) {
         WaitMultipleValidator validator = new WaitMultipleValidator(context);
@@ -770,7 +770,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
     }
 
     // =========================================================================
-    // waitForData usage validation
+    // ctx->await usage validation
     // =========================================================================
 
     /**
@@ -803,7 +803,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
     }
 
     /**
-     * Validates uses of {@code workflow:waitForData()} inside a @Workflow function:
+     * Validates uses of {@code ctx->await()} inside a @Workflow function:
      * <ol>
      *   <li>Every future in the array literal must come from the workflow's events parameter
      *       (field access on the events record).</li>
@@ -811,49 +811,35 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
      *       the inner type of the corresponding future.</li>
      * </ol>
      */
-    private void validateWaitForDataUsage(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context) {
+    private void validateAwaitUsage(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context) {
         String eventsParamName = getEventsParameterName(functionNode, context.semanticModel());
-        WaitForDataValidator validator = new WaitForDataValidator(context, eventsParamName);
+        AwaitValidator validator = new AwaitValidator(context, eventsParamName);
         functionNode.functionBody().accept(validator);
     }
 
     /**
-     * Node visitor that validates {@code workflow:waitForData()} calls.
+     * Node visitor that validates {@code ctx->await()} calls.
      */
-    private static class WaitForDataValidator extends NodeVisitor {
+    private static class AwaitValidator extends NodeVisitor {
         private final SyntaxNodeAnalysisContext context;
         private final SemanticModel semanticModel;
         private final String eventsParamName; // may be null if no events param
 
-        WaitForDataValidator(SyntaxNodeAnalysisContext context, String eventsParamName) {
+        AwaitValidator(SyntaxNodeAnalysisContext context, String eventsParamName) {
             this.context = context;
             this.semanticModel = context.semanticModel();
             this.eventsParamName = eventsParamName;
         }
 
         @Override
-        public void visit(FunctionCallExpressionNode callNode) {
-            if (isWaitForDataCall(callNode)) {
-                validateWaitForDataArgs(callNode);
+        public void visit(RemoteMethodCallActionNode callNode) {
+            if (WorkflowConstants.AWAIT_METHOD.equals(callNode.methodName().name().text())) {
+                validateAwaitArgs(callNode);
             }
             callNode.arguments().forEach(arg -> arg.accept(this));
         }
 
-        /** True if the call resolves to {@code ballerina/workflow:waitForData}. */
-        private boolean isWaitForDataCall(FunctionCallExpressionNode callNode) {
-            Optional<Symbol> symbolOpt = semanticModel.symbol(callNode);
-            if (symbolOpt.isEmpty() || symbolOpt.get().kind() != SymbolKind.FUNCTION) {
-                return false;
-            }
-            FunctionSymbol funcSymbol = (FunctionSymbol) symbolOpt.get();
-            if (!WorkflowConstants.WAIT_FOR_DATA_FUNCTION.equals(funcSymbol.getName().orElse(""))) {
-                return false;
-            }
-            Optional<ModuleSymbol> moduleOpt = funcSymbol.getModule();
-            return moduleOpt.isPresent() && WorkflowPluginUtils.isWorkflowModule(moduleOpt.get());
-        }
-
-        private void validateWaitForDataArgs(FunctionCallExpressionNode callNode) {
+        private void validateAwaitArgs(RemoteMethodCallActionNode callNode) {
             SeparatedNodeList<FunctionArgumentNode> args = callNode.arguments();
             if (args.isEmpty()) {
                 return;
@@ -900,7 +886,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
          * array size, verifies that each tuple element type matches the corresponding
          * future's inner type.
          */
-        private void validateTypeOrder(FunctionCallExpressionNode callNode,
+        private void validateTypeOrder(RemoteMethodCallActionNode callNode,
                                         ListConstructorExpressionNode listNode) {
             Optional<TypeSymbol> callTypeOpt = semanticModel.typeOf(callNode);
             if (callTypeOpt.isEmpty()) {

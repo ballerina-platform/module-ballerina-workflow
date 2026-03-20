@@ -29,6 +29,9 @@ import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BArray;
 import io.ballerina.runtime.api.values.BError;
+import io.ballerina.runtime.api.values.BMap;
+import io.ballerina.runtime.api.values.BObject;
+import io.ballerina.runtime.api.values.BString;
 import io.ballerina.runtime.api.values.BTypedesc;
 import io.ballerina.runtime.internal.values.FutureValue;
 import io.temporal.workflow.Workflow;
@@ -37,7 +40,7 @@ import org.slf4j.Logger;
 /**
  * Native implementation for workflow data-wait utility functions.
  * <p>
- * Provides {@code waitForData} — a Temporal-safe, replay-aware way to wait for
+ * Provides {@code awaitFutures} — a Temporal-safe, replay-aware way to wait for
  * N out of M data futures to complete. Uses {@link Workflow#await(java.util.function.Supplier)}
  * to cooperatively yield the workflow thread, avoiding the deadlocks that occur with
  * Ballerina's built-in {@code wait { ... }} syntax on Temporal signal futures.
@@ -49,6 +52,10 @@ import org.slf4j.Logger;
 public final class WaitUtils {
 
     private static final Logger LOGGER = Workflow.getLogger(WaitUtils.class);
+
+    private static final BString HOURS_KEY = StringUtils.fromString("hours");
+    private static final BString MINUTES_KEY = StringUtils.fromString("minutes");
+    private static final BString SECONDS_KEY = StringUtils.fromString("seconds");
 
     private WaitUtils() {
         // Utility class
@@ -62,13 +69,21 @@ public final class WaitUtils {
      * already met). Returns the completed values converted to the type described
      * by {@code typedesc} — either a tuple {@code [T1, T2, ...]} or a plain
      * {@code anydata[]} array.
+     * <p>
+     * When {@code timeout} is non-null, uses the timed overload of
+     * {@code Workflow.await(duration, condition)}: if the required number of futures
+     * have not completed within the given duration an error is returned.
      *
+     * @param self     the Context BObject (unused — needed for remote method routing)
      * @param futures  a Ballerina array of {@code future<anydata>} values
      * @param minCount the minimum number of futures that must complete
+     * @param timeout  optional Ballerina {@code time:Duration} record; {@code null} means wait forever
      * @param typedesc the expected return type (inferred by the compiler via {@code T = <>})
      * @return a typed tuple or array of completed values, or an error
      */
-    public static Object waitForData(BArray futures, long minCount, BTypedesc typedesc) {
+    @SuppressWarnings("unchecked")
+    public static Object awaitFutures(BObject self, BArray futures, long minCount,
+                                      Object timeout, BTypedesc typedesc) {
         int total = futures.size();
         int required = (int) minCount;
 
@@ -86,15 +101,30 @@ public final class WaitUtils {
 
         boolean replaying = Workflow.isReplaying();
         if (!replaying) {
-            LOGGER.debug("[WaitUtils] waitForData: waiting for {}/{} futures", required, total);
+            LOGGER.debug("[WaitUtils] awaitFutures: waiting for {}/{} futures", required, total);
         }
 
-        // Cooperatively block until the required number of futures are done.
+        // Cooperatively block until the required number of futures are done (or timeout).
         // During replay this condition is immediately true — no blocking occurs.
-        Workflow.await(() -> countDone(futureValues) >= required);
+        boolean conditionMet;
+        if (timeout instanceof BMap<?, ?> timeoutMap) {
+            long timeoutMillis = durationToMillis((BMap<BString, Object>) timeoutMap);
+            conditionMet = Workflow.await(
+                    java.time.Duration.ofMillis(timeoutMillis),
+                    () -> countDone(futureValues) >= required);
+        } else {
+            Workflow.await(() -> countDone(futureValues) >= required);
+            conditionMet = true;
+        }
+
+        if (!conditionMet) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Timeout waiting for futures: only " + countDone(futureValues)
+                            + " of " + required + " completed within the specified duration"));
+        }
 
         if (!replaying) {
-            LOGGER.debug("[WaitUtils] waitForData: {}/{} futures completed", required, total);
+            LOGGER.debug("[WaitUtils] awaitFutures: {}/{} futures completed", required, total);
         }
 
         // Collect completed values in input-array order
@@ -117,6 +147,33 @@ public final class WaitUtils {
 
         // Convert results to the caller's expected type (dependent-typing via typedesc)
         return convertResults(results, typedesc.getDescribingType());
+    }
+
+    /**
+     * Converts a Ballerina {@code time:Duration} record to milliseconds.
+     */
+    private static long durationToMillis(BMap<BString, Object> duration) {
+        long hours = getLongField(duration, HOURS_KEY);
+        long minutes = getLongField(duration, MINUTES_KEY);
+        Object secObj = duration.get(SECONDS_KEY);
+        long secondsMillis = 0;
+        if (secObj instanceof Long secLong) {
+            secondsMillis = secLong * 1000L;
+        } else if (secObj instanceof Double secDouble) {
+            secondsMillis = (long) (secDouble * 1000.0);
+        } else if (secObj instanceof io.ballerina.runtime.api.values.BDecimal secDec) {
+            secondsMillis = secDec.decimalValue().multiply(
+                    java.math.BigDecimal.valueOf(1000)).longValue();
+        }
+        return (hours * 3600_000L) + (minutes * 60_000L) + secondsMillis;
+    }
+
+    private static long getLongField(BMap<BString, Object> map, BString key) {
+        Object val = map.get(key);
+        if (val instanceof Long l) {
+            return l;
+        }
+        return 0L;
     }
 
     /**

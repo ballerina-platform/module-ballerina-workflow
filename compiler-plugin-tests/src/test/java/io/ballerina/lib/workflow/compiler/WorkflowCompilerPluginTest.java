@@ -235,20 +235,20 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "valid")
-    public void testValidWaitForDataTyped() {
+    public void testValidAwaitTyped() {
         String packagePath = "valid_wait_for_data_typed";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertEquals(diagnosticResult.errorCount(), 0,
-                "Expected no errors for valid typed waitForData usage. Errors: "
+                "Expected no errors for valid typed ctx->await usage. Errors: "
                         + getDiagnosticMessages(diagnosticResult));
     }
 
     @Test(groups = "invalid")
-    public void testInvalidWaitForDataNotFromEvents() {
+    public void testInvalidAwaitNotFromEvents() {
         String packagePath = "invalid_wait_for_data_not_from_events";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertTrue(diagnosticResult.errorCount() > 0,
-                "Expected validation error for waitForData futures not from events parameter");
+                "Expected validation error for ctx->await futures not from events parameter");
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_116);
     }
 

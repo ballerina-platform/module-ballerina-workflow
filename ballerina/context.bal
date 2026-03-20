@@ -155,6 +155,49 @@ public client class Context {
     public isolated function getWorkflowType() returns string|error {
         return getWorkflowTypeNative(self.nativeContext);
     }
+
+    # Waits for at least `minCount` data futures to complete.
+    #
+    # A replay-aware alternative to Ballerina's built-in `wait { ... }`
+    # syntax for workflow event futures. Uses cooperative scheduling
+    # internally — it yields the workflow thread without blocking
+    # the worker thread pool, and is a no-op during event history replay.
+    #
+    # When `minCount` is omitted the function waits for **all** futures
+    # (equivalent to `minCount = futures.length()`).
+    #
+    # The return type is inferred from the calling context (`T`), so you can
+    # assign results directly to a typed variable without explicit casting:
+    #
+    # ```ballerina
+    # // Tuple — each element is typed to the matching future's inner type
+    # [ApprovalDecision, ComplianceDecision] results =
+    #     check ctx->await([events.ops, events.compliance]);
+    # ApprovalDecision ops = results[0];   // no cloneWithType needed
+    # ```
+    #
+    # When `timeout` is provided and the required number of futures have not
+    # completed within that duration, an error is returned. Omit `timeout`
+    # (or pass `()`) to wait indefinitely.
+    #
+    # Common patterns:
+    # - **Wait for all**: `ctx->await([f1, f2, f3])` — waits for all 3 (default)
+    # - **Wait for any**: `ctx->await([f1, f2], 1)` — returns when 1 completes
+    # - **Quorum**: `ctx->await([f1, f2, f3], 2)` — waits for 2 of 3
+    # - **With timeout**: `ctx->await([f1, f2], timeout = {hours: 48})` — returns error on timeout
+    #
+    # + futures - Array of data futures from the workflow's events record
+    # + minCount - Minimum number of futures that must complete. Defaults to `futures.length()` (wait for all).
+    # + timeout - Optional maximum duration to wait. When exceeded an error is returned.
+    # + T - The expected return type (inferred from context). Use a tuple `[T1, T2, ...]` for per-element typed access, or `anydata[]` for untyped access.
+    # + return - Array or tuple of completed values (length = minCount, in input-array order), or an error
+    remote isolated function await(future<anydata>[] futures,
+            int:Unsigned32 minCount = <int:Unsigned32>futures.length(),
+            time:Duration? timeout = (),
+            typedesc<anydata> T = <>) returns T|error = @java:Method {
+        'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WaitUtils",
+        name: "awaitFutures"
+    } external;
 }
 
 // Native function declarations

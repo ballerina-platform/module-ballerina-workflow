@@ -153,13 +153,11 @@ function transferApproval(
         "amount": input.amount
     });
 
-    // Step 3: Wait for both teams using waitForData (wait for all — default)
+    // Step 3: Wait for both teams using ctx->await (wait for all — default)
     io:println(string `[Workflow] Waiting for both authorizations for: ${input.transferId}`);
-    anydata[] decisions = check workflow:waitForData(
+    [ApprovalDecision, ApprovalDecision] [opsDecision, compDecision] = check ctx->await(
         [events.operationsApproval, events.complianceApproval]
     );
-    ApprovalDecision opsDecision = check decisions[0].cloneWithType();
-    ApprovalDecision compDecision = check decisions[1].cloneWithType();
     io:println(string `[Workflow] Operations: approved=${opsDecision.approved}, Compliance: approved=${compDecision.approved}`);
 
     // Step 4: Both must approve

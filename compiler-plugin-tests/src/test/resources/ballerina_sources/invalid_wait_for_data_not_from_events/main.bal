@@ -44,6 +44,6 @@ function invalidWaitForDataSource(
     |} events
 ) returns Result|error {
     // externalFuture is not from events — should trigger WORKFLOW_116
-    anydata[] results = check workflow:waitForData([externalFuture]);
+    anydata[] results = check ctx->await([externalFuture]);
     return {status: "DONE"};
 }

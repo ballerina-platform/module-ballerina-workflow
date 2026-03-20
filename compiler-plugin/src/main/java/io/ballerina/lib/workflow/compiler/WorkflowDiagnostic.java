@@ -83,14 +83,14 @@ public enum WorkflowDiagnostic {
             DiagnosticSeverity.ERROR),
     WORKFLOW_115("WORKFLOW_115",
             "Multiple wait 'wait { ... }' is not supported for workflow event futures. "
-                    + "Use 'wait f1', 'wait f1|f2', or 'workflow:waitForData(futures, minCount)' instead",
+                    + "Use 'wait f1', 'wait f1|f2', or 'ctx->await(futures, minCount)' instead",
             DiagnosticSeverity.ERROR),
     WORKFLOW_116("WORKFLOW_116",
-            "Futures passed to 'workflow:waitForData' must come from the workflow function's events record "
+            "Futures passed to 'ctx->await' must come from the workflow function's events record "
                     + "parameter. External futures bypass the workflow event system",
             DiagnosticSeverity.ERROR),
     WORKFLOW_117("WORKFLOW_117",
-            "Return type mismatch at position %d in 'workflow:waitForData': "
+            "Return type mismatch at position %d in 'ctx->await': "
                     + "expected '%s' but the future at that position carries type '%s'. "
                     + "Tuple element types must match the future types in the same order",
             DiagnosticSeverity.ERROR),

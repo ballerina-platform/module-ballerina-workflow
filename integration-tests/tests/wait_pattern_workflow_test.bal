@@ -20,7 +20,7 @@
 //
 // Tests for:
 // - Alternate wait (wait f1|f2): first signal wins
-// - waitForData: wait for all, wait for 1 of N
+// - ctx->await: wait for all, wait for 1 of N
 //
 // ================================================================================
 

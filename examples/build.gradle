@@ -26,6 +26,8 @@ def examplePackageNames = [
     'error-compensation' : 'error_compensation',
     'graceful-completion': 'graceful_completion',
     'human-in-the-loop'  : 'human_in_the_loop',
+    'alternative-wait'   : 'alternative_wait',
+    'wait-for-all'       : 'wait_for_all',
     'forward-recovery'   : 'forward_recovery',
     'order-processing'   : 'order_processing',
     'order-with-payment' : 'order_with_payment'
@@ -53,6 +55,12 @@ task buildExamples {
         def examplesDir = project.projectDir
         def ballerinaDist = "${project.rootDir}/target/ballerina-runtime"
         def distributionBinPath = "${ballerinaDist}/bin"
+
+        // Clear the workflow BIR cache so the compiler picks up the freshly built bala
+        def workflowBirCache = new File("${ballerinaDist}/repo/cache/ballerina/workflow")
+        if (workflowBirCache.exists()) {
+            workflowBirCache.deleteDir()
+        }
 
         examplesDir.eachDir { exampleDir ->
             def packageName = examplePackageNames[exampleDir.name]

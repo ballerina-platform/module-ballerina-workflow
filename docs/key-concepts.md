@@ -72,7 +72,7 @@ function checkInventory(string item) returns boolean|error {
 
 Activities are:
 
-- **Executed exactly once** — Even if the workflow replays, a completed activity is not re-executed. The runtime returns the recorded result instead.
+- **Effectively executed once** — Once an activity completes successfully, the runtime records its result. If the workflow replays (e.g. after a crash), the recorded result is returned immediately without re-running the activity. Note that the activity function itself may run more than once if a worker crashes mid-execution or if `retryOnError` is enabled — activity implementations should be idempotent to handle this safely.
 - **Errors returned as values by default** — If an activity fails, the error is returned to the workflow as a normal return value so the workflow can handle it with its own logic. No automatic retries occur unless you explicitly opt in with `retryOnError = true`.
 - **Optionally retried** — Pass `retryOnError = true, maxRetries = 3` to `callActivity` to enable automatic retries with configurable backoff. See [Write Activity Functions](write-activity-functions.md) for details.
 - **Called via `ctx->callActivity()`** — Activities cannot be called directly from a workflow. The `callActivity` remote method ensures the runtime can track and replay activity executions.

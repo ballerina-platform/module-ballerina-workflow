@@ -100,6 +100,19 @@ build.dependsOn ":${packageName}-compiler-plugin:build"
 test.dependsOn ":${packageName}-native:build"
 test.dependsOn ":${packageName}-compiler-plugin:build"
 
+// Clear the stale compiled BIR cache after a build so the compiler plugin tests
+// always see the freshly-built package instead of a cached binary.
+task clearBirCache {
+    doLast {
+        def birCacheDir = file("${rootProject.projectDir}/target/ballerina-runtime/repo/cache/ballerina/${packageName}/${tomlVersion}")
+        if (birCacheDir.exists()) {
+            delete birCacheDir
+            logger.lifecycle("Cleared stale BIR cache for ballerina/${packageName}:${tomlVersion}")
+        }
+    }
+}
+build.finalizedBy clearBirCache
+
 publishToMavenLocal.dependsOn build
 publish.dependsOn build
 

@@ -7,152 +7,128 @@
 [![GitHub Last Commit](https://img.shields.io/github/last-commit/ballerina-platform/module-ballerina-workflow.svg)](https://github.com/ballerina-platform/module-ballerina-workflow/commits/main)
 [![Github issues](https://img.shields.io/github/issues/ballerina-platform/ballerina-library/Area%2FWorkflow.svg?label=Open%20Issues)](https://github.com/ballerina-platform/ballerina-library/labels/Area%2Fworkflow)
 
-This library provides APIs for building durable workflow orchestrations in Ballerina. It integrates with [Temporal.io](https://www.temporal.io/) to enable reliable, long-running workflows with built-in fault tolerance and state management.
+This library provides durable, fault-tolerant workflow orchestration for Ballerina applications. It lets you define long-running business processes — spanning minutes, hours, or days — that automatically recover from crashes and process restarts without losing progress.
 
 ## Overview
 
-The Workflow library facilitates building stateful, durable workflows that can survive process failures and restarts. It provides:
+Workflows and activities are ordinary Ballerina functions:
 
-- **Process Functions**: Durable workflow orchestration with automatic state persistence
-- **Activity Functions**: Reliable execution of side effects functions (I/O, API calls, etc.)
-- **External Data Support**: Future-based data handling for receiving external data
-- **Compiler Plugin**: Compile-time validation and code generation to ensure workflow determinism
-
-### Key Features
-
-#### @Workflow Annotation
-
-Marks a function as a workflow process. Process functions define the workflow orchestration logic:
+- **`@workflow:Workflow`** — A durable function that orchestrates a business process. The runtime checkpoints every step and replays recorded history to recover from failures.
+- **`@workflow:Activity`** — A function that performs a single non-deterministic operation (API call, database query, email send). Once an activity completes, its result is recorded and never re-executed during replay.
 
 ```ballerina
+import ballerina/workflow;
+
+@workflow:Activity
+function checkInventory(string item) returns boolean|error {
+    // Call external inventory API
+    return true;
+}
+
 @workflow:Workflow
 function processOrder(workflow:Context ctx, OrderRequest request) returns OrderResult|error {
-    // Deterministic workflow orchestration logic
-    InventoryStatus inventory = check ctx->callActivity(checkInventory, {item: request.item, quantity: request.quantity});
-    
-    if inventory.available {
-        string reservationId = check ctx->callActivity(reserveStock, {orderId: request.orderId, item: request.item});
-        return {status: "completed", reservationId};
+    boolean inStock = check ctx->callActivity(checkInventory, {"item": request.item});
+    if !inStock {
+        return {orderId: request.orderId, status: "OUT_OF_STOCK"};
     }
-    return {status: "insufficient_stock"};
+    return {orderId: request.orderId, status: "COMPLETED"};
 }
 ```
 
-#### @Activity Annotation
+## Starting a Workflow
 
-Marks a function as a workflow activity. Activities handle non-deterministic operations like I/O, external API calls, and side effects:
+Use `workflow:run()` to start a workflow instance from any entry point — HTTP service, scheduled job, message consumer, or `main`:
 
 ```ballerina
-@workflow:Activity
-function checkInventory(string item, int quantity) returns InventoryStatus|error {
-    // External system calls, database operations, API invocations
-    return database->query(`SELECT * FROM inventory WHERE item = ${item}`);
+string workflowId = check workflow:run(processOrder, {orderId: "ORD-001", item: "laptop"});
+```
+
+## Receiving External Data
+
+A workflow can pause and wait for external input — approvals, payment confirmations, user decisions — using future-based event records. Send data to a running workflow with `workflow:sendData()`:
+
+```ballerina
+// In the workflow — wait for a human decision
+ApprovalDecision decision = check wait events.approval;
+
+// From outside — deliver the decision
+check workflow:sendData(processOrder, workflowId, "approval", {approverId: "mgr-1", approved: true});
+```
+
+### Multi-Future Waits with `ctx->await`
+
+Use `ctx->await` to wait for multiple futures at once, with optional quorum and timeout:
+
+| Pattern | Example |
+|---------|---------|
+| Wait for all | `ctx->await([f1, f2])` |
+| Wait for any (first wins) | `ctx->await([f1, f2], 1)` |
+| Quorum (N of M) | `ctx->await([f1, f2, f3], 2)` |
+| With deadline | `ctx->await([f1, f2], timeout = {hours: 48})` |
+
+## Error Handling
+
+Activity errors are returned as plain Ballerina values. The workflow decides what happens next:
+
+```ballerina
+string|error result = ctx->callActivity(chargeCard, {"amount": input.amount});
+if result is error {
+    // retry with a different card, fall back, or compensate
 }
 ```
 
-**Important**: Activities must be called via `ctx->callActivity()` within process functions. Direct activity calls are not allowed and will produce a compiler error.
-
-#### Context Client Class
-
-The `workflow:Context` provides workflow execution capabilities:
-
-- `callActivity()` - Execute activities with automatic retry and result caching
-- `sleep()` - Durable delays that survive process restarts
-- `isReplaying()` - Detect if workflow is replaying from history
-- `getWorkflowId()` - Get the unique workflow execution ID
-- `getWorkflowType()` - Get the workflow type name
-
-#### Event Handling
-
-Workflows can wait for external signals using future-based events with correlation:
+Enable automatic retries for transient failures:
 
 ```ballerina
-public type OrderInput record {|
-    readonly string orderId;  // Correlation key
-    string item;
-|};
-
-public type PaymentEvent record {|
-    readonly string orderId;  // Matches correlation key
-    decimal amount;
-|};
-
-@workflow:Workflow
-function processOrderWithPayment(
-    workflow:Context ctx, 
-    OrderInput input,
-    record {| future<PaymentEvent> payment; |} events
-) returns OrderResult|error {
-    // Check inventory
-    check ctx->callActivity(checkInventory, {item: input.item, quantity: input.quantity});
-    
-    // Wait for payment data
-    PaymentEvent payment = check wait events.payment;
-    
-    // Complete order
-    return {status: "paid", amount: payment.amount};
-}
+string result = check ctx->callActivity(chargeCard, {"amount": input.amount},
+    retryOnError = true, maxRetries = 3);
 ```
 
 ## Configuration
 
-### Connecting to Temporal Server
-
-The Workflow library requires a running Temporal server. You can configure the connection using a `Config.toml` file in your project root:
+Add a `Config.toml` to your project. For local development with no server:
 
 ```toml
 [ballerina.workflow]
-mode = "LOCAL"
-url = "localhost:7233"
+mode = "IN_MEMORY"
+```
+
+For production, connect to a Temporal server:
+
+```toml
+[ballerina.workflow]
+mode = "TEMPORAL"
+temporalHost = "localhost"
+temporalPort = 7233
 namespace = "default"
-taskQueue = "MY_TASK_QUEUE"
-maxConcurrentWorkflows = 100
-maxConcurrentActivities = 100
+taskQueue = "my-task-queue"
 ```
 
-**Configuration Parameters:**
-- `mode` - Deployment mode: `LOCAL`, `CLOUD`, `SELF_HOSTED`, or `IN_MEMORY`
-- `url` - Workflow server address (default: `localhost:7233`)
-- `namespace` - Workflow namespace (default: `default`)
-- `taskQueue` - Task queue name for workflow and activity execution
-- `maxConcurrentWorkflows` - Maximum number of concurrent workflow executions
-- `maxConcurrentActivities` - Maximum number of concurrent activity executions
+## Documentation
 
-### Running Temporal Locally
+| Guide | Description |
+|-------|-------------|
+| [Get Started](https://github.com/ballerina-platform/module-ballerina-workflow/blob/main/docs/get-started.md) | Write and run your first workflow |
+| [Key Concepts](https://github.com/ballerina-platform/module-ballerina-workflow/blob/main/docs/key-concepts.md) | Workflows, activities, external data, and timers |
+| [Write Workflow Functions](https://github.com/ballerina-platform/module-ballerina-workflow/blob/main/docs/write-workflow-functions.md) | Signatures, determinism rules, and durable sleep |
+| [Write Activity Functions](https://github.com/ballerina-platform/module-ballerina-workflow/blob/main/docs/write-activity-functions.md) | Activity patterns and retry options |
+| [Handle Data](https://github.com/ballerina-platform/module-ballerina-workflow/blob/main/docs/handle-data.md) | Waiting for external input and sending data |
+| [Handle Errors](https://github.com/ballerina-platform/module-ballerina-workflow/blob/main/docs/handle-errors.md) | Propagation, retry, fallback, and compensation |
+| [Configure the Module](https://github.com/ballerina-platform/module-ballerina-workflow/blob/main/docs/configure-the-module.md) | Connection settings, TLS, and namespaces |
 
-For local development and testing, you can run Temporal server using Docker:
+## Examples
 
-#### Using Docker Compose
-
-Create a `docker-compose.yml` file or use Temporal's official setup:
-
-```bash
-# Clone Temporal's docker-compose setup
-git clone https://github.com/temporalio/docker-compose.git
-cd docker-compose
-
-# Start Temporal server
-docker-compose up -d
-
-# Temporal server will be available at localhost:7233
-# Temporal Web UI will be available at http://localhost:8080
-```
-
-#### Using Temporal CLI
-
-Alternatively, use Temporal's CLI to run a local development server:
-
-```bash
-# Install Temporal CLI
-brew install temporal
-
-# Start local Temporal server
-temporal server start-dev
-
-# Server runs on localhost:7233 with Web UI on http://localhost:8080
-```
-
-For more details, visit the [Temporal documentation](https://docs.temporal.io/cli/server/start-dev).
+| Example | Description |
+|---------|-------------|
+| [Get Started](https://github.com/ballerina-platform/module-ballerina-workflow/tree/main/examples/get-started) | First workflow |
+| [Order Processing](https://github.com/ballerina-platform/module-ballerina-workflow/tree/main/examples/order-processing) | HTTP-triggered workflow with result polling |
+| [Human in the Loop](https://github.com/ballerina-platform/module-ballerina-workflow/tree/main/examples/human-in-the-loop) | Pause for a human approval |
+| [Wait for All](https://github.com/ballerina-platform/module-ballerina-workflow/tree/main/examples/wait-for-all) | Dual authorization — both teams must approve |
+| [Alternative Wait](https://github.com/ballerina-platform/module-ballerina-workflow/tree/main/examples/alternative-wait) | First responder wins (approval ladder) |
+| [Forward Recovery](https://github.com/ballerina-platform/module-ballerina-workflow/tree/main/examples/forward-recovery) | Pause for corrected data and retry |
+| [Error Propagation](https://github.com/ballerina-platform/module-ballerina-workflow/tree/main/examples/error-propagation) | Fail the workflow on a critical error |
+| [Error Fallback](https://github.com/ballerina-platform/module-ballerina-workflow/tree/main/examples/error-fallback) | Fall back to a secondary activity |
+| [Error Compensation](https://github.com/ballerina-platform/module-ballerina-workflow/tree/main/examples/error-compensation) | Saga: undo committed steps on failure |
 
 ## Issues and projects
 

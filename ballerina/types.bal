@@ -31,7 +31,7 @@ public enum Mode {
 # + initialIntervalInSeconds - Initial delay before the first retry attempt in seconds
 # + backoffCoefficient - Multiplier applied to the interval after each retry
 # + maximumIntervalInSeconds - Optional cap on the delay between retries in seconds
-# + maximumAttempts - Maximum number of Temporal-level attempts (1 = no retries)
+# + maximumAttempts - Maximum number of retry attempts (1 = no retries)
 type ActivityRetryPolicy record {|
     int initialIntervalInSeconds = 1;
     decimal backoffCoefficient = 2.0;
@@ -109,4 +109,3 @@ public type WorkflowExecutionInfo record {
     string? errorMessage;
     ActivityInvocation[] activityInvocations;
 };
-

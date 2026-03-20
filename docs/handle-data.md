@@ -159,8 +159,152 @@ function conditionalProcess(
 }
 ```
 
+## Alternative Wait — First Wins
+
+When a workflow step can be satisfied by **any one** of several senders, use a single shared data channel. Multiple senders all target the same channel name — the first `sendData` call unblocks the wait, and any subsequent calls are silently ignored.
+
+A common use case is the **approval ladder**: multiple approvers are notified, and whichever responds first unblocks the workflow.
+
+```ballerina
+@workflow:Workflow
+function purchaseApproval(
+    workflow:Context ctx,
+    PurchaseInput input,
+    record {|
+        future<ApprovalDecision> approval;
+    |} events
+) returns PurchaseResult|error {
+    // Notify both approvers
+    string _ = check ctx->callActivity(notifyApprovers, {...});
+
+    // Wait once — first sendData("approval", ...) wins, rest ignored
+    ApprovalDecision decision = check wait events.approval;
+
+    if !decision.approved {
+        return {requestId: input.requestId, status: "REJECTED",
+                message: "Rejected by " + decision.approverId};
+    }
+
+    string poNumber = check ctx->callActivity(processPurchase, {...});
+    return {requestId: input.requestId, status: "APPROVED", message: poNumber};
+}
+```
+
+Both the Manager and the Director send to the same data channel — only the first response matters:
+
+```ballerina
+// Manager responds
+check workflow:sendData(purchaseApproval, workflowId, "approval", decision);
+
+// Or director responds — first call wins, second is ignored
+check workflow:sendData(purchaseApproval, workflowId, "approval", decision);
+```
+
+> **Pattern guide:** [patterns/alternative-wait.md](patterns/alternative-wait.md) &nbsp;|&nbsp; **Example:** [examples/alternative-wait/](../examples/alternative-wait/)
+
+## Wait for All — `ctx->await`
+
+When a workflow step requires data from **every** source before it can proceed, use `ctx->await` with the full array of futures. The workflow resumes only after all expected data has arrived.
+
+A common use case is **dual authorization**: both the Operations team and the Compliance team must approve a fund transfer.
+
+```ballerina
+@workflow:Workflow
+function transferApproval(
+    workflow:Context ctx,
+    TransferInput input,
+    record {|
+        future<ApprovalDecision> operationsApproval;
+        future<ApprovalDecision> complianceApproval;
+    |} events
+) returns TransferResult|error {
+    string _ = check ctx->callActivity(notifyApprovalTeams, {...});
+
+    // Wait for both — order of arrival doesn't matter
+    [ApprovalDecision, ApprovalDecision] [opsDecision, compDecision] =
+        check ctx->await([events.operationsApproval, events.complianceApproval]);
+
+    if !opsDecision.approved || !compDecision.approved {
+        return {transferId: input.transferId, status: "REJECTED", message: "..."};
+    }
+
+    string txnRef = check ctx->callActivity(executeTransfer, {...});
+    return {transferId: input.transferId, status: "COMPLETED", message: txnRef};
+}
+```
+
+`ctx->await` takes an array of futures and, by default, waits for all of them. The return type is a typed tuple whose element types match the corresponding `future<T>` types, so no casting is needed.
+
+**Data arrival order does not matter.** If Compliance sends their decision before Operations, the data is stored by the runtime. `ctx->await` resolves as soon as the last outstanding future completes.
+
+> **Pattern guide:** [patterns/wait-for-all.md](patterns/wait-for-all.md) &nbsp;|&nbsp; **Example:** [examples/wait-for-all/](../examples/wait-for-all/)
+
+## `ctx->await` — Full API Reference
+
+`ctx->await` is the single entry point for all multi-future wait patterns. It replaces the use of Ballerina's `wait` keyword for event futures and adds timeout and quorum support.
+
+### Wait for All (default)
+
+Pass an array of futures — `ctx->await` blocks until every future completes:
+
+```ballerina
+[ApprovalDecision, ApprovalDecision] [opsDecision, compDecision] =
+    check ctx->await([events.operationsApproval, events.complianceApproval]);
+```
+
+`minCount` defaults to the length of the array. The return value is a typed tuple.
+
+### Wait for Any (first wins)
+
+Pass `1` as `minCount` — `ctx->await` returns as soon as the first future completes:
+
+```ballerina
+[ApprovalDecision] [first] = check ctx->await([events.approverA, events.approverB], 1);
+```
+
+This is equivalent to the shared-channel first-wins pattern described above, but lets each approver send to their own named channel. The returned tuple contains only the completed values in input-array order. If you prefer the simpler single-channel model (several senders posting to the same name), the `wait events.approval` pattern still works unchanged.
+
+### Quorum (N of M)
+
+Pass any `minCount` between 1 and the array length:
+
+```ballerina
+// 2-of-3 quorum — proceed when any two of three validators agree
+[ValidationResult, ValidationResult] [r1, r2] =
+    check ctx->await([events.validatorA, events.validatorB, events.validatorC], 2);
+```
+
+### With a Timeout
+
+Add a `timeout` named argument using a `time:Duration` record. If the required number of futures have not completed within the given duration, `ctx->await` returns an error:
+
+```ballerina
+[ApprovalDecision, ApprovalDecision] [opsDecision, compDecision] =
+    check ctx->await(
+        [events.operationsApproval, events.complianceApproval],
+        timeout = {hours: 48}
+    );
+```
+
+The timeout participates in Temporal's durable timer infrastructure — if the worker restarts while waiting, the remaining time is preserved across replay.
+
+### Summary
+
+| Pattern | Call | Completes when |
+|---------|------|----------------|
+| Wait for all | `ctx->await([f1, f2])` | Every future resolves |
+| Wait for any | `ctx->await([f1, f2], 1)` | First future resolves |
+| Quorum | `ctx->await([f1, f2, f3], 2)` | N futures resolve |
+| With deadline | `ctx->await([f1, f2], timeout = {hours: 48})` | All resolve or timeout |
+
+### Relationship to the `wait` Keyword
+
+`ctx->await` complements — rather than replaces — the `wait` keyword. For single-future waits (e.g. `check wait events.approval`), the plain `wait` syntax remains idiomatic. `ctx->await` is the right choice when you need to coordinate multiple futures, set a quorum count, or apply a deadline.
+
 ## What's Next
 
+- [Alternative Wait](patterns/alternative-wait.md) — First-wins pattern (approval ladder)
+- [Wait for All](patterns/wait-for-all.md) — Collect data from multiple sources before proceeding
 - [Human in the Loop](patterns/human-in-the-loop.md) — Pause for a human decision (approve or reject)
 - [Forward Recovery](patterns/forward-recovery.md) — Pause for corrected data and retry a failed activity
 - [Handle Errors](handle-errors.md) — Error handling patterns

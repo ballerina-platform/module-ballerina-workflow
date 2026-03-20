@@ -79,7 +79,11 @@ if not exist "%BAL_SOURCE_DIR%" (
 if exist "%BAL_DESTINATION_DIR%" (
     rmdir /s /q "%BAL_DESTINATION_DIR%"
 )
-xcopy /e /i "%BAL_SOURCE_DIR%" "%BAL_DESTINATION_DIR%"
+xcopy /E /I /Y /R /Q "%BAL_SOURCE_DIR%" "%BAL_DESTINATION_DIR%"
+if errorlevel 1 (
+    echo Error: xcopy failed while updating central repository.
+    exit /b 1
+)
 echo Successfully updated the local central repositories
 
 echo %BAL_DESTINATION_DIR%

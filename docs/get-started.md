@@ -1,5 +1,11 @@
 # Get Started with Ballerina Workflow
 
+A **workflow** is a series of **activities** orchestrated in a durable, fault-tolerant manner. Activities are the individual steps — calling an API, querying a database, sending an email. The workflow coordinates these steps and automatically recovers from crashes and restarts, even if the program is interrupted mid-execution.
+
+In Ballerina, both workflows and activities are modeled as regular functions. A `@workflow:Workflow` function defines the orchestration logic; `@workflow:Activity` functions define the individual steps.
+
+Once you define a workflow, you start it with `workflow:run()`. This returns a **workflow instance ID** — a unique handle you use to query the workflow's status, or send data to it.
+
 This guide walks you through writing and running your first workflow, then introduces activities step by step.
 
 ## Prerequisites

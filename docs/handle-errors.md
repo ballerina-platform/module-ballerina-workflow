@@ -255,8 +255,6 @@ service /orders on new http:Listener(9090) {
 }
 ```
 
-While the workflow is paused waiting for `events.paymentRetry`, it is fully durable. If the workflow worker restarts, the workflow replays from its history and returns to the `wait` point exactly.
-
 > **Pattern guide:** [patterns/forward-recovery.md](patterns/forward-recovery.md)
 
 ---

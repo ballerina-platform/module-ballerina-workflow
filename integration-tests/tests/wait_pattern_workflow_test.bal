@@ -251,3 +251,60 @@ function testWaitOneOfThree() returns error? {
         test:assertFail("Result should be a map");
     }
 }
+
+// ================================================================================
+// AWAIT WITH TIMEOUT — signal arrives before the 5-second timeout
+// ================================================================================
+
+@test:Config {
+    groups: ["integration", "wait-patterns"]
+}
+function testAwaitSignalWinsBeforeTimeout() returns error? {
+    string testId = uniqueId("await-sig-wins");
+    WaitPatternInput input = {id: testId};
+
+    string workflowId = check workflow:run(awaitOneWithTimeoutWorkflow, input);
+    // Wait 2 s, then send a signal — well inside the 5 s window
+    runtime:sleep(2);
+
+    WaitDecision decision = {approverId: "alice", approved: true};
+    check workflow:sendData(awaitOneWithTimeoutWorkflow, workflowId, "approverA", decision);
+
+    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
+    test:assertEquals(execInfo.status, "COMPLETED");
+
+    if execInfo.result is map<anydata> {
+        map<anydata> result = <map<anydata>>execInfo.result;
+        test:assertEquals(result["status"], "APPROVED", "Signal should win: status must be APPROVED");
+        test:assertEquals(result["decidedBy"], "alice");
+    } else {
+        test:assertFail("Result should be a map");
+    }
+}
+
+// ================================================================================
+// AWAIT WITH TIMEOUT — timeout fires before any signal arrives
+// ================================================================================
+
+@test:Config {
+    groups: ["integration", "wait-patterns"]
+}
+function testAwaitTimeoutFiresBeforeSignal() returns error? {
+    string testId = uniqueId("await-timeout");
+    WaitPatternInput input = {id: testId};
+
+    string workflowId = check workflow:run(awaitOneWithTimeoutWorkflow, input);
+    // Do NOT send any signal — let the 5 s timeout inside the workflow fire.
+    // getWorkflowResult blocks until the workflow completes (up to 30 s).
+
+    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
+    test:assertEquals(execInfo.status, "COMPLETED",
+            "Workflow should complete (not fail) when timeout fires — it handles timeout gracefully");
+
+    if execInfo.result is map<anydata> {
+        map<anydata> result = <map<anydata>>execInfo.result;
+        test:assertEquals(result["status"], "TIMED_OUT", "Timeout should fire: status must be TIMED_OUT");
+    } else {
+        test:assertFail("Result should be a map");
+    }
+}

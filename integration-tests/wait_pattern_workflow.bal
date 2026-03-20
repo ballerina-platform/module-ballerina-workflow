@@ -153,3 +153,41 @@ function waitOneOfThreeWorkflow(
         decidedBy: decision.approverId
     };
 }
+
+// ================================================================================
+// AWAIT WITH TIMEOUT WORKFLOW (ctx->await + timeout)
+// ================================================================================
+
+# Workflow that waits for the first of two approvers, but with a 5-second timeout.
+# If a signal arrives before the timeout, it wins. If the timeout fires first,
+# the workflow returns TIMED_OUT gracefully instead of failing.
+#
+# + ctx - Workflow context
+# + input - Request input
+# + events - Two approval data futures
+# + return - Result from the winning signal, or TIMED_OUT if no signal arrives in time
+@workflow:Workflow
+function awaitOneWithTimeoutWorkflow(
+    workflow:Context ctx,
+    WaitPatternInput input,
+    record {|
+        future<WaitDecision> approverA;
+        future<WaitDecision> approverB;
+    |} events
+) returns WaitPatternResult|error {
+    io:println(string `[awaitOneWithTimeoutWorkflow] Waiting for 1 of 2 (5 s timeout) for: ${input.id}`);
+    [WaitDecision]|error awaitResult = ctx->await(
+        [events.approverA, events.approverB], 1,
+        timeout = {seconds: 5}
+    );
+    if awaitResult is error {
+        io:println("[awaitOneWithTimeoutWorkflow] Timed out — no signal received within 5 s");
+        return {status: "TIMED_OUT", decidedBy: ()};
+    }
+    WaitDecision decision = awaitResult[0];
+    io:println(string `[awaitOneWithTimeoutWorkflow] Signal from ${decision.approverId}: approved=${decision.approved}`);
+    return {
+        status: decision.approved ? "APPROVED" : "REJECTED",
+        decidedBy: decision.approverId
+    };
+}

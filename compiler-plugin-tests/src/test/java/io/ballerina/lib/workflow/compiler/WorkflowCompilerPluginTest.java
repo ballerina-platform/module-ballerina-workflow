@@ -243,6 +243,15 @@ public class WorkflowCompilerPluginTest {
                         + getDiagnosticMessages(diagnosticResult));
     }
 
+    @Test(groups = "valid")
+    public void testValidAwaitWithTimeout() {
+        String packagePath = "valid_await_with_timeout";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for ctx->await with timeout parameter. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
     @Test(groups = "invalid")
     public void testInvalidAwaitNotFromEvents() {
         String packagePath = "invalid_wait_for_data_not_from_events";

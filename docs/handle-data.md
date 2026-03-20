@@ -163,7 +163,7 @@ function conditionalProcess(
 
 When a workflow step can be satisfied by **any one** of several senders, use a single shared data channel. Multiple senders all target the same channel name — the first `sendData` call unblocks the wait, and any subsequent calls are silently ignored.
 
-A common use case is the **approval ladder**: multiple approvers are notified, and whichever responds first unblocks the workflow.
+A common use case is **any-approver**: multiple approvers are notified simultaneously, and whichever responds first unblocks the workflow.
 
 ```ballerina
 @workflow:Workflow
@@ -202,7 +202,27 @@ check workflow:sendData(purchaseApproval, workflowId, "approval", decision);
 
 > **Pattern guide:** [patterns/alternative-wait.md](patterns/alternative-wait.md) &nbsp;|&nbsp; **Example:** [examples/alternative-wait/](../examples/alternative-wait/)
 
-## Wait for All — `ctx->await`
+## Approval Ladder — Sequential Escalation
+
+An **approval ladder** is a sequential escalation pattern: the workflow tries each approver one at a time, in order. If the first approver does not respond within a deadline, the workflow escalates to the next level. This is distinct from the first-wins pattern above, where all approvers are notified simultaneously and the workflow takes whoever responds first.
+
+The key difference:
+
+| | Alternative Wait (First Wins) | Approval Ladder |
+|---|---|---|
+| **Approvers notified** | All at once | One at a time, in sequence |
+| **Escalation trigger** | N/A — first response wins | Timeout or explicit rejection at each level |
+| **Use case** | Any approver is sufficient | Prefer junior approval; escalate only if unresponsive |
+
+### How to Implement
+
+Use a separate data channel per approver level combined with `ctx->await` timeouts:
+
+1. Notify the first-level approver and call `ctx->await` with a deadline (e.g. 24 hours).
+2. If `ctx->await` returns an error (timeout), notify the next-level approver and repeat.
+3. Continue up the ladder until an approver responds or all levels are exhausted.
+
+Each level targets its own named channel in the events record (e.g. `managerApproval`, `directorApproval`), so responses from different levels are never mixed. A response that arrives after the workflow has already escalated is delivered to its own channel and can be handled (or ignored) by the workflow logic.
 
 When a workflow step requires data from **every** source before it can proceed, use `ctx->await` with the full array of futures. The workflow resumes only after all expected data has arrived.
 
@@ -262,7 +282,7 @@ Pass `1` as `minCount` — `ctx->await` returns as soon as the first future comp
 [ApprovalDecision] [first] = check ctx->await([events.approverA, events.approverB], 1);
 ```
 
-This is equivalent to the shared-channel first-wins pattern described above, but lets each approver send to their own named channel. The returned tuple contains only the completed values in input-array order. If you prefer the simpler single-channel model (several senders posting to the same name), the `wait events.approval` pattern still works unchanged.
+This is equivalent to the shared-channel first-wins pattern described above, but lets each approver send to their own named channel. The returned tuple contains the completed values in input-array order. If you prefer the simpler single-channel model (several senders posting to the same name), the `wait events.approval` pattern still works unchanged.
 
 ### Quorum (N of M)
 
@@ -303,7 +323,7 @@ The timeout participates in Temporal's durable timer infrastructure — if the w
 
 ## What's Next
 
-- [Alternative Wait](patterns/alternative-wait.md) — First-wins pattern (approval ladder)
+- [Alternative Wait](patterns/alternative-wait.md) — First-wins pattern (any-approver, first response wins)
 - [Wait for All](patterns/wait-for-all.md) — Collect data from multiple sources before proceeding
 - [Human in the Loop](patterns/human-in-the-loop.md) — Pause for a human decision (approve or reject)
 - [Forward Recovery](patterns/forward-recovery.md) — Pause for corrected data and retry a failed activity

@@ -8,7 +8,7 @@ When a workflow needs a decision from one of several possible sources, use a **s
 
 - Multiple people or systems can independently satisfy the same workflow step (e.g., any one approver is sufficient).
 - You want the workflow to proceed the moment the first response arrives, without waiting for the rest.
-- Approval ladder / escalation: a junior approver and a senior approver both receive a notification — whichever acts first unblocks the workflow.
+- **Any-approver**: several approvers are notified simultaneously and whichever responds first unblocks the workflow.
 
 ## Code Pattern
 
@@ -87,7 +87,7 @@ While the workflow is waiting at `wait events.approval`:
 |---|---|---|
 | **Completes when** | First `sendData` call arrives | **All** data channels have been sent to |
 | **Data channels** | Single shared channel | Separate channel per source |
-| **Use case** | Approval ladder, first-responder | Dual authorization, collect all inputs |
+| **Use case** | Any-approver, first-responder | Dual authorization, collect all inputs |
 | **Subsequent sends** | Silently ignored | Each consumed by its own `wait` |
 
 ## What's Next

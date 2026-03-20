@@ -2,6 +2,22 @@
 
 Activity functions encapsulate non-deterministic operations — I/O, API calls, database access, and other side effects. The workflow runtime ensures each activity executes exactly once, even if the workflow replays.
 
+## What Activities Should Do
+
+Activities are the right place for:
+
+- HTTP/API calls to external services
+- Database queries and updates
+- File system operations
+- Sending emails or notifications
+- Any operation with side effects
+
+## What Activities Should Not Do
+
+- Call other activities (activities are flat, not nested)
+- Run workflow logic (use workflow functions for orchestration)
+- Access workflow context methods
+
 ## Define an Activity
 
 Annotate a function with `@workflow:Activity`:
@@ -145,21 +161,6 @@ string result = check ctx->callActivity(sendEmail,
 | `retryBackoff` | `decimal` | `2.0` | Multiplier applied to `retryDelay` after each attempt (`1.0` = fixed interval) |
 | `maxRetryDelay` | `decimal?` | — | Cap on the delay between retries in seconds (optional) |
 
-## What Activities Should Do
-
-Activities are the right place for:
-
-- HTTP/API calls to external services
-- Database queries and updates
-- File system operations
-- Sending emails or notifications
-- Any operation with side effects
-
-## What Activities Should Not Do
-
-- Call other activities (activities are flat, not nested)
-- Run workflow logic (use workflow functions for orchestration)
-- Access workflow context methods
 
 ## What's Next
 

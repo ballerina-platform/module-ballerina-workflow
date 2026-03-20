@@ -1,6 +1,17 @@
 # Key Concepts
 
-This page introduces the core concepts of the Ballerina Workflow module. Understanding these concepts will help you design and build durable workflows effectively.
+Workflows are **durable** and **long-running** — they can span minutes, days, or even months. Unlike a regular program that loses its state on a crash or restart, a workflow is **resilient to failures**: the workflow engine recovers it automatically and continues from exactly where it stopped, without re-running completed steps.
+
+This resilience is built on **replay**. The workflow engine records the outcome of every step — every activity result, every external event, every timer completion. After a crash, a program restart, or a long sleep, the engine replays that recorded history to restore the workflow to its last known state. Your workflow code runs as if it never stopped.
+
+In Ballerina, workflows and activities are ordinary functions:
+
+- [**Workflows**](#workflows) — A durable function annotated with `@workflow:Workflow` that orchestrates a business process by calling activities and reacting to events.
+- [**Activities**](#activities) — Functions annotated with `@workflow:Activity` that perform the real work: API calls, database queries, sending emails.
+- [**External Data**](#external-data) — Data sent into a running workflow from outside — approvals, payment notifications, user decisions.
+- [**Timer Events**](#timer-events) — Durable pauses that survive program restarts and continue counting down from the right point.
+
+Workflows can be started from any integration point — HTTP services, message consumers, or scheduled jobs — using `workflow:run()`. External data can similarly be sent into a running workflow from any integration point using `workflow:sendData()`.
 
 ## Workflows
 
@@ -20,9 +31,32 @@ function processOrder(workflow:Context ctx, OrderRequest request) returns OrderR
 
 Workflows must be **deterministic** — given the same inputs and history, they must produce the same sequence of operations. This is what makes replay and recovery possible. All non-deterministic work (I/O, API calls, random values) belongs in activities.
 
-> **Compiler restriction:** Calling `time:utcNow()` inside a `@Workflow` function is prohibited (WORKFLOW_113). Use `ctx.currentTime()` to obtain the current time deterministically, or call `time:utcNow()` from an activity instead.
-
 Learn more: [Write Workflow Functions](write-workflow-functions.md)
+
+## How Workflows Are Triggered
+
+Workflow logic is independent of the protocol that triggers it. You start a workflow by calling `workflow:run()` — this can happen from any entry point:
+
+**HTTP endpoint:**
+```ballerina
+service /orders on new http:Listener(9090) {
+    resource function post .(OrderRequest request) returns json|error {
+        string workflowId = check workflow:run(processOrder, request);
+        return {workflowId: workflowId};
+    }
+}
+```
+
+**Main function:**
+```ballerina
+public function main() returns error? {
+    string workflowId = check workflow:run(processOrder, {orderId: "ORD-001", item: "laptop"});
+}
+```
+
+**Multiple entry points for the same workflow:**
+
+The same workflow can be triggered from different protocols simultaneously. For example, an order workflow could be started from an HTTP API, a Kafka consumer, or a scheduled job — the workflow logic remains the same.
 
 ## Activities
 
@@ -94,6 +128,22 @@ The field name in the events record (`approval`) maps directly to the data name 
 
 Learn more: [Handle Data](handle-data.md)
 
+## How Events Are Sent
+
+Like workflow triggers, external data can be delivered to a running workflow from any integration point using `workflow:sendData()`:
+
+**HTTP endpoint:**
+```ballerina
+service /approvals on new http:Listener(9090) {
+    resource function post [string workflowId](ApprovalDecision decision) returns json|error {
+        check workflow:sendData(orderWithApproval, workflowId, "approval", decision);
+        return {status: "sent"};
+    }
+}
+```
+
+The data name (`"approval"`, `"payment"`) must match the field name declared in the workflow's events record. The workflow resumes automatically once the expected data arrives.
+
 ## Timer Events
 
 A **timer event** pauses the workflow for a specified duration. Unlike a regular sleep, a workflow timer is durable — it survives program restarts and continues counting down.
@@ -115,43 +165,6 @@ Timer events are useful for:
 - Scheduled follow-ups and reminders
 - Timeout logic (e.g., cancel an order if not paid within 30 minutes)
 - Periodic polling patterns
-
-## How Workflows Are Triggered
-
-Workflow logic is independent of the protocol that triggers it. You start a workflow by calling `workflow:run()` — this can happen from any entry point:
-
-**HTTP endpoint:**
-```ballerina
-service /orders on new http:Listener(9090) {
-    resource function post .(OrderRequest request) returns json|error {
-        string workflowId = check workflow:run(processOrder, request);
-        return {workflowId: workflowId};
-    }
-}
-```
-
-**Message consumer:**
-```ballerina
-service on kafkaListener {
-    remote function onConsumerRecord(kafka:ConsumerRecord[] records) returns error? {
-        foreach var record in records {
-            OrderRequest request = check record.value.fromJsonStringWithType();
-            _ = check workflow:run(processOrder, request);
-        }
-    }
-}
-```
-
-**Main function:**
-```ballerina
-public function main() returns error? {
-    string workflowId = check workflow:run(processOrder, {orderId: "ORD-001", item: "laptop"});
-}
-```
-
-**Multiple entry points for the same workflow:**
-
-The same workflow can be triggered from different protocols simultaneously. For example, an order workflow could be started from an HTTP API, a Kafka consumer, or a scheduled job — the workflow logic remains the same.
 
 ## What's Next
 

@@ -6,10 +6,9 @@ This example demonstrates the **wait-for-all** pattern. A fund transfer requires
 
 1. A transfer request is submitted via `POST /api/transfers`.
 2. The workflow validates the transfer and notifies both teams.
-3. The workflow waits for Operations authorization (`wait events.operationsApproval`).
-4. The workflow waits for Compliance authorization (`wait events.complianceApproval`).
-5. **Data arrival order does not matter** — if Compliance responds before Operations, the data is stored and delivered immediately when the workflow reaches that wait.
-6. If both approve, the transfer is executed. If either rejects, the transfer is rejected.
+3. The workflow calls `ctx->await([events.operationsApproval, events.complianceApproval])` — a single call that blocks until **both** futures complete.
+4. **Data arrival order does not matter** — if Compliance responds before Operations, the data is stored and `ctx->await` resolves as soon as the last outstanding future completes.
+5. If both approve, the transfer is executed. If either rejects, the transfer is rejected.
 
 ## Running the Example
 

@@ -69,6 +69,24 @@ url = "temporal.internal:7233"
 namespace = "default"
 ```
 
+## Task Queue Naming
+
+The `taskQueue` value must be **unique for each workflow integration deployment**. A task queue is how Temporal routes work to the correct worker — if two deployments share the same task queue on the same Temporal cluster, they will compete for each other's tasks and produce unpredictable results.
+
+> If you run multiple workflow integrations (e.g., an order service and a customer onboarding service) on the same Temporal cluster, give each a distinct task queue name:
+
+```toml
+# Order service deployment
+[ballerina.workflow]
+taskQueue = "ORDER_SERVICE_QUEUE"
+
+# Customer onboarding deployment (separate application)
+[ballerina.workflow]
+taskQueue = "ONBOARDING_SERVICE_QUEUE"
+```
+
+A good convention is to use a name that reflects the service and environment, for example `ORDER_SERVICE_PROD` or `INVENTORY_SERVICE_STAGING`. The same task queue name can safely be used across multiple replicas of the **same** deployment — Temporal load-balances across them correctly.
+
 ## In-Memory Mode
 
 For testing without an external server:
@@ -87,7 +105,7 @@ mode = "IN_MEMORY"
 | `mode` | `LOCAL` | Deployment mode (`LOCAL`, `CLOUD`, `SELF_HOSTED`, `IN_MEMORY`) |
 | `url` | `localhost:7233` | Temporal server URL |
 | `namespace` | `default` | Workflow namespace |
-| `taskQueue` | `BALLERINA_WORKFLOW_TASK_QUEUE` | Task queue for workflow and activity execution |
+| `taskQueue` | `BALLERINA_WORKFLOW_TASK_QUEUE` | Task queue for workflow and activity execution. **Must be unique per deployment** — see [Task Queue Naming](#task-queue-naming) below. |
 | `maxConcurrentWorkflows` | `100` | Maximum concurrent workflow executions |
 | `maxConcurrentActivities` | `100` | Maximum concurrent activity executions |
 

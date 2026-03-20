@@ -2,13 +2,6 @@
 
 Workflows can receive external data while running using future-based data handling. This allows a workflow to pause and wait for data — such as approvals, payments, or user actions — before continuing execution.
 
-## Overview
-
-1. Define data types as records
-2. Add an events parameter to the workflow function with `future<T>` fields
-3. Use Ballerina's `wait` keyword to pause until data arrives
-4. Send data to running workflows using `workflow:sendData()`
-
 ## Define Data Types
 
 Create record types for each kind of data your workflow expects:

@@ -90,26 +90,6 @@ While the workflow is waiting at `wait events.approval`:
 
 The intended pattern is to race the data future against a durable timer using Ballerina's **alternate wait** (`wait f1|f2`), which returns the result of whichever future completes first:
 
-```ballerina
-// Illustrative only — durable timer support is planned.
-future<ApprovalDecision> approvalFuture = events.approval;
-future<error?> timeoutFuture = start ctx->sleep({hours: 48});
-
-// Alternate wait: returns whichever future completes first
-ApprovalDecision|error? raceResult = wait approvalFuture|timeoutFuture;
-
-if raceResult is ApprovalDecision {
-    // Decision arrived before timeout
-    ApprovalDecision decision = raceResult;
-    // ... process decision
-} else {
-    // Timeout expired — auto-reject the order
-    return {orderId: input.orderId, status: "REJECTED", message: "Approval timed out"};
-}
-```
-
-> **Note:** In the snippet above, `ctx->sleep` uses remote-call syntax (not `ctx.sleep`). The `start` keyword creates a Ballerina strand/future, not a durable workflow timer. True durable timer behavior is planned for a future release.
-
 ## What's Next
 
 - [Forward Recovery](forward-recovery.md) — Pause for corrected data and retry a failed activity

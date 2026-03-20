@@ -114,5 +114,3 @@ public isolated function getWorkflowResult(string workflowId, int timeoutSeconds
 public isolated function getWorkflowInfo(string workflowId) returns WorkflowExecutionInfo|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative"
 } external;
-
-

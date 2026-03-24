@@ -38,6 +38,7 @@ import io.ballerina.runtime.api.types.PredefinedTypes;
 import io.ballerina.runtime.api.types.RecordType;
 import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.utils.StringUtils;
+import io.ballerina.runtime.api.utils.ValueUtils;
 import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BMap;
@@ -948,6 +949,28 @@ public final class WorkflowWorkerNative {
 
                 // Check if the process function expects a Context parameter
                 boolean hasContext = EventExtractor.hasContextParameter(processFunction);
+
+                // Convert workflow arguments to match expected parameter types.
+                // After Temporal JSON round-trip, record inputs arrive as map<anydata>
+                // but the workflow function expects specific record types (e.g. OrderRequest).
+                if (processFunction != null && workflowArgs.length > 0) {
+                    FunctionType funcType = (FunctionType) processFunction.getType();
+                    Parameter[] params = funcType.getParameters();
+                    int startIdx = hasContext ? 1 : 0;
+                    for (int i = 0; i < workflowArgs.length; i++) {
+                        int paramIdx = startIdx + i;
+                        if (paramIdx < params.length && workflowArgs[i] != null) {
+                            try {
+                                workflowArgs[i] = ValueUtils.convert(
+                                        workflowArgs[i], params[paramIdx].type);
+                            } catch (Exception e) {
+                                LOGGER.debug(
+                                        "[JWorkflowAdapter] Type conversion for param {} failed: {}",
+                                        params[paramIdx].name, e.getMessage());
+                            }
+                        }
+                    }
+                }
 
                 // Check if the process function expects an events record parameter
                 RecordType eventsRecordType = processFunction != null ?

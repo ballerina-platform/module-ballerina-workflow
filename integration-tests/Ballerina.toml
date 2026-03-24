@@ -1,12 +1,12 @@
 [package]
 org = "ballerina"
 name = "workflow_tests"
-version = "0.3.0"
+version = "0.3.1"
 
 [[dependency]]
 org = "ballerina"
 name = "workflow"
-version = "0.3.0"
+version = "0.3.1"
 
 [build-options]
 observabilityIncluded = true

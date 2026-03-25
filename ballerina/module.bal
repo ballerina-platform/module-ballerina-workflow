@@ -15,45 +15,22 @@
 // under the License.
 
 import ballerina/jballerina.java;
+import ballerina/lang.runtime;
 
 # Flag indicating whether the singleton program has been started.
 isolated boolean programStarted = false;
 
 # Module initialization function.
-# This captures the module reference and initializes the program.
+# Initializes and starts the workflow worker, then registers a graceful-stop handler
+# so the worker is shut down when the program exits (whether via `main()` returning
+# or an OS signal such as SIGTERM/Ctrl+C).
 #
 # + return - An error if initialization fails, otherwise nil
 function init() returns error? {
     initModule();
     check initWorkflowRuntime();
-}
-
-listener WorkflowListener _workflowListener = new;
-
-class WorkflowListener {
-
-    public function attach(service object {} svc, string attachPoint) returns error? {
-    }
-
-    public function detach(service object {} svc) returns error? {
-    }
-
-    public function 'start() returns error? {
-        check startWorkflowRuntime();
-    }
-
-    // gracefulStop calls stopWorkflowRuntime() which invokes workerFactory.shutdown() —
-    // a cooperative drain that lets in-flight workflow/activity tasks complete.
-    // immediateStop calls stopWorkflowRuntimeNow() which invokes workerFactory.shutdownNow() —
-    // a forceful interrupt that cancels in-flight tasks, followed by awaitTermination()
-    // to ensure the JVM threads exit before the process continues.
-    public function gracefulStop() returns error? {
-        check stopWorkflowRuntime();
-    }
-
-    public function immediateStop() returns error? {
-        check stopWorkflowRuntimeNow();
-    }
+    check startWorkflowRuntime();
+    runtime:onGracefulStop(stopWorkflowRuntime);
 }
 
 # Initializes the workflow module.

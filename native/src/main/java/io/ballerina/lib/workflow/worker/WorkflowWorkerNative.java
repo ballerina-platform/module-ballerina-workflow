@@ -71,6 +71,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.logging.Level;
 
 /**
  * Native implementation for workflow worker operations.
@@ -81,6 +82,34 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class WorkflowWorkerNative {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(WorkflowWorkerNative.class);
+
+    // When true, all Temporal SDK log suppression is skipped — useful for debugging
+    // Temporal connectivity / worker behaviour.  Enable with the JVM system property:
+    //   -Dballerina.workflow.temporal.logs=true
+    private static final boolean TEMPORAL_LOGS_ENABLED =
+            Boolean.getBoolean("ballerina.workflow.temporal.logs");
+
+    // Strong reference to the Temporal JUL logger — held as a static final field so
+    // GC cannot reset the log level (prevents SpotBugs LG_LOST_LOGGER_DUE_TO_WEAK_REFERENCE).
+    // Level is set in the static initializer below so suppression is active before any
+    // Temporal initialization runs (WorkflowServiceStubs, MultiThreadedPoller, etc.).
+    private static final java.util.logging.Logger TEMPORAL_JUL_LOGGER =
+            java.util.logging.Logger.getLogger("io.temporal");
+    // Ensures the JUL config-reload listener is registered exactly once, preventing
+    // the listener list from growing each time suppressTemporalLogs() is called.
+    // Must be declared BEFORE the static initializer block so it is non-null when
+    // suppressTemporalLogs() first runs at class-load time.
+    private static final AtomicBoolean configListenerRegistered = new AtomicBoolean(false);
+
+    static {
+        // Suppress Temporal SDK INFO logs at class-load time, before any Temporal
+        // initialization runs, unless the user has explicitly opted in to seeing them.
+        // The Temporal SDK logs through SLF4J which is bridged to JUL (slf4j-jdk14)
+        // by the Ballerina runtime.  Default suppression silences startup banners
+        // ("Created WorkflowServiceStubs", "MultiThreadedPoller start") while
+        // preserving genuine warnings and errors.
+        suppressTemporalLogs();
+    }
 
     // Static registry to store service objects accessible during workflow execution
     private static final Map<String, BObject> SERVICE_REGISTRY = new ConcurrentHashMap<>();
@@ -122,6 +151,70 @@ public final class WorkflowWorkerNative {
 
     private WorkflowWorkerNative() {
         // Utility class, prevent instantiation
+    }
+
+    /**
+     * Suppresses Temporal SDK INFO/FINE logs by default so that Ballerina programs are
+     * not flooded with Temporal startup banners ("Created WorkflowServiceStubs",
+     * "MultiThreadedPoller start", etc.).
+     *
+     * <p>Suppression is intentionally <em>non-override-resistant</em>: if a caller later
+     * calls {@code Logger.getLogger("io.temporal").setLevel(Level.ALL)} the level change
+     * is honoured, making it easy to enable Temporal logs at runtime for debugging.
+     *
+     * <p>To skip suppression entirely from the start, pass the JVM system property:
+     * <pre>  -Dballerina.workflow.temporal.logs=true</pre>
+     *
+     * <p>Two complementary mechanisms are used in the default (suppressed) path:
+     * <ol>
+     *   <li><b>Logger-level</b> — sets the {@code io.temporal} JUL logger to WARNING so
+     *       child loggers inherit WARNING and drop INFO records immediately.</li>
+     *   <li><b>Root-handler filter</b> — installs a fallback filter on every handler of the
+     *       root JUL logger to catch records from child loggers that were obtained before
+     *       the {@code io.temporal} parent was registered in
+     *       {@link java.util.logging.LogManager} (early-obtained loggers do not inherit the
+     *       level set above).</li>
+     * </ol>
+     * Both strategies are re-applied after any {@link java.util.logging.LogManager#readConfiguration()}
+     * call via a configuration listener registered exactly once.
+     */
+    private static void suppressTemporalLogs() {
+        // Skip all suppression when the user has explicitly opted in to Temporal logs.
+        if (TEMPORAL_LOGS_ENABLED) {
+            return;
+        }
+
+        // 1. Logger-level: child loggers inherit WARNING from io.temporal.
+        //    Intentionally no setFilter() here — a subsequent setLevel(ALL) call on this
+        //    logger will be respected, which allows runtime debug overrides.
+        TEMPORAL_JUL_LOGGER.setLevel(Level.WARNING);
+
+        // 2. Root-handler filter: fallback for records that escape mechanism 1
+        //    (e.g. child loggers obtained before the io.temporal parent was registered).
+        java.util.logging.Logger rootLogger =
+                java.util.logging.LogManager.getLogManager().getLogger("");
+        if (rootLogger != null) {
+            for (java.util.logging.Handler handler : rootLogger.getHandlers()) {
+                final java.util.logging.Filter prev = handler.getFilter();
+                handler.setFilter(record -> {
+                    if (record.getLoggerName() != null
+                            && record.getLoggerName().startsWith("io.temporal")
+                            && record.getLevel().intValue() < Level.WARNING.intValue()) {
+                        return false;
+                    }
+                    return prev == null || prev.isLoggable(record);
+                });
+            }
+        }
+
+        // Re-apply both strategies after any JUL configuration reload.
+        // The listener is registered exactly once — addConfigurationListener does not
+        // deduplicate, so calling it unconditionally would grow the listener list
+        // on every invocation of suppressTemporalLogs().
+        if (configListenerRegistered.compareAndSet(false, true)) {
+            java.util.logging.LogManager.getLogManager().addConfigurationListener(
+                    WorkflowWorkerNative::suppressTemporalLogs);
+        }
     }
 
     /**
@@ -169,6 +262,8 @@ public final class WorkflowWorkerNative {
             BString mtlsKey,
             BString caCert,
             BMap<BString, Object> defaultRetryPolicy) {
+
+        suppressTemporalLogs();
 
         if (!initialized.compareAndSet(false, true)) {
             LOGGER.debug("Singleton worker already initialized");
@@ -293,6 +388,8 @@ public final class WorkflowWorkerNative {
      * @return null on success, error on failure
      */
     public static Object initInMemoryWorker() {
+        suppressTemporalLogs();
+
         if (!initialized.compareAndSet(false, true)) {
             LOGGER.debug("Singleton worker already initialized");
             return null;

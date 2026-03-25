@@ -78,6 +78,9 @@ public final class WorkflowNative {
     // Default timeout for implicit activity execution (run, sendData)
     private static final Duration DEFAULT_IMPLICIT_ACTIVITY_TIMEOUT = Duration.ofMinutes(5);
 
+    // Deadline in seconds for gRPC metadata calls (DescribeWorkflowExecution, GetHistory)
+    private static final long GET_INFO_DEADLINE_SECONDS = 5;
+
     // Error message prefixes
     private static final String ERR_START_PROCESS = "Failed to start process: ";
     private static final String ERR_SEND_DATA = "Failed to send data: ";
@@ -424,6 +427,7 @@ public final class WorkflowNative {
                                 .build();
                 DescribeWorkflowExecutionResponse describeResponse = client.getWorkflowServiceStubs()
                         .blockingStub()
+                        .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
                         .describeWorkflowExecution(describeRequest);
                 workflowType = describeResponse.getWorkflowExecutionInfo().getType().getName();
             } catch (Exception e) {
@@ -527,6 +531,7 @@ public final class WorkflowNative {
 
             DescribeWorkflowExecutionResponse response = client.getWorkflowServiceStubs()
                     .blockingStub()
+                    .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
                     .describeWorkflowExecution(request);
 
             WorkflowExecutionInfo execInfo = response.getWorkflowExecutionInfo();
@@ -691,6 +696,7 @@ public final class WorkflowNative {
 
                 GetWorkflowExecutionHistoryResponse response = client.getWorkflowServiceStubs()
                         .blockingStub()
+                        .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
                         .getWorkflowExecutionHistory(reqBuilder.build());
 
                 for (HistoryEvent event : response.getHistory().getEventsList()) {

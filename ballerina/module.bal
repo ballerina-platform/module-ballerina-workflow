@@ -21,15 +21,16 @@ import ballerina/lang.runtime;
 isolated boolean programStarted = false;
 
 # Module initialization function.
-# Initializes and starts the workflow worker, then registers a graceful-stop handler
-# so the worker is shut down when the program exits (whether via `main()` returning
-# or an OS signal such as SIGTERM/Ctrl+C).
+# Initializes the workflow runtime configuration and registers a graceful-stop
+# handler. Polling is NOT started here — the compiler plugin generates a
+# `wfInternal:startWorkflowRuntime()` call as the last module-level statement
+# in the user's module, guaranteeing that all workflow registrations complete
+# before the Temporal worker begins polling.
 #
 # + return - An error if initialization fails, otherwise nil
 function init() returns error? {
     initModule();
     check initWorkflowRuntime();
-    check startWorkflowRuntime();
     runtime:onGracefulStop(stopWorkflowRuntime);
 }
 

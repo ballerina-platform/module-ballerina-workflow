@@ -63,24 +63,41 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
 
     @Override
     public void modify(SourceModifierContext context) {
+        // Collect all process functions across all documents so we can generate
+        // a single registerWorkflowsAndStart() call that covers every workflow.
+        List<Map.Entry<DocumentId, WorkflowModifierContext>> entries = new ArrayList<>();
+        List<ProcessFunctionInfo> allProcessInfos = new ArrayList<>();
+
         for (Map.Entry<DocumentId, WorkflowModifierContext> entry : this.modifierContextMap.entrySet()) {
+            if (!entry.getValue().getProcessInfoMap().isEmpty()) {
+                entries.add(entry);
+                allProcessInfos.addAll(entry.getValue().getProcessInfoMap().values());
+            }
+        }
+
+        // Transform each document (AST-level activity call rewrites) …
+        for (int i = 0; i < entries.size(); i++) {
+            Map.Entry<DocumentId, WorkflowModifierContext> entry = entries.get(i);
             DocumentId documentId = entry.getKey();
             WorkflowModifierContext workflowContext = entry.getValue();
-
-            if (workflowContext.getProcessInfoMap().isEmpty()) {
-                continue;
-            }
 
             Module module = context.currentPackage().module(documentId.moduleId());
             ModulePartNode rootNode = module.document(documentId).syntaxTree().rootNode();
 
-            // Transform the document
-            ModulePartNode updatedRootNode = transformDocument(rootNode, workflowContext);
+            // … and append the combined registration function + invocation
+            // only to the LAST document so that all @Workflow functions from
+            // every source file are visible to the generated function body.
+            boolean isLastDocument = (i == entries.size() - 1);
 
-            // Add import if needed
-            updatedRootNode = addWorkflowInternalImportIfMissing(updatedRootNode);
+            ModulePartNode updatedRootNode = transformDocument(
+                    rootNode, workflowContext, isLastDocument ? allProcessInfos : null);
 
-            // Update the syntax tree
+            // Only add the import for the document that contains the generated
+            // __registerWorkflowsAndStart() function to avoid unused-import errors.
+            if (isLastDocument) {
+                updatedRootNode = addWorkflowInternalImportIfMissing(updatedRootNode);
+            }
+
             SyntaxTree syntaxTree = module.document(documentId).syntaxTree().modifyWith(updatedRootNode);
             TextDocument textDocument = syntaxTree.textDocument();
 
@@ -92,30 +109,77 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         }
     }
 
-    private ModulePartNode transformDocument(ModulePartNode rootNode, WorkflowModifierContext workflowContext) {
-        // First, transform the function bodies (replace activity calls)
+    private ModulePartNode transformDocument(ModulePartNode rootNode, WorkflowModifierContext workflowContext,
+                                             List<ProcessFunctionInfo> allProcessInfos) {
+        // Transform function bodies (replace activity calls)
         WorkflowTreeModifier treeModifier = new WorkflowTreeModifier(workflowContext);
         ModulePartNode modifiedRoot = (ModulePartNode) rootNode.apply(treeModifier);
 
-        // Then, add registerWorkflow calls at module level
         NodeList<ModuleMemberDeclarationNode> members = modifiedRoot.members();
         List<ModuleMemberDeclarationNode> newMembers = new ArrayList<>();
-
         for (ModuleMemberDeclarationNode member : members) {
             newMembers.add(member);
         }
 
-        // Add registerWorkflow calls for each process function
-        for (ProcessFunctionInfo processInfo : workflowContext.getProcessInfoMap().values()) {
-            ModuleVariableDeclarationNode registerCall = createRegisterWorkflowCall(processInfo);
-            newMembers.add(registerCall);
+        // When allProcessInfos is non-null this is the target document:
+        // generate a private function that registers every workflow and
+        // starts the runtime, plus a module-level variable that calls it.
+        if (allProcessInfos != null && !allProcessInfos.isEmpty()) {
+            newMembers.add(createRegisterAndStartFunction(allProcessInfos));
+            newMembers.add(createRegisterAndStartInvocation());
         }
 
         NodeList<ModuleMemberDeclarationNode> updatedMembers = NodeFactory.createNodeList(newMembers);
         return modifiedRoot.modify(modifiedRoot.imports(), updatedMembers, modifiedRoot.eofToken());
     }
 
-    private ModuleVariableDeclarationNode createRegisterWorkflowCall(ProcessFunctionInfo processInfo) {
+    /**
+     * Generates a private function that registers all workflows and starts the runtime.
+     * <pre>
+     * function __registerWorkflowsAndStart() returns boolean|error {
+     *     _ = check wfInternal:registerWorkflow(wf1, "wf1", {"act": act});
+     *     _ = check wfInternal:registerWorkflow(wf2, "wf2");
+     *     _ = check wfInternal:startWorkflowRuntime();
+     *     return true;
+     * }
+     * </pre>
+     */
+    private ModuleMemberDeclarationNode createRegisterAndStartFunction(List<ProcessFunctionInfo> allProcessInfos) {
+        StringBuilder body = new StringBuilder();
+        body.append("function __registerWorkflowsAndStart() returns boolean|error {");
+        body.append(System.lineSeparator());
+
+        for (ProcessFunctionInfo processInfo : allProcessInfos) {
+            String activitiesArg = buildActivitiesArg(processInfo);
+            body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                    .append(":registerWorkflow(").append(processInfo.functionName())
+                    .append(", \"").append(processInfo.functionName()).append("\", ")
+                    .append(activitiesArg).append(");").append(System.lineSeparator());
+        }
+
+        body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                .append(":startWorkflowRuntime();").append(System.lineSeparator());
+        body.append("    return true;").append(System.lineSeparator());
+        body.append("}");
+
+        return (ModuleMemberDeclarationNode) NodeParser.parseModuleMemberDeclaration(body.toString());
+    }
+
+    /**
+     * Generates the module-level variable that invokes the combined function.
+     * <pre>
+     * boolean _ = check __registerWorkflowsAndStart();
+     * </pre>
+     */
+    private ModuleVariableDeclarationNode createRegisterAndStartInvocation() {
+        return (ModuleVariableDeclarationNode) NodeParser.parseModuleMemberDeclaration(
+                "boolean _ = check __registerWorkflowsAndStart();");
+    }
+
+    private String buildActivitiesArg(ProcessFunctionInfo processInfo) {
+        if (processInfo.activityMap().isEmpty()) {
+            return "()";
+        }
         StringBuilder mapLiteral = new StringBuilder("{");
         boolean first = true;
         for (Map.Entry<String, String> activity : processInfo.activityMap().entrySet()) {
@@ -126,18 +190,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             first = false;
         }
         mapLiteral.append("}");
-
-        String activitiesArg = processInfo.activityMap().isEmpty() ? "()" : mapLiteral.toString();
-
-        String registerStatement = String.format(
-                "boolean _ = check %s:registerWorkflow(%s, \"%s\", %s);",
-                WorkflowConstants.INTERNAL_MODULE_ALIAS,
-                processInfo.functionName(),
-                processInfo.functionName(),
-                activitiesArg
-        );
-
-        return (ModuleVariableDeclarationNode) NodeParser.parseModuleMemberDeclaration(registerStatement);
+        return mapLiteral.toString();
     }
 
     private ModulePartNode addWorkflowInternalImportIfMissing(ModulePartNode rootNode) {

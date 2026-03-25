@@ -194,6 +194,11 @@ function setupTests() returns error? {
     };
     _ = check wfInternal:registerWorkflow(processWithDependentActivity, "dependent-activity-process",
             dependentActivities);
+
+    // Start the in-memory workflow runtime after all registrations are done.
+    // (The compiler plugin generates this for user packages, but it doesn't
+    // run on the workflow module's own tests.)
+    _ = check wfInternal:startWorkflowRuntime();
 }
 
 // ============================================================================

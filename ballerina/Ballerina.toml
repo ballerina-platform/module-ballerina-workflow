@@ -1,7 +1,7 @@
 [package]
 org = "ballerina"
 name = "workflow"
-version = "0.3.1"
+version = "0.3.2"
 authors = ["Ballerina"]
 keywords = ["workflow"]
 repository = "https://github.com/ballerina-platform/module-ballerina-workflow"

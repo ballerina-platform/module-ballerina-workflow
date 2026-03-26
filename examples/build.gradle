@@ -46,6 +46,14 @@ observabilityIncluded = true
 """
 }
 
+// Examples whose main() exits on its own (non-HTTP, non-listener).
+// These are run with `bal run` as a smoke test to verify that the
+// compiler-plugin-generated __registerWorkflowsAndStart() function
+// works correctly at runtime — not just during `bal test`.
+def runnableExamples = [
+    'get-started'
+]
+
 task buildExamples {
     description = 'Builds and tests all example projects using the locally built workflow module'
     group = 'build'
@@ -99,6 +107,44 @@ task buildExamples {
     }
 }
 
+task runExamples {
+    description = 'Runs examples with a main() function via bal run to verify runtime startup'
+    group = 'verification'
+    dependsOn(buildExamples)
+
+    doLast {
+        def ballerinaDist = "${project.rootDir}/target/ballerina-runtime"
+        def distributionBinPath = "${ballerinaDist}/bin"
+
+        runnableExamples.each { exampleName ->
+            def exampleDir = new File(project.projectDir, exampleName)
+            if (!exampleDir.exists()) {
+                throw new GradleException("Runnable example not found: ${exampleDir}")
+            }
+
+            logger.lifecycle("Running example: ${exampleName}")
+
+            exec {
+                workingDir exampleDir
+                environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
+                if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+                    commandLine 'cmd', '/c', "${distributionBinPath}/bal.bat run"
+                } else {
+                    commandLine 'sh', '-c', "${distributionBinPath}/bal run"
+                }
+            }
+
+            logger.lifecycle("Example ${exampleName} ran successfully")
+        }
+    }
+}
+
 task build {
     dependsOn buildExamples
+}
+
+task test {
+    description = 'Tests all examples and runs main() smoke tests'
+    group = 'verification'
+    dependsOn runExamples
 }

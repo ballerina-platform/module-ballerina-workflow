@@ -107,6 +107,8 @@ task build {
     dependsOn(':workflow-compiler-plugin-tests:test')
     // Examples are built against the locally built workflow module
     dependsOn(':workflow-examples:build')
+    // Run examples with main() to verify runtime startup (bal run smoke test)
+    dependsOn(':workflow-examples:test')
 }
 
 task verifyExamples {

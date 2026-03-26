@@ -30,3 +30,22 @@ public isolated function registerWorkflow(function workflowFunction, string work
     'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
     name: "registerWorkflow"
 } external;
+
+# Starts the workflow runtime after all workflows have been registered.
+#
+# This is an **internal** function used by the compiler plugin as the last
+# generated module-level statement, ensuring that polling only begins after
+# every `registerWorkflow` call has executed.
+#
+# + return - `true` if the worker started successfully, or an error if starting fails
+public isolated function startWorkflowRuntime() returns boolean|error {
+    check startWorkflowRuntimeNative();
+    return true;
+}
+
+# Native call to start the singleton worker.
+# + return - An error if starting fails, otherwise nil
+isolated function startWorkflowRuntimeNative() returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
+    name: "startSingletonWorker"
+} external;

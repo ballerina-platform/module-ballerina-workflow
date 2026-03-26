@@ -71,4 +71,11 @@
         <Method name="berrorToApplicationFailure" />
         <Bug pattern="BC_VACUOUS_INSTANCEOF" />
     </Match>
+
+    <!-- Best-effort DescribeWorkflowExecution for workflowType: exception intentionally ignored -->
+    <Match>
+        <Class name="io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative" />
+        <Method name="getWorkflowResult" />
+        <Bug pattern="DE_MIGHT_IGNORE" />
+    </Match>
 </FindBugsFilter>

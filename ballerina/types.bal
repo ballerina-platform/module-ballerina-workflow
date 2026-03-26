@@ -86,12 +86,14 @@ type WorkflowRegistry map<ProcessRegistration>;
 # + output - The result returned by the activity (nil if not yet completed or failed)
 # + status - The status of the activity execution ("COMPLETED", "FAILED", "RUNNING", "PENDING")
 # + errorMessage - Error message if the activity failed
+# + attempt - The attempt number for this invocation (1-based; values greater than 1 indicate a retry)
 public type ActivityInvocation record {
     string activityName;
     anydata[] input;
     anydata? output;
     string status;
     string? errorMessage;
+    int attempt?;
 };
 
 # Information about a workflow execution (for testing/introspection).

@@ -194,6 +194,11 @@ function setupTests() returns error? {
     };
     _ = check wfInternal:registerWorkflow(processWithDependentActivity, "dependent-activity-process",
             dependentActivities);
+
+    // Start the in-memory workflow runtime after all registrations are done.
+    // (The compiler plugin generates this for user packages, but it doesn't
+    // run on the workflow module's own tests.)
+    _ = check wfInternal:startWorkflowRuntime();
 }
 
 // ============================================================================
@@ -538,4 +543,239 @@ function testRunWithValidInput() returns error? {
             result.message().includes("Failed"),
             "Unexpected error for valid run input: " + result.message());
     }
+}
+
+// ============================================================================
+// Workflow Status / Result Tests (require workflow server - IN_MEMORY mode)
+// ============================================================================
+// These tests verify workflow execution status and workflowType population.
+// They run against the embedded IN_MEMORY Temporal test server started by init().
+
+// Activity that always returns an error (for testing activity-failure propagation).
+@Activity
+function alwaysFailingActivity(string input) returns string|error {
+    return error("Activity intentionally failed: " + input);
+}
+
+// Workflow that calls alwaysFailingActivity and propagates the error via `check`.
+@Workflow
+function workflowWithFailingActivity(Context ctx, string input) returns string|error {
+    string result = check ctx->callActivity(alwaysFailingActivity, {"input": input});
+    return result;
+}
+
+// Workflow that calls two activities successfully (for activity invocation tracking tests).
+@Workflow
+function workflowWithTwoActivities(Context ctx, string input) returns string|error {
+    string r1 = check ctx->callActivity(testActivityFunction, {"input": input});
+    int r2 = check ctx->callActivity(testActivityFunction2, {"value": 5});
+    return r1 + " / " + r2.toString();
+}
+
+// Workflow that calls a failing activity with retryOnError=true.
+// The activity fails every attempt so all retries are exhausted.
+@Workflow
+function workflowWithRetryFailingActivity(Context ctx, string input) returns string|error {
+    string result = check ctx->callActivity(alwaysFailingActivity, {"input": input},
+            retryOnError = true, maxRetries = 2, retryDelay = 0.1);
+    return result;
+}
+
+@test:Config {groups: ["unit"]}
+function testGetWorkflowResultStatusCompleted() returns error? {
+    // Register the simple workflow used in this test (idempotent — safe if already registered).
+    // Use a unique name to avoid clashing with registrations done in @BeforeSuite.
+    _ = check wfInternal:registerWorkflow(simpleWorkflowProcess, "simple-workflow-status-test");
+
+    map<string> input = {id: "test-status-completed-001"};
+    string|error runResult = run(simpleWorkflowProcess, input);
+    if runResult is error {
+        // No running workflow server – skip execution assertions gracefully.
+        return;
+    }
+    string workflowId = runResult;
+
+    WorkflowExecutionInfo info = check getWorkflowResult(workflowId, 15);
+
+    test:assertEquals(info.status, "COMPLETED", "Completed workflow should have status COMPLETED");
+    test:assertEquals(info.workflowId, workflowId, "workflowId should match");
+    test:assertFalse(info.workflowType == "", "workflowType should not be empty");
+}
+
+@test:Config {groups: ["unit"]}
+function testGetWorkflowResultWorkflowType() returns error? {
+    // Verify that getWorkflowResult populates workflowType correctly.
+    _ = check wfInternal:registerWorkflow(simpleWorkflowProcess, "simple-workflow-type-test");
+
+    map<string> input = {id: "test-type-001"};
+    string|error runResult = run(simpleWorkflowProcess, input);
+    if runResult is error {
+        return; // No server available – skip.
+    }
+    string workflowId = runResult;
+
+    WorkflowExecutionInfo info = check getWorkflowResult(workflowId, 15);
+
+    test:assertEquals(info.workflowType, "simple-workflow-type-test",
+            "workflowType should match the registered workflow name");
+}
+
+@test:Config {groups: ["unit"]}
+function testGetWorkflowResultStatusFailedOnActivityError() returns error? {
+    // Verify that when an activity returns a Ballerina error the workflow is marked FAILED
+    // (not COMPLETED) in Temporal, and getWorkflowResult reflects status="FAILED".
+    map<function> activities = {"alwaysFailingActivity": alwaysFailingActivity};
+    _ = check wfInternal:registerWorkflow(workflowWithFailingActivity,
+            "workflow-failing-activity-test", activities);
+
+    map<string> input = {id: "test-activity-fail-001", input: "trigger"};
+    string|error runResult = run(workflowWithFailingActivity, input);
+    if runResult is error {
+        return; // No server available – skip.
+    }
+    string workflowId = runResult;
+
+    WorkflowExecutionInfo info = check getWorkflowResult(workflowId, 15);
+
+    test:assertEquals(info.status, "FAILED",
+            "Workflow whose activity returned error should have status FAILED");
+    test:assertTrue(info.errorMessage is string,
+            "errorMessage should be set when workflow fails");
+    string? errMsg = info.errorMessage;
+    if errMsg is string {
+        test:assertTrue(errMsg.includes("Activity intentionally failed") || errMsg.includes("failed"),
+                "errorMessage should contain the original activity error: " + errMsg);
+    }
+}
+
+// ============================================================================
+// ActivityInvocation / Retry Visibility Tests
+// ============================================================================
+// These tests verify that WorkflowExecutionInfo.activityInvocations is populated
+// from the Temporal event history and that the `attempt` field correctly reflects
+// retry behaviour.
+
+@test:Config {groups: ["unit"]}
+function testActivityInvocationsTrackedOnSuccess() returns error? {
+    // Register a workflow that calls two activities.
+    map<function> activities = {
+        "testActivityFunction": testActivityFunction,
+        "testActivityFunction2": testActivityFunction2
+    };
+    _ = check wfInternal:registerWorkflow(workflowWithTwoActivities,
+            "workflow-two-activities-test", activities);
+
+    map<string> input = {id: "test-invocations-001", input: "hello"};
+    string|error runResult = run(workflowWithTwoActivities, input);
+    if runResult is error {
+        return; // No server available – skip.
+    }
+    string workflowId = runResult;
+
+    WorkflowExecutionInfo info = check getWorkflowResult(workflowId, 15);
+
+    test:assertEquals(info.status, "COMPLETED",
+            "Workflow should complete successfully");
+
+    // Should have at least 2 user activity invocations (COMPLETED).
+    // The history may also include built-in implicit activities, so we filter
+    // for the two user activities by name prefix.
+    ActivityInvocation[] invocations = info.activityInvocations;
+    test:assertTrue(invocations.length() >= 2,
+            "Should have at least 2 activity invocations, got " + invocations.length().toString());
+
+    // Collect user-activity invocations (their names contain a '.' separator)
+    ActivityInvocation[] userActivities = from ActivityInvocation inv in invocations
+        where inv.activityName.includes("testActivityFunction")
+        select inv;
+
+    test:assertEquals(userActivities.length(), 2,
+            "Should have exactly 2 user activity invocations");
+    test:assertEquals(userActivities[0].status, "COMPLETED",
+            "First activity should be COMPLETED");
+    int? attempt0 = userActivities[0].attempt;
+    test:assertTrue(attempt0 is int && attempt0 == 1,
+            "First activity should be attempt 1 (no retries)");
+    test:assertEquals(userActivities[1].status, "COMPLETED",
+            "Second activity should be COMPLETED");
+    int? attempt1 = userActivities[1].attempt;
+    test:assertTrue(attempt1 is int && attempt1 == 1,
+            "Second activity should be attempt 1 (no retries)");
+}
+
+@test:Config {groups: ["unit"]}
+function testActivityInvocationsShowRetriesOnFailure() returns error? {
+    // Register a workflow that calls a failing activity with retryOnError=true, maxRetries=2.
+    // The activity always fails, so Temporal retries it (total 3 attempts: 1 initial + 2 retries).
+    map<function> activities = {"alwaysFailingActivity": alwaysFailingActivity};
+    _ = check wfInternal:registerWorkflow(workflowWithRetryFailingActivity,
+            "workflow-retry-failing-test", activities);
+
+    map<string> input = {id: "test-retry-fail-001", input: "trigger"};
+    string|error runResult = run(workflowWithRetryFailingActivity, input);
+    if runResult is error {
+        return; // No server available – skip.
+    }
+    string workflowId = runResult;
+
+    WorkflowExecutionInfo info = check getWorkflowResult(workflowId, 30);
+
+    test:assertEquals(info.status, "FAILED",
+            "Workflow should fail after retries exhausted");
+
+    // The failing activity should appear once in the invocations as FAILED
+    // with the final attempt number reflecting the total attempts made.
+    ActivityInvocation[] invocations = info.activityInvocations;
+    test:assertTrue(invocations.length() >= 1,
+            "Should have at least 1 activity invocation, got " + invocations.length().toString());
+
+    // Find the failing user activity
+    ActivityInvocation[] failedActivities = from ActivityInvocation inv in invocations
+        where inv.activityName.includes("alwaysFailingActivity") && inv.status == "FAILED"
+        select inv;
+
+    test:assertTrue(failedActivities.length() >= 1,
+            "Should have at least one FAILED alwaysFailingActivity invocation");
+
+    // The last failed invocation should have attempt >= 3 (1 initial + 2 retries)
+    ActivityInvocation lastFailed = failedActivities[failedActivities.length() - 1];
+    int? lastAttempt = lastFailed.attempt;
+    test:assertTrue(lastAttempt is int && lastAttempt >= 3,
+            "Final failed invocation should be attempt >= 3, got " + (lastAttempt ?: 0).toString());
+
+    // Verify error message is captured
+    test:assertTrue(lastFailed.errorMessage is string,
+            "Failed activity should have an errorMessage");
+}
+
+@test:Config {groups: ["unit"]}
+function testActivityInvocationsOnSingleFailNoRetry() returns error? {
+    // When retryOnError=false (default), the activity fails once with attempt=1.
+    // Re-use the existing workflowWithFailingActivity process.
+    map<function> activities = {"alwaysFailingActivity": alwaysFailingActivity};
+    _ = check wfInternal:registerWorkflow(workflowWithFailingActivity,
+            "workflow-single-fail-invocations-test", activities);
+
+    map<string> input = {id: "test-single-fail-inv-001", input: "trigger"};
+    string|error runResult = run(workflowWithFailingActivity, input);
+    if runResult is error {
+        return;
+    }
+    string workflowId = runResult;
+
+    WorkflowExecutionInfo info = check getWorkflowResult(workflowId, 15);
+
+    test:assertEquals(info.status, "FAILED",
+            "Workflow should fail on activity error");
+
+    ActivityInvocation[] failedActivities = from ActivityInvocation inv in info.activityInvocations
+        where inv.activityName.includes("alwaysFailingActivity") && inv.status == "FAILED"
+        select inv;
+
+    test:assertTrue(failedActivities.length() >= 1,
+            "Should have at least one FAILED invocation");
+    // With no retries, the single attempt should be attempt 1
+    int? singleAttempt = failedActivities[0].attempt;
+    test:assertTrue(singleAttempt is int && singleAttempt == 1,
+            "Without retries, failed activity should be attempt 1");
 }

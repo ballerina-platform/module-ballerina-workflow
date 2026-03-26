@@ -33,16 +33,23 @@ import io.ballerina.runtime.api.values.BArray;
 import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
+import io.temporal.api.enums.v1.EventType;
 import io.temporal.api.enums.v1.WorkflowExecutionStatus;
+import io.temporal.api.history.v1.HistoryEvent;
 import io.temporal.api.workflow.v1.WorkflowExecutionInfo;
 import io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest;
 import io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionResponse;
+import io.temporal.api.workflowservice.v1.GetWorkflowExecutionHistoryRequest;
+import io.temporal.api.workflowservice.v1.GetWorkflowExecutionHistoryResponse;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowStub;
 import io.temporal.workflow.Workflow;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -66,8 +73,13 @@ import java.util.concurrent.TimeUnit;
  */
 public final class WorkflowNative {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(WorkflowNative.class);
+
     // Default timeout for implicit activity execution (run, sendData)
     private static final Duration DEFAULT_IMPLICIT_ACTIVITY_TIMEOUT = Duration.ofMinutes(5);
+
+    // Deadline in seconds for gRPC metadata calls (DescribeWorkflowExecution, GetHistory)
+    private static final long GET_INFO_DEADLINE_SECONDS = 5;
 
     // Error message prefixes
     private static final String ERR_START_PROCESS = "Failed to start process: ";
@@ -401,6 +413,27 @@ public final class WorkflowNative {
 
             String wfId = workflowId.getValue();
 
+            // Fetch workflowType via DescribeWorkflowExecution (best-effort; non-fatal).
+            // This is done first so the type is available even when the workflow has already
+            // completed and the stub.getResult() call below returns immediately.
+            String workflowType = "";
+            try {
+                DescribeWorkflowExecutionRequest describeRequest =
+                        DescribeWorkflowExecutionRequest.newBuilder()
+                                .setNamespace(client.getOptions().getNamespace())
+                                .setExecution(io.temporal.api.common.v1.WorkflowExecution.newBuilder()
+                                        .setWorkflowId(wfId)
+                                        .build())
+                                .build();
+                DescribeWorkflowExecutionResponse describeResponse = client.getWorkflowServiceStubs()
+                        .blockingStub()
+                        .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                        .describeWorkflowExecution(describeRequest);
+                workflowType = describeResponse.getWorkflowExecutionInfo().getType().getName();
+            } catch (Exception e) {
+                // Non-fatal: workflowType stays empty if the describe call fails
+            }
+
             // Create an untyped stub to get the result
             WorkflowStub stub = client.newUntypedWorkflowStub(wfId);
 
@@ -423,8 +456,8 @@ public final class WorkflowNative {
                 errorMessage = e.getMessage();
             }
 
-            // Build the WorkflowExecutionInfo record
-            return buildWorkflowExecutionInfo(wfId, "", status, result, errorMessage);
+            // Build the WorkflowExecutionInfo record (with activity history)
+            return buildWorkflowExecutionInfo(wfId, workflowType, status, result, errorMessage, client);
 
         } catch (Exception e) {
             return ErrorCreator.createError(
@@ -451,8 +484,9 @@ public final class WorkflowNative {
             String status = (String) info.get("status");
             Object result = info.get("result");
             String errorMessage = (String) info.get("errorMessage");
+            String workflowType = (String) info.getOrDefault("workflowType", "");
 
-            return buildWorkflowExecutionInfo(workflowId, "", status, result, errorMessage);
+            return buildWorkflowExecutionInfo(workflowId, workflowType, status, result, errorMessage);
         } catch (Exception e) {
             return handleImplicitActivityError(e, ERR_GET_RESULT);
         }
@@ -497,6 +531,7 @@ public final class WorkflowNative {
 
             DescribeWorkflowExecutionResponse response = client.getWorkflowServiceStubs()
                     .blockingStub()
+                    .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
                     .describeWorkflowExecution(request);
 
             WorkflowExecutionInfo execInfo = response.getWorkflowExecutionInfo();
@@ -553,6 +588,8 @@ public final class WorkflowNative {
 
     /**
      * Builds a WorkflowExecutionInfo Ballerina record.
+     * When a {@link WorkflowClient} is provided, activity invocations are fetched
+     * from the workflow's event history; otherwise the array is left empty.
      */
     private static BMap<BString, Object> buildWorkflowExecutionInfo(
             String workflowId,
@@ -560,6 +597,19 @@ public final class WorkflowNative {
             String status,
             Object result,
             String errorMessage) {
+        return buildWorkflowExecutionInfo(workflowId, workflowType, status, result, errorMessage, null);
+    }
+
+    /**
+     * Overload that accepts an optional {@link WorkflowClient} to fetch activity history.
+     */
+    private static BMap<BString, Object> buildWorkflowExecutionInfo(
+            String workflowId,
+            String workflowType,
+            String status,
+            Object result,
+            String errorMessage,
+            WorkflowClient client) {
 
         BMap<BString, Object> record = ValueCreator.createRecordValue(
                 ModuleUtils.getModule(), "WorkflowExecutionInfo");
@@ -580,11 +630,148 @@ public final class WorkflowNative {
             record.put(StringUtils.fromString("errorMessage"), null);
         }
 
-        // For now, activity invocations is an empty array
-        // Full activity history would require querying the workflow history
-        BArray emptyActivities = ValueCreator.createArrayValue(new BString[0]);
-        record.put(StringUtils.fromString("activityInvocations"), emptyActivities);
+        // Fetch activity invocations from workflow event history when a client is available
+        BArray activityInvocations;
+        if (client != null && ("COMPLETED".equals(status) || "FAILED".equals(status))) {
+            activityInvocations = fetchActivityInvocations(client, workflowId);
+        } else {
+            activityInvocations = createEmptyActivityInvocationsArray();
+        }
+        record.put(StringUtils.fromString("activityInvocations"), activityInvocations);
 
+        return record;
+    }
+
+    /**
+     * Creates an empty typed array for the {@code activityInvocations} field.
+     */
+    private static BArray createEmptyActivityInvocationsArray() {
+        RecordType invocationType = (RecordType) ValueCreator.createRecordValue(
+                ModuleUtils.getModule(), "ActivityInvocation").getType();
+        return ValueCreator.createArrayValue(
+                TypeCreator.createArrayType(invocationType));
+    }
+
+    /**
+     * Fetches activity invocation history from the Temporal server.
+     * <p>
+     * Iterates over the workflow's event history, pairing
+     * {@code ACTIVITY_TASK_SCHEDULED} events with their terminal events
+     * ({@code COMPLETED}, {@code FAILED}, {@code TIMED_OUT}, {@code CANCELED}).
+     * Each {@code ACTIVITY_TASK_STARTED} event carries the attempt number
+     * which is recorded in the {@code ActivityInvocation.attempt} field.
+     * <p>
+     * When an activity is retried, multiple (scheduled → started → failed) cycles
+     * appear in the history. Each cycle produces a separate
+     * {@code ActivityInvocation} entry so the caller can see every attempt.
+     *
+     * @param client     the Temporal client for gRPC calls
+     * @param workflowId the workflow execution to query
+     * @return a Ballerina array of {@code ActivityInvocation} records
+     */
+    private static BArray fetchActivityInvocations(WorkflowClient client, String workflowId) {
+        RecordType invocationType = (RecordType) ValueCreator.createRecordValue(
+                ModuleUtils.getModule(), "ActivityInvocation").getType();
+        BArray invocations = ValueCreator.createArrayValue(
+                TypeCreator.createArrayType(invocationType));
+
+        try {
+            // Map: scheduledEventId → activity name (from SCHEDULED events)
+            Map<Long, String> scheduledActivities = new HashMap<>();
+            // Map: scheduledEventId → attempt number (from STARTED events, last one wins)
+            Map<Long, Integer> scheduledAttempts = new HashMap<>();
+
+            com.google.protobuf.ByteString nextPageToken = com.google.protobuf.ByteString.EMPTY;
+
+            do {
+                GetWorkflowExecutionHistoryRequest.Builder reqBuilder =
+                        GetWorkflowExecutionHistoryRequest.newBuilder()
+                                .setNamespace(client.getOptions().getNamespace())
+                                .setExecution(io.temporal.api.common.v1.WorkflowExecution.newBuilder()
+                                        .setWorkflowId(workflowId)
+                                        .build());
+                if (!nextPageToken.isEmpty()) {
+                    reqBuilder.setNextPageToken(nextPageToken);
+                }
+
+                GetWorkflowExecutionHistoryResponse response = client.getWorkflowServiceStubs()
+                        .blockingStub()
+                        .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                        .getWorkflowExecutionHistory(reqBuilder.build());
+
+                for (HistoryEvent event : response.getHistory().getEventsList()) {
+                    EventType eventType = event.getEventType();
+
+                    if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED) {
+                        String activityName = event.getActivityTaskScheduledEventAttributes()
+                                .getActivityType().getName();
+                        scheduledActivities.put(event.getEventId(), activityName);
+                    } else if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_STARTED) {
+                        long scheduledId = event.getActivityTaskStartedEventAttributes()
+                                .getScheduledEventId();
+                        int attempt = event.getActivityTaskStartedEventAttributes().getAttempt();
+                        scheduledAttempts.put(scheduledId, attempt);
+                    } else if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_COMPLETED) {
+                        long scheduledId = event.getActivityTaskCompletedEventAttributes()
+                                .getScheduledEventId();
+                        String name = scheduledActivities.getOrDefault(scheduledId, "unknown");
+                        int attempt = scheduledAttempts.getOrDefault(scheduledId, 1);
+                        invocations.append(createActivityInvocation(
+                                name, "COMPLETED", null, attempt));
+                    } else if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_FAILED) {
+                        long scheduledId = event.getActivityTaskFailedEventAttributes()
+                                .getScheduledEventId();
+                        String name = scheduledActivities.getOrDefault(scheduledId, "unknown");
+                        int attempt = scheduledAttempts.getOrDefault(scheduledId, 1);
+                        String failMsg = "";
+                        if (event.getActivityTaskFailedEventAttributes().hasFailure()) {
+                            failMsg = event.getActivityTaskFailedEventAttributes()
+                                    .getFailure().getMessage();
+                        }
+                        invocations.append(createActivityInvocation(
+                                name, "FAILED", failMsg, attempt));
+                    } else if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT) {
+                        long scheduledId = event.getActivityTaskTimedOutEventAttributes()
+                                .getScheduledEventId();
+                        String name = scheduledActivities.getOrDefault(scheduledId, "unknown");
+                        int attempt = scheduledAttempts.getOrDefault(scheduledId, 1);
+                        invocations.append(createActivityInvocation(
+                                name, "TIMED_OUT", "Activity timed out", attempt));
+                    } else if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_CANCELED) {
+                        long scheduledId = event.getActivityTaskCanceledEventAttributes()
+                                .getScheduledEventId();
+                        String name = scheduledActivities.getOrDefault(scheduledId, "unknown");
+                        int attempt = scheduledAttempts.getOrDefault(scheduledId, 1);
+                        invocations.append(createActivityInvocation(
+                                name, "CANCELED", null, attempt));
+                    }
+                }
+
+                nextPageToken = response.getNextPageToken();
+            } while (!nextPageToken.isEmpty());
+
+        } catch (Exception e) {
+            LOGGER.debug("Failed to fetch activity history for workflow '{}': {}",
+                    workflowId, e.getMessage());
+        }
+
+        return invocations;
+    }
+
+    /**
+     * Creates a single {@code ActivityInvocation} Ballerina record.
+     */
+    private static BMap<BString, Object> createActivityInvocation(
+            String activityName, String status, String errorMessage, int attempt) {
+        BMap<BString, Object> record = ValueCreator.createRecordValue(
+                ModuleUtils.getModule(), "ActivityInvocation");
+        record.put(StringUtils.fromString("activityName"), StringUtils.fromString(activityName));
+        record.put(StringUtils.fromString("input"), ValueCreator.createArrayValue(new BString[0]));
+        record.put(StringUtils.fromString("output"), null);
+        record.put(StringUtils.fromString("status"), StringUtils.fromString(status));
+        record.put(StringUtils.fromString("errorMessage"),
+                errorMessage != null ? StringUtils.fromString(errorMessage) : null);
+        record.put(StringUtils.fromString("attempt"), (long) attempt);
         return record;
     }
 

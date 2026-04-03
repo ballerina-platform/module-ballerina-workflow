@@ -306,6 +306,51 @@ public class WorkflowCompilerPluginTest {
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_122);
     }
 
+    @Test(groups = "invalid")
+    public void testInvalidAwaitPrimitiveTypeMismatch() {
+        String packagePath = "invalid_await_primitive_type_mismatch";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for string result from future<int>");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_121);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidAwaitRecordMismatch() {
+        String packagePath = "invalid_await_record_mismatch";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for ApprovalDecision result from future<PaymentInfo>");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_121);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidAwaitTupleSwapped() {
+        String packagePath = "invalid_await_tuple_swapped";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for swapped tuple element order in ctx->await");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_117);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidAwaitTupleWrongMember() {
+        String packagePath = "invalid_await_tuple_wrong_member";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for wrong tuple member type in ctx->await");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_117);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidAwaitScalarThreeFutures() {
+        String packagePath = "invalid_await_scalar_three_futures";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for boolean scalar type used with 3 futures");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_122);
+    }
+
     /**
      * Get diagnostic result for the given package path.
      * Uses runCodeGenAndModifyPlugins() to run the code modifier.

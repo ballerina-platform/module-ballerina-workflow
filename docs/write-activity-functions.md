@@ -1,6 +1,6 @@
 # Write Activity Functions
 
-Activity functions encapsulate non-deterministic operations — I/O, API calls, database access, and other side effects. The workflow runtime ensures each activity executes exactly once, even if the workflow replays.
+Activity functions are the units of work that workflows orchestrate. They can perform any operation — deterministic or not — including I/O, API calls, database access, computation, and other side effects. The workflow engine records each activity's result, so that on recovery it can skip completed activities and continue from where the workflow left off. If you are new to workflows, start with [Key Concepts](key-concepts.md) first.
 
 ## What Activities Should Do
 
@@ -14,13 +14,13 @@ Activities are the right place for:
 
 ## What Activities Should Not Do
 
-- Call other activities (activities are flat, not nested)
-- Run workflow logic (use workflow functions for orchestration)
-- Access workflow context methods
+- **Call other activities** — Activities are flat, not nested. The engine tracks activity calls made from a workflow function via `ctx->callActivity()`. An activity calling another activity directly would bypass this tracking, so the inner call would not be recorded and could re-execute on recovery.
+- **Run workflow orchestration logic** — Decisions about what to do next (branching, looping over steps, waiting for data) belong in the workflow function, where the engine can track them. Putting orchestration logic inside an activity hides it from the engine.
+- **Access workflow context methods** — Methods like `ctx.sleep()`, `ctx.currentTime()`, and `ctx->callActivity()` are only available in workflow functions. Activities run outside the workflow scheduler and do not have access to the workflow context.
 
 ## Define an Activity
 
-Annotate a function with `@workflow:Activity`:
+Annotate a function with `@workflow:Activity`. Activity functions can be defined in the same file as the workflow, in a separate file within the same module, or even in a different Ballerina module. This makes it easy to share common activities across multiple workflows.
 
 ```ballerina
 import ballerina/workflow;
@@ -123,6 +123,18 @@ function myWorkflow(workflow:Context ctx, Input input) returns Output|error {
     check sendEmail(input.email, "Hello");
 }
 ```
+
+## Idempotency
+
+The engine records each activity result exactly once per `callActivity()` invocation. In most cases that means an activity executes exactly once. However, it can execute **more than once** for the same call in certain edge cases — for example, if a worker crashes after the activity finishes but before the engine persists the result.
+
+Because of this, activity implementations should aim to be **idempotent**: producing the same observable outcome if called again with the same inputs. In practice, full idempotency can be difficult to achieve. Common strategies include:
+
+- **Idempotency keys** — Pass a unique identifier (e.g., `orderId`, `requestId`) to external APIs when available. Most payment gateways and messaging systems use this to detect and discard duplicate requests.
+- **Check-before-write** — Wrap database operations in a transaction that checks whether the operation already completed before applying changes (e.g., `INSERT ... WHERE NOT EXISTS`).
+- **Naturally idempotent operations** — Design activities so repeating them is harmless: prefer upserts over inserts, and reads are always safe.
+
+> **Hard cases:** Some situations are inherently difficult to make idempotent. A common example is a database transaction that commits on the remote side but the acknowledgment never arrives due to a network error. The activity sees a failure, but the effect already happened. These cases require careful system-level design — for example, reconciliation jobs, compensating activities, or relying on the remote system's own idempotency support. See [Error Compensation](patterns/error-compensation.md) for patterns that address this.
 
 ## Activity Options
 

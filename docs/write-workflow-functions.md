@@ -1,6 +1,6 @@
 # Write Workflow Functions
 
-A workflow function defines the orchestration logic for a durable business process. It coordinates activities, handles events, and manages the overall flow of work.
+A workflow function defines the orchestration logic for coordinating activities, handling external data, and reacting to timer events. If you are new to workflows, start with [Key Concepts](key-concepts.md) first.
 
 ## Define a Workflow
 
@@ -34,7 +34,7 @@ All three parameters are optional. When present, they must appear in this order:
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `workflow:Context ctx` | Only if using runtime APIs | Provides `callActivity`, `sleep`, `currentTime`, `isReplaying`, `getWorkflowId`, and `getWorkflowType` |
+| `workflow:Context ctx` | No | Provides `callActivity`, `sleep`, `currentTime`, `isReplaying`, `getWorkflowId`, and `getWorkflowType` |
 | Input | No | Workflow input data. Must be a subtype of `anydata` |
 | Events record | No | Record with `future<T>` fields for receiving external data. See [Handle Data](handle-data.md) |
 
@@ -44,45 +44,78 @@ The return type must be a subtype of `anydata` or `error`.
 
 ## Call Activities
 
-Activities **must** be called using `ctx->callActivity()`. Direct calls to `@Activity` functions inside a workflow produce a compile error.
+Activities must be called through `ctx->callActivity()`. The engine uses this to track each call and record its result. Pass arguments as a `map<anydata>` with keys matching the activity's parameter names:
 
 ```ballerina
-@workflow:Workflow
-function myWorkflow(workflow:Context ctx, Input input) returns Output|error {
-    // Correct — use ctx->callActivity()
-    string result = check ctx->callActivity(sendEmail, {"to": input.email, "subject": "Hello"});
-
-    // Compile error (WORKFLOW_108) — direct calls not allowed
-    // string result = check sendEmail(input.email, "Hello");
-}
+// ✅ Correct
+boolean inStock = check ctx->callActivity(checkInventory, {"item": request.item});
 ```
 
-Pass arguments as a `map<anydata>`:
+Calling the activity function directly is a compile error — the engine cannot track or record it:
 
 ```ballerina
-InventoryStatus status = check ctx->callActivity(checkInventory, {
-    "item": request.item,
-    "quantity": request.quantity
-});
+// ❌ Compile error (WORKFLOW_108)
+boolean inStock = check checkInventory(request.item);
 ```
 
 ## Determinism Rules
 
-Workflow functions must be **deterministic** — given the same inputs and history, they must produce the same sequence of operations. The runtime may replay a workflow from its history at any time.
+During recovery, the engine re-executes the workflow function and replays the recorded event history — feeding back the same results for every engine-tracked operation (`callActivity`, `ctx.sleep()`, `ctx.currentTime()`). For recovery to work correctly, the workflow must derive all decision-influencing values through these APIs rather than reading them directly from the system. This is what "determinism" means here: not that the workflow logic is static, but that every value it acts on comes from a recorded, reproducible source.
+
+For example, branching on time is perfectly fine — as long as you use `ctx.currentTime()` (whose value is recorded). Using `time:utcNow()` would return a different value on recovery, causing the workflow to take a different branch.
 
 **Do:**
-- Call activities for I/O operations
+- Call activities for any external interaction (HTTP, databases, file I/O, external processes)
 - Use `ctx.sleep()` for durable delays
+- Use `ctx.currentTime()` to read the current time
 - Use standard control flow (`if`, `match`, `foreach`)
 - Use `wait` on data futures
 
 **Don't:**
-- Make HTTP calls or access databases directly (use activities)
+- Make direct external calls — HTTP requests, database mutations, file I/O, or invoking external processes — outside an activity
 - Use `runtime:sleep()` (use `ctx.sleep()` instead)
-- Generate random values (use activities)
-- Read system time for decisions (use `ctx.currentTime()` instead)
+- Read system time directly — e.g. `time:utcNow()` (use `ctx.currentTime()` instead)
+- Generate random values directly (use an activity so the value is recorded)
 - Access mutable global state
 - Use `worker`, `fork`, or `start` — see [Unsupported Language Features](#unsupported-language-features)
+
+> **What does the compiler enforce?** Structural violations — direct activity calls, `worker`, `fork`, and `start` inside a workflow — are caught at compile time. Other violations (e.g. a direct HTTP call in workflow code) are not detectable by the compiler; they produce incorrect behavior at runtime during recovery.
+
+### Why External Calls Must Be in Activities
+
+During recovery, the engine re-runs your workflow function to rebuild its state. For every `callActivity` the engine finds in the event history, it returns the previously recorded result *without* calling the activity again. But any code that runs directly in the workflow — outside an activity — has no recorded result and **will execute again on every recovery**.
+
+Consider this example:
+
+```ballerina
+// ❌ Dangerous — the HTTP call runs again on every recovery
+@workflow:Workflow
+function processPayment(workflow:Context ctx, PaymentRequest req) returns PaymentResult|error {
+    http:Client paymentGateway = check new ("https://payments.example.com");
+    json response = check paymentGateway->post("/charge", req.toJson());
+    // If the workflow recovers after this point, the charge is made AGAIN
+    check ctx->callActivity(sendReceipt, {"email": req.email});
+    return {status: "COMPLETED"};
+}
+```
+
+```ballerina
+// ✅ Correct — the payment call is wrapped in an activity
+@workflow:Activity
+function chargePayment(string orderId, decimal amount) returns json|error {
+    http:Client paymentGateway = check new ("https://payments.example.com");
+    return check paymentGateway->post("/charge", {orderId, amount});
+}
+
+@workflow:Workflow
+function processPayment(workflow:Context ctx, PaymentRequest req) returns PaymentResult|error {
+    json response = check ctx->callActivity(chargePayment, {"orderId": req.orderId, "amount": req.amount});
+    check ctx->callActivity(sendReceipt, {"email": req.email});
+    return {status: "COMPLETED"};
+}
+```
+
+The same principle applies to any value the workflow acts on: random numbers, environment variables, external configuration. Wrap them in activities so the engine can record and replay the values safely.
 
 ## Durable Sleep
 
@@ -122,6 +155,8 @@ function myWorkflow(workflow:Context ctx, Input input) returns Output|error {
 ```
 
 ## Get Workflow Metadata
+
+These methods return `string|error` because they communicate with the engine; use `check` to unwrap the result:
 
 ```ballerina
 @workflow:Workflow
@@ -167,7 +202,7 @@ if info.status == "RUNNING" {
 
 ## Unsupported Language Features
 
-Several Ballerina concurrency primitives are **not allowed** inside `@Workflow` functions. These constructs spawn independent execution strands that run outside the workflow scheduler, breaking the deterministic event-history replay that the runtime depends on.
+Several Ballerina concurrency primitives are **not allowed** inside `@Workflow` functions. These constructs spawn independent execution strands that run outside the workflow scheduler, which the engine cannot track in the event history.
 
 ### Named Workers
 
@@ -186,7 +221,7 @@ function myWorkflow(workflow:Context ctx, Input input) returns Output|error {
 
 ### Fork Statements
 
-`fork` statements are rejected with a compile error (`WORKFLOW_119`). Use sequential `ctx->callActivity()` calls instead — activities are individually durable and the runtime already handles parallel scheduling where possible:
+`fork` statements are rejected with a compile error (`WORKFLOW_119`). Use sequential `ctx->callActivity()` calls instead — each call is individually durable and recorded in the event history:
 
 ```ballerina
 @workflow:Workflow
@@ -220,7 +255,7 @@ function myWorkflow(workflow:Context ctx, Input input) returns Output|error {
 
 ### Why These Restrictions Exist
 
-The workflow runtime records every decision a workflow makes into an event history. During failures or restarts, the workflow is **replayed** from this history to restore its exact state. Concurrency primitives (`worker`, `fork`, `start`) spawn strands that the event history does not track, so their outcomes are unpredictable on replay — producing different results from the original execution and corrupting workflow state.
+The workflow runtime records every decision a workflow makes into a persistent event history. During recovery after a failure or restart, the engine walks through this event history to determine the last successfully completed activity, restores the workflow's context to that point, and continues execution from there — without re-executing any previously completed activities. Concurrency primitives (`worker`, `fork`, `start`) spawn strands that the event history does not track, so their outcomes cannot be restored on recovery — leading to unpredictable behaviour and corrupted workflow state.
 
 ## What's Next
 

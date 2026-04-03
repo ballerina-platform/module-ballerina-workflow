@@ -27,7 +27,7 @@ public client class Context {
         self.nativeContext = nativeContext;
     }
 
-    # Executes an activity function. The activity runs exactly once even across replays.
+    # Executes an activity function. The activity runs exactly once, even if the process crashes and restarts.
     #
     # ```ballerina
     # PaymentResult result = check ctx->callActivity(processPayment, args = {"orderId": orderId});
@@ -45,7 +45,7 @@ public client class Context {
         name: "callActivity"
     } external;
 
-    # Durable sleep that survives restarts and replays. Do not use `runtime:sleep()` in workflows.
+    # Durable sleep that survives process crashes and restarts. Do not use `runtime:sleep()` in workflows.
     #
     # ```ballerina
     # check ctx.sleep({seconds: 30});
@@ -75,9 +75,9 @@ public client class Context {
         return [seconds, fraction];
     }
 
-    # Checks whether the workflow is currently replaying history.
+    # Checks whether the workflow is recovering from a failure (re-executing recorded history).
     #
-    # + return - `true` if replaying, `false` on first execution
+    # + return - `true` if recovering, `false` on first execution
     public isolated function isReplaying() returns boolean {
         return isReplayingNative(self.nativeContext);
     }

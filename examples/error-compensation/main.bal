@@ -105,8 +105,8 @@ function transferFunds(workflow:Context ctx, TransferInput input) returns string
         "amount": input.amount
     });
     // NOTE: io:println is used here for demo purposes only. Side effects inside
-    // workflow logic will repeat during Temporal replay. In production, move
-    // logging to an activity or use the workflow-safe logging mechanism.
+    // workflow logic will repeat if the process crashes and recovers. In production,
+    // move logging to an activity or use the workflow-safe logging mechanism.
     io:println("Step 1 committed: " + debitConfirm);
 
     // Step 2: Credit destination — retry twice on transient failures

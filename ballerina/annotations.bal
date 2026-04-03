@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-# Marks a function as a workflow. Workflow functions must be deterministic — use activities for I/O.
+# Marks a function as a workflow.
 #
 # ```ballerina
 # @workflow:Workflow
@@ -23,7 +23,7 @@
 # ```
 public annotation Workflow on function;
 
-# Marks a function as a workflow activity. Activities run exactly once, even during replay.
+# Marks a function as a workflow activity.
 #
 # ```ballerina
 # @workflow:Activity

@@ -44,7 +44,7 @@ The return type must be a subtype of `anydata` or `error`.
 
 ## Call Activities
 
-Activities must be called through `ctx->callActivity()`. The engine uses this to track each call and record its result. Passing arguments as a `map<anydata>` with keys matching the activity's parameter names:
+Activities must be called through `ctx->callActivity()`. The engine uses this to track each call and record its result. Pass arguments as a `map<anydata>` with keys matching the activity's parameter names:
 
 ```ballerina
 // ✅ Correct
@@ -79,7 +79,7 @@ For example, branching on time is perfectly fine — as long as you use `ctx.cur
 - Access mutable global state
 - Use `worker`, `fork`, or `start` — see [Unsupported Language Features](#unsupported-language-features)
 
-> **What does the compiler enforce?** Structural violations — direct activity calls, `worker`, `fork`, and `start` inside a workflow — are caught at compile time. Other violations (e.g. a direct HTTP call in workflow code) are not detectable by the compiler; they produce incorrect behaviour at runtime during recovery.
+> **What does the compiler enforce?** Structural violations — direct activity calls, `worker`, `fork`, and `start` inside a workflow — are caught at compile time. Other violations (e.g. a direct HTTP call in workflow code) are not detectable by the compiler; they produce incorrect behavior at runtime during recovery.
 
 ### Why External Calls Must Be in Activities
 

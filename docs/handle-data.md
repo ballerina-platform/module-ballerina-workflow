@@ -1,6 +1,6 @@
 # Handle Data
 
-Workflows can receive external data while running using future-based data handling. This allows a workflow to pause and wait for data — such as approvals, payments, or user actions — before continuing execution.
+Workflows can receive external data while running using future-based data handling. This allows a workflow to pause and wait for data — such as approvals, payments, or user actions — before continuing execution. If you are new to workflows, start with [Key Concepts](key-concepts.md) first.
 
 ## Define Data Types
 

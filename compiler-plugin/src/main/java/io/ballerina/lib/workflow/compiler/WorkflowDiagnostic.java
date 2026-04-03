@@ -105,6 +105,14 @@ public enum WorkflowDiagnostic {
     WORKFLOW_120("WORKFLOW_120",
             "'start' action is not allowed inside @Workflow functions. "
                     + "Use 'ctx->callActivity()' for asynchronous work instead",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_121("WORKFLOW_121",
+            "Type mismatch in 'ctx->await': expected '%s' but the future carries type '%s'. "
+                    + "The return type must match the future's inner type",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_122("WORKFLOW_122",
+            "Return type of 'ctx->await' with %d futures must be a tuple '[T1, T2, ...]', "
+                    + "not scalar type '%s'",
             DiagnosticSeverity.ERROR);
 
     private final String code;

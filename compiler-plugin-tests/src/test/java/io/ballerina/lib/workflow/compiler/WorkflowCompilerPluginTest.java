@@ -288,6 +288,24 @@ public class WorkflowCompilerPluginTest {
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_120);
     }
 
+    @Test(groups = "invalid")
+    public void testInvalidAwaitScalarTypeMismatch() {
+        String packagePath = "invalid_await_scalar_type_mismatch";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for scalar type mismatch in ctx->await with single future");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_121);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidAwaitScalarMultiFuture() {
+        String packagePath = "invalid_await_scalar_multi_future";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for scalar type used with multiple futures in ctx->await");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_122);
+    }
+
     /**
      * Get diagnostic result for the given package path.
      * Uses runCodeGenAndModifyPlugins() to run the code modifier.

@@ -57,9 +57,15 @@ function awaitAnyWithTimeoutWorkflow(
         future<ApprovalDecision> approverC;
     |} events
 ) returns Result|error {
-    // Wait for first of three approvers, but no longer than 24 hours
-    [ApprovalDecision] [first] =
+    // Partial wait with timeout: sparse tuple with nil for incomplete positions
+    [ApprovalDecision?, ApprovalDecision?, ApprovalDecision?] results =
         check ctx->await([events.approverA, events.approverB, events.approverC], 1,
             timeout = {hours: 24});
-    return {status: "APPROVED", approved: first.approved};
+    // Find the first completed result
+    foreach ApprovalDecision? decision in results {
+        if decision is ApprovalDecision {
+            return {status: "APPROVED", approved: decision.approved};
+        }
+    }
+    return error("No approver responded in time");
 }

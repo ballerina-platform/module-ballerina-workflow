@@ -884,7 +884,9 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         /**
          * When the call's inferred return type is a tuple whose arity equals the futures
          * array size, verifies that each tuple element type matches the corresponding
-         * future's inner type.
+         * future's inner type. When T is a non-tuple scalar, validates it against the
+         * futures array: for a single future the scalar must match the future's inner type,
+         * and for multiple futures a tuple type is required.
          */
         private void validateTypeOrder(RemoteMethodCallActionNode callNode,
                                         ListConstructorExpressionNode listNode) {
@@ -898,12 +900,33 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                 return;
             }
             dataType = WorkflowPluginUtils.resolveTypeReference(dataType);
+            SeparatedNodeList<Node> expressions = listNode.expressions();
+            int futureCount = expressions.size();
+
             if (dataType.typeKind() != TypeDescKind.TUPLE) {
-                return; // not a tuple — no order check needed
+                // Allow array types and broadly-typed returns (anydata, json, etc.)
+                TypeDescKind kind = dataType.typeKind();
+                if (kind == TypeDescKind.ARRAY || kind == TypeDescKind.ANYDATA
+                        || kind == TypeDescKind.JSON || kind == TypeDescKind.ANY
+                        || kind == TypeDescKind.UNION) {
+                    return;
+                }
+                // T is a definite scalar type — validate against the futures array
+                if (futureCount == 1) {
+                    validateScalarAgainstSingleFuture(dataType, expressions.get(0), callNode);
+                } else if (futureCount > 1) {
+                    DiagnosticInfo info = new DiagnosticInfo(
+                            WorkflowDiagnostic.WORKFLOW_122.getCode(),
+                            WorkflowDiagnostic.WORKFLOW_122.getMessage(
+                                    futureCount, dataType.signature()),
+                            WorkflowDiagnostic.WORKFLOW_122.getSeverity());
+                    context.reportDiagnostic(
+                            DiagnosticFactory.createDiagnostic(info, callNode.location()));
+                }
+                return;
             }
             TupleTypeSymbol tupleType = (TupleTypeSymbol) dataType;
             List<TypeSymbol> memberTypes = tupleType.memberTypeDescriptors();
-            SeparatedNodeList<Node> expressions = listNode.expressions();
             // Only validate when arity matches (full "wait-all" typed pattern)
             if (memberTypes.size() != expressions.size()) {
                 return;
@@ -927,8 +950,14 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                 }
                 TypeSymbol innerType = WorkflowPluginUtils.resolveTypeReference(innerTypeOpt.get());
                 TypeSymbol expectedType = WorkflowPluginUtils.resolveTypeReference(memberTypes.get(i));
+                // Strip nil from expected type to support partial-wait nullable tuples
+                // (e.g. [T1?, T2?, T3?] where T? = T|())
+                TypeSymbol compareType = stripNil(expectedType);
+                if (compareType == null) {
+                    compareType = expectedType;
+                }
                 // Check bidirectional subtyping (structural equivalence)
-                if (!innerType.subtypeOf(expectedType) || !expectedType.subtypeOf(innerType)) {
+                if (!innerType.subtypeOf(compareType) || !compareType.subtypeOf(innerType)) {
                     DiagnosticInfo info = new DiagnosticInfo(
                             WorkflowDiagnostic.WORKFLOW_117.getCode(),
                             WorkflowDiagnostic.WORKFLOW_117.getMessage(
@@ -936,6 +965,39 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                             WorkflowDiagnostic.WORKFLOW_117.getSeverity());
                     context.reportDiagnostic(DiagnosticFactory.createDiagnostic(info, elemExpr.location()));
                 }
+            }
+        }
+
+        /**
+         * Validates that a scalar (non-tuple) return type {@code T} matches the inner type
+         * of a single future in the {@code ctx->await()} call.
+         */
+        private void validateScalarAgainstSingleFuture(TypeSymbol scalarType, Node futureNode,
+                                                        RemoteMethodCallActionNode callNode) {
+            if (!(futureNode instanceof ExpressionNode elemExpr)) {
+                return;
+            }
+            Optional<TypeSymbol> elemTypeOpt = semanticModel.typeOf(elemExpr);
+            if (elemTypeOpt.isEmpty()) {
+                return;
+            }
+            TypeSymbol elemType = WorkflowPluginUtils.resolveTypeReference(elemTypeOpt.get());
+            if (elemType.typeKind() != TypeDescKind.FUTURE) {
+                return;
+            }
+            Optional<TypeSymbol> innerTypeOpt = ((FutureTypeSymbol) elemType).typeParameter();
+            if (innerTypeOpt.isEmpty()) {
+                return;
+            }
+            TypeSymbol innerType = WorkflowPluginUtils.resolveTypeReference(innerTypeOpt.get());
+            if (!innerType.subtypeOf(scalarType) || !scalarType.subtypeOf(innerType)) {
+                DiagnosticInfo info = new DiagnosticInfo(
+                        WorkflowDiagnostic.WORKFLOW_121.getCode(),
+                        WorkflowDiagnostic.WORKFLOW_121.getMessage(
+                                scalarType.signature(), innerType.signature()),
+                        WorkflowDiagnostic.WORKFLOW_121.getSeverity());
+                context.reportDiagnostic(
+                        DiagnosticFactory.createDiagnostic(info, callNode.location()));
             }
         }
 
@@ -958,6 +1020,26 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                     })
                     .toList();
             return nonErrors.size() == 1 ? nonErrors.get(0) : null;
+        }
+
+        /**
+         * Strips {@code ()} (nil) from a union type, returning the remaining single member.
+         * Used to compare nullable tuple members (e.g. {@code T?} = {@code T|()}) against
+         * non-nullable future inner types. Returns {@code null} if no nil was found or
+         * the result is ambiguous.
+         */
+        private static TypeSymbol stripNil(TypeSymbol type) {
+            TypeSymbol resolved = WorkflowPluginUtils.resolveTypeReference(type);
+            if (resolved.typeKind() != TypeDescKind.UNION) {
+                return null; // not a union — nothing to strip
+            }
+            List<TypeSymbol> nonNils = ((UnionTypeSymbol) resolved).memberTypeDescriptors().stream()
+                    .filter(m -> {
+                        TypeSymbol r = WorkflowPluginUtils.resolveTypeReference(m);
+                        return r.typeKind() != TypeDescKind.NIL;
+                    })
+                    .toList();
+            return nonNils.size() == 1 ? WorkflowPluginUtils.resolveTypeReference(nonNils.get(0)) : null;
         }
 
         private void reportFutureNotFromEvents(ExpressionNode expr) {

@@ -186,11 +186,26 @@ public client class Context {
     # - **Quorum**: `ctx->await([f1, f2, f3], 2)` — waits for 2 of 3
     # - **With timeout**: `ctx->await([f1, f2], timeout = {hours: 48})` — returns error on timeout
     #
+    # When `minCount < futures.length()` (partial wait), the result is a
+    # **positional sparse tuple** of length `futures.length()` where each
+    # index corresponds to the original future at that position:
+    # - Completed futures carry their inner value.
+    # - Incomplete futures carry `()` (nil).
+    #
+    # ```ballerina
+    # // Partial wait — 2 of 3 must complete
+    # [ApprovalDecision?, ComplianceDecision?, AuditDecision?] result =
+    #     check ctx->await([events.approval, events.compliance, events.audit], 2);
+    # ApprovalDecision? approval = result[0];   // () if not completed
+    # ComplianceDecision? compliance = result[1]; // () if not completed
+    # AuditDecision? audit = result[2];          // () if not completed
+    # ```
+    #
     # + futures - Array of data futures from the workflow's events record
     # + minCount - Minimum number of futures that must complete. Defaults to `futures.length()` (wait for all).
     # + timeout - Optional maximum duration to wait. When exceeded an error is returned.
-    # + T - The expected return type (inferred from context). Use a tuple `[T1, T2, ...]` for per-element typed access, or `anydata[]` for untyped access.
-    # + return - Array or tuple of completed values (length = minCount, in input-array order), or an error
+    # + T - The expected return type (inferred from context). Use a tuple `[T1, T2, ...]` for full waits, `[T1?, T2?, ...]` for partial waits, or `anydata[]` for untyped access.
+    # + return - Tuple of values aligned to input positions (length = futures.length()), or an error. For partial waits, incomplete positions are `()` (nil).
     remote isolated function await(future<anydata>[] futures,
             int:Unsigned32 minCount = <int:Unsigned32>futures.length(),
             time:Duration? timeout = (),

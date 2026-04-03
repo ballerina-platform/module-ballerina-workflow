@@ -51,7 +51,7 @@ function typedWaitForDataWorkflow(
     return {status: "DONE", approved: appDecision.approved && compDecision.compliant};
 }
 
-// Valid ctx->await with wait-any pattern (minCount=1, anydata[] return)
+// Valid ctx->await with wait-any pattern (minCount=1, sparse tuple return)
 @workflow:Workflow
 function waitAnyWorkflow(
     workflow:Context ctx,
@@ -62,7 +62,14 @@ function waitAnyWorkflow(
         future<ApprovalDecision> approverC;
     |} events
 ) returns Result|error {
-    [ApprovalDecision] [first] =
+    // Partial wait: result is a 3-element sparse tuple with nil for incomplete positions
+    [ApprovalDecision?, ApprovalDecision?, ApprovalDecision?] results =
         check ctx->await([events.approverA, events.approverB, events.approverC], 1);
-    return {status: "DONE", approved: first.approved};
+    // Find the first completed result
+    foreach ApprovalDecision? decision in results {
+        if decision is ApprovalDecision {
+            return {status: "DONE", approved: decision.approved};
+        }
+    }
+    return error("No decision completed");
 }

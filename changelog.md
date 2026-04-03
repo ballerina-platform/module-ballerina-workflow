@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+- [Fix#8737](https://github.com/ballerina-platform/ballerina-library/issues/8737) - `ctx->await()`: Fix compile-time type validation and partial-wait runtime semantics  
+
+## [0.3.2] - 2026-03-26
+
+- Minor Bug Fixes and Improvements. [1](https://github.com/ballerina-platform/module-ballerina-workflow/compare/release-0.3.1...release-0.3.2)
+
+## [0.3.1] - 2026-03-24
+
+- Minor Bug Fixes and Improvements. [1](https://github.com/ballerina-platform/module-ballerina-workflow/compare/release-0.3.0...release-0.3.1)
+
+## [0.3.0] - 2026-03-30
+
 ### Added
 
 - New `ballerina/workflow.internal` submodule containing internal registration APIs used by the

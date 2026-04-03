@@ -279,10 +279,23 @@ Pass an array of futures — `ctx->await` blocks until every future completes:
 Pass `1` as `minCount` — `ctx->await` returns as soon as the first future completes:
 
 ```ballerina
-[ApprovalDecision] [first] = check ctx->await([events.approverA, events.approverB], 1);
+[ApprovalDecision?, ApprovalDecision?] result =
+    check ctx->await([events.approverA, events.approverB], 1);
 ```
 
-This is equivalent to the shared-channel first-wins pattern described above, but lets each approver send to their own named channel. The returned tuple contains the completed values in input-array order. If you prefer the simpler single-channel model (several senders posting to the same name), the `wait events.approval` pattern still works unchanged.
+When `minCount < futures.length()`, the result is a **positional sparse tuple** of the same length as the input array. Each index corresponds to the original future at that position:
+
+- Completed futures carry their future value.
+- Incomplete futures carry `()` (nil).
+
+This ensures callers always know **which** futures completed, regardless of completion order:
+
+```ballerina
+ApprovalDecision? a = result[0]; // () if approverA has not responded yet
+ApprovalDecision? b = result[1]; // () if approverB has not responded yet
+```
+
+This is equivalent to the shared-channel first-wins pattern described above, but lets each approver send to their own named channel. If you prefer the simpler single-channel model (several senders posting to the same name), the `wait events.approval` pattern still works unchanged.
 
 ### Quorum (N of M)
 
@@ -290,8 +303,19 @@ Pass any `minCount` between 1 and the array length:
 
 ```ballerina
 // 2-of-3 quorum — proceed when any two of three validators agree
-[ValidationResult, ValidationResult] [r1, r2] =
+[ValidationResult?, ValidationResult?, ValidationResult?] results =
     check ctx->await([events.validatorA, events.validatorB, events.validatorC], 2);
+```
+
+The result is a 3-element sparse tuple aligned to the input positions. The two completed slots carry `ValidationResult` values; the remaining slot carries `()`. Iterate or check each position to determine which validators responded:
+
+```ballerina
+int approvedCount = 0;
+foreach ValidationResult? r in results {
+    if r is ValidationResult && r.valid {
+        approvedCount += 1;
+    }
+}
 ```
 
 ### With a Timeout
@@ -310,12 +334,12 @@ The timeout participates in Temporal's durable timer infrastructure — if the w
 
 ### Summary
 
-| Pattern | Call | Completes when |
-|---------|------|----------------|
-| Wait for all | `ctx->await([f1, f2])` | Every future resolves |
-| Wait for any | `ctx->await([f1, f2], 1)` | First future resolves |
-| Quorum | `ctx->await([f1, f2, f3], 2)` | N futures resolve |
-| With deadline | `ctx->await([f1, f2], timeout = {hours: 48})` | All resolve or timeout |
+| Pattern | Call | Completes when | Result shape |
+|---------|------|----------------|---------------|
+| Wait for all | `ctx->await([f1, f2])` | Every future resolves | `[T1, T2]` — all populated |
+| Wait for any | `ctx->await([f1, f2], 1)` | First future resolves | `[T1?, T2?]` — nil for incomplete |
+| Quorum | `ctx->await([f1, f2, f3], 2)` | N futures resolve | `[T1?, T2?, T3?]` — nil for incomplete |
+| With deadline | `ctx->await([f1, f2], timeout = {hours: 48})` | All resolve or timeout | `[T1, T2]` — error on timeout |
 
 ### Relationship to the `wait` Keyword
 

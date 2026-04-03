@@ -108,6 +108,7 @@ service /api on new http:Listener(8090) {
 |---|---|---|
 | **Syntax** | `ctx->await([f1, f2])` | `ctx->await([f1, f2], 1)` |
 | **Completes when** | **All** futures resolve | First `sendData` call arrives |
+| **Result shape** | `[T1, T2]` — all populated | `[T1?, T2?]` — nil for incomplete |
 | **Data channels** | Separate channel per source | Single shared channel |
 | **Use case** | Dual authorization, collect all inputs | Approval ladder, first-responder |
 | **Subsequent sends** | Each consumed by its own future | Silently ignored |

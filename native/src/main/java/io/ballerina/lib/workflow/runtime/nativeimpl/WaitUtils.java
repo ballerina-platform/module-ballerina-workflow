@@ -106,7 +106,7 @@ public final class WaitUtils {
         uniqueFutures = java.util.Arrays.copyOf(uniqueFutures, uniqueCount);
 
         // Validate minCount as long before casting to int to avoid truncation overflow.
-        if (minCount < 1 || minCount > uniqueCount) {
+        if ((minCount < 1 && uniqueCount > 0) || minCount > uniqueCount) {
             return ErrorCreator.createError(StringUtils.fromString(
                     "Invalid minCount=" + minCount + " for " + uniqueCount
                             + " futures: minCount must be between 1 and " + uniqueCount));
@@ -149,22 +149,26 @@ public final class WaitUtils {
         // Collect completed values as a positional sparse array aligned to input positions.
         // For full waits (minCount == total): all positions are populated (no nil).
         // For partial waits (minCount < total): incomplete positions carry null (→ Ballerina nil).
+        // A separate boolean[] tracks completion state so that a future whose payload is
+        // genuinely null (Ballerina nil) is not confused with an incomplete position.
         Object[] results = new Object[originalTotal];
+        boolean[] completed = new boolean[originalTotal];
         for (int i = 0; i < originalTotal; i++) {
             FutureValue fv = originalFutures[i];
             if (fv.completableFuture.isDone()) {
                 try {
                     results[i] = fv.completableFuture.join();
+                    completed[i] = true;
                 } catch (Exception e) {
                     return ErrorCreator.createError(StringUtils.fromString(
                             "Error retrieving completed future value: " + e.getMessage()));
                 }
             }
-            // else: results[i] remains null → Ballerina nil ()
+            // else: results[i] remains null, completed[i] remains false
         }
 
         // Convert results to the caller's expected type (dependent-typing via typedesc)
-        return convertResults(results, typedesc.getDescribingType());
+        return convertResults(results, completed, typedesc.getDescribingType());
     }
 
     /**
@@ -197,6 +201,9 @@ public final class WaitUtils {
     /**
      * Converts the raw result array to the target type described by {@code targetType}.
      * <p>
+     * The {@code completed} array distinguishes incomplete positions from completed futures
+     * that carry a null (Ballerina nil) payload.
+     * <p>
      * <ul>
      *   <li>If {@code targetType} is a {@link TupleType}, each element is converted to
      *       its corresponding member type — enabling direct typed access without
@@ -206,13 +213,13 @@ public final class WaitUtils {
      *   <li>Otherwise the results are returned as a plain {@code anydata[]} array.</li>
      * </ul>
      */
-    private static Object convertResults(Object[] results, Type targetType) {
+    private static Object convertResults(Object[] results, boolean[] completed, Type targetType) {
         if (targetType instanceof TupleType tupleType) {
             java.util.List<Type> memberTypes = tupleType.getTupleTypes();
             BArray tupleValue = ValueCreator.createTupleValue(tupleType);
             for (int i = 0; i < results.length; i++) {
                 Type memberType = i < memberTypes.size() ? memberTypes.get(i) : tupleType.getRestType();
-                if (results[i] == null) {
+                if (!completed[i]) {
                     // Incomplete future position → nil ()
                     tupleValue.add(i, (Object) null);
                     continue;

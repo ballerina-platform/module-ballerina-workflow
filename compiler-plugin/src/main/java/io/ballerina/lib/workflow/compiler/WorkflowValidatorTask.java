@@ -19,6 +19,7 @@
 package io.ballerina.lib.workflow.compiler;
 
 import io.ballerina.compiler.api.SemanticModel;
+import io.ballerina.compiler.api.symbols.ConstantSymbol;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.FunctionTypeSymbol;
 import io.ballerina.compiler.api.symbols.FutureTypeSymbol;
@@ -71,6 +72,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Validation task for workflow @Workflow and @Activity function signatures.
@@ -830,6 +832,10 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
      * Node visitor that validates {@code ctx->await()} calls.
      */
     private static class AwaitValidator extends NodeVisitor {
+        private static final Pattern DECIMAL_INT_LITERAL = Pattern.compile("[+-]?[0-9][0-9_]*");
+        private static final Pattern HEX_INT_LITERAL = Pattern.compile("[+-]?0[xX][0-9a-fA-F][0-9a-fA-F_]*");
+        private static final Pattern BINARY_INT_LITERAL = Pattern.compile("[+-]?0[bB][01][01_]*");
+
         private final SyntaxNodeAnalysisContext context;
         private final SemanticModel semanticModel;
         private final String eventsParamName; // may be null if no events param
@@ -1101,7 +1107,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
          * Extracts the {@code minCount} value from the {@code ctx->await()} call arguments,
          * if it is a literal integer. Returns empty if not provided or not a literal.
          */
-        private static OptionalInt extractMinCount(RemoteMethodCallActionNode callNode) {
+        private OptionalInt extractMinCount(RemoteMethodCallActionNode callNode) {
             SeparatedNodeList<FunctionArgumentNode> args = callNode.arguments();
             for (int i = 0; i < args.size(); i++) {
                 FunctionArgumentNode arg = args.get(i);
@@ -1122,10 +1128,61 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
          * Attempts to parse an expression node as an integer literal.
          * Returns empty for non-literal expressions (variables, method calls, etc.).
          */
-        private static OptionalInt extractLiteralInt(ExpressionNode expr) {
-            String text = expr.toString().trim();
+        private OptionalInt extractLiteralInt(ExpressionNode expr) {
+            OptionalInt constValue = extractConstInt(expr);
+            if (constValue.isPresent()) {
+                return constValue;
+            }
+            String text = expr.toSourceCode().trim();
+            return parseBallerinaIntLiteral(text);
+        }
+
+        private OptionalInt extractConstInt(ExpressionNode expr) {
+            Optional<Symbol> symbolOpt = semanticModel.symbol(expr);
+            if (symbolOpt.isPresent() && symbolOpt.get().kind() == SymbolKind.CONSTANT
+                    && symbolOpt.get() instanceof ConstantSymbol constantSymbol) {
+                Optional<String> constValue = constantSymbol.resolvedValue();
+                if (constValue.isPresent()) {
+                    return parseBallerinaIntLiteral(constValue.get().trim());
+                }
+            }
+            return OptionalInt.empty();
+        }
+
+        private static OptionalInt parseBallerinaIntLiteral(String text) {
+            if (text.isEmpty()) {
+                return OptionalInt.empty();
+            }
+
+            if (!DECIMAL_INT_LITERAL.matcher(text).matches()
+                    && !HEX_INT_LITERAL.matcher(text).matches()
+                    && !BINARY_INT_LITERAL.matcher(text).matches()) {
+                return OptionalInt.empty();
+            }
+
+            boolean negative = text.charAt(0) == '-';
+            boolean hasSign = text.charAt(0) == '-' || text.charAt(0) == '+';
+            String unsignedText = hasSign ? text.substring(1) : text;
+
+            int radix = 10;
+            if (unsignedText.startsWith("0x") || unsignedText.startsWith("0X")) {
+                radix = 16;
+                unsignedText = unsignedText.substring(2);
+            } else if (unsignedText.startsWith("0b") || unsignedText.startsWith("0B")) {
+                radix = 2;
+                unsignedText = unsignedText.substring(2);
+            }
+
+            String normalizedDigits = unsignedText.replace("_", "");
             try {
-                return OptionalInt.of(Integer.parseInt(text));
+                long value = Long.parseLong(normalizedDigits, radix);
+                if (negative) {
+                    value = -value;
+                }
+                if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
+                    return OptionalInt.empty();
+                }
+                return OptionalInt.of((int) value);
             } catch (NumberFormatException e) {
                 return OptionalInt.empty();
             }

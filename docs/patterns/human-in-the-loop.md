@@ -70,12 +70,14 @@ function processOrder(
 service /api on new http:Listener(8090) {
     resource function post orders/[string workflowId]/approve(ApprovalDecision decision) returns json|error {
         check workflow:sendData(processOrder, workflowId, "approval", decision);
-        return {status: "decision received"};
+        return {status: "accepted"};
     }
 }
 ```
 
-`workflow:sendData` delivers the data immediately. The workflow resumes from the `wait events.approval` point.
+`workflow:sendData` is **asynchronous** — it delivers the signal to the workflow engine and returns once the engine has accepted it. The workflow processes the signal and resumes from `wait events.approval` independently after that.
+
+`return {status: "accepted"}` confirms that the engine accepted the signal, not that the workflow has already acted on it. If `sendData` fails (for example, the engine is unavailable or the workflow ID does not exist), the endpoint returns an error and the caller should retry.
 
 ## Durability While Paused
 
@@ -86,9 +88,15 @@ While the workflow is waiting at `wait events.approval`:
 
 ## Timeout: Escalate If No Decision Arrives
 
-> **Planned feature:** Racing a data future against a durable timer (`wait f1|f2`) is not yet supported by the workflow runtime. Until this is available, set an external deadline (e.g., a scheduled job or a separate reminder workflow) that sends a timeout to the waiting workflow.
+You can implement escalation today using `ctx->await` with a timeout.
 
-The intended pattern is to race the data future against a durable timer using Ballerina's **alternate wait** (`wait f1|f2`), which returns the result of whichever future completes first:
+```ballerina
+[ApprovalDecision] [decision] = check ctx->await([events.approval], timeout = {hours: 24});
+```
+
+If the timeout expires first, `ctx->await` returns an error and the workflow can trigger escalation (for example, notify a second approver or support queue).
+
+Both notification and response timestamps are preserved in workflow history through recorded activity executions and data-delivery events.
 
 ## What's Next
 

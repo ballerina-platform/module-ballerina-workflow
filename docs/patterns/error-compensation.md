@@ -1,4 +1,4 @@
-# Pattern: Compensation (Saga) — Undo Committed Steps
+# Pattern: Compensation (Saga) — Undo Completed Steps
 
 When a multi-step workflow partially succeeds and a later step fails, run **compensating activities** in reverse order to undo the work that was already committed. This is the Saga pattern for distributed transactions.
 
@@ -6,7 +6,7 @@ When a multi-step workflow partially succeeds and a later step fails, run **comp
 
 ## When to Use
 
-- The workflow makes changes across multiple independent services or data stores (e.g., debit account → credit account, reserve inventory → charge card).
+- The workflow makes changes across multiple independent services or data stores (e.g., debit account → credit account, reserve inventory → release inventory).
 - A single database transaction cannot span all the steps.
 - Rolling back to a consistent state is preferable to leaving partial changes in place.
 - Each step that commits work has a defined undo operation.
@@ -16,7 +16,7 @@ When a multi-step workflow partially succeeds and a later step fails, run **comp
 ```ballerina
 @workflow:Workflow
 function transferFunds(workflow:Context ctx, TransferInput input) returns string|error {
-    // Step 1: commit the debit. Use `check` — if this fails there is nothing to compensate.
+    // Step 1: complete the debit. Use `check` — if this fails there is nothing to compensate.
     string _ = check ctx->callActivity(debitAccount, {
         "accountId": input.sourceAccount,
         "amount": input.amount
@@ -45,20 +45,30 @@ function transferFunds(workflow:Context ctx, TransferInput input) returns string
 ## Designing Compensating Activities
 
 A compensating activity must be:
-- **Idempotent** — safe to call more than once (in case of retries during the compensation phase).
+- **Ideally idempotent** — safest when compensation may be retried.
 - **Always succeeds** — if compensation can also fail, configure it with retries or handle the error explicitly. A failed compensation usually requires manual intervention.
 - **Semantically correct** — it undoes the specific committed change, not just a generic rollback.
 
+Compensation is different from ACID rollback. A compensating action may introduce new side effects (fees, cancellation penalties, audit events) while restoring acceptable business consistency.
+
+If strict idempotency is not achievable, document the risk and define operational runbooks for manual review and repair using workflow history.
+
 ## Scaling to More Steps
 
-For N steps, track compensations as you commit and execute them in reverse order on failure:
+For N steps, track compensations as each step succeeds and execute them in reverse order on failure:
 
 ```ballerina
-// Step 1 committed
+// Step 1 completed
 string _ = check ctx->callActivity(step1, {...});
 
-// Step 2 committed
-string _ = check ctx->callActivity(step2, {...});
+// Step 2 captured so it can fail and still allow compensation of step1
+string|error step2Result = ctx->callActivity(step2, {...});
+if step2Result is error {
+    string _ = check ctx->callActivity(compensateStep1, {...});
+    return "ROLLED_BACK";
+}
+
+// Step 2 completed
 
 // Step 3 — capture as T|error
 string|error step3Result = ctx->callActivity(step3, {...});

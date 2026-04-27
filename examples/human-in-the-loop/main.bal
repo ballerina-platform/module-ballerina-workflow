@@ -195,11 +195,15 @@ service /api on new http:Listener(8090) {
     }
 
     # Sends the manager's approval decision to a waiting workflow.
+    # workflow:sendData is asynchronous — it signals the workflow engine and
+    # returns once the engine has accepted the signal. The workflow processes
+    # the signal and resumes independently. The response confirms engine
+    # acceptance, not that the workflow has already acted on the decision.
     resource function post orders/[string workflowId]/approve(@http:Payload ApprovalDecision decision)
             returns record {|string status; string message;|}|error {
         check workflow:sendData(processOrder, workflowId, "approval", decision);
-        io:println(string `Approval decision sent to workflow ${workflowId}`);
-        return {status: "accepted", message: "Approval decision delivered to workflow"};
+        io:println(string `Approval decision accepted by engine for workflow ${workflowId}`);
+        return {status: "accepted", message: "Approval signal accepted by the workflow engine"};
     }
 
     # Retrieves the final result of a workflow. Blocks until the workflow completes.

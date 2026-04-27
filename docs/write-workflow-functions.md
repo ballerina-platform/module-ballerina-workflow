@@ -22,7 +22,7 @@ A workflow function follows this signature pattern:
 ```ballerina
 @workflow:Workflow
 function <name>(
-    workflow:Context ctx,        // Optional — required for activities, sleep, currentTime, etc.
+    workflow:Context ctx,        // Optional — runtime-provided handle for activities, sleep, currentTime, etc.
     <InputType> input,           // Optional — workflow input (anydata subtype)
     record {| future<T>... |} events  // Optional — for receiving external events
 ) returns <ReturnType>|error { }
@@ -34,9 +34,13 @@ All three parameters are optional. When present, they must appear in this order:
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `workflow:Context ctx` | No | Provides `callActivity`, `sleep`, `currentTime`, `isReplaying`, `getWorkflowId`, and `getWorkflowType` |
+| `workflow:Context ctx` | No | Runtime-provided handle that exposes `callActivity`, `sleep`, `currentTime`, `isReplaying`, `getWorkflowId`, and `getWorkflowType` for the current workflow instance |
 | Input | No | Workflow input data. Must be a subtype of `anydata` |
 | Events record | No | Record with `future<T>` fields for receiving external data. See [Handle Data](handle-data.md) |
+
+If a workflow does not need any runtime APIs, you can omit `workflow:Context ctx`. This is uncommon, but valid for simple workflows that only transform input or wait for external data. Activities and callers do not create or manipulate this value; the runtime provides it when the workflow starts.
+
+The context contains APIs for the current workflow instance. Workflow-management operations such as `workflow:getWorkflowInfo()` are module-level functions, not context methods.
 
 ### Return Type
 
@@ -54,15 +58,22 @@ boolean inStock = check ctx->callActivity(checkInventory, {"item": request.item}
 Calling the activity function directly is a compile error — the engine cannot track or record it:
 
 ```ballerina
-// ❌ Compile error (WORKFLOW_108)
+// ❌ Compile error (WORKFLOW_108) — direct call bypasses activity tracking
 boolean inStock = check checkInventory(request.item);
 ```
 
+The difference is:
+
+- `ctx->callActivity(sendEmail, {...})` is allowed because it records the call in workflow history.
+- `sendEmail(...)` directly inside a workflow is not allowed because it bypasses workflow tracking.
+
 ## Determinism Rules
 
-During recovery, the engine re-executes the workflow function and replays the recorded event history — feeding back the same results for every engine-tracked operation (`callActivity`, `ctx.sleep()`, `ctx.currentTime()`). For recovery to work correctly, the workflow must derive all decision-influencing values through these APIs rather than reading them directly from the system. This is what "determinism" means here: not that the workflow logic is static, but that every value it acts on comes from a recorded, reproducible source.
+During recovery, the engine re-executes the workflow function and replays the recorded event history — feeding back the same results for every engine-tracked operation (`callActivity`, `ctx.sleep()`, `ctx.currentTime()`, external data delivery). Here, event history means the engine-recorded outcomes of workflow-visible operations. For recovery to work correctly, the workflow must derive all decision-influencing values through these APIs rather than reading them directly from the system. This is what "determinism" means here: not that the workflow always makes the same business decision in every environment, but that it makes the same decision again when given the same recorded inputs.
 
 For example, branching on time is perfectly fine — as long as you use `ctx.currentTime()` (whose value is recorded). Using `time:utcNow()` would return a different value on recovery, causing the workflow to take a different branch.
+
+The same applies to other environment-dependent decisions. If the workflow needs the current time, a random value, an environment variable, or external configuration, read it through an activity or another engine-tracked API so the value is reproducible during recovery.
 
 **Do:**
 - Call activities for any external interaction (HTTP, databases, file I/O, external processes)
@@ -80,6 +91,8 @@ For example, branching on time is perfectly fine — as long as you use `ctx.cur
 - Use `worker`, `fork`, or `start` — see [Unsupported Language Features](#unsupported-language-features)
 
 > **What does the compiler enforce?** Structural violations — direct activity calls, `worker`, `fork`, and `start` inside a workflow — are caught at compile time. Other violations (e.g. a direct HTTP call in workflow code) are not detectable by the compiler; they produce incorrect behavior at runtime during recovery.
+
+Direct calls to external executables are in the same category as direct HTTP or database calls: they must be wrapped in activities and are not generally detectable at compile time.
 
 ### Why External Calls Must Be in Activities
 
@@ -137,6 +150,8 @@ function reminderWorkflow(workflow:Context ctx, ReminderInput input) returns err
 }
 ```
 
+If the timer expires while the workflow is recovering, the engine recognizes that immediately and the workflow continues without waiting for the duration again.
+
 ## Check Replay Status
 
 Use `ctx.isReplaying()` to skip side effects during replay:
@@ -154,6 +169,8 @@ function myWorkflow(workflow:Context ctx, Input input) returns Output|error {
 }
 ```
 
+`ctx.isReplaying()` returns a `boolean`. It indicates whether the workflow is currently being recovered from recorded history; it does not identify a specific activity or activity instance.
+
 ## Get Workflow Metadata
 
 These methods return `string|error` because they communicate with the engine; use `check` to unwrap the result:
@@ -167,6 +184,8 @@ function myWorkflow(workflow:Context ctx, Input input) returns Output|error {
 }
 ```
 
+These values are useful for logging, auditing, and correlation with engine-side workflow records.
+
 ## Start a Workflow
 
 Use `workflow:run()` to start a new workflow instance:
@@ -179,7 +198,7 @@ string workflowId = check workflow:run(processOrder, {
 });
 ```
 
-The returned `workflowId` uniquely identifies the running workflow instance.
+The returned `workflowId` uniquely identifies the running workflow instance. In the current implementation it is a UUID v7 string, not a URI.
 
 ## Get Workflow Results
 
@@ -190,6 +209,8 @@ workflow:WorkflowExecutionInfo result = check workflow:getWorkflowResult(workflo
 io:println(result.status);  // "COMPLETED", "FAILED", "RUNNING", etc.
 io:println(result.result);  // The workflow return value (if completed)
 ```
+
+`WorkflowExecutionInfo` includes the workflow ID, workflow type, status, result, error message, and recorded activity invocations. Use `getWorkflowResult()` when you want to wait for completion, and `getWorkflowInfo()` when you only need the current status.
 
 Use `workflow:getWorkflowInfo()` to inspect a workflow's current state without waiting for completion:
 
@@ -255,7 +276,7 @@ function myWorkflow(workflow:Context ctx, Input input) returns Output|error {
 
 ### Why These Restrictions Exist
 
-The workflow runtime records every decision a workflow makes into a persistent event history. During recovery after a failure or restart, the engine walks through this event history to determine the last successfully completed activity, restores the workflow's context to that point, and continues execution from there — without re-executing any previously completed activities. Concurrency primitives (`worker`, `fork`, `start`) spawn strands that the event history does not track, so their outcomes cannot be restored on recovery — leading to unpredictable behaviour and corrupted workflow state.
+The workflow runtime records every workflow-visible decision into a persistent event history. During recovery after a failure or restart, the engine walks through this history, restores the workflow context from the last recorded state, and continues execution from there without re-executing previously completed activities. Concurrency primitives (`worker`, `fork`, `start`) spawn strands that the event history does not track, so their outcomes cannot be restored on recovery — leading to unpredictable behaviour and corrupted workflow state.
 
 ## What's Next
 

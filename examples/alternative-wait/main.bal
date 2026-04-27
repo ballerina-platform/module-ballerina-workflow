@@ -18,20 +18,21 @@
 //
 // Demonstrates a workflow where multiple people can satisfy the same step.
 // Either the Manager or the Director can approve a purchase request —
-// whichever responds first unblocks the workflow, and the other response
-// is discarded.
+// whichever responds first unblocks the workflow, and any subsequent
+// response to the same channel is silently ignored.
 //
-// The workflow uses Ballerina's alternate wait syntax (wait f1|f2) to race
-// two data channels. Each approver has their own endpoint and channel.
+// The workflow uses a single shared "approval" data channel. Both approvers
+// call the same endpoint — the first sendData("approval", ...) unblocks the
+// wait, and any later call is ignored because the workflow has already moved
+// past the wait point.
 //
 // Start the service:
 //   bal run
 //
 // Then use the HTTP API to drive the workflow:
-//   POST /api/purchases                            — submit a purchase request
-//   POST /api/purchases/{id}/managerApproval       — manager sends decision
-//   POST /api/purchases/{id}/directorApproval      — director sends decision
-//   GET  /api/purchases/{id}                       — get the final result
+//   POST /api/purchases                  — submit a purchase request
+//   POST /api/purchases/{id}/approval    — any approver sends decision (first wins)
+//   GET  /api/purchases/{id}             — get the final result
 
 import ballerina/http;
 import ballerina/io;
@@ -117,25 +118,24 @@ function processPurchase(string requestId, string item, decimal amount) returns 
 #
 # 1. Validates the request
 # 2. Notifies both a Manager and a Director
-# 3. Waits for either approver using alternate wait (`wait f1|f2`)
+# 3. Waits for either approver using a single shared data channel
 # 4. If approved — processes the purchase
 # 5. If rejected — returns REJECTED
 #
-# Each approver has a dedicated data channel (`managerApproval` and
-# `directorApproval`). The alternate wait returns whichever decision
-# arrives first; the remaining future is discarded.
+# Both approvers target the same channel name ("approval"). The first
+# sendData("approval", ...) unblocks the wait; any subsequent response
+# to the same workflow instance is silently ignored.
 #
 # + ctx - Workflow context for calling activities
 # + input - Purchase request details
-# + events - Record containing two approval data futures
+# + events - Record containing the shared approval data future
 # + return - Final purchase result or error
 @workflow:Workflow
 function purchaseApproval(
     workflow:Context ctx,
     PurchaseInput input,
     record {|
-        future<ApprovalDecision> managerApproval;
-        future<ApprovalDecision> directorApproval;
+        future<ApprovalDecision> approval;
     |} events
 ) returns PurchaseResult|error {
 
@@ -153,9 +153,9 @@ function purchaseApproval(
         "amount": input.amount
     });
 
-    // Step 3: Alternate wait — first response wins, the other is discarded
+    // Step 3: Wait once — the first sendData("approval", ...) unblocks the workflow
     io:println(string `[Workflow] Waiting for approval (Manager or Director) for: ${input.requestId}`);
-    ApprovalDecision decision = check wait events.managerApproval | events.directorApproval;
+    ApprovalDecision decision = check wait events.approval;
     io:println(string `[Workflow] Decision from ${decision.approverId}: approved=${decision.approved}`);
 
     if !decision.approved {
@@ -188,7 +188,7 @@ function purchaseApproval(
 #
 # Endpoints:
 #   POST /api/purchases                      — submit a purchase request
-#   POST /api/purchases/{id}/approval        — any approver sends decision
+#   POST /api/purchases/{id}/approval        — any approver sends decision (first wins)
 #   GET  /api/purchases/{id}                 — get the final result
 service /api on new http:Listener(8090) {
 
@@ -199,20 +199,13 @@ service /api on new http:Listener(8090) {
         return {workflowId};
     }
 
-    # Sends the manager's approval decision.
-    resource function post purchases/[string workflowId]/managerApproval(
+    # Sends an approval decision to a waiting workflow.
+    # Both the Manager and the Director call this endpoint — the first response wins.
+    resource function post purchases/[string workflowId]/approval(
             @http:Payload ApprovalDecision decision) returns record {|string status; string message;|}|error {
-        check workflow:sendData(purchaseApproval, workflowId, "managerApproval", decision);
-        io:println(string `Manager approval from ${decision.approverId} sent to workflow ${workflowId}`);
-        return {status: "accepted", message: "Manager approval delivered to workflow"};
-    }
-
-    # Sends the director's approval decision.
-    resource function post purchases/[string workflowId]/directorApproval(
-            @http:Payload ApprovalDecision decision) returns record {|string status; string message;|}|error {
-        check workflow:sendData(purchaseApproval, workflowId, "directorApproval", decision);
-        io:println(string `Director approval from ${decision.approverId} sent to workflow ${workflowId}`);
-        return {status: "accepted", message: "Director approval delivered to workflow"};
+        check workflow:sendData(purchaseApproval, workflowId, "approval", decision);
+        io:println(string `Approval from ${decision.approverId} sent to workflow ${workflowId}`);
+        return {status: "accepted", message: "Approval delivered to workflow"};
     }
 
     # Retrieves the final result of a purchase workflow.

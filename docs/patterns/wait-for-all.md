@@ -6,7 +6,7 @@ When a workflow step requires input from **every** data source before it can pro
 
 ## When to Use
 
-- Multiple independent parties must all weigh in before the workflow can continue (dual authorization, multi-party sign-off).
+- Multiple independent parties must all weigh in before the workflow can continue (dual authorization / Four-Eyes Principle, multi-party sign-off).
 - You need to collect data from several sources and aggregate the results.
 - Regulatory or business rules require approval from every designated authority.
 
@@ -33,6 +33,8 @@ function transferApproval(
 ```
 
 Each field represents a separate data channel. Both must deliver data before the workflow proceeds.
+
+Current model note: the events record is statically typed, so channels are declared up front. Dynamic, variable-length approver sets are not first-class in this API today; they require an application-level aggregation strategy.
 
 ### Wait for All Data — `ctx->await`
 
@@ -106,12 +108,14 @@ service /api on new http:Listener(8090) {
 
 | | Wait for All | Alternative Wait |
 |---|---|---|
-| **Syntax** | `ctx->await([f1, f2])` | `ctx->await([f1, f2], 1)` |
+| **Syntax** | `ctx->await([f1, f2])` | `wait events.approval` |
 | **Completes when** | **All** futures resolve | First `sendData` call arrives |
-| **Result shape** | `[T1, T2]` — all populated | `[T1?, T2?]` — nil for incomplete |
+| **Result shape** | `[T1, T2]` — all populated | `T` — the decision value |
 | **Data channels** | Separate channel per source | Single shared channel |
-| **Use case** | Dual authorization, collect all inputs | Approval ladder, first-responder |
+| **Use case** | Dual authorization (Four-Eyes Principle), collect all inputs | Approval ladder, first-responder |
 | **Subsequent sends** | Each consumed by its own future | Silently ignored |
+
+Both mechanisms are fully durable. Use `wait` for simple single-channel first-wins scenarios; use `ctx->await` when you need richer controls such as `timeout`.
 
 ## What's Next
 

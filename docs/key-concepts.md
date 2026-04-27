@@ -29,7 +29,7 @@ Because the engine mediates all interactions, it can safely handle events that a
 
 ## Workflows
 
-A **workflow** is a durable function that orchestrates a business process. The runtime automatically checkpoints workflow state so it can recover from failures and continue where it left off.
+A **workflow** is a durable function that orchestrates the steps of a business process. The runtime automatically checkpoints workflow state so it can recover from failures and resume from its last recorded state.
 
 ```ballerina
 @workflow:Workflow
@@ -74,7 +74,7 @@ public function main() returns error? {
 
 **Multiple entry points for the same workflow:**
 
-The same workflow model can be triggered from different protocols. For example, an order workflow could be started from an HTTP API, a Kafka consumer, or a scheduled job — the workflow logic remains the same.
+The same workflow model can be triggered from different entry points, including concurrently. For example, an order workflow could be started from an HTTP API, a Kafka consumer, or a scheduled job — the workflow logic remains the same.
 
 ## Activities
 
@@ -145,7 +145,7 @@ The field name in the events record (`approval`) maps directly to the data name 
 
 Learn more: [Handle Data](handle-data.md)
 
-## How Data Is Sent
+## How Data Is Delivered
 
 Like workflow triggers, external data can be delivered to a running workflow from any integration point using `workflow:sendData()`:
 
@@ -159,7 +159,9 @@ service /approvals on new http:Listener(9090) {
 }
 ```
 
-The data name (`"approval"`, `"payment"`) must match the field name declared in the workflow's events record. The workflow resumes automatically once the expected data arrives.
+The data name (`"approval"`, `"payment"`) must match the field name declared in the workflow's events record. Each field name represents a logical data channel in the workflow, not an activity name. The workflow resumes automatically once the expected data arrives.
+
+The workflow function reference passed to `workflow:sendData()` is used for compile-time validation of the data name and payload type. The `workflowId` is what identifies the target workflow instance at runtime.
 
 > **What if data arrives while the workflow is recovering?** The engine stores all incoming data in the event history regardless of the workflow's current state. If data arrives during recovery, it is persisted and delivered to the workflow as soon as recovery completes.
 

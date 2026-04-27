@@ -21,7 +21,7 @@ The Ballerina Workflow module provides durable workflow orchestration for Baller
 | [Handle Data](handle-data.md) | Receiving external data, waiting for human input, and sending data to running workflows |
 | &emsp;[Human in the Loop](patterns/human-in-the-loop.md) | Pause the workflow for a human decision (approve or reject) |
 | &emsp;[Alternative Wait](patterns/alternative-wait.md) | Race multiple data sources — first response wins |
-| &emsp;[Wait for All](patterns/wait-for-all.md) | Collect data from every source before proceeding (dual authorization) |
+| &emsp;[Wait for All](patterns/wait-for-all.md) | Collect data from every source before proceeding (dual authorization / Four-Eyes Principle) |
 | [Handle Errors](handle-errors.md) | Error propagation, retry, fallback, compensation patterns |
 | &emsp;[Propagate — Fail the Workflow](patterns/error-propagation.md) | Use `check` to fail immediately when a critical activity fails |
 | &emsp;[Fallback — Try an Alternative](patterns/error-fallback.md) | Try a secondary activity when the primary exhausts its retries |
@@ -39,7 +39,7 @@ The Ballerina Workflow module provides durable workflow orchestration for Baller
 | [Order with Payment](../examples/order-with-payment/) | Order workflow that pauses and waits for a payment confirmation |
 | [Human in the Loop](../examples/human-in-the-loop/) | Pause the workflow for a human decision (approve or reject) |
 | [Alternative Wait](../examples/alternative-wait/) | Race multiple data sources — first response wins |
-| [Wait for All](../examples/wait-for-all/) | Collect data from every source before proceeding (dual authorization) |
+| [Wait for All](../examples/wait-for-all/) | Collect data from every source before proceeding (dual authorization / Four-Eyes Principle) |
 | [Error Propagation](../examples/error-propagation/) | Propagate an activity error to fail the workflow |
 | [Error Fallback](../examples/error-fallback/) | Fall back to a secondary activity when the primary fails |
 | [Error Compensation](../examples/error-compensation/) | Saga pattern: undo committed steps when a later step fails |

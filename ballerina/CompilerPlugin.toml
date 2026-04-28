@@ -3,4 +3,4 @@ id = "workflow-compiler-plugin"
 class = "io.ballerina.lib.workflow.compiler.WorkflowCompilerPlugin"
 
 [[dependency]]
-path = "../compiler-plugin/build/libs/workflow-compiler-plugin-0.3.4-SNAPSHOT.jar"
+path = "../compiler-plugin/build/libs/workflow-compiler-plugin-0.3.4.jar"

@@ -35,6 +35,8 @@ Because failures and outcomes are durably recorded in an append-only history, wo
 
 If the workflow engine itself is temporarily unavailable, API calls such as `sendData` may fail fast and should be retried by callers. Once the engine and workers recover, execution resumes from recorded history.
 
+> **Retry safety for `sendData`:** retries are safe in the [Alternative Wait — First Wins](handle-data.md#alternative-wait--first-wins) pattern, where multiple senders post to a single shared channel and only the first delivery unblocks the workflow — later duplicates on the same channel are effectively ignored. For sequential workflows or multi-channel scenarios (for example, distinct channels per step or per approver, or a workflow that consumes the same channel more than once), duplicates are **not** auto-suppressed: a blind retry can deliver the same signal twice and advance the workflow further than intended. In those cases, make the send idempotent before retrying — for example, check the workflow status with `workflow:getWorkflowInfo()` to confirm the prior send was not already accepted, or include an idempotency key in the payload that the workflow (or the receiving activity) deduplicates against its recorded state.
+
 ---
 
 ## Controlling Retries
@@ -308,7 +310,7 @@ A **workflow reset** replays the workflow from a chosen event, discarding histor
 Steps:
 1. In the workflow detail view, click **Reset Workflow**
 2. Select the event to reset to — typically the last `WorkflowTaskCompleted` event before the failed activity was scheduled
-3. Confirm the reset — the workflow engine creates a new run for the same workflow ID from that point, carrying forward all history up to the reset event
+3. Confirm the reset — the workflow engine creates a new run (a new run ID under the same workflow) and rebuilds workflow state by replaying the recorded history up to the reset event; events after that point are discarded and execution continues from the reset point onwards
 
 After resetting, the workflow worker will pick up the new run and execute the activity again with the fixed code.
 

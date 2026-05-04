@@ -1,0 +1,13 @@
+[package]
+org = "ballerina_usecases"
+name = "finance_invoice_processing"
+version = "0.1.0"
+distribution = "2201.13.0"
+
+[build-options]
+observabilityIncluded = true
+
+[[dependency]]
+org = "ballerinax"
+name = "salesforce"
+version = "8.4.0"

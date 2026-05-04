@@ -1,0 +1,27 @@
+[ballerina.workflow]
+mode = "IN_MEMORY"
+
+[ballerina_usecases.hr_onboarding]
+# Slack bot token (xoxb-...) and target channel
+slackBotToken = ""
+onboardingChannel = "#onboarding"
+
+# Gmail OAuth refresh-token-based auth
+gmailRefreshToken = ""
+gmailClientId = ""
+gmailClientSecret = ""
+gmailFromAddress = "hr@example.com"
+
+# Jira API key/email + base URL (https://<your-org>.atlassian.net/rest)
+jiraBaseUrl = "https://your-org.atlassian.net/rest"
+jiraEmail = ""
+jiraApiToken = ""
+jiraProjectKey = "HR"
+jiraEquipmentIssueType = "Task"
+
+# Equipment approval threshold (USD). Requests above this amount need
+# manager approval via the Jira task.
+equipmentApprovalThresholdUsd = 1500.00
+
+# HTTP listener port
+servicePort = 8101

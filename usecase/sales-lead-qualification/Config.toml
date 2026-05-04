@@ -1,0 +1,23 @@
+[ballerina.workflow]
+mode = "IN_MEMORY"
+
+[ballerina_usecases.sales_lead_qualification]
+salesforceBaseUrl = "https://your-domain.my.salesforce.com"
+salesforceClientId = ""
+salesforceClientSecret = ""
+salesforceRefreshToken = ""
+salesforceRefreshUrl = "https://login.salesforce.com/services/oauth2/token"
+
+slackBotToken = ""
+salesChannel = "#sales"
+managerChannel = "#sales-leadership"
+
+twilioAccountSid = ""
+twilioApiKey = ""
+twilioApiSecret = ""
+twilioFromNumber = "+15555550100"
+
+# SLA: hours before an unattended lead is escalated to the sales manager
+slaHours = 24
+
+servicePort = 8104

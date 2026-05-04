@@ -41,8 +41,12 @@ import io.ballerina.projects.plugins.SourceModifierContext;
 import io.ballerina.tools.text.TextDocument;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Source modifier that transforms workflow process functions.
@@ -56,9 +60,18 @@ import java.util.Map;
 public class WorkflowSourceModifier implements ModifierTask<SourceModifierContext> {
 
     private final Map<DocumentId, WorkflowModifierContext> modifierContextMap;
+    private final Map<String, Object> userData;
 
-    public WorkflowSourceModifier(Map<DocumentId, WorkflowModifierContext> modifierContextMap) {
+    public WorkflowSourceModifier(Map<DocumentId, WorkflowModifierContext> modifierContextMap,
+                                  Map<String, Object> userData) {
         this.modifierContextMap = modifierContextMap;
+        this.userData = userData;
+    }
+
+    /** @deprecated Retained for source-compat with older callers. */
+    @Deprecated
+    public WorkflowSourceModifier(Map<DocumentId, WorkflowModifierContext> modifierContextMap) {
+        this(modifierContextMap, Collections.emptyMap());
     }
 
     @Override
@@ -75,6 +88,30 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             }
         }
 
+        // Collect import declarations across every document in the module(s) being
+        // modified, keyed by their alias prefix. We need this because the generated
+        // __registerWorkflowsAndStart() function may reference activity functions by
+        // a qualified prefix (e.g. `activity:callRestAPI`) that is only imported in
+        // a *different* file from the one we choose to host the generated function.
+        // Without copying the relevant import into the target file the generated
+        // function fails to compile with "undefined module 'activity'".
+        Map<String, ImportDeclarationNode> importsByPrefix = new HashMap<>();
+        for (Map.Entry<DocumentId, WorkflowModifierContext> entry : entries) {
+            DocumentId docId = entry.getKey();
+            Module module = context.currentPackage().module(docId.moduleId());
+            ModulePartNode rootNode = module.document(docId).syntaxTree().rootNode();
+            for (ImportDeclarationNode imp : rootNode.imports()) {
+                String prefix = importPrefixOf(imp);
+                if (prefix != null) {
+                    importsByPrefix.putIfAbsent(prefix, imp);
+                }
+            }
+        }
+
+        // Determine which prefixes the generated function will reference, so we
+        // can selectively copy the corresponding imports into the target file.
+        Set<String> requiredPrefixes = collectRequiredImportPrefixes(allProcessInfos);
+
         // Transform each document (AST-level activity call rewrites) …
         for (int i = 0; i < entries.size(); i++) {
             Map.Entry<DocumentId, WorkflowModifierContext> entry = entries.get(i);
@@ -90,12 +127,15 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             boolean isLastDocument = (i == entries.size() - 1);
 
             ModulePartNode updatedRootNode = transformDocument(
-                    rootNode, workflowContext, isLastDocument ? allProcessInfos : null);
+                    rootNode, workflowContext, isLastDocument ? allProcessInfos : null,
+                    isLastDocument ? collectConnectionNames() : Collections.emptyList());
 
             // Only add the import for the document that contains the generated
             // __registerWorkflowsAndStart() function to avoid unused-import errors.
             if (isLastDocument) {
                 updatedRootNode = addWorkflowInternalImportIfMissing(updatedRootNode);
+                updatedRootNode = addReferencedActivityImports(
+                        updatedRootNode, importsByPrefix, requiredPrefixes);
             }
 
             SyntaxTree syntaxTree = module.document(documentId).syntaxTree().modifyWith(updatedRootNode);
@@ -110,7 +150,8 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
     }
 
     private ModulePartNode transformDocument(ModulePartNode rootNode, WorkflowModifierContext workflowContext,
-                                             List<ProcessFunctionInfo> allProcessInfos) {
+                                             List<ProcessFunctionInfo> allProcessInfos,
+                                             List<String> connectionNames) {
         // Transform function bodies (replace activity calls)
         WorkflowTreeModifier treeModifier = new WorkflowTreeModifier(workflowContext);
         ModulePartNode modifiedRoot = (ModulePartNode) rootNode.apply(treeModifier);
@@ -125,12 +166,29 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         // generate a private function that registers every workflow and
         // starts the runtime, plus a module-level variable that calls it.
         if (allProcessInfos != null && !allProcessInfos.isEmpty()) {
-            newMembers.add(createRegisterAndStartFunction(allProcessInfos));
+            newMembers.add(createRegisterAndStartFunction(allProcessInfos, connectionNames));
             newMembers.add(createRegisterAndStartInvocation());
         }
 
         NodeList<ModuleMemberDeclarationNode> updatedMembers = NodeFactory.createNodeList(newMembers);
         return modifiedRoot.modify(modifiedRoot.imports(), updatedMembers, modifiedRoot.eofToken());
+    }
+
+    private List<String> collectConnectionNames() {
+        if (this.userData == null) {
+            return Collections.emptyList();
+        }
+        Object raw = this.userData.get(WorkflowConstants.CONNECTION_VAR_NAMES);
+        if (!(raw instanceof Set<?> set)) {
+            return Collections.emptyList();
+        }
+        List<String> result = new ArrayList<>(set.size());
+        for (Object o : set) {
+            if (o instanceof String s) {
+                result.add(s);
+            }
+        }
+        return result;
     }
 
     /**
@@ -144,10 +202,19 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
      * }
      * </pre>
      */
-    private ModuleMemberDeclarationNode createRegisterAndStartFunction(List<ProcessFunctionInfo> allProcessInfos) {
+    private ModuleMemberDeclarationNode createRegisterAndStartFunction(
+            List<ProcessFunctionInfo> allProcessInfos, List<String> connectionNames) {
         StringBuilder body = new StringBuilder();
         body.append("function __registerWorkflowsAndStart() returns boolean|error {");
         body.append(System.lineSeparator());
+
+        // Register module-level final clients before workflows so any activity
+        // launched during workflow registration can already resolve them.
+        for (String name : connectionNames) {
+            body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                    .append(":registerConnection(\"").append(name).append("\", ")
+                    .append(name).append(");").append(System.lineSeparator());
+        }
 
         for (ProcessFunctionInfo processInfo : allProcessInfos) {
             String activitiesArg = buildActivitiesArg(processInfo);
@@ -191,6 +258,87 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         }
         mapLiteral.append("}");
         return mapLiteral.toString();
+    }
+
+    /**
+     * Returns the alias prefix declared by an import (the symbol used in
+     * qualified references), or {@code null} if the import is malformed.
+     * If no explicit alias is given, falls back to the last segment of the
+     * dotted module name (e.g. {@code workflow.activity} → {@code activity}).
+     */
+    private String importPrefixOf(ImportDeclarationNode imp) {
+        if (imp.prefix().isPresent()) {
+            return imp.prefix().get().prefix().text();
+        }
+        SeparatedNodeList<IdentifierToken> moduleNames = imp.moduleName();
+        if (moduleNames.isEmpty()) {
+            return null;
+        }
+        return moduleNames.get(moduleNames.size() - 1).text();
+    }
+
+    /**
+     * Scans every collected {@link ProcessFunctionInfo} for activity-call
+     * references that use a qualified module prefix and returns the set of
+     * those prefixes. Only these are copied into the target file later, so we
+     * avoid pulling in unrelated imports and triggering unused-import warnings.
+     */
+    private Set<String> collectRequiredImportPrefixes(List<ProcessFunctionInfo> infos) {
+        Set<String> prefixes = new LinkedHashSet<>();
+        for (ProcessFunctionInfo info : infos) {
+            for (Map.Entry<String, String> e : info.activityMap().entrySet()) {
+                addPrefixIfQualified(prefixes, e.getKey());
+                addPrefixIfQualified(prefixes, e.getValue());
+            }
+        }
+        return prefixes;
+    }
+
+    private static void addPrefixIfQualified(Set<String> prefixes, String ref) {
+        if (ref == null) {
+            return;
+        }
+        int colon = ref.indexOf(':');
+        if (colon > 0) {
+            prefixes.add(ref.substring(0, colon).trim());
+        }
+    }
+
+    /**
+     * Copies any import declarations from {@code importsByPrefix} whose alias
+     * appears in {@code requiredPrefixes} into the target document, unless
+     * already present there.
+     */
+    private ModulePartNode addReferencedActivityImports(ModulePartNode rootNode,
+                                                        Map<String, ImportDeclarationNode> importsByPrefix,
+                                                        Set<String> requiredPrefixes) {
+        if (requiredPrefixes.isEmpty() || importsByPrefix.isEmpty()) {
+            return rootNode;
+        }
+        Set<String> existingPrefixes = new java.util.HashSet<>();
+        for (ImportDeclarationNode existing : rootNode.imports()) {
+            String pref = importPrefixOf(existing);
+            if (pref != null) {
+                existingPrefixes.add(pref);
+            }
+        }
+        NodeList<ImportDeclarationNode> imports = rootNode.imports();
+        boolean changed = false;
+        for (String prefix : requiredPrefixes) {
+            if (existingPrefixes.contains(prefix)) {
+                continue;
+            }
+            ImportDeclarationNode source = importsByPrefix.get(prefix);
+            if (source == null) {
+                continue;
+            }
+            imports = imports.add(source);
+            changed = true;
+        }
+        if (!changed) {
+            return rootNode;
+        }
+        return rootNode.modify().withImports(imports).apply();
     }
 
     private ModulePartNode addWorkflowInternalImportIfMissing(ModulePartNode rootNode) {

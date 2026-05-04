@@ -42,6 +42,11 @@
     </Match>
 
     <Match>
+        <Class name="io.ballerina.lib.workflow.compiler.ConnectionVariableAnalysisTask"/>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+    </Match>
+
+    <Match>
         <Class name="io.ballerina.lib.workflow.compiler.ProcessFunctionInfo"/>
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
     </Match>

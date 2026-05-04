@@ -118,6 +118,21 @@ public enum WorkflowDiagnostic {
             "Tuple member at position %d must be nilable (e.g., '%s?') when minCount (%d) "
                     + "is less than the number of futures (%d). "
                     + "Not all futures are guaranteed to complete",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_124("WORKFLOW_124",
+            "@Activity function parameter '%s' is a 'client object'. "
+                    + "Activity arguments of client-object types must be passed as a simple "
+                    + "reference to a module-level 'final' variable, not '%s'",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_125("WORKFLOW_125",
+            "Activity argument '%s' references '%s' which is not a module-level "
+                    + "'final' (or 'configurable') 'client object' variable. "
+                    + "Activity client-object arguments must be globally registered connections",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_126("WORKFLOW_126",
+            "Activity argument '%s' has type '%s' which is neither a subtype of 'anydata' "
+                    + "nor a 'client object'. Only 'anydata' and 'client object' arguments are "
+                    + "supported",
             DiagnosticSeverity.ERROR);
 
     private final String code;

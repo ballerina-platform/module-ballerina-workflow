@@ -56,8 +56,15 @@ public class WorkflowCodeModifier extends CodeModifier {
                 SyntaxKind.FUNCTION_DEFINITION
         );
 
+        // Register the analysis task that collects module-level `final` client
+        // variables so the source modifier can emit registerConnection calls.
+        modifierContext.addSyntaxNodeAnalysisTask(
+                new ConnectionVariableAnalysisTask(this.userData),
+                SyntaxKind.MODULE_VAR_DECL
+        );
+
         // Register the source modifier task that performs the actual transformations
-        modifierContext.addSourceModifierTask(new WorkflowSourceModifier(this.modifierContextMap));
+        modifierContext.addSourceModifierTask(new WorkflowSourceModifier(this.modifierContextMap, this.userData));
 
         // Mark analysis as completed
         this.userData.put(WorkflowConstants.IS_ANALYSIS_COMPLETED, true);

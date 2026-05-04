@@ -50,6 +50,8 @@ public final class WorkflowConstants {
     // User data keys
     public static final String MODIFIER_CONTEXT_MAP = "workflow.modifier.context.map";
     public static final String IS_ANALYSIS_COMPLETED = "workflow.analysis.completed";
+    /** Set of module-level final client variable names discovered package-wide. */
+    public static final String CONNECTION_VAR_NAMES = "workflow.connection.var.names";
 
     // Function names for validation
     public static final String SEND_DATA_FUNCTION = "sendData";

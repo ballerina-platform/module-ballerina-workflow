@@ -34,11 +34,17 @@ public client class Context {
     # ```
     #
     # + activityFunction - The activity function (must have `@Activity`)
-    # + args - Arguments to pass to the activity
+    # + args - Arguments to pass to the activity. Values are normally `anydata`.
+    #          Module-level `final` `client object` variables may also be passed for
+    #          activity parameters whose declared type is a client object; the
+    #          compiler plugin validates the call site and substitutes a
+    #          `"connection:<name>"` marker for transport across the workflow
+    #          execution boundary.
     # + T - Expected return type (inferred from context)
     # + options - Retry and error-handling options
     # + return - The activity result as `T`, or an error
-    remote isolated function callActivity(function activityFunction, map<anydata> args = {},
+    remote isolated function callActivity(function activityFunction,
+            map<anydata|object {}> args = {},
             typedesc<anydata> T = <>, *ActivityOptions options) 
             returns T|error = @java:Method {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",

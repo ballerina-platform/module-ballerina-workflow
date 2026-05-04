@@ -12,6 +12,10 @@ distribution = "2201.13.0"
 name = "workflow.internal"
 export = true
 
+[[package.modules]]
+name = "workflow.activity"
+export = true
+
 [platform.java21]
 graalvmCompatible = false
 

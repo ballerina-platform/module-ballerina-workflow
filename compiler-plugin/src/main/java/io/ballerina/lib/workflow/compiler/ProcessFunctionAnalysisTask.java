@@ -153,10 +153,13 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
                         // Get the full function reference (may include module prefix)
                         String fullRef = extractFunctionName(expression);
                         if (fullRef != null) {
-                            // Use the full reference as the map key to avoid collisions
-                            // when different modules export functions with the same simple name
-                            // (e.g., payments:send vs notifications:send).
-                            activityMap.put(fullRef, fullRef);
+                            // Use the simple function name (without any module prefix)
+                            // as the activity-map KEY, because the native runtime keys
+                            // its registry on the BFunctionPointer's type name which
+                            // never carries a module prefix. Keep the qualified ref as
+                            // the VALUE so the generated map literal still parses.
+                            String simpleName = stripModulePrefix(fullRef);
+                            activityMap.put(simpleName, fullRef);
                         }
                     }
                 }
@@ -177,6 +180,16 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
                 return expression.toString().trim();
             }
             return null;
+        }
+
+        /**
+         * Strips a leading {@code <module>:} prefix, if any, from a function
+         * reference. {@code activity:callRestAPI} → {@code callRestAPI};
+         * {@code mySimpleFn} → {@code mySimpleFn}.
+         */
+        private static String stripModulePrefix(String ref) {
+            int colon = ref.indexOf(':');
+            return colon < 0 ? ref : ref.substring(colon + 1).trim();
         }
 
         private String getFunctionName(FunctionCallExpressionNode callNode) {

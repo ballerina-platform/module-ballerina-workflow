@@ -10,3 +10,12 @@ version = "@toml.version@"
 
 [build-options]
 observabilityIncluded = true
+
+# GreenMail (in-process SMTP server) for the builtin sendEmail integration test.
+# Bundled as a transitive dep of `ballerina/email`; explicitly declared here so
+# its classes are visible on the test compile classpath.
+[[platform.java21.dependency]]
+path = "./libs/greenmail-1.5.11.jar"
+
+[[platform.java21.dependency]]
+path = "./libs/javax.mail-1.6.2.jar"

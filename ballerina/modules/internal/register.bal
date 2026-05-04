@@ -49,3 +49,26 @@ isolated function startWorkflowRuntimeNative() returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
     name: "startSingletonWorker"
 } external;
+
+# Registers a module-level `final` client object so that it can be passed as
+# an argument to activity functions whose parameter type is a client object.
+#
+# This is an **internal** function used by the compiler plugin. It is emitted
+# by the source modifier for every module-level `final` variable whose type is a
+# `client object` and is invoked during module initialization, before
+# `startWorkflowRuntime`.
+#
+# When an activity is called with such a client as one of its arguments, the
+# native runtime substitutes the value with the marker string
+# `"connection:<name>"` for transport, then resolves it back to the registered
+# client on the activity worker side using the same name.
+#
+# + name - The Ballerina variable name of the client (used as the lookup key)
+# + connection - The client object reference to register
+# + return - `true` on success, or an error if a different client is already
+#            registered under the same name
+public isolated function registerConnection(string name, object {} connection)
+        returns boolean|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
+    name: "registerConnection"
+} external;

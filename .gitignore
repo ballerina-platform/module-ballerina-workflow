@@ -54,5 +54,8 @@ Dependencies.toml
 ballerina/tests/Config.toml
 integration-tests/tests/Config.toml
 
+# Local libs used only for integration-test fixture setup
+integration-tests/libs/*.jar
+
 # Java Logs
 java_pid*.hprof

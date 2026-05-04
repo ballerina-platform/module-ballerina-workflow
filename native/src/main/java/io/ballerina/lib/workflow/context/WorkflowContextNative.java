@@ -19,6 +19,7 @@
 package io.ballerina.lib.workflow.context;
 
 import io.ballerina.lib.workflow.utils.TypesUtil;
+import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
 import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.utils.StringUtils;
@@ -98,7 +99,13 @@ public final class WorkflowContextNative {
             // BallerinaActivityAdapter can reconstruct positional args using the
             // function's parameter names. This avoids misalignment when optional
             // parameters are omitted from the args map.
-            Map<String, Object> namedArgs = TypesUtil.convertBMapToMap(args);
+            //
+            // Client object values (declared parameter type is `client object`)
+            // cannot be serialized, so they are first replaced with the marker
+            // string "connection:<name>" via the connection registry. The
+            // activity-side adapter resolves the marker back to the BObject
+            // before invoking the activity function.
+            Map<String, Object> namedArgs = convertArgsMapWithConnectionMarkers(args);
 
             // Parse ActivityOptions from the included record param
             boolean retryOnError = false;
@@ -213,6 +220,49 @@ public final class WorkflowContextNative {
         }
 
         return builder.build();
+    }
+
+    /**
+     * Converts an activity {@code args} BMap to a Java map for Temporal
+     * serialization, replacing any {@link BObject} value with the marker string
+     * {@code "connection:<name>"}.
+     * <p>
+     * The map type at the Ballerina level is
+     * {@code map<anydata|object {}>}: only client-object values are non-anydata
+     * and they cannot cross the Temporal boundary. The compiler plugin has
+     * already validated at the call site that any such value is a module-level
+     * {@code final} {@code client object} reference and that
+     * {@code registerConnection} has been emitted for it during module init,
+     * so the registry lookup is expected to succeed.
+     *
+     * @param args the raw BMap passed to {@code callActivity}
+     * @return a serializable Java map with connection refs replaced by markers
+     * @throws RuntimeException if a {@link BObject} value is not registered;
+     *         this surfaces as a workflow-side error in the catch block above.
+     */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> convertArgsMapWithConnectionMarkers(
+            BMap<BString, Object> args) {
+        Map<String, Object> result = new HashMap<>();
+        for (BString key : args.getKeys()) {
+            Object value = args.get(key);
+            if (value instanceof BObject bObject) {
+                String name = WorkflowWorkerNative.getConnectionName(bObject);
+                if (name == null) {
+                    throw new RuntimeException(
+                            "Activity argument '" + key.getValue() + "' is a client object "
+                                    + "that has not been registered as a module-level "
+                                    + "connection. Only module-level `final` `client object` "
+                                    + "variables may be passed to activities.");
+                }
+                result.put(key.getValue(),
+                        WorkflowWorkerNative.CONNECTION_MARKER_PREFIX + name);
+            } else {
+                result.put(key.getValue(),
+                        TypesUtil.convertBallerinaToJavaType(value));
+            }
+        }
+        return result;
     }
 
     /**

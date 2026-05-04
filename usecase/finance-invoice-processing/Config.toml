@@ -1,0 +1,28 @@
+[ballerina.workflow]
+mode = "IN_MEMORY"
+
+[ballerina_usecases.finance_invoice_processing]
+# SFTP server hosting the /incoming/invoices directory
+sftpHost = "sftp.example.com"
+sftpPort = 22
+sftpUser = ""
+sftpPassword = ""
+sftpPath = "/incoming/invoices"
+sftpPollingIntervalSeconds = 30.0
+
+# Finance team email distribution list (SMTP)
+smtpHost = "smtp.example.com"
+smtpUser = ""
+smtpPassword = ""
+financeFromAddress = "ap@example.com"
+financeNotifyAddress = "finance-team@example.com"
+
+# Salesforce REST API
+salesforceBaseUrl = "https://your-domain.my.salesforce.com"
+salesforceAccessToken = ""
+
+# HTTP listener for the Salesforce webhook callback
+servicePort = 8103
+
+# Auto-approve invoices below this USD amount
+autoApproveThresholdUsd = 500.00

@@ -1,0 +1,18 @@
+[ballerina.workflow]
+mode = "IN_MEMORY"
+
+[ballerina_usecases.it_access_request]
+slackBotToken = ""
+itApproversChannel = "#it-approvals"
+
+jiraBaseUrl = "https://your-org.atlassian.net/rest"
+jiraEmail = ""
+jiraApiToken = ""
+jiraProjectKey = "ITSEC"
+jiraAccessIssueType = "Service Request"
+
+twilioAccountSid = ""
+twilioAuthToken = ""
+twilioFromNumber = "+15555550100"
+
+servicePort = 8102

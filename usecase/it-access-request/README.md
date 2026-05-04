@@ -55,7 +55,8 @@ curl -X POST localhost:8102/it/access-requests \
     "approverJiraAccountId": "5b10ac8d82e05b22cc7d4ef5"
   }'
 
-curl -X POST localhost:8102/it/access-requests/<workflowId>/jira-resolved \
+export WORKFLOW_ID=<paste-workflow-id-here>
+curl -X POST "http://localhost:8102/it/access-requests/$WORKFLOW_ID/jira-resolved" \
   -H 'content-type: application/json' \
   -d '{
     "jiraIssueKey": "ITSEC-42",

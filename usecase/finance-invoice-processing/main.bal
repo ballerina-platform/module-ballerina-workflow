@@ -98,11 +98,11 @@ public type Invoice record {|
 # + caseId - Salesforce Case Id
 # + caseStatus - Final case status (`Closed - Approved`, `Closed - Rejected`, …)
 # + approverName - Approver display name
-public type InvoiceApproval record {|
-    string caseId;
+public type InvoiceApproval record {
+    string caseId?;
     string caseStatus;
     string approverName;
-|};
+};
 
 # Workflow result.
 #
@@ -212,7 +212,7 @@ function processInvoice(
             retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
 
     InvoiceApproval decision = check wait events.approval;
-    boolean approved = decision.caseStatus.toLowerAscii().includes("approved");
+    boolean approved = decision.caseStatus.toLowerAscii() == "closed - approved";
     string finalStatus = approved ? "Closed - Approved" : "Closed - Rejected";
 
     () _ = check ctx->callActivity(closeSalesforceCase,
@@ -245,7 +245,7 @@ listener ftp:Listener invoiceListener = check new ({
     port: sftpPort,
     auth: {credentials: {username: sftpUser, password: sftpPassword}},
     path: sftpPath,
-    fileNamePattern: "(.*).csv",
+    fileNamePattern: "(.*)\\.csv",
     pollingInterval: sftpPollingIntervalSeconds
 });
 

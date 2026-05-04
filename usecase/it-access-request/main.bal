@@ -53,6 +53,10 @@ configurable string twilioAccountSid = "";
 configurable string twilioAuthToken = "";
 configurable string twilioFromNumber = "+15555550100";
 
+# Shared secret that Jira must send in the `X-Webhook-Secret` header.
+# Leave empty to disable secret verification (development only).
+configurable string jiraWebhookSecret = "";
+
 configurable int servicePort = 8102;
 
 // -----------------------------------------------------------------------------
@@ -121,6 +125,18 @@ public type AccessResult record {|
 |};
 
 // -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+
+# Masks a phone number to avoid logging PII. Returns all but last 4 digits masked.
+isolated function maskPhone(string phone) returns string {
+    if phone.length() <= 4 {
+        return "****";
+    }
+    return string `${"*".repeat(phone.length() - 4)}${phone.substring(phone.length() - 4)}`;
+}
+
+// -----------------------------------------------------------------------------
 // Activities
 // -----------------------------------------------------------------------------
 
@@ -183,7 +199,7 @@ isolated function sendSmsToRequester(string toNumber, string body) returns strin
         Body: body
     });
     string sid = msg?.sid ?: "";
-    log:printInfo("[twilio] SMS sent", to = toNumber, sid = sid);
+    log:printInfo("[twilio] SMS sent", to = maskPhone(toNumber), sid = sid);
     return sid;
 }
 
@@ -215,7 +231,11 @@ function handleAccessRequest(
 
     AccessDecision decision = check wait events.approval;
     string lower = decision.resolution.toLowerAscii();
-    boolean granted = lower == "done" || lower == "approved";
+    boolean granted = (issueKey == decision.jiraIssueKey) && (lower == "done" || lower == "approved");
+    if issueKey != decision.jiraIssueKey {
+        log:printWarn("[it-access] issueKey mismatch",
+                expected = issueKey, received = decision.jiraIssueKey);
+    }
 
     string smsBody = granted
             ? string `Hi ${req.requesterName}, your ${req.accessLevel} access to ` +
@@ -261,9 +281,17 @@ service /it on new http:Listener(servicePort) {
     #
     # + workflowId - Target workflow id
     # + decision - Approval decision payload
+    # + request - Incoming HTTP request (used for secret verification)
     # + return - `accepted` envelope, or an error
     resource function post 'access\-requests/[string workflowId]/'jira\-resolved(
-            @http:Payload AccessDecision decision) returns record {| string status; |}|error {
+            http:Request request, @http:Payload AccessDecision decision)
+            returns record {| string status; |}|http:Unauthorized|error {
+        if jiraWebhookSecret != "" {
+            string|http:HeaderNotFoundError secret = request.getHeader("X-Webhook-Secret");
+            if secret is http:HeaderNotFoundError || secret != jiraWebhookSecret {
+                return <http:Unauthorized>{};
+            }
+        }
         check workflow:sendData(handleAccessRequest, workflowId, "approval", decision);
         return {status: "accepted"};
     }

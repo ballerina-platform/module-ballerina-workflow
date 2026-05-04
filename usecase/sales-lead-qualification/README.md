@@ -20,7 +20,7 @@ leadership.
    * **SLA breach** → update Lead status to `Stale - Escalated` and
      post on `#sales-leadership`.
 
-```
+```text
 Form ── POST /sales/leads ──▶ workflow start
                                     │
                                     ├─▶ salesforce: create Lead

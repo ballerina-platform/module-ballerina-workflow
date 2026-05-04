@@ -15,4 +15,7 @@ twilioAccountSid = ""
 twilioAuthToken = ""
 twilioFromNumber = "+15555550100"
 
+# Shared secret for Jira webhook callback verification (X-Webhook-Secret header)
+jiraWebhookSecret = ""
+
 servicePort = 8102

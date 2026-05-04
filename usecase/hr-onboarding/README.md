@@ -69,10 +69,11 @@ curl -X POST localhost:8101/hr/new-hire \
   }'
 
 # Simulate Jira webhook on issue resolution
-curl -X POST localhost:8101/hr/onboarding/<workflowId>/jira-resolved \
+export WORKFLOW_ID=<paste-workflow-id-here>
+curl -X POST "http://localhost:8101/hr/onboarding/$WORKFLOW_ID/jira-resolved" \
   -H 'content-type: application/json' \
   -d '{
-    "id": "<workflowId>",
+    "id": "'"$WORKFLOW_ID"'",
     "jiraIssueKey": "HR-123",
     "resolution": "Done",
     "approverDisplayName": "Jane Smith",
@@ -80,5 +81,5 @@ curl -X POST localhost:8101/hr/onboarding/<workflowId>/jira-resolved \
   }'
 
 # Fetch result
-curl localhost:8101/hr/onboarding/<workflowId>
+curl "http://localhost:8101/hr/onboarding/$WORKFLOW_ID"
 ```

@@ -133,22 +133,20 @@ isolated function postMarketingSlack(string text) returns string|error {
 
 @workflow:Activity
 isolated function emailOwner(string to, string subject, string body) returns string|error {
-    gmail:Message sent = check gmailClient->/users/["me"]/messages.post({
+    gmail:Message sent = check gmailClient->/users/me/messages/send.post({
         to: [to],
         'from: gmailFromAddress,
         subject,
         bodyInText: body
     });
-    log:printInfo("[gmail] campaign owner emailed", to = to, gmailMessageId = sent.id);
+    log:printInfo("[gmail] campaign owner emailed", gmailMessageId = sent.id);
     return sent.id;
 }
 
 @workflow:Workflow
 function createCampaignFromSheet(workflow:Context ctx, CampaignRow row)
         returns CampaignSyncResult|error {
-    string campaignId = check ctx->callActivity(createSalesforceCampaign,
-            {"row": row},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+    string campaignId = check ctx->callActivity(createSalesforceCampaign, {"row": row});
     string _ = check ctx->callActivity(postMarketingSlack,
             {"text": string `:mega: Created Salesforce Campaign *${row.campaignName}* ` +
                     string `from sheet request ${row.requestId}. Campaign id: ${campaignId}`},
@@ -215,10 +213,10 @@ function campaignRowFromEvent(sheets:GSheetEvent payload) returns CampaignRow|er
     };
 }
 
-function cell(sheets:GSheetEvent payload, int column, string defaultValue = "") returns string|error {
+function cell(sheets:GSheetEvent payload, int column, string? defaultValue = ()) returns string|error {
     (int|string|float)[][]? values = payload.newValues;
     if values is () || values.length() == 0 || values[0].length() <= column {
-        if defaultValue != "" {
+        if defaultValue is string {
             return defaultValue;
         }
         return error(string `Google Sheets event does not contain column ${column}`);

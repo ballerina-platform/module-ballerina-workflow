@@ -129,6 +129,15 @@ public type OnboardingResult record {|
 // Activities — each one is a real connector call with configurable retries
 // -----------------------------------------------------------------------------
 
+# Masks an email address to avoid logging PII. Returns `****@domain`.
+isolated function maskEmail(string email) returns string {
+    int? atIdx = email.indexOf("@");
+    if atIdx is int {
+        return string `****${email.substring(atIdx)}`;
+    }
+    return "****";
+}
+
 # Sends an `#onboarding` Slack message announcing the new hire.
 #
 # + fullName - New hire's full name
@@ -200,7 +209,7 @@ isolated function sendWelcomeEmail(string workEmail, string fullName, string sum
         bodyInText: summaryText
     });
     string mid = sent.id;
-    log:printInfo("[gmail] welcome email sent", to = workEmail, gmailMessageId = mid);
+    log:printInfo("[gmail] welcome email sent", to = maskEmail(workEmail), gmailMessageId = mid);
     return mid;
 }
 
@@ -252,7 +261,8 @@ function onboardEmployee(
 
             // 3) Wait for the Jira webhook callback.
             EquipmentApproval decision = check wait events.equipmentApproval;
-            if decision.resolution == "Done" || decision.resolution.toLowerAscii() == "approved" {
+            string normalizedResolution = decision.resolution.toLowerAscii();
+            if normalizedResolution == "done" || normalizedResolution == "approved" {
                 equipmentApproved = true;
                 approvedBudget = decision.budgetUsd;
             }
@@ -333,7 +343,10 @@ service /hr on new http:Listener(servicePort) {
     # + decision - Mapped resolution payload
     # + return - `accepted` envelope, or an error
     resource function post onboarding/[string workflowId]/'jira\-resolved(@http:Payload EquipmentApproval decision)
-            returns record {| string status; |}|error {
+            returns record {| string status; |}|http:BadRequest|error {
+        if decision.id != workflowId {
+            return <http:BadRequest>{body: "payload id does not match workflowId"};
+        }
         check workflow:sendData(onboardEmployee, workflowId, "equipmentApproval", decision);
         return {status: "accepted"};
     }

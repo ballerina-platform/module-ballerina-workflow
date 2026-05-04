@@ -20,7 +20,7 @@ via Salesforce.
    * **Close the Case** in Salesforce.
    * **Email the finance team** with the final outcome.
 
-```
+```text
 SFTP /incoming/invoices/*.csv  ──▶  ftp listener  ──▶  workflow:run per row
                                                               │
                                                               ├─▶ salesforce: create Case

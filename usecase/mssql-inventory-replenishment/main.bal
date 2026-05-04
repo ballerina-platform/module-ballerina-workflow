@@ -241,10 +241,10 @@ function inventoryChangeFromRecord(record {} row) returns InventoryChange|error 
     };
 }
 
-function stringCell(record {} row, string column, string defaultValue = "") returns string|error {
+function stringCell(record {} row, string column, string? defaultValue = ()) returns string|error {
     anydata? value = row[column];
     if value is () {
-        if defaultValue != "" {
+        if defaultValue is string {
             return defaultValue;
         }
         return error(string `CDC row does not contain column ${column}`);

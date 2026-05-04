@@ -27,7 +27,7 @@ case waits for customer messages, engineer decisions, and deployment
 events. Each external callback resumes the correct checkpoint with the
 workflow id.
 
-```
+```text
 Portal/Chatbot ── POST /support/cases ──▶ workflow:run
                                                │
                                                ├─▶ salesforce: create Case

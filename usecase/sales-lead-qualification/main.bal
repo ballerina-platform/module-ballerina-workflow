@@ -41,14 +41,18 @@ import ballerinax/twilio;
 // -----------------------------------------------------------------------------
 
 configurable string salesforceBaseUrl = "https://your-domain.my.salesforce.com";
-configurable string salesforceAccessToken = "";
+configurable string salesforceClientId = "";
+configurable string salesforceClientSecret = "";
+configurable string salesforceRefreshToken = "";
+configurable string salesforceRefreshUrl = "https://login.salesforce.com/services/oauth2/token";
 
 configurable string slackBotToken = "";
 configurable string salesChannel = "#sales";
 configurable string managerChannel = "#sales-leadership";
 
 configurable string twilioAccountSid = "";
-configurable string twilioAuthToken = "";
+configurable string twilioApiKey = "";
+configurable string twilioApiSecret = "";
 configurable string twilioFromNumber = "+15555550100";
 
 configurable int slaHours = 24;
@@ -60,13 +64,18 @@ configurable int servicePort = 8104;
 
 final salesforce:Client salesforceClient = check new ({
     baseUrl: salesforceBaseUrl,
-    auth: {token: salesforceAccessToken}
+    auth: {
+        clientId: salesforceClientId,
+        clientSecret: salesforceClientSecret,
+        refreshToken: salesforceRefreshToken,
+        refreshUrl: salesforceRefreshUrl
+    }
 });
 
 final slack:Client slackClient = check new ({auth: {token: slackBotToken}});
 
 final twilio:Client twilioClient = check new ({
-    auth: {accountSid: twilioAccountSid, authToken: twilioAuthToken}
+    auth: {accountSid: twilioAccountSid, apiKey: twilioApiKey, apiSecret: twilioApiSecret}
 });
 
 // -----------------------------------------------------------------------------
@@ -150,10 +159,7 @@ isolated function createSalesforceLead(LeadInput lead) returns string|error {
 # + return - `()` on success, or an error
 @workflow:Activity
 isolated function updateLeadStatus(string salesforceLeadId, string status) returns error? {
-    error? r = salesforceClient->update("Lead", salesforceLeadId, {"Status": status});
-    if r is error {
-        return r;
-    }
+    check salesforceClient->update("Lead", salesforceLeadId, {"Status": status});
     log:printInfo("[salesforce] Lead status updated",
             salesforceLeadId = salesforceLeadId, status = status);
 }
@@ -250,9 +256,10 @@ function qualifyLead(
     }
 
     [QualificationDecision] [decision] = awaited;
-    string status = decision.outcome.toLowerAscii() == "qualified"
+    string normalizedOutcome = decision.outcome.toLowerAscii();
+    string status = normalizedOutcome == "qualified"
             ? "Working - Contacted"
-            : (decision.outcome.toLowerAscii() == "disqualified"
+            : (normalizedOutcome == "disqualified"
                     ? "Closed - Not Converted"
                     : "Open - Not Contacted");
     () _ = check ctx->callActivity(updateLeadStatus,
@@ -265,8 +272,8 @@ function qualifyLead(
             {"channel": salesChannel, "text": outcomeText},
             retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
 
-    string finalStatus = decision.outcome.toLowerAscii() == "qualified" ? "QUALIFIED"
-            : decision.outcome.toLowerAscii() == "disqualified" ? "DISQUALIFIED"
+    string finalStatus = normalizedOutcome == "qualified" ? "QUALIFIED"
+            : normalizedOutcome == "disqualified" ? "DISQUALIFIED"
             : "NURTURE";
     return {
         leadId: lead.leadId,

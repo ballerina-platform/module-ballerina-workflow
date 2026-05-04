@@ -258,6 +258,11 @@ function handleAccessRequest(
 // HTTP listener
 // -----------------------------------------------------------------------------
 
+// In-memory idempotency store: requestId → workflowId.
+// Prevents duplicate workflows when the portal retries the same requestId.
+// Note: this store is not persisted across restarts; use a DB for production.
+isolated map<string> requestWorkflowIds = {};
+
 # REST API for the IT access-request workflow.
 service /it on new http:Listener(servicePort) {
 
@@ -270,7 +275,22 @@ service /it on new http:Listener(servicePort) {
         if req.requestId.trim() == "" || req.requesterPhone.trim() == "" {
             return <http:BadRequest>{body: "requestId and requesterPhone are required"};
         }
-        string workflowId = check workflow:run(handleAccessRequest, req);
+        lock {
+            string? existing = requestWorkflowIds[req.requestId];
+            if existing is string {
+                log:printInfo("access-request workflow already started (idempotent hit)",
+                        workflowId = existing, requestId = req.requestId);
+                return {workflowId: existing, requestId: req.requestId};
+            }
+        }
+        string|error workflowIdOrError = workflow:run(handleAccessRequest, req);
+        if workflowIdOrError is error {
+            return workflowIdOrError;
+        }
+        string workflowId = workflowIdOrError;
+        lock {
+            requestWorkflowIds[req.requestId] = workflowId;
+        }
         log:printInfo("access-request workflow started",
                 workflowId = workflowId, requestId = req.requestId);
         return {workflowId, requestId: req.requestId};

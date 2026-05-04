@@ -215,11 +215,14 @@ function campaignRowFromEvent(sheets:GSheetEvent payload) returns CampaignRow|er
 
 function cell(sheets:GSheetEvent payload, int column, string? defaultValue = ()) returns string|error {
     (int|string|float)[][]? values = payload.newValues;
-    if values is () || values.length() == 0 || values[0].length() <= column {
+    // startingColumnPosition is 1-based; convert to 0-based and compute offset into newValues.
+    int startCol = (payload.startingColumnPosition ?: 1) - 1;
+    int offset = column - startCol;
+    if values is () || values.length() == 0 || offset < 0 || values[0].length() <= offset {
         if defaultValue is string {
             return defaultValue;
         }
         return error(string `Google Sheets event does not contain column ${column}`);
     }
-    return values[0][column].toString();
+    return values[0][offset].toString();
 }

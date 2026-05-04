@@ -49,6 +49,8 @@ bin
 velocity.log*
 *Ballerina.lock
 Dependencies.toml
+!ballerina/Dependencies.toml
+!integration-tests/Dependencies.toml
 
 # Auto-generated test configuration
 ballerina/tests/Config.toml

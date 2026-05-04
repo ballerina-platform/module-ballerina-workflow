@@ -35,74 +35,6 @@ with the external systems involved in the process.
 
 ---
 
-## Pattern: Human interactions
-
-The Ballerina Workflow module does not yet ship a user portal for
-human-in-the-loop steps. Full human task management, such as access
-control and delegation, is currently outside the scope of this module and
-is expected to be managed in external systems. As a best practice, we
-recommend the following three-step pattern for managing human
-interactions without a built-in user portal:
-
-1. **Notify the user** via a real channel — Slack, Email (Gmail/SMTP),
-   or SMS (Twilio).
-2. **Create a task in an external system of record** — a Jira issue, a
-   Salesforce Case/Task, etc. — so there is an auditable, assignable item
-   the user can act on.
-3. **Receive completion** through either:
-   * a **webhook callback** from the system of record (preferred — the
-     workflow exposes an HTTP endpoint that calls
-     `workflow:sendData(...)`), or
-   * a **polling activity** that asks the system of record for the task's
-     status until it is `Done` / `Closed`.
-
-In the workflow, the human-step boundary is a `wait events.<name>` (or
-`ctx->await([events.<name>], timeout = {...})`) on a typed signal
-channel. This keeps user assignment, access control, delegation, and task
-auditing in the external system, while the workflow waits durably for the
-completion event.
-
----
-
-## Triggering Workflow from Human Interaction
-
-Human-facing applications and automated systems usually start workflows
-through trigger points exposed by the Ballerina ecosystem, such as REST
-APIs, GraphQL APIs, webhook callbacks, and other API calls. Depending on
-the use case, the workflow designer can choose the trigger type that best
-fits the application or system that initiates the process.
-
-Common trigger patterns include:
-
-| Caller | Typical trigger point |
-| ------ | --------------------- |
-| Mobile app | REST API or GraphQL mutation |
-| Web app | REST API or GraphQL mutation |
-| Automated system | Webhook, such as a GitHub webhook, database trigger, or SaaS trigger |
-
-After the trigger receives the request, it can validate the payload,
-derive a workflow ID, and call `workflow:run(...)` to start the durable
-workflow instance. Follow-up human actions can then resume the workflow
-by calling a callback endpoint that uses `workflow:sendData(...)`.
-
----
-
-## System triggers in these examples
-
-| Trigger                           | Used in                                                  |
-| --------------------------------- | -------------------------------------------------------- |
-| `http:Listener` (webhook/API)     | `hr-onboarding`, `it-access-request`, `sales-lead-qualification`, `support-case-resolution` |
-| `ftp:Listener` (SFTP file watch)  | `finance-invoice-processing`                             |
-| Google Sheets trigger             | `sheets-campaign-sync`                                   |
-| `mssql:CdcListener`               | `mssql-inventory-replenishment`                          |
-
-Polling-based triggers are also straightforward: a `task:Job` (from
-`ballerina/task`) or a `workflow` that runs in a loop with `ctx.sleep(...)`
-can query an external API on a schedule and start a downstream workflow
-when new work appears.
-
----
-
 ## Use cases
 
 | # | Use case | Domain | Trigger | Connectors used |
@@ -124,6 +56,64 @@ deployments.
 > connectors only attempt to authenticate when a client is created and
 > used at runtime. Each example documents the configurable secrets
 > needed to actually run end-to-end.
+
+---
+
+## System triggers
+
+Workflow orchestration usually starts from an external system event: an
+API call, webhook, file arrival, spreadsheet change, database change, or
+scheduled poll. Ballerina lets each of those events enter through listener that best matches the source system, then start a
+workflow with `workflow:run(...)`.
+
+Common trigger patterns include:
+
+| Caller | Typical trigger point |
+| ------ | --------------------- |
+| Mobile app | REST API or GraphQL mutation |
+| Web app | REST API or GraphQL mutation |
+| Automated system | Webhook, such as a GitHub webhook, database trigger, or SaaS trigger |
+
+The use cases in this directory use these trigger types:
+
+| Trigger                           | Used in                                                  |
+| --------------------------------- | -------------------------------------------------------- |
+| `http:Listener` (webhook/API)     | `hr-onboarding`, `it-access-request`, `sales-lead-qualification`, `support-case-resolution` |
+| `ftp:Listener` (SFTP file watch)  | `finance-invoice-processing`                             |
+| Google Sheets trigger             | `sheets-campaign-sync`                                   |
+| `mssql:CdcListener`               | `mssql-inventory-replenishment`                          |
+
+---
+
+## Pattern: Human interactions
+
+Some integration workflows include a human-in-the-loop step, such as an
+approval, review, or customer confirmation. These flows are different
+from fully automated system-triggered workflows because the workflow must
+pause durably and resume later when the external interaction completes.
+
+The Ballerina Workflow module does not yet ship a built-in user portal.
+Full human task management, such as access control and delegation, is
+currently outside the scope of this module and is expected to be managed
+in external systems.
+As a best practice, we recommend the following three-step pattern for
+managing human interactions:
+
+1. **Notify the user** via a real channel — Slack, Email (Gmail/SMTP),
+   or SMS (Twilio).
+2. **Create a task in an external system of record** — a Jira issue, a
+   Salesforce Case/Task, etc. — so there is an auditable, assignable item
+   the user can act on.
+3. **Receive completion** through either:
+   * a **webhook callback** from the system of record (preferred — the
+     workflow exposes an HTTP endpoint that calls
+     `workflow:sendData(...)`), or
+   * a **polling activity** that asks the system of record for the task's
+     status until it is `Done` / `Closed`.
+
+In the workflow, the human-step boundary is a `wait events.<name>` (or
+`ctx->await([events.<name>], timeout = {...})`) on a typed signal
+channel.
 
 ---
 

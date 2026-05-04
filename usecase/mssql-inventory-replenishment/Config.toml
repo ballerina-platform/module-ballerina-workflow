@@ -1,0 +1,25 @@
+[ballerina.workflow]
+mode = "IN_MEMORY"
+
+[ballerina_usecases.mssql_inventory_replenishment]
+mssqlHost = "localhost"
+mssqlPort = 1433
+mssqlUser = ""
+mssqlPassword = ""
+mssqlDatabase = "warehouse"
+mssqlIncludedTables = ["dbo.inventory"]
+
+slackBotToken = ""
+operationsChannel = "#warehouse-ops"
+
+salesforceBaseUrl = "https://your-domain.my.salesforce.com"
+salesforceAccessToken = ""
+
+gmailRefreshToken = ""
+gmailClientId = ""
+gmailClientSecret = ""
+gmailFromAddress = "warehouse@example.com"
+procurementEmail = "procurement@example.com"
+
+reorderThreshold = 25
+servicePort = 8106

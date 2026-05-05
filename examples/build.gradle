@@ -73,6 +73,10 @@ task buildExamples {
             workflowBirCache.deleteDir()
         }
 
+        boolean testsExcluded = gradle.startParameter.excludedTaskNames.any {
+            it == 'test' || it.endsWith(':test')
+        }
+
         examplesDir.eachDir { exampleDir ->
             def packageName = examplePackageNames[exampleDir.name]
             if (packageName == null) {
@@ -94,14 +98,15 @@ task buildExamples {
             def targetDir = new File(exampleDir, "target")
             if (targetDir.exists()) targetDir.deleteDir()
 
-            // Run bal test which both compiles and runs tests
+            // Respect Gradle -x test: build examples without running bal tests.
+            def balCommand = testsExcluded ? 'build' : 'test'
             exec {
                 workingDir exampleDir
                 environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
                 if (Os.isFamily(Os.FAMILY_WINDOWS)) {
-                    commandLine 'cmd', '/c', "${distributionBinPath}/bal.bat test"
+                    commandLine 'cmd', '/c', "${distributionBinPath}/bal.bat ${balCommand}"
                 } else {
-                    commandLine 'sh', '-c', "${distributionBinPath}/bal test"
+                    commandLine 'sh', '-c', "${distributionBinPath}/bal ${balCommand}"
                 }
             }
         }

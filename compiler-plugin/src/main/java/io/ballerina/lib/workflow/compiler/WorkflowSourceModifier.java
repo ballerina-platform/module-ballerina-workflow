@@ -43,6 +43,7 @@ import io.ballerina.tools.text.TextDocument;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -96,6 +97,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         // Without copying the relevant import into the target file the generated
         // function fails to compile with "undefined module 'activity'".
         Map<String, ImportDeclarationNode> importsByPrefix = new HashMap<>();
+        Set<String> conflictingPrefixes = new HashSet<>();
         for (Map.Entry<DocumentId, WorkflowModifierContext> entry : entries) {
             DocumentId docId = entry.getKey();
             Module module = context.currentPackage().module(docId.moduleId());
@@ -103,7 +105,12 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             for (ImportDeclarationNode imp : rootNode.imports()) {
                 String prefix = importPrefixOf(imp);
                 if (prefix != null) {
-                    importsByPrefix.putIfAbsent(prefix, imp);
+                    ImportDeclarationNode existing = importsByPrefix.get(prefix);
+                    if (existing == null) {
+                        importsByPrefix.put(prefix, imp);
+                    } else if (!sameImport(existing, imp)) {
+                        conflictingPrefixes.add(prefix);
+                    }
                 }
             }
         }
@@ -138,7 +145,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             if (isLastDocument) {
                 updatedRootNode = addWorkflowInternalImportIfMissing(updatedRootNode);
                 updatedRootNode = addReferencedActivityImports(
-                        updatedRootNode, importsByPrefix, requiredPrefixes);
+                    updatedRootNode, importsByPrefix, requiredPrefixes, conflictingPrefixes);
             }
 
             SyntaxTree syntaxTree = module.document(documentId).syntaxTree().modifyWith(updatedRootNode);
@@ -328,7 +335,8 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
      */
     private ModulePartNode addReferencedActivityImports(ModulePartNode rootNode,
                                                         Map<String, ImportDeclarationNode> importsByPrefix,
-                                                        Set<String> requiredPrefixes) {
+                                                        Set<String> requiredPrefixes,
+                                                        Set<String> conflictingPrefixes) {
         if (requiredPrefixes.isEmpty() || importsByPrefix.isEmpty()) {
             return rootNode;
         }
@@ -342,6 +350,12 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         NodeList<ImportDeclarationNode> imports = rootNode.imports();
         boolean changed = false;
         for (String prefix : requiredPrefixes) {
+            if (conflictingPrefixes.contains(prefix)) {
+                throw new IllegalStateException(
+                        "Conflicting import prefix '" + prefix
+                                + "' detected across workflow source files. "
+                                + "Use unique import aliases for activity modules.");
+            }
             if (existingPrefixes.contains(prefix)) {
                 continue;
             }
@@ -356,6 +370,23 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             return rootNode;
         }
         return rootNode.modify().withImports(imports).apply();
+    }
+
+    private boolean sameImport(ImportDeclarationNode a, ImportDeclarationNode b) {
+        String aOrg = a.orgName().isPresent() ? a.orgName().get().orgName().text() : "";
+        String bOrg = b.orgName().isPresent() ? b.orgName().get().orgName().text() : "";
+        if (!aOrg.equals(bOrg)) {
+            return false;
+        }
+        if (a.moduleName().size() != b.moduleName().size()) {
+            return false;
+        }
+        for (int i = 0; i < a.moduleName().size(); i++) {
+            if (!a.moduleName().get(i).text().equals(b.moduleName().get(i).text())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private ModulePartNode addWorkflowInternalImportIfMissing(ModulePartNode rootNode) {

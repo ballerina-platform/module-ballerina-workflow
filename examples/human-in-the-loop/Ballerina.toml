@@ -2,7 +2,7 @@
 org = "ballerina_examples"
 name = "human_in_the_loop"
 version = "0.1.0"
-distribution = "2201.13.0"
+distribution = "2201.13.2"
 
 [build-options]
 observabilityIncluded = true

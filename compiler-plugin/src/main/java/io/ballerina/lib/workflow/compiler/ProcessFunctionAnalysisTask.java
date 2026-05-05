@@ -34,6 +34,8 @@ import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.projects.DocumentId;
 import io.ballerina.projects.plugins.AnalysisTask;
 import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
+import io.ballerina.tools.diagnostics.DiagnosticFactory;
+import io.ballerina.tools.diagnostics.DiagnosticInfo;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -67,7 +69,7 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
         String functionName = functionNode.functionName().text();
 
         // Collect all activity function calls within this process function
-        Map<String, String> activityMap = collectActivityCalls(functionNode, context.semanticModel());
+        Map<String, String> activityMap = collectActivityCalls(functionNode, context);
 
         // Store the process function information
         ProcessFunctionInfo processInfo = new ProcessFunctionInfo(functionName, activityMap);
@@ -80,11 +82,11 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
     }
 
     private Map<String, String> collectActivityCalls(FunctionDefinitionNode functionNode,
-                                                      SemanticModel semanticModel) {
+                                                     SyntaxNodeAnalysisContext context) {
         Map<String, String> activityMap = new HashMap<>();
 
         // Visit all function calls within the function body
-        ActivityCallCollector collector = new ActivityCallCollector(semanticModel, activityMap);
+        ActivityCallCollector collector = new ActivityCallCollector(context, activityMap);
         functionNode.functionBody().accept(collector);
 
         return activityMap;
@@ -115,11 +117,13 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
      * Supports both direct activity calls and ctx->callActivity(activityFunc, args) pattern.
      */
     private static class ActivityCallCollector extends NodeVisitor {
+        private final SyntaxNodeAnalysisContext context;
         private final SemanticModel semanticModel;
         private final Map<String, String> activityMap;
 
-        ActivityCallCollector(SemanticModel semanticModel, Map<String, String> activityMap) {
-            this.semanticModel = semanticModel;
+        ActivityCallCollector(SyntaxNodeAnalysisContext context, Map<String, String> activityMap) {
+            this.context = context;
+            this.semanticModel = context.semanticModel();
             this.activityMap = activityMap;
         }
 
@@ -153,10 +157,24 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
                         // Get the full function reference (may include module prefix)
                         String fullRef = extractFunctionName(expression);
                         if (fullRef != null) {
-                            // Use the full reference as the map key to avoid collisions
-                            // when different modules export functions with the same simple name
-                            // (e.g., payments:send vs notifications:send).
-                            activityMap.put(fullRef, fullRef);
+                            // Use the simple function name (without any module prefix)
+                            // as the activity-map KEY, because the native runtime keys
+                            // its registry on the BFunctionPointer's type name which
+                            // never carries a module prefix. Keep the qualified ref as
+                            // the VALUE so the generated map literal still parses.
+                            String simpleName = stripModulePrefix(fullRef);
+                            String existing = activityMap.get(simpleName);
+                            if (existing != null && !existing.equals(fullRef)) {
+                                DiagnosticInfo info = new DiagnosticInfo(
+                                        WorkflowDiagnostic.WORKFLOW_127.getCode(),
+                                        WorkflowDiagnostic.WORKFLOW_127.getMessage(
+                                                simpleName, existing, fullRef),
+                                        WorkflowDiagnostic.WORKFLOW_127.getSeverity());
+                                context.reportDiagnostic(DiagnosticFactory.createDiagnostic(
+                                        info, remoteCallNode.location()));
+                            } else {
+                                activityMap.put(simpleName, fullRef);
+                            }
                         }
                     }
                 }
@@ -177,6 +195,16 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
                 return expression.toString().trim();
             }
             return null;
+        }
+
+        /**
+         * Strips a leading {@code <module>:} prefix, if any, from a function
+         * reference. {@code activity:callRestAPI} → {@code callRestAPI};
+         * {@code mySimpleFn} → {@code mySimpleFn}.
+         */
+        private static String stripModulePrefix(String ref) {
+            int colon = ref.indexOf(':');
+            return colon < 0 ? ref : ref.substring(colon + 1).trim();
         }
 
         private String getFunctionName(FunctionCallExpressionNode callNode) {

@@ -123,6 +123,20 @@ public final class WorkflowWorkerNative {
     // Static registry to store event names per process (process name to list of event names)
     private static final Map<String, List<String>> EVENT_REGISTRY = new ConcurrentHashMap<>();
 
+    /**
+     * Marker prefix used to ferry module-level client object references through
+        * Temporal's serialization plane. A value like
+        * {@code "connection:org/pkg.mod:db"} means "resolve to the registered
+        * client identified by that module-qualified connection key".
+     */
+    public static final String CONNECTION_MARKER_PREFIX = "connection:";
+
+    // Module-qualified connection ids registered by the compiler-plugin-emitted
+    // `wfInternal:registerConnection("name", name)` calls during module init.
+    // The registration routine prefixes the variable name with the caller module
+    // identity so names remain globally unique across modules in the same JVM.
+    private static final Map<String, BObject> CONNECTION_REGISTRY = new ConcurrentHashMap<>();
+
     // Singleton worker components
     private static volatile WorkflowServiceStubs serviceStubs;
     private static volatile WorkflowClient workflowClient;
@@ -308,6 +322,8 @@ public final class WorkflowWorkerNative {
                         }
                         LOGGER.debug("Custom CA certificate configured: {}", caCertPath);
                     }
+                    // Configure ALPN for gRPC/HTTP2 support
+                    io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts.configure(sslBuilder);
                     stubsBuilder.setSslContext(sslBuilder.build());
                     stubsBuilder.setEnableHttps(true);
                 } catch (IOException e) {
@@ -802,6 +818,142 @@ public final class WorkflowWorkerNative {
      */
     static Object convertJavaToBallerinaType(Object javaValue) {
         return TypesUtil.convertJavaToBallerinaType(javaValue);
+    }
+
+    /**
+     * Returns {@code true} when the given activity parameter's declared type is
+     * an object type (e.g. a {@code client object}). Used to disambiguate
+     * {@code "connection:<name>"} marker strings from genuine string arguments
+     * that happen to begin with the same prefix: only object-typed parameters
+     * trigger registry lookup.
+     *
+     * <p>Type references (named types, intersections introduced by client
+     * declarations, etc.) are dereferenced with bounded depth before checking
+     * the tag.
+     */
+    static boolean isObjectParam(Parameter param) {
+        return isObjectType(param.type, 0);
+    }
+
+    /**
+     * Returns {@code true} if the type, after dereferencing references and
+     * descending into union members (bounded depth to defeat pathological
+     * cycles), contains an object/service type. Used to detect client-object
+     * parameters including unions like {@code soap11:Client|soap12:Client}.
+     */
+    private static boolean isObjectType(io.ballerina.runtime.api.types.Type t, int depth) {
+        if (t == null || depth > 16) {
+            return false;
+        }
+        if (t instanceof io.ballerina.runtime.api.types.ReferenceType ref) {
+            io.ballerina.runtime.api.types.Type next = ref.getReferredType();
+            if (next != t) {
+                return isObjectType(next, depth + 1);
+            }
+        }
+        int tag = t.getTag();
+        if (tag == TypeTags.OBJECT_TYPE_TAG || tag == TypeTags.SERVICE_TAG) {
+            return true;
+        }
+        if (tag == TypeTags.UNION_TAG && t instanceof io.ballerina.runtime.api.types.UnionType ut) {
+            for (io.ballerina.runtime.api.types.Type member : ut.getMemberTypes()) {
+                if (isObjectType(member, depth + 1)) {
+                    return true;
+                }
+            }
+        }
+        if (tag == TypeTags.INTERSECTION_TAG
+                && t instanceof io.ballerina.runtime.api.types.IntersectionType it) {
+            for (io.ballerina.runtime.api.types.Type member : it.getConstituentTypes()) {
+                if (isObjectType(member, depth + 1)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns {@code true} when the given runtime type can include {@code nil}.
+     */
+    private static boolean isNilableType(io.ballerina.runtime.api.types.Type t, int depth) {
+        if (t == null || depth > 16) {
+            return false;
+        }
+        if (t instanceof io.ballerina.runtime.api.types.ReferenceType ref) {
+            io.ballerina.runtime.api.types.Type next = ref.getReferredType();
+            if (next != t) {
+                return isNilableType(next, depth + 1);
+            }
+        }
+        int tag = t.getTag();
+        if (tag == TypeTags.NULL_TAG) {
+            return true;
+        }
+        if (tag == TypeTags.UNION_TAG && t instanceof io.ballerina.runtime.api.types.UnionType ut) {
+            for (io.ballerina.runtime.api.types.Type member : ut.getMemberTypes()) {
+                if (isNilableType(member, depth + 1)) {
+                    return true;
+                }
+            }
+        }
+        if (tag == TypeTags.INTERSECTION_TAG
+                && t instanceof io.ballerina.runtime.api.types.IntersectionType it) {
+            for (io.ballerina.runtime.api.types.Type member : it.getConstituentTypes()) {
+                if (isNilableType(member, depth + 1)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Registers a module-level {@code final} {@code client object} variable so it can
+     * be referenced from inside activities via the {@code "connection:<name>"} wire
+     * marker. Called from generated module-init code emitted by the workflow compiler
+     * plugin (see {@code wfInternal:registerConnection}).
+     *
+     * <p>Idempotent for an exact (name, object) pair; returns a Ballerina error if a
+     * <em>different</em> object is already registered under the same name (which would
+     * indicate an internal compiler-plugin bug, since module-level identifiers are
+     * unique by language rule).
+     *
+     * @param env the caller environment, used to qualify the module-level name
+     * @param name the Ballerina variable name (qualified with caller module for storage)
+     * @param connection the client object reference
+     * @return {@code true} on success, or a {@code BError} on a duplicate-name collision
+     */
+    public static Object registerConnection(Environment env, BString name, BObject connection) {
+        String key = buildConnectionKey(env.getCurrentModule(), name.getValue());
+        BObject existing = CONNECTION_REGISTRY.putIfAbsent(key, connection);
+        if (existing != null && existing != connection) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "A different client is already registered under name '" + key + "'."));
+        }
+        return true;
+    }
+
+    /**
+     * Returns the registered name of the given client by identity, or {@code null} if
+     * the client has not been registered. Performs a linear identity scan of the
+     * connection map; this is fine because the number of module-level clients is small
+     * and the lookup runs at most once per activity argument.
+     */
+    public static String getConnectionName(BObject connection) {
+        for (Map.Entry<String, BObject> e : CONNECTION_REGISTRY.entrySet()) {
+            if (e.getValue() == connection) {
+                return e.getKey();
+            }
+        }
+        return null;
+    }
+
+    private static String buildConnectionKey(Module module, String name) {
+        if (module == null) {
+            return name;
+        }
+        return module.getOrg() + "/" + module.getName() + ":" + name;
     }
 
     /**
@@ -1484,28 +1636,67 @@ public final class WorkflowWorkerNative {
 
             // Find the last parameter that is present in the map so we can
             // omit trailing absent params (FPValue.call fills defaults for those).
+            // Exception: if a typedesc parameter is present, we must pass *all*
+            // data params positionally, otherwise the appended typedesc value
+            // would land in the slot of an omitted trailing data param.
             int lastProvidedIndex = -1;
             for (int i = 0; i < dataParams.size(); i++) {
                 if (namedArgs.containsKey(dataParams.get(i).name)) {
                     lastProvidedIndex = i;
                 }
             }
+            int lastIndexToBuild = (typedescParam != null)
+                    ? dataParams.size() - 1
+                    : lastProvidedIndex;
 
             // Build positional Ballerina args up to the last provided param
             List<Object> orderedArgs = new ArrayList<>();
-            for (int i = 0; i <= lastProvidedIndex; i++) {
-                String paramName = dataParams.get(i).name;
+            for (int i = 0; i <= lastIndexToBuild; i++) {
+                Parameter param = dataParams.get(i);
+                String paramName = param.name;
                 if (namedArgs.containsKey(paramName)) {
-                    orderedArgs.add(convertJavaToBallerinaType(namedArgs.get(paramName)));
+                    Object raw = namedArgs.get(paramName);
+                    // If the param type is an object (e.g. a client) and the
+                    // wire value is a "connection:<name>" marker string,
+                    // resolve it from the connection registry rather than
+                    // converting to a BString. The compiler plugin guarantees
+                    // every such marker has a matching registered client.
+                    if (isObjectParam(param)
+                            && raw instanceof String s
+                            && s.startsWith(CONNECTION_MARKER_PREFIX)) {
+                        String connName = s.substring(CONNECTION_MARKER_PREFIX.length());
+                        BObject resolved = CONNECTION_REGISTRY.get(connName);
+                        if (resolved == null) {
+                            throw new RuntimeException(
+                                    "Connection '" + connName + "' is not registered "
+                                            + "on this worker. The activity '"
+                                            + activityName
+                                            + "' expected a client object for "
+                                            + "parameter '" + paramName + "'.");
+                        }
+                        orderedArgs.add(resolved);
+                    } else {
+                        orderedArgs.add(convertJavaToBallerinaType(raw));
+                    }
                 } else {
                     // Intermediate parameter missing from the named args map.
                     // Only optional/defaultable parameters may be absent; required parameters
                     // must always be supplied by the caller.
-                    Parameter param = dataParams.get(i);
                     if (!param.isDefault) {
                         throw new RuntimeException(
                                 "Required activity parameter '" + paramName
                                         + "' is missing from the activity arguments map");
+                    }
+                    // For typedesc-dependent activities we inject a synthetic
+                    // typedesc at the end and therefore materialize omitted
+                    // parameters as null in the positional arg array. This is
+                    // only safe for nilable parameter types.
+                    if (typedescParam != null && !isNilableType(param.type, 0)) {
+                        throw new RuntimeException(
+                                "Activity '" + activityName + "' omits defaultable parameter '"
+                                        + paramName + "' with non-nilable type in a "
+                                        + "typedesc-dependent signature. Pass this argument "
+                                        + "explicitly to preserve default semantics.");
                     }
                     orderedArgs.add(null); // optional/defaultable param absent → Ballerina default
                 }

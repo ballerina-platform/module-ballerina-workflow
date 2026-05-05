@@ -290,7 +290,8 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                     }
                     continue;
                 }
-                if (!WorkflowPluginUtils.isSubtypeOfAnydata(paramType, semanticModel)) {
+                if (!WorkflowPluginUtils.isSubtypeOfAnydata(paramType, semanticModel)
+                        && !WorkflowPluginUtils.isClientObjectType(paramType)) {
                     reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_103);
                     return;
                 }
@@ -457,6 +458,10 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
             List<ParameterSymbol> expectedParams = paramsOpt.get();
             Set<String> expectedParamNames = new HashSet<>();
             Set<String> requiredParamNames = new HashSet<>();
+            // Names of parameters whose declared type is a client object —
+            // arguments at these names must be simple module-level final
+            // client references (validated below).
+            Set<String> clientParamNames = new HashSet<>();
             
             for (ParameterSymbol param : expectedParams) {
                 // Skip typedesc parameters — they are type metadata provided by
@@ -466,10 +471,14 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                 }
                 Optional<String> nameOpt = param.getName();
                 if (nameOpt.isPresent()) {
-                    expectedParamNames.add(nameOpt.get());
+                    String pName = normalizeIdentifier(nameOpt.get());
+                    expectedParamNames.add(pName);
                     // Required if not default-able
                     if (param.paramKind() == ParameterKind.REQUIRED) {
-                        requiredParamNames.add(nameOpt.get());
+                        requiredParamNames.add(pName);
+                    }
+                    if (WorkflowPluginUtils.isClientObjectType(param.typeDescriptor())) {
+                        clientParamNames.add(pName);
                     }
                 }
             }
@@ -488,6 +497,79 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
             for (String provided : providedParamNames) {
                 if (!expectedParamNames.contains(provided)) {
                     reportExtraParam(callNode, provided);
+                }
+            }
+
+            // Validate that arguments bound to client-object parameters are
+            // simple references to module-level final client variables.
+            validateClientArgs(paramsArg, clientParamNames);
+        }
+
+        /**
+         * Iterates the args mapping constructor and, for every field whose
+         * key matches a client-object activity parameter, asserts that the
+         * field value is a simple name reference resolving to a module-level
+         * {@code final} {@code client object} variable. Reports
+         * {@code WORKFLOW_124} (shape) or {@code WORKFLOW_125} (target).
+         */
+        private void validateClientArgs(FunctionArgumentNode paramsArg,
+                                        Set<String> clientParamNames) {
+            if (clientParamNames.isEmpty()) {
+                return;
+            }
+            if (!(paramsArg instanceof PositionalArgumentNode posArg)) {
+                return;
+            }
+            ExpressionNode expr = posArg.expression();
+            if (expr.kind() != SyntaxKind.MAPPING_CONSTRUCTOR) {
+                return;
+            }
+            MappingConstructorExpressionNode mapping = (MappingConstructorExpressionNode) expr;
+            for (MappingFieldNode field : mapping.fields()) {
+                if (!(field instanceof SpecificFieldNode specific)) {
+                    continue;
+                }
+                String fieldName = extractFieldName(specific);
+                if (fieldName == null || !clientParamNames.contains(fieldName)) {
+                    continue;
+                }
+                if (specific.valueExpr().isEmpty()) {
+                    // Shorthand mapping field: `{connection}`.
+                    // Resolve the shorthand identifier symbol and enforce the
+                    // same module-level final client constraint.
+                    Optional<Symbol> symbolOpt = semanticModel.symbol(specific.fieldName());
+                    if (symbolOpt.isEmpty()
+                            || !WorkflowPluginUtils.isModuleLevelFinalClient(symbolOpt.get())) {
+                        DiagnosticInfo info = new DiagnosticInfo(
+                                WorkflowDiagnostic.WORKFLOW_125.getCode(),
+                                WorkflowDiagnostic.WORKFLOW_125.getMessage(fieldName, fieldName),
+                                WorkflowDiagnostic.WORKFLOW_125.getSeverity());
+                        context.reportDiagnostic(DiagnosticFactory.createDiagnostic(
+                                info, specific.fieldName().location()));
+                    }
+                    continue;
+                }
+                ExpressionNode valueExpr = specific.valueExpr().get();
+                if (!(valueExpr instanceof SimpleNameReferenceNode nameRef)) {
+                    DiagnosticInfo info = new DiagnosticInfo(
+                            WorkflowDiagnostic.WORKFLOW_124.getCode(),
+                            WorkflowDiagnostic.WORKFLOW_124.getMessage(
+                                    fieldName, valueExpr.toSourceCode().trim()),
+                            WorkflowDiagnostic.WORKFLOW_124.getSeverity());
+                    context.reportDiagnostic(DiagnosticFactory.createDiagnostic(
+                            info, valueExpr.location()));
+                    continue;
+                }
+                Optional<Symbol> symbolOpt = semanticModel.symbol(nameRef);
+                if (symbolOpt.isEmpty()
+                        || !WorkflowPluginUtils.isModuleLevelFinalClient(symbolOpt.get())) {
+                    DiagnosticInfo info = new DiagnosticInfo(
+                            WorkflowDiagnostic.WORKFLOW_125.getCode(),
+                            WorkflowDiagnostic.WORKFLOW_125.getMessage(
+                                    fieldName, nameRef.name().text()),
+                            WorkflowDiagnostic.WORKFLOW_125.getSeverity());
+                    context.reportDiagnostic(DiagnosticFactory.createDiagnostic(
+                            info, nameRef.location()));
                 }
             }
         }
@@ -523,8 +605,20 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         }
 
         /**
+         * Normalizes an identifier by removing the leading quote from escaped identifiers.
+         * For example, 'from -> from, 'type -> type, etc.
+         */
+        private String normalizeIdentifier(String identifier) {
+            if (identifier != null && identifier.startsWith("'")) {
+                return identifier.substring(1);
+            }
+            return identifier;
+        }
+
+        /**
          * Extracts the field name from a SpecificFieldNode.
          * Handles both string literal keys ("fieldName") and identifier keys (fieldName).
+         * Also normalizes escaped identifiers (e.g., 'from -> from).
          */
         private String extractFieldName(SpecificFieldNode field) {
             var fieldName = field.fieldName();
@@ -535,7 +629,9 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                     return text.substring(1, text.length() - 1);
                 }
             } else if (fieldName.kind() == SyntaxKind.IDENTIFIER_TOKEN) {
-                return fieldName.toString().trim();
+                String text = fieldName.toString().trim();
+                // Normalize escaped identifiers (e.g., 'from -> from)
+                return normalizeIdentifier(text);
             }
             return null;
         }

@@ -225,7 +225,7 @@ public final class WorkflowRuntime {
             // This is a normal race condition (e.g. alternate-wait, timeout) — not an error.
             LOGGER.debug("Signal '{}' dropped: workflow {} has already completed",
                     signalName, workflowId);
-            throw new RuntimeException("Failed to send signal: " + e.getMessage(), e);
+            return false;
         } catch (Exception e) {
             LOGGER.error("Failed to send signal to workflow {}: {}", workflowId, e.getMessage(), e);
             throw new RuntimeException("Failed to send signal: " + e.getMessage(), e);

@@ -38,10 +38,10 @@ import java.util.Set;
  * Analysis task that detects module-level {@code final} (or {@code configurable})
  * variables whose declared type is a {@code client object}. Their identifiers are
  * collected into the package-level user data under {@link
- * WorkflowConstants#CONNECTION_VAR_NAMES}, keyed by module id, so that
- * {@link WorkflowSourceModifier} can emit corresponding
- * {@code wfInternal:registerConnection(...)} calls only in modules where the
- * variables are actually visible.
+ * WorkflowConstants#CONNECTION_VAR_NAMES}, keyed by module id plus source-set,
+ * so that {@link WorkflowSourceModifier} can emit corresponding
+ * {@code wfInternal:registerConnection(...)} calls only where the variables are
+ * actually visible.
  *
  * @since 0.2.0
  */
@@ -70,7 +70,11 @@ public class ConnectionVariableAnalysisTask implements AnalysisTask<SyntaxNodeAn
         if (name == null || name.isEmpty() || "_".equals(name)) {
             return;
         }
-        addConnectionName(context.documentId().moduleId().toString(), name);
+        boolean isTestDocument = !context.currentPackage()
+            .module(context.documentId().moduleId())
+            .documentIds()
+            .contains(context.documentId());
+        addConnectionName(scopeKey(context.documentId().moduleId().toString(), isTestDocument), name);
     }
 
     private String extractVariableName(ModuleVariableDeclarationNode varDecl) {
@@ -84,12 +88,16 @@ public class ConnectionVariableAnalysisTask implements AnalysisTask<SyntaxNodeAn
     }
 
     @SuppressWarnings("unchecked")
-    private void addConnectionName(String moduleKey, String name) {
+    private void addConnectionName(String scopeKey, String name) {
         Map<String, Set<String>> namesByModule =
                 (Map<String, Set<String>>) userData.computeIfAbsent(
                         WorkflowConstants.CONNECTION_VAR_NAMES,
                         k -> new LinkedHashMap<String, Set<String>>());
-        Set<String> names = namesByModule.computeIfAbsent(moduleKey, k -> new LinkedHashSet<>());
+        Set<String> names = namesByModule.computeIfAbsent(scopeKey, k -> new LinkedHashSet<>());
         names.add(name);
+    }
+
+    private String scopeKey(String moduleKey, boolean isTestDocument) {
+        return moduleKey + (isTestDocument ? "#test" : "#source");
     }
 }

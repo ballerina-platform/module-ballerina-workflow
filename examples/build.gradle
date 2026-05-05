@@ -33,13 +33,15 @@ def examplePackageNames = [
     'order-with-payment' : 'order_with_payment'
 ]
 
+def ballerinaDistributionVersion = project.rootProject.findProperty("ballerinaLangVersion") ?: "2201.13.2"
+
 // Helper: generate a Ballerina.toml for an example
 def generateExampleToml = { String packageName ->
     return """[package]
 org = "ballerina_examples"
 name = "${packageName}"
 version = "0.1.0"
-distribution = "2201.13.0"
+distribution = "${ballerinaDistributionVersion}"
 
 [build-options]
 observabilityIncluded = true
@@ -58,6 +60,7 @@ task buildExamples {
     description = 'Builds and tests all example projects using the locally built workflow module'
     group = 'build'
     dependsOn(':workflow-ballerina:build')
+    dependsOn(':startSharedTestServer')
 
     doLast {
         def examplesDir = project.projectDir

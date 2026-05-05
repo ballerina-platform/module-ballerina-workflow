@@ -125,11 +125,12 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             // only to the LAST document so that all @Workflow functions from
             // every source file are visible to the generated function body.
             boolean isLastDocument = (i == entries.size() - 1);
+                boolean isTestDocument = !module.documentIds().contains(documentId);
 
             ModulePartNode updatedRootNode = transformDocument(
                     rootNode, workflowContext, isLastDocument ? allProcessInfos : null,
                     isLastDocument
-                        ? collectConnectionNames(documentId.moduleId().toString())
+                        ? collectConnectionNames(documentId.moduleId().toString(), isTestDocument)
                         : Collections.emptyList());
 
             // Only add the import for the document that contains the generated
@@ -176,7 +177,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         return modifiedRoot.modify(modifiedRoot.imports(), updatedMembers, modifiedRoot.eofToken());
     }
 
-    private List<String> collectConnectionNames(String moduleKey) {
+    private List<String> collectConnectionNames(String moduleKey, boolean isTestDocument) {
         if (this.userData == null) {
             return Collections.emptyList();
         }
@@ -184,17 +185,27 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         if (!(raw instanceof Map<?, ?> rawMap)) {
             return Collections.emptyList();
         }
-        Object moduleNames = rawMap.get(moduleKey);
-        if (!(moduleNames instanceof Set<?> set)) {
-            return Collections.emptyList();
+        List<String> result = new ArrayList<>();
+        addConnectionNames(result, rawMap.get(scopeKey(moduleKey, false)));
+        if (isTestDocument) {
+            addConnectionNames(result, rawMap.get(scopeKey(moduleKey, true)));
         }
-        List<String> result = new ArrayList<>(set.size());
+        return result;
+    }
+
+    private void addConnectionNames(List<String> result, Object rawNames) {
+        if (!(rawNames instanceof Set<?> set)) {
+            return;
+        }
         for (Object o : set) {
-            if (o instanceof String s) {
+            if (o instanceof String s && !result.contains(s)) {
                 result.add(s);
             }
         }
-        return result;
+    }
+
+    private String scopeKey(String moduleKey, boolean isTestDocument) {
+        return moduleKey + (isTestDocument ? "#test" : "#source");
     }
 
     /**

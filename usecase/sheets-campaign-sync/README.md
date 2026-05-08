@@ -4,6 +4,7 @@
 > and row update · **Connectors:** `ballerinax/trigger.google.sheets`,
 > `ballerinax/slack`, `ballerinax/salesforce`,
 > `ballerinax/googleapis.gmail`
+> **Category:** Transactional workflow (no human in the loop).
 
 ## Scenario
 
@@ -18,6 +19,14 @@ for a human approval or task completion.
 4. **Email the campaign owner** with the synchronization outcome.
 5. **Listen for row updates** and synchronize Salesforce Campaign status
    when the sheet status changes.
+
+```text
+Google Sheets ── row append / update ──▶ workflow start
+                                              │
+                                              ├─▶ salesforce: create/update Campaign
+                                              ├─▶ slack: notify marketing ops
+                                              └─▶ gmail: email campaign owner
+```
 
 No activity mocks the backend. Slack, Salesforce, and Gmail work is done
 through real connector calls. Google Sheets is the operational data entry
@@ -61,3 +70,12 @@ bal run
 
 Append a row to the configured sheet to create a Salesforce Campaign.
 Update the row status later to synchronize the campaign status.
+
+## Where this pattern shows up
+
+- Spreadsheet-driven operational workflows where a business team edits
+   rows and downstream systems need to stay synchronized.
+- Campaign, pricing, catalog, or partner-data fan-out where one row
+   change must update CRM, messaging, and email systems together.
+- Low-code operational surfaces where Google Sheets is the source of
+   truth, but durable execution and retries are still required.

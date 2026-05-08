@@ -1,0 +1,17 @@
+[ballerina.workflow]
+mode = "IN_MEMORY"
+
+[ballerina_usecases.subscription_provisioning_saga]
+servicePort = 8122
+
+salesforceBaseUrl = "https://your-domain.my.salesforce.com"
+salesforceAccessToken = ""
+
+slackBotToken = ""
+provisioningChannel = "#provisioning"
+
+gmailRefreshToken = ""
+gmailClientId = ""
+gmailClientSecret = ""
+gmailFromAddress = "billing@example.com"
+billingOpsAddress = "billing-ops@example.com"

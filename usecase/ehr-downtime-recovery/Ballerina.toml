@@ -1,0 +1,18 @@
+[package]
+org = "ballerina_usecases"
+name = "ehr_downtime_recovery"
+version = "0.1.0"
+distribution = "2201.13.0"
+
+[build-options]
+observabilityIncluded = true
+
+[[dependency]]
+org = "ballerinax"
+name = "slack"
+version = "5.0.1"
+
+[[dependency]]
+org = "ballerinax"
+name = "googleapis.gmail"
+version = "4.2.0"

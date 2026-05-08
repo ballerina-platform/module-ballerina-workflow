@@ -1,0 +1,17 @@
+[ballerina.workflow]
+mode = "IN_MEMORY"
+
+[ballerina_usecases.notification_fallback]
+servicePort = 8121
+
+gmailRefreshToken = ""
+gmailClientId = ""
+gmailClientSecret = ""
+gmailFromAddress = "alerts@example.com"
+
+twilioAccountSid = ""
+twilioAuthToken = ""
+twilioFromNumber = "+15555550100"
+
+slackBotToken = ""
+deliveryAuditChannel = "#delivery-audit"

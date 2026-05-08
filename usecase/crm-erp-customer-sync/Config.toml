@@ -1,0 +1,16 @@
+[ballerina.workflow]
+mode = "IN_MEMORY"
+
+[ballerina_usecases.crm_erp_customer_sync]
+servicePort = 8120
+
+slackBotToken = ""
+crmOpsChannel = "#crm-ops"
+
+salesforceBaseUrl = "https://your-domain.my.salesforce.com"
+salesforceAccessToken = ""
+
+gmailRefreshToken = ""
+gmailClientId = ""
+gmailClientSecret = ""
+gmailFromAddress = "crm-ops@example.com"

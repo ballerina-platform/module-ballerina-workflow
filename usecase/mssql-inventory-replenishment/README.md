@@ -4,6 +4,7 @@
 > changes from an inventory table · **Connectors:** `ballerinax/mssql`,
 > `ballerinax/mssql.cdc.driver`, `ballerinax/slack`,
 > `ballerinax/salesforce`, `ballerinax/googleapis.gmail`
+> **Category:** Transactional workflow (no human in the loop).
 
 ## Scenario
 
@@ -21,6 +22,14 @@ manual task completion, or human callbacks.
    preferred supplier** with reorder details.
 5. If the row is deleted, **notify operations** that inventory tracking
    was removed.
+
+```text
+SQL Server CDC ── create / update / delete ──▶ workflow start
+                                                   │
+                                                   ├─▶ salesforce: create inventory snapshot
+                                                   ├─▶ slack: notify warehouse ops
+                                                   └─▶ gmail: email reorder details when low stock
+```
 
 The CDC listener is the integration trigger. Activities use real
 connector calls; there is no mocked inventory, Salesforce, Slack, or
@@ -72,3 +81,19 @@ bal run
 
 Insert, update, or delete rows in `dbo.inventory` to trigger the
 automation.
+
+Use the result endpoint exposed by the example to inspect a workflow once
+you have its id:
+
+```bash
+curl http://localhost:8106/inventory/syncs/<workflow-id>
+```
+
+## Where this pattern shows up
+
+- Database-change-driven synchronization where a row mutation must fan
+   out to CRM, notification, and reporting systems.
+- Replenishment, catalog, or warehouse automations triggered by CDC
+   rather than a human-operated UI.
+- Operational pipelines that need durable retries and state recovery
+   when a worker restarts during downstream synchronization.

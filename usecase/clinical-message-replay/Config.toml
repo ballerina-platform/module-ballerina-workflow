@@ -1,0 +1,17 @@
+[ballerina.workflow]
+mode = "IN_MEMORY"
+
+[ballerina_usecases.clinical_message_replay]
+servicePort = 8123
+
+slackBotToken = ""
+interopOpsChannel = "#interop-ops"
+
+jiraBaseUrl = "https://your-org.atlassian.net/rest"
+jiraEmail = ""
+jiraApiToken = ""
+jiraProjectKey = "INTEROP"
+jiraReplayIssueType = "Task"
+jiraWebhookSecret = ""
+
+emrBaseUrl = "http://localhost:9080"

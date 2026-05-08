@@ -6,6 +6,7 @@ servicePort = 8124
 
 slackBotToken = ""
 interopOpsChannel = "#interop-ops"
+enableDispatchNotifications = true
 
 gmailRefreshToken = ""
 gmailClientId = ""

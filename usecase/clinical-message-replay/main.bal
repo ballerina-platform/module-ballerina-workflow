@@ -24,10 +24,12 @@
 // Human step   : Replay-after-failure. The workflow:
 //                  1) Attempts delivery to the downstream EMR over HTTP.
 //                  2) If validation or delivery fails, creates a Jira replay
-//                     task and notifies the interoperability Slack channel.
-//                  3) Pauses until an analyst resolves the task and calls
+//                     task as the system of record.
+//                  3) Optionally notifies the interoperability Slack channel
+//                     when `enableInteropNotifications=true`.
+//                  4) Pauses until an analyst resolves the task and calls
 //                     back with replay instructions.
-//                  4) Retries delivery with corrected values or an explicit
+//                  5) Retries delivery with corrected values or an explicit
 //                     filter override, keeping the entire replay trail inside
 //                     workflow history.
 
@@ -45,6 +47,7 @@ configurable int servicePort = 8123;
 
 configurable string slackBotToken = "";
 configurable string interopOpsChannel = "#interop-ops";
+configurable boolean enableInteropNotifications = true;
 
 configurable string jiraBaseUrl = "https://your-org.atlassian.net/rest";
 configurable string jiraEmail = "";
@@ -232,6 +235,20 @@ function attemptDelivery(workflow:Context ctx, ClinicalMessage req) returns int|
             retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
 }
 
+# Posts an interop audit message only when notifications are enabled.
+#
+# + ctx - Workflow context
+# + text - Notification text
+# + return - Error if posting fails while notifications are enabled
+function postInteropAuditIfEnabled(workflow:Context ctx, string text) returns error? {
+    if !enableInteropNotifications {
+        return;
+    }
+    string _ = check ctx->callActivity(postInteropAudit,
+            {"text": text},
+            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+}
+
 # Applies analyst instructions to the original message before replay.
 #
 # + req - Original clinical message request
@@ -269,10 +286,9 @@ function replayClinicalMessage(
 ) returns ReplayResult|error {
     int|error initialAttempt = attemptDelivery(ctx, req);
     if initialAttempt is int {
-        string _ = check ctx->callActivity(postInteropAudit,
-                {"text": string `:white_check_mark: Message *${req.messageId}* ` +
-                        string `delivered to the EMR on the first attempt (${initialAttempt}).`},
-                retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+        check postInteropAuditIfEnabled(ctx,
+                string `:white_check_mark: Message *${req.messageId}* ` +
+                string `delivered to the EMR on the first attempt (${initialAttempt}).`);
         return {
             messageId: req.messageId,
             status: "DELIVERED",
@@ -290,9 +306,7 @@ function replayClinicalMessage(
     string alertText = string `:warning: Replay required for *${req.messageId}* ` +
             string `(${req.messageType}) from *${req.sourceSystem}*. Jira: ${issueKey}. ` +
             string `Reason: ${failureReason}`;
-    string _ = check ctx->callActivity(postInteropAudit,
-            {"text": alertText},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+    check postInteropAuditIfEnabled(ctx, alertText);
 
     ReplayInstruction instruction = check wait events.replayInstruction;
     if issueKey != instruction.jiraIssueKey {
@@ -301,10 +315,9 @@ function replayClinicalMessage(
     }
 
     if instruction.action.toUpperAscii() == "CANCEL" {
-        string _ = check ctx->callActivity(postInteropAudit,
-                {"text": string `:no_entry: Replay cancelled for *${req.messageId}* ` +
-                        string `by ${instruction.analystName}. Jira: ${issueKey}. Notes: ${instruction.notes}`},
-                retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+        check postInteropAuditIfEnabled(ctx,
+                string `:no_entry: Replay cancelled for *${req.messageId}* ` +
+                string `by ${instruction.analystName}. Jira: ${issueKey}. Notes: ${instruction.notes}`);
         return {
             messageId: req.messageId,
             status: "CANCELLED",
@@ -317,11 +330,10 @@ function replayClinicalMessage(
     int|error replayAttempt = attemptDelivery(ctx, replayRequest);
     if replayAttempt is error {
         string replayFailure = replayAttempt.message();
-        string _ = check ctx->callActivity(postInteropAudit,
-                {"text": string `:x: Replay failed again for *${req.messageId}*. ` +
-                        string `Jira: ${issueKey}. Analyst: ${instruction.analystName}. ` +
-                        string `Reason: ${replayFailure}`},
-                retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+        check postInteropAuditIfEnabled(ctx,
+                string `:x: Replay failed again for *${req.messageId}*. ` +
+                string `Jira: ${issueKey}. Analyst: ${instruction.analystName}. ` +
+                string `Reason: ${replayFailure}`);
         return {
             messageId: req.messageId,
             status: "REPLAY_FAILED",
@@ -330,11 +342,10 @@ function replayClinicalMessage(
         };
     }
 
-    string _ = check ctx->callActivity(postInteropAudit,
-            {"text": string `:repeat: Message *${req.messageId}* replayed successfully ` +
-                    string `by ${instruction.analystName}. Jira: ${issueKey}. ` +
-                    string `Downstream status: ${replayAttempt}.`},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+    check postInteropAuditIfEnabled(ctx,
+            string `:repeat: Message *${req.messageId}* replayed successfully ` +
+            string `by ${instruction.analystName}. Jira: ${issueKey}. ` +
+            string `Downstream status: ${replayAttempt}.`);
     return {
         messageId: req.messageId,
         status: "REPLAYED",

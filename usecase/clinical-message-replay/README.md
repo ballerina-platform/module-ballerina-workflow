@@ -3,6 +3,7 @@
 > **Domain:** Healthcare interoperability · **Trigger:** HTTP API from an
 > integration gateway, replay console, or operator dashboard · **Connectors:**
 > `http`, `ballerinax/jira`, `ballerinax/slack`
+> **Notifications:** Optional (`enableInteropNotifications`)
 > **Category:** Human task with error recovery.
 
 ## Scenario
@@ -17,7 +18,8 @@ out-of-band dashboard action.
 2. **Validate and deliver** it to the downstream EMR over HTTP.
 3. If validation or delivery fails:
    * **Create a Jira replay task** as the auditable system of record.
-   * **Notify interoperability operations** in Slack.
+   * **Optionally notify interoperability operations** in Slack
+     (`enableInteropNotifications=true`).
    * **Pause** until an analyst resolves the task and sends replay instructions.
 4. **Replay** the message with corrected ids or a filter override, then
    record the final outcome in workflow history and Slack.
@@ -29,7 +31,7 @@ Integration gateway ── POST /interop/messages ──▶ workflow start
                                                       ├─▶ http: deliver to downstream EMR
                                                       │
                                                       ├─▶ on failure: jira create replay task
-                                                      ├─▶ on failure: slack notify interop ops
+                                                      ├─▶ on failure (optional): slack notify interop ops
                                                       │
                                                       ░ wait replayInstruction ░
                                                       │
@@ -41,6 +43,9 @@ Integration gateway ── POST /interop/messages ──▶ workflow start
 No activity mocks the backend. The human step is auditable because the
 workflow does not silently retry on its own: it creates a task, waits for
 operator input, and records the replay decision in workflow history.
+
+The execution order is explicit: **create task → optional notify → webhook
+callback**.
 
 ## Replay instructions
 

@@ -37,15 +37,16 @@
 // Flow
 //   1. Receive a clinical message dispatch request over HTTP.
 //   2. Attempt first delivery to the downstream EHR/EMR (no automatic retry).
-//   3. If delivery succeeds on the first try → Slack confirmation and done.
+//   3. If delivery succeeds on the first try → optional Slack confirmation and done.
 //   4. If the EHR returns 5xx or is unreachable:
-//        a. Notify the Slack ops channel: "EHR offline — workflow is retrying."
+//        a. Optionally notify the Slack ops channel: "EHR offline — workflow is retrying."
 //        b. Retry delivery with exponential backoff (up to maxRetries).
 //           The workflow runtime persists the in-flight state across restarts,
 //           acting as the message's durable "queue slot".
-//        c. When the EHR recovers and a retry succeeds → Slack recovery notice
-//           and a Gmail delivery report for audit.
-//        d. If all retries are exhausted → Slack + Gmail failure alert.
+//        c. When the EHR recovers and a retry succeeds → optional Slack recovery
+//           notice and optional Gmail delivery report for audit.
+//        d. If all retries are exhausted → workflow fails; notifications are
+//           still optional.
 //
 // Retry parameters (tune for your SLA):
 //   maxRetries = 20, retryDelay = 30 s, retryBackoff = 1.5
@@ -65,6 +66,7 @@ configurable int servicePort = 8124;
 
 configurable string slackBotToken = "";
 configurable string interopOpsChannel = "#interop-ops";
+configurable boolean enableDispatchNotifications = true;
 
 configurable string gmailRefreshToken = "";
 configurable string gmailClientId = "";
@@ -250,6 +252,53 @@ function retryEhrDelivery(workflow:Context ctx, ClinicalMessageDispatch msg) ret
             retryOnError = true, maxRetries = 20, retryDelay = 30.0, retryBackoff = 1.5);
 }
 
+# Sends a downtime alert only when notifications are enabled.
+#
+# + ctx - Workflow context
+# + msg - Clinical message metadata
+# + failureReason - First-attempt failure reason
+# + return - Error if notification fails while enabled
+function notifyEhrDownIfEnabled(workflow:Context ctx, ClinicalMessageDispatch msg, string failureReason)
+        returns error? {
+    if !enableDispatchNotifications {
+        return;
+    }
+    string _ = check ctx->callActivity(notifySlackEhrDown,
+            {"messageId": msg.messageId, "sourceSystem": msg.sourceSystem,
+             "messageType": msg.messageType, "failureReason": failureReason},
+            retryOnError = true, maxRetries = 3, retryDelay = 5.0, retryBackoff = 2.0);
+}
+
+# Sends a recovery alert only when notifications are enabled.
+#
+# + ctx - Workflow context
+# + msg - Clinical message metadata
+# + statusCode - Successful EHR status code
+# + return - Error if notification fails while enabled
+function notifyEhrRecoveredIfEnabled(workflow:Context ctx, ClinicalMessageDispatch msg, int statusCode)
+        returns error? {
+    if !enableDispatchNotifications {
+        return;
+    }
+    string _ = check ctx->callActivity(notifySlackEhrRecovered,
+            {"messageId": msg.messageId, "sourceSystem": msg.sourceSystem,
+             "httpStatusCode": statusCode},
+            retryOnError = true, maxRetries = 3, retryDelay = 5.0, retryBackoff = 2.0);
+}
+
+# Sends a delivery report only when notifications are enabled.
+#
+# + ctx - Workflow context
+# + result - Final dispatch result
+# + return - Error if report delivery fails while enabled
+function sendDeliveryReportIfEnabled(workflow:Context ctx, DispatchResult result) returns error? {
+    if !enableDispatchNotifications {
+        return;
+    }
+    string _ = check ctx->callActivity(sendDeliveryReport, {"result": result},
+            retryOnError = true, maxRetries = 3, retryDelay = 5.0, retryBackoff = 2.0);
+}
+
 // -----------------------------------------------------------------------------
 // Workflow
 // -----------------------------------------------------------------------------
@@ -274,10 +323,7 @@ function dispatchClinicalMessage(workflow:Context ctx, ClinicalMessageDispatch m
 
     if firstAttempt is int {
         // Happy path — EHR accepted the message on first try.
-        string _ = check ctx->callActivity(notifySlackEhrRecovered,
-                {"messageId": msg.messageId, "sourceSystem": msg.sourceSystem,
-                 "httpStatusCode": firstAttempt},
-                retryOnError = true, maxRetries = 3, retryDelay = 5.0, retryBackoff = 2.0);
+        check notifyEhrRecoveredIfEnabled(ctx, msg, firstAttempt);
         return {
             messageId: msg.messageId,
             status: "DELIVERED",
@@ -293,10 +339,7 @@ function dispatchClinicalMessage(workflow:Context ctx, ClinicalMessageDispatch m
     log:printWarn("[workflow] EHR delivery failed, entering retry mode",
             messageId = msg.messageId, reason = failureReason);
 
-    string _ = check ctx->callActivity(notifySlackEhrDown,
-            {"messageId": msg.messageId, "sourceSystem": msg.sourceSystem,
-             "messageType": msg.messageType, "failureReason": failureReason},
-            retryOnError = true, maxRetries = 3, retryDelay = 5.0, retryBackoff = 2.0);
+        check notifyEhrDownIfEnabled(ctx, msg, failureReason);
 
     // ── Step 3: Retry with exponential backoff ────────────────────────────────
     // Retry window: 30 s → 45 s → 67 s → 101 s → … (factor 1.5, 20 attempts
@@ -314,13 +357,8 @@ function dispatchClinicalMessage(workflow:Context ctx, ClinicalMessageDispatch m
         summary: string `Message ${msg.messageId} delivered after EHR recovered (HTTP ${statusCode}).`
     };
 
-    string _ = check ctx->callActivity(notifySlackEhrRecovered,
-            {"messageId": msg.messageId, "sourceSystem": msg.sourceSystem,
-             "httpStatusCode": statusCode},
-            retryOnError = true, maxRetries = 3, retryDelay = 5.0, retryBackoff = 2.0);
-
-    string _ = check ctx->callActivity(sendDeliveryReport, {"result": result},
-            retryOnError = true, maxRetries = 3, retryDelay = 5.0, retryBackoff = 2.0);
+        check notifyEhrRecoveredIfEnabled(ctx, msg, statusCode);
+        check sendDeliveryReportIfEnabled(ctx, result);
 
     return result;
 }

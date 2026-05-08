@@ -4,6 +4,7 @@
 > **Domain**: Healthcare interoperability
 > **Trigger**: HTTP API (`POST /interop/dispatch`)
 > **Connectors**: `ballerina/http` (EHR endpoint), `ballerinax/slack`, `ballerinax/googleapis.gmail`
+> **Notifications**: Optional (`enableDispatchNotifications`)
 
 ## Overview
 
@@ -27,12 +28,12 @@ POST /interop/dispatch
  └────────┬──────────┘
           │ success (2xx)
           ▼
-  Slack: "Delivered"          ◄── happy path ends here
+  Optional Slack: "Delivered" ◄── happy path ends here
           │
           │ EHR down (5xx / connection refused)
           ▼
  ┌───────────────────┐
- │  Slack alert      │  "#interop-ops: EHR offline — workflow retrying"
+ │  Optional Slack   │  "#interop-ops: EHR offline — workflow retrying"
  └────────┬──────────┘
           │
           ▼
@@ -47,7 +48,8 @@ POST /interop/dispatch
           │ EHR recovers — retry succeeds
           ▼
  ┌───────────────────┐
- │  Slack: "Recovered│  + Gmail delivery report to ops team
+ │  Optional Slack:  │  + Optional Gmail delivery report to ops team
+ │  "Recovered"     │
  └───────────────────┘
 ```
 
@@ -116,6 +118,7 @@ Response after recovery:
 | `servicePort` | HTTP listener port (default `8124`) |
 | `slackBotToken` | Slack bot token for ops alerts |
 | `interopOpsChannel` | Slack channel for interop ops (e.g. `#interop-ops`) |
+| `enableDispatchNotifications` | Enable/disable Slack and Gmail notifications (`true` by default) |
 | `gmailRefreshToken` / `gmailClientId` / `gmailClientSecret` | Gmail OAuth2 credentials |
 | `gmailFromAddress` | Sender address for delivery reports |
 | `opsEmail` | Ops team email that receives delivery reports |

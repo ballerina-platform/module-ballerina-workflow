@@ -6,6 +6,7 @@ servicePort = 8123
 
 slackBotToken = ""
 interopOpsChannel = "#interop-ops"
+enableInteropNotifications = true
 
 jiraBaseUrl = "https://your-org.atlassian.net/rest"
 jiraEmail = ""

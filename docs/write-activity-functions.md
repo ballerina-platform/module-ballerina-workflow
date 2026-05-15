@@ -7,7 +7,7 @@ Activity functions are the units of work that workflows orchestrate. They can pe
 Activities are the right place for:
 
 - HTTP/API calls to external services
-- Database queries and updates
+- Database manipulations (queries, inserts, updates, deletes)
 - File system operations
 - Sending emails or notifications
 - Any operation with side effects
@@ -124,9 +124,16 @@ function myWorkflow(workflow:Context ctx, Input input) returns Output|error {
 }
 ```
 
+These restrictions keep activity boundaries explicit and statically analyzable. In particular, requiring `@workflow:Activity` on `ctx->callActivity()` targets makes the runtime model and tooling behavior predictable.
+
 ## Idempotency
 
 The engine records each activity result exactly once per `callActivity()` invocation. In most cases that means an activity executes exactly once. However, it can execute **more than once** for the same call in certain edge cases — for example, if a worker crashes after the activity finishes but before the engine persists the result.
+
+The practical rule is:
+
+- If the engine has already recorded the activity result, recovery returns that recorded result and the activity is not run again.
+- If the activity finished but the result was not durably recorded before the failure, the engine may schedule the activity again according to recovery behavior and any configured retry policy.
 
 Because of this, activity implementations should aim to be **idempotent**: producing the same observable outcome if called again with the same inputs. In practice, full idempotency can be difficult to achieve. Common strategies include:
 

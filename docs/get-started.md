@@ -102,7 +102,7 @@ function reserveStock(string orderId, string item, int quantity) returns string|
 
 #### Key Concepts
 
-- **`@workflow:Activity`** marks a function as an activity. Use activities for any operation that interacts with external systems — API calls, database queries, sending emails.
+- **`@workflow:Activity`** marks a function as an activity. Use activities for any operation that interacts with external systems — API calls, database manipulations, sending emails.
 - Activity results are tracked by the runtime. If an activity fails, you can configure a retry policy. See [Write Activity Functions](write-activity-functions.md) for details.
 
 ### Update the Workflow

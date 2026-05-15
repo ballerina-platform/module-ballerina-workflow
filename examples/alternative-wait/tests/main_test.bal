@@ -17,7 +17,7 @@ type WorkflowResponse record {
 };
 
 // ---------------------------------------------------------------------------
-// MANAGER APPROVES
+// MANAGER APPROVES (via shared channel)
 // ---------------------------------------------------------------------------
 
 @test:Config {}
@@ -36,9 +36,9 @@ function testManagerApproves() returns error? {
     // Wait for workflow to reach the wait point
     runtime:sleep(5);
 
-    // Manager approves via dedicated channel
+    // Manager approves via shared channel
     DataResponse approveResp = check cl->post(
-        string `/purchases/${startResp.workflowId}/managerApproval`,
+        string `/purchases/${startResp.workflowId}/approval`,
         {approverId: "manager-1", approved: true, reason: "Within budget"}
     );
     test:assertEquals(approveResp.status, "accepted");
@@ -52,7 +52,7 @@ function testManagerApproves() returns error? {
 }
 
 // ---------------------------------------------------------------------------
-// DIRECTOR APPROVES
+// DIRECTOR APPROVES (via shared channel)
 // ---------------------------------------------------------------------------
 
 @test:Config {}
@@ -70,9 +70,9 @@ function testDirectorApproves() returns error? {
     // Wait for workflow to reach the wait point
     runtime:sleep(5);
 
-    // Director approves via dedicated channel
+    // Director approves via shared channel
     DataResponse _ = check cl->post(
-        string `/purchases/${startResp.workflowId}/directorApproval`,
+        string `/purchases/${startResp.workflowId}/approval`,
         {approverId: "director-1", approved: true, reason: "Approved at director level"}
     );
 
@@ -102,9 +102,9 @@ function testApproverRejects() returns error? {
     // Wait for workflow to reach the wait point
     runtime:sleep(5);
 
-    // Manager rejects via dedicated channel
+    // Approver rejects via shared channel
     DataResponse _ = check cl->post(
-        string `/purchases/${startResp.workflowId}/managerApproval`,
+        string `/purchases/${startResp.workflowId}/approval`,
         {approverId: "manager-2", approved: false, reason: "Over budget"}
     );
 
@@ -116,11 +116,11 @@ function testApproverRejects() returns error? {
 }
 
 // ---------------------------------------------------------------------------
-// DIRECTOR REJECTS
+// SECOND SENDER IS IGNORED (first-wins verification)
 // ---------------------------------------------------------------------------
 
 @test:Config {}
-function testDirectorRejects() returns error? {
+function testSecondSenderIgnored() returns error? {
     http:Client cl = check new ("http://localhost:8090/api");
 
     StartResponse startResp = check cl->post("/purchases", {
@@ -132,24 +132,31 @@ function testDirectorRejects() returns error? {
 
     runtime:sleep(5);
 
-    // Director rejects via dedicated channel
+    // First sender rejects via shared channel
     DataResponse _ = check cl->post(
-        string `/purchases/${startResp.workflowId}/directorApproval`,
+        string `/purchases/${startResp.workflowId}/approval`,
         {approverId: "director-2", approved: false, reason: "Not justified"}
+    );
+
+    // Second sender approves — silently ignored (workflow already moved on)
+    DataResponse _ = check cl->post(
+        string `/purchases/${startResp.workflowId}/approval`,
+        {approverId: "manager-4", approved: true, reason: "I approve"}
     );
 
     WorkflowResponse result = check cl->get(string `/purchases/${startResp.workflowId}`);
     test:assertEquals(result.status, "COMPLETED");
+    // First sender's rejection wins
     test:assertEquals(result.result.status, "REJECTED");
-    test:assertTrue(result.result.message.includes("director-2"), "Should contain rejector ID");
+    test:assertTrue(result.result.message.includes("director-2"), "Should reflect the first responder");
 }
 
 // ---------------------------------------------------------------------------
-// MANAGER APPROVES FIRST — director also responds, but is ignored
+// FIRST SENDER APPROVES — second sender also responds, but is ignored
 // ---------------------------------------------------------------------------
 
 @test:Config {}
-function testManagerApprovesFirstDirectorIgnored() returns error? {
+function testFirstSenderWins() returns error? {
     http:Client cl = check new ("http://localhost:8090/api");
 
     StartResponse startResp = check cl->post("/purchases", {
@@ -161,21 +168,78 @@ function testManagerApprovesFirstDirectorIgnored() returns error? {
 
     runtime:sleep(5);
 
-    // Manager approves first
+    // Manager approves first via shared channel
     DataResponse _ = check cl->post(
-        string `/purchases/${startResp.workflowId}/managerApproval`,
+        string `/purchases/${startResp.workflowId}/approval`,
         {approverId: "manager-3", approved: true, reason: "Reasonable expense"}
     );
 
-    // Director also responds (too late — workflow already moved on)
+    // Director also responds to same channel (too late — workflow already moved on)
     DataResponse _ = check cl->post(
-        string `/purchases/${startResp.workflowId}/directorApproval`,
+        string `/purchases/${startResp.workflowId}/approval`,
         {approverId: "director-3", approved: false, reason: "I disagree"}
     );
 
     WorkflowResponse result = check cl->get(string `/purchases/${startResp.workflowId}`);
     test:assertEquals(result.status, "COMPLETED");
-    // The manager's approval wins because it arrived first
+    // The first response wins
     test:assertEquals(result.result.status, "APPROVED");
     test:assertTrue(result.result.message.includes("manager-3"), "Should reflect the first responder");
+}
+
+// ---------------------------------------------------------------------------
+// NEW INSTANCE IS ISOLATED — a fresh workflow does not see signals
+// sent to a previous workflow instance (signals are scoped by workflow ID).
+// ---------------------------------------------------------------------------
+
+@test:Config {}
+function testNewInstanceDoesNotInheritPreviousSignals() returns error? {
+    http:Client cl = check new ("http://localhost:8090/api");
+
+    // --- Instance A: approved by manager-A ---
+    StartResponse startA = check cl->post("/purchases", {
+        requestId: "REQ-ALT-ISO-A",
+        item: "office-chair",
+        amount: 450.00,
+        requestedBy: "alice"
+    });
+    runtime:sleep(5);
+
+    DataResponse _ = check cl->post(
+        string `/purchases/${startA.workflowId}/approval`,
+        {approverId: "manager-A", approved: true, reason: "ok"}
+    );
+
+    WorkflowResponse resultA = check cl->get(string `/purchases/${startA.workflowId}`);
+    test:assertEquals(resultA.status, "COMPLETED");
+    test:assertEquals(resultA.result.status, "APPROVED");
+    test:assertTrue(resultA.result.message.includes("manager-A"),
+            "Instance A should reflect manager-A's decision");
+
+    // --- Instance B: brand new workflow ID. Must NOT inherit manager-A's signal ---
+    StartResponse startB = check cl->post("/purchases", {
+        requestId: "REQ-ALT-ISO-B",
+        item: "office-chair",
+        amount: 450.00,
+        requestedBy: "bob"
+    });
+    test:assertNotEquals(startB.workflowId, startA.workflowId,
+            "New instance must get a distinct workflow ID");
+    runtime:sleep(5);
+
+    // Send a clearly different decision to instance B
+    DataResponse _ = check cl->post(
+        string `/purchases/${startB.workflowId}/approval`,
+        {approverId: "director-B", approved: false, reason: "budget review"}
+    );
+
+    WorkflowResponse resultB = check cl->get(string `/purchases/${startB.workflowId}`);
+    test:assertEquals(resultB.status, "COMPLETED");
+    // Instance B must use its own signal, not the stale approval from instance A
+    test:assertEquals(resultB.result.status, "REJECTED",
+            "Instance B must reflect its own rejection, not inherit instance A's approval");
+    test:assertTrue(resultB.result.message.includes("director-B"),
+            "Instance B must reflect director-B's decision");
+    test:assertFalse(resultB.result.message.includes("manager-A"),
+            "Instance B must NOT reflect any signal from instance A");
 }

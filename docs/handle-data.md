@@ -38,7 +38,7 @@ function orderProcess(
 }
 ```
 
-The runtime automatically manages the futures and delivers data when they arrive.
+The runtime automatically manages the futures and delivers each item of data when it arrives.
 
 ## Wait for Data
 
@@ -78,12 +78,17 @@ function orderProcess(
 
 ## Send Data to a Running Workflow
 
-Use `workflow:sendData()` to deliver data to a running workflow:
+Use `workflow:sendData()` to deliver data to a running workflow. In production, workflow start and data delivery are usually triggered by separate external events.
+
+Start the workflow (for example, from an HTTP request or scheduled trigger):
 
 ```ballerina
-// Start the workflow
 string workflowId = check workflow:run(orderProcess, {orderId: "ORD-001", item: "laptop"});
+```
 
+Deliver external updates later (for example, from a webhook, message consumer, or another service):
+
+```ballerina
 // Send approval data (the dataName must match the field name in the events record)
 check workflow:sendData(orderProcess, workflowId, "approval", {
     approverId: "manager-1",
@@ -97,6 +102,14 @@ check workflow:sendData(orderProcess, workflowId, "payment", {
 });
 ```
 
+### Delivery Guarantees and Failure Handling
+
+- `workflow:sendData()` returns success only after the signal is accepted by the workflow engine.
+- If the call returns an error, the sender did not get a delivery guarantee and should retry.
+- If the workflow worker/integration process is temporarily down but the workflow engine is up, accepted data is preserved and delivered after recovery.
+- If the workflow engine itself is unavailable, the sender receives an error and must retry.
+- If data arrives while the workflow is recovering, the engine stores it and delivers it once recovery completes.
+
 ### Parameters
 
 | Parameter | Description |
@@ -105,6 +118,13 @@ check workflow:sendData(orderProcess, workflowId, "payment", {
 | `workflowId` | The ID of the running workflow instance (returned by `workflow:run()`) |
 | `dataName` | The data name — must match a field name in the events record |
 | `data` | The data payload — must match the type of the corresponding `future<T>` |
+
+Notes:
+
+- The workflow function reference is used for compile-time validation of the target workflow signature and payload type.
+- Runtime delivery is still identified by `workflowId`.
+- `dataName` identifies a logical data channel in the workflow's events record, not an activity name.
+- With the current semantics, use distinct data names for distinct independently awaited inputs.
 
 ## Expose Data Delivery via HTTP
 
@@ -138,7 +158,7 @@ service /orders on new http:Listener(9090) {
 
 ## Conditional Data Waiting
 
-You can wait for data conditionally. Data that is never waited on is simply ignored:
+You can wait for data conditionally. Data that is never waited on is ignored by workflow logic:
 
 ```ballerina
 @workflow:Workflow
@@ -158,6 +178,8 @@ function conditionalProcess(
     return {status: "REJECTED"};
 }
 ```
+
+There is currently no workflow-module-level dead-letter queue for unused data channels.
 
 ## Alternative Wait — First Wins
 
@@ -226,7 +248,7 @@ Each level targets its own named channel in the events record (e.g. `managerAppr
 
 When a workflow step requires data from **every** source before it can proceed, use `ctx->await` with the full array of futures. The workflow resumes only after all expected data has arrived.
 
-A common use case is **dual authorization**: both the Operations team and the Compliance team must approve a fund transfer.
+A common use case is **dual authorization (Four-Eyes Principle)**: both the Operations team and the Compliance team must approve a fund transfer.
 
 ```ballerina
 @workflow:Workflow
@@ -253,7 +275,7 @@ function transferApproval(
 }
 ```
 
-`ctx->await` takes an array of futures and, by default, waits for all of them. The return type is a typed tuple whose element types match the corresponding `future<T>` types, so no casting is needed.
+`ctx->await` takes a `future<anydata>[]` and, by default, waits for all of them. Each element can still be a different `future<T>` as long as `T` is an `anydata` subtype. The return type is a typed tuple whose element types match the corresponding `future<T>` types, so no casting is needed.
 
 **Data arrival order does not matter.** If Compliance sends their decision before Operations, the data is stored by the runtime. `ctx->await` resolves as soon as the last outstanding future completes.
 
@@ -273,6 +295,8 @@ Pass an array of futures — `ctx->await` blocks until every future completes:
 ```
 
 `minCount` defaults to the length of the array. The return value is a typed tuple.
+
+Although the parameter type is `future<anydata>[]`, the array may contain different future element types such as `future<ApprovalDecision>` and `future<PaymentConfirmation>`. The result type preserves that positional typing.
 
 ### Wait for Any (first wins)
 

@@ -30,6 +30,8 @@ function processOrder(workflow:Context ctx, OrderInput input) returns OrderResul
 
 The `check` expression is the entire mechanism — it unwraps `T|error` to `T` on success, and returns the error to the caller on failure. There is no special workflow API involved.
 
+This applies to every `check` in the workflow, not just the first one. Any failing `check` propagates to the workflow boundary and marks the run as failed.
+
 ## How the Error Appears in the Workflow Engine
 
 When the workflow fails via `check`:

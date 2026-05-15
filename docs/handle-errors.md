@@ -2,7 +2,14 @@
 
 In Ballerina, errors are first-class values — they are returned, inspected, and acted on like any other value. This is a deliberate design principle: **error handling is part of the business logic, not an afterthought**.
 
-Workflows are long-running business processes, and failures are expected outcomes, not exceptional events. An activity that calls an external API may time out. A payment may be declined. An inventory check may return "out of stock". These are not crashes — they are results that your workflow should reason about explicitly.
+Workflows are long-running business processes, and deviations from the happy path are expected. Some are technical failures (for example, an API timeout or a DB connectivity issue). Others are valid business outcomes (for example, payment declined or out of stock). Both should be modeled explicitly in workflow logic.
+
+## Technical Errors vs Business Outcomes
+
+- **Technical errors**: infrastructure or execution failures (`error` values), such as network timeouts, unavailable downstream systems, serialization failures, or transaction aborts.
+- **Business outcomes**: domain-level decisions represented as normal data values, such as rejected approvals, declined payments, or insufficient inventory.
+
+This guide focuses on technical error handling patterns (`T|error`) while keeping business outcomes explicit in normal control flow.
 
 ## Where Errors Are Handled
 
@@ -22,15 +29,21 @@ What happens next is determined entirely by the workflow code:
 string|error result = ctx->callActivity(processPayment, {"amount": input.amount});
 ```
 
-If the activity is configured with retries (`retryOnError = true`), the workflow engine retries the activity transparently. Each attempt is recorded in the history as an `ActivityTaskScheduled` event. Only after all retries are exhausted does the final error reach the workflow as a value.
+If the activity is configured with retries (`retryOnError = true`), the workflow engine retries the activity transparently. Each attempt is recorded in history as Temporal task events (for example `ActivityTaskScheduled` / `ActivityTaskStarted` / `ActivityTaskCompleted` or `ActivityTaskFailed`). Only after all retries are exhausted does the final error reach the workflow as a value.
 
-Because every failure is a recorded event in an append-only log, workflows can recover from process restarts mid-execution and replay to exactly where they left off — giving you durability and full observability without extra instrumentation.
+Because failures and outcomes are durably recorded in an append-only history, workflows can recover from worker-process restarts mid-execution and resume from the last recorded workflow state — giving durability and observability without extra instrumentation.
+
+If the workflow engine itself is temporarily unavailable, API calls such as `sendData` may fail fast and should be retried by callers. Once the engine and workers recover, execution resumes from recorded history.
+
+> **Retry safety for `sendData`:** retries are safe in the [Alternative Wait — First Wins](handle-data.md#alternative-wait--first-wins) pattern, where multiple senders post to a single shared channel and only the first delivery unblocks the workflow — later duplicates on the same channel are effectively ignored. For sequential workflows or multi-channel scenarios (for example, distinct channels per step or per approver, or a workflow that consumes the same channel more than once), duplicates are **not** auto-suppressed: a blind retry can deliver the same signal twice and advance the workflow further than intended. In those cases, make the send idempotent before retrying — for example, check the workflow status with `workflow:getWorkflowInfo()` to confirm the prior send was not already accepted, or include an idempotency key in the payload that the workflow (or the receiving activity) deduplicates against its recorded state.
 
 ---
 
 ## Controlling Retries
 
-By default (`retryOnError = false`), errors are returned immediately as values — no retries are attempted. This matches Ballerina's standard error-as-value model and is the right default for deterministic business failures (e.g., validation errors, "item not found").
+By default (`retryOnError = false`), errors are returned immediately as values and no automatic retries are attempted. This is a safe baseline that keeps retry intent explicit per call.
+
+Business-specific retry behavior (including delayed retries) can still be implemented in workflow logic or enabled via activity retry options when appropriate.
 
 Enable retries when the failure is transient (e.g., network timeouts, intermittent downstream outages):
 
@@ -54,6 +67,22 @@ Regardless of whether retries are enabled, the outcome is the same: the error ar
 | `retryDelay` | `decimal` | `1.0` | Initial delay in seconds between retries |
 | `retryBackoff` | `decimal` | `2.0` | Exponential backoff multiplier |
 | `maxRetryDelay`| `decimal?`  | *(none)*| Cap on the delay between retries in seconds (optional) |
+
+## State Transition Summary
+
+The following table summarizes common state transitions during error handling.
+
+| Scope | Trigger | Resulting state |
+|-------|---------|-----------------|
+| Activity attempt | `ctx->callActivity()` scheduled | Scheduled -> Started |
+| Activity attempt | Successful completion | Completed |
+| Activity attempt | Failure with retries enabled | Failed -> (retry) Scheduled |
+| Activity attempt | Failure with retries exhausted | Failed (error returned to workflow) |
+| Workflow run | `check` propagates unhandled error | Failed |
+| Workflow run | Error captured and handled in workflow code | Running (continues) |
+| Workflow run | Compensations complete | Completed (with rollback outcome) |
+
+State names shown here are conceptual workflow/API-level states; engine event history may use more granular event types.
 
 ---
 
@@ -125,12 +154,12 @@ function sendNotification(workflow:Context ctx, NotificationInput input) returns
 
 ### Compensation (Saga Pattern) — Undo Completed Steps
 
-When a later step fails, run compensating activities to reverse earlier committed work. This is the standard pattern for distributed transactions without two-phase commit. Each compensating activity is itself a durable activity call — if the compensation fails, it can also be retried or escalated.
+When a later step fails, run compensating activities to reverse earlier completed work. This is the standard pattern for distributed workflows without global ACID rollback. Each compensating activity is itself a durable activity call — if compensation fails, it can also be retried or escalated.
 
 ```ballerina
 @workflow:Workflow
 function transferFunds(workflow:Context ctx, TransferInput input) returns string|error {
-    // Step 1: commit the debit. `check` — if this fails there is nothing to compensate.
+    // Step 1: complete the debit. `check` — if this fails there is nothing to compensate.
     string _ = check ctx->callActivity(debitAccount,
             {"accountId": input.sourceAccount, "amount": input.amount});
 
@@ -149,6 +178,8 @@ function transferFunds(workflow:Context ctx, TransferInput input) returns string
     return string `Transfer ${input.transferId} COMPLETED`;
 }
 ```
+
+Compensation is not the same as ACID rollback. A compensating action may have side effects (fees, notifications, partial reversals) even when it restores business consistency.
 
 > **Pattern guide:** [patterns/error-compensation.md](patterns/error-compensation.md)
 
@@ -183,7 +214,7 @@ function processOrder(workflow:Context ctx, OrderInput input) returns string|err
 
 ## Forward Recovery
 
-When an activity fails due to a condition that code alone cannot resolve (e.g., a payment dispute, a compliance hold, an ambiguous data state), you can pause the workflow and wait for a human to supply **corrected data**, then retry the failed activity with the updated values. This is called **forward recovery**: instead of rolling back, you hold state and move forward once the problem is fixed.
+When an activity fails due to a condition that code alone cannot resolve (e.g., a payment dispute, a compliance hold, an ambiguous data state), you can pause the workflow and wait for a human to supply **corrected data**, then retry the failed activity with the updated values. This guide uses **forward recovery** in that practical sense: retain state and move forward once corrected.
 
 ### Define the Correction Type
 
@@ -279,7 +310,7 @@ A **workflow reset** replays the workflow from a chosen event, discarding histor
 Steps:
 1. In the workflow detail view, click **Reset Workflow**
 2. Select the event to reset to — typically the last `WorkflowTaskCompleted` event before the failed activity was scheduled
-3. Confirm the reset — the workflow engine creates a new workflow run from that point, carrying forward all history up to the reset event
+3. Confirm the reset — the workflow engine creates a new run (a new run ID under the same workflow) and rebuilds workflow state by replaying the recorded history up to the reset event; events after that point are discarded and execution continues from the reset point onwards
 
 After resetting, the workflow worker will pick up the new run and execute the activity again with the fixed code.
 
@@ -291,6 +322,8 @@ If the workflow state is corrupt or the reset point is unclear, terminate the fa
 2. Start a fresh workflow run via your application API or by calling `workflow:run()` directly with the corrected input
 
 Termination is permanent — it marks the workflow **Terminated** and stops all execution. Use it as a last resort when reset is not appropriate.
+
+At present, this guide does not cover module-level suspend/resume APIs.
 
 ### Send Data to a Paused Workflow
 

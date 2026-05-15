@@ -480,6 +480,21 @@ public class WorkflowCompilerPluginTest {
                         + getDiagnosticMessages(diagnosticResult));
     }
 
+    @Test(groups = "valid")
+    public void testValidAwaitOptionalFutures() {
+        // Regression test: futures whose inner type is itself optional (future<int?>,
+        // future<string?>) must be accepted when matched against the same optional
+        // tuple member type ([int?, string?]).  With minCount = 1 < 2 futures the
+        // WORKFLOW_123 nilable check passes (int? and string? are both nilable), and
+        // the WORKFLOW_117 subtype check must also pass because int? subtypeOf int?.
+        String packagePath = "valid_await_optional_futures";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for ctx->await with future<int?>/future<string?> "
+                        + "matched against [int?, string?]. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
     /**
      * Get diagnostic result for the given package path.
      * Uses runCodeGenAndModifyPlugins() to run the code modifier.

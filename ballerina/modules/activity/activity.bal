@@ -23,7 +23,13 @@ import ballerina/soap.soap12;
 import ballerina/workflow;
 
 # HTTP method supported by the [`callRestAPI`](#callRestAPI) builtin activity.
-public type RestMethod "GET"|"POST"|"PUT"|"DELETE"|"PATCH";
+public enum RestMethod {
+    GET,
+    POST,
+    PUT,
+    DELETE,
+    PATCH
+}
 
 # Calls a REST API as a workflow activity.
 #

@@ -23,7 +23,7 @@ isolated boolean programStarted = false;
 # Module initialization function.
 # Initializes the workflow runtime configuration and registers a graceful-stop
 # handler. Polling is NOT started here — the compiler plugin generates a
-# `wfInternal:startWorkflowRuntime()` call as the last module-level statement
+# wfInternal:startWorkflowRuntime() call as the last module-level statement
 # in the user's module, guaranteeing that all workflow registrations complete
 # before the Temporal worker begins polling.
 #

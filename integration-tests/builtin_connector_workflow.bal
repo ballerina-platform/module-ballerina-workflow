@@ -92,7 +92,7 @@ function fetchUserWorkflow(workflow:Context ctx, ConnectorInput input)
         returns json|error {
     json user = check ctx->callActivity(activity:callRestAPI, {
         connection: mockApi,
-        method: "GET",
+        method: activity:GET,
         path: "/users/" + input.userId.toString()
     });
     return user;
@@ -109,7 +109,7 @@ function echoWorkflow(workflow:Context ctx, EchoInput input)
         returns json|error {
     json result = check ctx->callActivity(activity:callRestAPI, {
         connection: mockApi,
-        method: "POST",
+        method: activity:POST,
         path: "/echo",
         message: input.payload
     });

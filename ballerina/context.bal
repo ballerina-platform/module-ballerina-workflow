@@ -51,7 +51,7 @@ public client class Context {
         name: "callActivity"
     } external;
 
-    # Durable sleep that survives process crashes and restarts. Do not use `runtime:sleep()` in workflows.
+    # Durable sleep that survives process crashes and restarts. Do not use runtime:sleep() in workflows.
     #
     # ```ballerina
     # check ctx.sleep({seconds: 30});

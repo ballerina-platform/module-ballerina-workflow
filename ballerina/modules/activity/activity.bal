@@ -107,45 +107,71 @@ isolated function callRestAPIDispatch(http:Client connection, RestMethod method,
     return error("Unsupported REST method: " + method);
 }
 
-# Sends a plain-text email as a workflow activity.
+# Sends an email as a workflow activity.
 #
 # The `connection` argument must be a module-level `final` `email:SmtpClient`
-# variable in the user's program. The activity composes a simple text
-# `email:Message` from the supplied parameters and submits it.
+# variable in the user's program. The activity sends the email using the
+# `email:SmtpClient.send()` method.
 #
-# Workflows that need rich email features (HTML body, attachments, custom
-# headers, etc.) should write their own `@workflow:Activity` function that
-# accepts the relevant `email:SmtpClient` and constructs the `email:Message`
-# inline.
+# Example:
+# ```ballerina
+# final email:SmtpClient smtp = check new ("smtp.example.com", "user", "pass");
+#
+# @workflow:Workflow
+# isolated function notifyWorkflow(workflow:Context ctx, string recipient) returns error? {
+#     check ctx->callActivity(activity:sendEmail, {
+#         connection: smtp,
+#         to: recipient,
+#         subject: "Order shipped",
+#         'from: "no-reply@example.com",
+#         body: "Your order is on the way."
+#     });
+# }
+# ```
 #
 # + connection - The SMTP client to use for sending
 # + to - Recipient address (or list of addresses)
 # + subject - Subject line of the email
+# + 'from - From address of the email
 # + body - Plain-text body of the email
-# + 'from - Optional `From` address; if omitted, the SMTP client default applies
-# + cc - Optional CC recipient(s)
-# + bcc - Optional BCC recipient(s)
+# + options - Optional email fields: `htmlBody`, `contentType`, `headers`,
+#             `cc`, `bcc`, `replyTo`, and `sender`
 # + return - An error if sending fails, otherwise `()`
 @workflow:Activity
-public isolated function sendEmail(email:SmtpClient connection, string|string[] to,
-        string subject, string body, string? 'from = (),
-        string|string[]? cc = (), string|string[]? bcc = ()) returns error? {
-    email:Message message = {
-        to: to,
-        subject: subject,
-        body: body
+public isolated function sendEmail(email:SmtpClient connection, string|string[] to, string subject, string 'from, string body, EmailOptions? options = ()) returns error? {
+    email:Options emailOptions = {
+        htmlBody: options?.htmlBody,
+        contentType: options?.contentType,
+        headers: options?.headers,
+        cc: options?.cc,
+        bcc: options?.bcc,
+        replyTo: options?.replyTo,
+        sender: options?.sender
     };
-    if 'from is string {
-        message.'from = 'from;
-    }
-    if cc !is () {
-        message.cc = cc;
-    }
-    if bcc !is () {
-        message.bcc = bcc;
-    }
-    return connection->sendMessage(message);
+    return connection->send(to, subject, 'from, body, emailOptions);
 }
+
+# Additional email options for [`sendEmail`](#sendEmail).
+#
+# Maps to the `email:Options` inclusive record accepted by `email:SmtpClient.send()`.
+# All fields are optional; omitting a field leaves that aspect of the email unset.
+#
+# + htmlBody - Optional HTML body (sent alongside the plain-text body)
+# + contentType - MIME content type override (default: `text/plain`)
+# + headers - Additional mail headers as a `map<string>`
+# + cc - CC recipient address(es)
+# + bcc - BCC recipient address(es)
+# + replyTo - Reply-To address(es)
+# + sender - Sender address (used when the envelope sender differs from `From`)
+public type EmailOptions record {|
+    string htmlBody?;
+    string contentType?;
+    map<string> headers?;
+    string|string[] cc?;
+    string|string[] bcc?;
+    string|string[] replyTo?;
+    string sender?;
+|};
 
 # Calls a SOAP endpoint as a workflow activity.
 #

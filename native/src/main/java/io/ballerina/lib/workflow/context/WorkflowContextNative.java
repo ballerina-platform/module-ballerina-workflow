@@ -163,6 +163,14 @@ public final class WorkflowContextNative {
             }
             return ErrorCreator.createError(
                     StringUtils.fromString(errorMsg));
+        } catch (io.temporal.worker.NonDeterministicException e) {
+            // Re-throw non-determinism exceptions so Temporal's replay engine handles them.
+            // Swallowing this would produce FAIL_WORKFLOW_EXECUTION instead of the expected
+            // next command, causing a cascade of NonDeterministicException SEVERE log entries.
+            throw e;
+        } catch (io.temporal.failure.TemporalFailure e) {
+            // Re-throw other Temporal failures (cancellation, etc.) — not activity errors.
+            throw e;
         } catch (Exception e) {
             return ErrorCreator.createError(
                     StringUtils.fromString("Activity execution failed: " + e.getMessage()));
@@ -288,6 +296,8 @@ public final class WorkflowContextNative {
         try {
             Workflow.sleep(Duration.ofMillis(millis));
             return null;
+        } catch (io.temporal.worker.NonDeterministicException | io.temporal.failure.TemporalFailure e) {
+            throw e;
         } catch (Exception e) {
             return ErrorCreator.createError(
                     StringUtils.fromString("Workflow sleep failed: " + e.getMessage()));

@@ -1315,6 +1315,11 @@ public final class WorkflowWorkerNative {
             } catch (io.temporal.failure.TemporalFailure e) {
                 // Re-throw Temporal failures as-is (ApplicationFailure, etc.)
                 throw e;
+            } catch (io.temporal.worker.NonDeterministicException e) {
+                // Re-throw non-determinism exceptions so Temporal's replay engine handles them.
+                // Wrapping in ApplicationFailure would produce FAIL_WORKFLOW_EXECUTION instead of
+                // the expected next command, causing a cascade of SEVERE log entries.
+                throw e;
             } catch (Exception e) {
                 // Check if this is a DestroyWorkflowThreadError (expected during shutdown)
                 boolean isDestroyError = isDestroyWorkflowThreadError(e);

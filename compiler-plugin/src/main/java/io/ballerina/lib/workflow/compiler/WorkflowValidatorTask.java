@@ -994,14 +994,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                     continue;
                 }
 
-                // Strip nil from expected type to support partial-wait nullable tuples
-                // (e.g. [T1?, T2?, T3?] where T? = T|())
-                TypeSymbol compareType = stripNil(expectedType);
-                if (compareType == null) {
-                    compareType = expectedType;
-                }
-                // Check bidirectional subtyping (structural equivalence)
-                if (!innerType.subtypeOf(compareType) || !compareType.subtypeOf(innerType)) {
+                if (!innerType.subtypeOf(expectedType)) {
                     DiagnosticInfo info = new DiagnosticInfo(
                             WorkflowDiagnostic.WORKFLOW_117.getCode(),
                             WorkflowDiagnostic.WORKFLOW_117.getMessage(
@@ -1065,26 +1058,6 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                     })
                     .toList();
             return nonErrors.size() == 1 ? nonErrors.get(0) : null;
-        }
-
-        /**
-         * Strips {@code ()} (nil) from a union type, returning the remaining single member.
-         * Used to compare nullable tuple members (e.g. {@code T?} = {@code T|()}) against
-         * non-nullable future inner types. Returns {@code null} if no nil was found or
-         * the result is ambiguous.
-         */
-        private static TypeSymbol stripNil(TypeSymbol type) {
-            TypeSymbol resolved = WorkflowPluginUtils.resolveTypeReference(type);
-            if (resolved.typeKind() != TypeDescKind.UNION) {
-                return null; // not a union — nothing to strip
-            }
-            List<TypeSymbol> nonNils = ((UnionTypeSymbol) resolved).memberTypeDescriptors().stream()
-                    .filter(m -> {
-                        TypeSymbol r = WorkflowPluginUtils.resolveTypeReference(m);
-                        return r.typeKind() != TypeDescKind.NIL;
-                    })
-                    .toList();
-            return nonNils.size() == 1 ? WorkflowPluginUtils.resolveTypeReference(nonNils.get(0)) : null;
         }
 
         /**

@@ -88,19 +88,19 @@ isolated function callRestAPIDispatch(http:Client connection, RestMethod method,
         map<string|string[]>? headers,
         typedesc<anydata> t) returns anydata|error {
     match method {
-        "GET" => {
+        GET => {
             return connection->get(path, headers, targetType = t);
         }
-        "POST" => {
+        POST => {
             return connection->post(path, message, headers, targetType = t);
         }
-        "PUT" => {
+        PUT => {
             return connection->put(path, message, headers, targetType = t);
         }
-        "DELETE" => {
+        DELETE => {
             return connection->delete(path, message, headers, targetType = t);
         }
-        "PATCH" => {
+        PATCH => {
             return connection->patch(path, message, headers, targetType = t);
         }
     }

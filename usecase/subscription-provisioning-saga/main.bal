@@ -425,7 +425,7 @@ service /subscriptions on new http:Listener(servicePort) {
             returns record {|string workflowId;|}|error {
         lock {
             string? existing = subscriptionWorkflowIds[req.requestId];
-            if existing is string {
+            if existing is string && existing != "in-progress" {
                 log:printInfo("subscription provisioning workflow already started (idempotent hit)",
                         workflowId = existing, requestId = req.requestId);
                 return {workflowId: existing};

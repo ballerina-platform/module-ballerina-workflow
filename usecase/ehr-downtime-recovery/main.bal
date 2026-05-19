@@ -360,7 +360,11 @@ function dispatchClinicalMessage(workflow:Context ctx, ClinicalMessageDispatch m
 
     if firstAttempt is int {
         // Happy path — EHR accepted the message on first try.
-        check notifyEhrDeliveredIfEnabled(ctx, msg, firstAttempt);
+        error? notifyResult = notifyEhrDeliveredIfEnabled(ctx, msg, firstAttempt);
+        if notifyResult is error {
+            log:printWarn("[workflow] EHR delivery notification failed",
+                    messageId = msg.messageId, reason = notifyResult.message());
+        }
         return {
             messageId: msg.messageId,
             status: "DELIVERED",
@@ -376,7 +380,11 @@ function dispatchClinicalMessage(workflow:Context ctx, ClinicalMessageDispatch m
     log:printWarn("[workflow] EHR delivery failed, entering retry mode",
             messageId = msg.messageId, reason = failureReason);
 
-        check notifyEhrDownIfEnabled(ctx, msg, failureReason);
+        error? notifyDownResult = notifyEhrDownIfEnabled(ctx, msg, failureReason);
+        if notifyDownResult is error {
+            log:printWarn("[workflow] EHR down notification failed",
+                    messageId = msg.messageId, reason = notifyDownResult.message());
+        }
 
     // ── Step 3: Retry with exponential backoff ────────────────────────────────
     // Retry window: 30 s → 45 s → 67 s → 101 s → … (factor 1.5, 20 attempts
@@ -395,8 +403,16 @@ function dispatchClinicalMessage(workflow:Context ctx, ClinicalMessageDispatch m
             httpStatusCode: 0,
             summary: string `Message ${msg.messageId} delivery failed after all retries exhausted: ${exhaustedReason}`
         };
-        check notifyEhrDownIfEnabled(ctx, msg, exhaustedReason);
-        check sendDeliveryReportIfEnabled(ctx, failedResult);
+        error? notifyExhaustedResult = notifyEhrDownIfEnabled(ctx, msg, exhaustedReason);
+        if notifyExhaustedResult is error {
+            log:printWarn("[workflow] EHR down notification failed",
+                    messageId = msg.messageId, reason = notifyExhaustedResult.message());
+        }
+        error? failedReportResult = sendDeliveryReportIfEnabled(ctx, failedResult);
+        if failedReportResult is error {
+            log:printWarn("[workflow] delivery report failed",
+                    messageId = msg.messageId, reason = failedReportResult.message());
+        }
         return failedResult;
     }
     int statusCode = retryResult;
@@ -409,8 +425,16 @@ function dispatchClinicalMessage(workflow:Context ctx, ClinicalMessageDispatch m
         summary: string `Message ${msg.messageId} delivered after EHR recovered (HTTP ${statusCode}).`
     };
 
-        check notifyEhrRecoveredIfEnabled(ctx, msg, statusCode);
-        check sendDeliveryReportIfEnabled(ctx, result);
+        error? notifyRecoveredResult = notifyEhrRecoveredIfEnabled(ctx, msg, statusCode);
+        if notifyRecoveredResult is error {
+            log:printWarn("[workflow] EHR recovery notification failed",
+                    messageId = msg.messageId, reason = notifyRecoveredResult.message());
+        }
+        error? recoveredReportResult = sendDeliveryReportIfEnabled(ctx, result);
+        if recoveredReportResult is error {
+            log:printWarn("[workflow] delivery report failed",
+                    messageId = msg.messageId, reason = recoveredReportResult.message());
+        }
 
     return result;
 }

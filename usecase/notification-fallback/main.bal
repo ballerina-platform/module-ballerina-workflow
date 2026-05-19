@@ -256,7 +256,7 @@ service /notifications on new http:Listener(servicePort) {
             returns record {|string workflowId;|}|error {
         lock {
             string? existing = notificationWorkflowIds[req.notificationId];
-            if existing is string {
+            if existing is string && existing != "in-progress" {
                 log:printInfo("notification workflow already started (idempotent hit)",
                         workflowId = existing, notificationId = req.notificationId);
                 return {workflowId: existing};

@@ -313,7 +313,7 @@ service /sales on new http:Listener(servicePort) {
         }
         lock {
             string? existing = leadWorkflowIds[lead.leadId];
-            if existing is string {
+            if existing is string && existing != "in-progress" {
                 log:printInfo("lead-qualification workflow already started (idempotent hit)",
                         workflowId = existing, leadId = lead.leadId);
                 return {workflowId: existing, leadId: lead.leadId};

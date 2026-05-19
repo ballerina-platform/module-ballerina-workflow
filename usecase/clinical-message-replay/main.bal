@@ -388,7 +388,7 @@ service /interop on new http:Listener(servicePort) {
         }
         lock {
             string? existing = messageWorkflowIds[req.messageId];
-            if existing is string {
+            if existing is string && existing != "in-progress" {
                 log:printInfo("clinical replay workflow already started (idempotent hit)",
                         workflowId = existing, messageId = req.messageId);
                 return {workflowId: existing, messageId: req.messageId};

@@ -46,6 +46,7 @@ task updateTomlFiles {
         newBallerinaToml = newBallerinaToml.replace("@tally.version@", tallyVersion)
         newBallerinaToml = newBallerinaToml.replace("@perfmark.version@", perfmarkVersion)
         newBallerinaToml = newBallerinaToml.replace("@nexusrpc.version@", nexusrpcVersion)
+        newBallerinaToml = newBallerinaToml.replace("@ballerina.lang.version@", ballerinaLangVersion)
         ballerinaTomlFile.text = newBallerinaToml
 
         def newCompilerPluginToml = compilerPluginTomlFilePlaceHolder.text.replace("@project.version@", project.version)

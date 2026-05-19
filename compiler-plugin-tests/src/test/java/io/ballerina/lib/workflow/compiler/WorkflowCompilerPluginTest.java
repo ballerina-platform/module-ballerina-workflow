@@ -108,6 +108,15 @@ public class WorkflowCompilerPluginTest {
                         + getDiagnosticMessages(diagnosticResult));
     }
 
+        @Test(groups = "valid")
+        public void testValidCallActivityWithModuleFinalClientArg() {
+        String packagePath = "valid_call_activity_client_module_final";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+            "Expected no validation errors for module-level final client argument. Errors: "
+                + getDiagnosticMessages(diagnosticResult));
+        }
+
     // ===== Invalid test cases - Validation errors =====
 
     @Test(groups = "invalid")
@@ -225,6 +234,24 @@ public class WorkflowCompilerPluginTest {
         Assert.assertTrue(diagnosticResult.errorCount() > 0,
                 "Expected validation error for callActivity with activity having rest parameters");
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_111);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidCallActivityClientArgNonReference() {
+        String packagePath = "invalid_call_activity_client_non_reference";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertEquals(diagnosticResult.errorCount(), 3,
+                "Expected exactly 3 validation errors for non-reference client argument");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_124);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidCallActivityClientArgNotModuleFinal() {
+        String packagePath = "invalid_call_activity_client_not_module_final";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertEquals(diagnosticResult.errorCount(), 1,
+            "Expected exactly 1 validation error for client argument that is not module-level final/configurable");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_125);
     }
 
     @Test(groups = "invalid")

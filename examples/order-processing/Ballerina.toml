@@ -2,7 +2,7 @@
 org = "ballerina_examples"
 name = "order_processing"
 version = "0.1.0"
-distribution = "2201.13.0"
+distribution = "2201.13.2"
 
 [build-options]
 observabilityIncluded = true

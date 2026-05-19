@@ -36,6 +36,11 @@ jobs:
           tar -xzf /tmp/temporal.tar.gz -C "${HOME}/.temporalio/bin"
           echo "${HOME}/.temporalio/bin" >> $GITHUB_PATH
 
+      - name: Configure Git
+        run: |
+          git config --global user.email "ballerina-platform@wso2.com"
+          git config --global user.name "Ballerina Platform"
+
       - name: Build the Package
         env:
           packageUser: ${{ github.actor }}
@@ -100,6 +105,11 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/temporalio/cli/releases/download/v$version/temporal_cli_${version}_windows_amd64.zip" -OutFile "$env:TEMP\temporal.zip"
           Expand-Archive -Path "$env:TEMP\temporal.zip" -DestinationPath "$env:USERPROFILE\.temporalio\bin" -Force
           echo "$env:USERPROFILE\.temporalio\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Configure Git
+        run: |
+          git config --global user.email "ballerina-platform@wso2.com"
+          git config --global user.name "Ballerina Platform"
 
       - name: Build the Project
         env:

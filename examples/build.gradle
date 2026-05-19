@@ -33,13 +33,15 @@ def examplePackageNames = [
     'order-with-payment' : 'order_with_payment'
 ]
 
+def ballerinaDistributionVersion = project.rootProject.findProperty("ballerinaLangVersion") ?: "2201.13.2"
+
 // Helper: generate a Ballerina.toml for an example
 def generateExampleToml = { String packageName ->
     return """[package]
 org = "ballerina_examples"
 name = "${packageName}"
 version = "0.1.0"
-distribution = "2201.13.0"
+distribution = "${ballerinaDistributionVersion}"
 
 [build-options]
 observabilityIncluded = true
@@ -58,6 +60,7 @@ task buildExamples {
     description = 'Builds and tests all example projects using the locally built workflow module'
     group = 'build'
     dependsOn(':workflow-ballerina:build')
+    dependsOn(':startSharedTestServer')
 
     doLast {
         def examplesDir = project.projectDir
@@ -68,6 +71,10 @@ task buildExamples {
         def workflowBirCache = new File("${ballerinaDist}/repo/cache/ballerina/workflow")
         if (workflowBirCache.exists()) {
             workflowBirCache.deleteDir()
+        }
+
+        boolean testsExcluded = gradle.startParameter.excludedTaskNames.any {
+            it == 'test' || it.endsWith(':test')
         }
 
         examplesDir.eachDir { exampleDir ->
@@ -91,14 +98,15 @@ task buildExamples {
             def targetDir = new File(exampleDir, "target")
             if (targetDir.exists()) targetDir.deleteDir()
 
-            // Run bal test which both compiles and runs tests
+            // Respect Gradle -x test: build examples without running bal tests.
+            def balCommand = testsExcluded ? 'build' : 'test'
             exec {
                 workingDir exampleDir
                 environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
                 if (Os.isFamily(Os.FAMILY_WINDOWS)) {
-                    commandLine 'cmd', '/c', "${distributionBinPath}/bal.bat test"
+                    commandLine 'cmd', '/c', "${distributionBinPath}/bal.bat ${balCommand}"
                 } else {
-                    commandLine 'sh', '-c', "${distributionBinPath}/bal test"
+                    commandLine 'sh', '-c', "${distributionBinPath}/bal ${balCommand}"
                 }
             }
         }

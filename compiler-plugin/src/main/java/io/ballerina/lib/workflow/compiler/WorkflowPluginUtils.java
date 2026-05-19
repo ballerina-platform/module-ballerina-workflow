@@ -21,11 +21,15 @@ import io.ballerina.compiler.api.SemanticModel;
 import io.ballerina.compiler.api.symbols.AnnotationSymbol;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.ModuleSymbol;
+import io.ballerina.compiler.api.symbols.ObjectTypeSymbol;
+import io.ballerina.compiler.api.symbols.Qualifiable;
+import io.ballerina.compiler.api.symbols.Qualifier;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.api.symbols.TypeDescKind;
 import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
+import io.ballerina.compiler.api.symbols.VariableSymbol;
 import io.ballerina.compiler.syntax.tree.AnnotationNode;
 import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
@@ -232,5 +236,75 @@ public final class WorkflowPluginUtils {
         // Check if it's a subtype of anydata or error
         return typeSymbol.subtypeOf(semanticModel.types().ANYDATA) 
                 || typeSymbol.subtypeOf(semanticModel.types().ERROR);
+    }
+
+    /**
+     * Returns {@code true} when the given type is (or resolves to) a
+     * {@code client object} type. Type references and intersections introduced
+     * by client declarations (e.g. {@code readonly & ClientObject}) are
+     * dereferenced.
+     *
+     * <p>Used to recognize activity parameters whose values must be
+     * module-level final client references rather than anydata.
+     */
+    public static boolean isClientObjectType(TypeSymbol typeSymbol) {
+        TypeSymbol resolved = resolveTypeReference(typeSymbol);
+        if (resolved.typeKind() == TypeDescKind.INTERSECTION) {
+            // e.g. readonly & ClientObject — pick the object member.
+            io.ballerina.compiler.api.symbols.IntersectionTypeSymbol intersection =
+                    (io.ballerina.compiler.api.symbols.IntersectionTypeSymbol) resolved;
+            for (TypeSymbol member : intersection.memberTypeDescriptors()) {
+                if (isClientObjectType(member)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (resolved.typeKind() == TypeDescKind.UNION) {
+            io.ballerina.compiler.api.symbols.UnionTypeSymbol union =
+                    (io.ballerina.compiler.api.symbols.UnionTypeSymbol) resolved;
+            for (TypeSymbol member : union.memberTypeDescriptors()) {
+                if (!isClientObjectType(member)) {
+                    return false;
+                }
+            }
+            return !union.memberTypeDescriptors().isEmpty();
+        }
+        if (resolved.typeKind() != TypeDescKind.OBJECT) {
+            return false;
+        }
+        ObjectTypeSymbol objectType = (ObjectTypeSymbol) resolved;
+        return objectType.qualifiers().contains(Qualifier.CLIENT);
+    }
+
+    /**
+     * Returns {@code true} when {@code symbol} is a module-level
+     * {@code final} variable whose type is a {@code client object}.
+     *
+     * <p>Used by the call-site validator to ensure that any activity argument
+     * whose declared parameter type is a client object resolves to a
+     * registered, immutable, top-level client reference.
+     */
+    public static boolean isModuleLevelFinalClient(Symbol symbol) {
+        if (symbol == null || symbol.kind() != SymbolKind.VARIABLE) {
+            return false;
+        }
+        VariableSymbol varSymbol = (VariableSymbol) symbol;
+        // Module-level: enclosed by a ModuleSymbol (not a function/block scope).
+        if (varSymbol.getModule().isEmpty()) {
+            return false;
+        }
+        if (!hasQualifier(varSymbol, Qualifier.FINAL)
+                && !hasQualifier(varSymbol, Qualifier.CONFIGURABLE)) {
+            return false;
+        }
+        return isClientObjectType(varSymbol.typeDescriptor());
+    }
+
+    /**
+     * Returns {@code true} when {@code symbol} carries the given qualifier.
+     */
+    public static boolean hasQualifier(Qualifiable symbol, Qualifier qualifier) {
+        return symbol.qualifiers().contains(qualifier);
     }
 }

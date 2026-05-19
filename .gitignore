@@ -49,10 +49,15 @@ bin
 velocity.log*
 *Ballerina.lock
 Dependencies.toml
+!ballerina/Dependencies.toml
+!integration-tests/Dependencies.toml
 
 # Auto-generated test configuration
 ballerina/tests/Config.toml
 integration-tests/tests/Config.toml
+
+# Local libs used only for integration-test fixture setup
+integration-tests/libs/*.jar
 
 # Java Logs
 java_pid*.hprof

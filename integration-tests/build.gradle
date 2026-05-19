@@ -26,6 +26,19 @@ apply plugin: 'java'
 
 description = 'Ballerina - Workflow Integration Tests'
 
+configurations {
+    smtpFixtureLibs
+}
+
+dependencies {
+    smtpFixtureLibs("com.icegreen:greenmail:1.5.11") {
+        transitive = false
+    }
+    smtpFixtureLibs("com.sun.mail:javax.mail:1.6.2") {
+        transitive = false
+    }
+}
+
 def packageName = "workflow"
 def packageOrg = "ballerina"
 def tomlVersion = stripBallerinaExtensionVersion("${project.version}")
@@ -51,6 +64,13 @@ def stripBallerinaExtensionVersion(String extVersion) {
 
 clean {
     delete "$project.projectDir/target"
+    delete "$project.projectDir/libs"
+}
+
+task prepareIntegrationTestLibs(type: Copy) {
+    description = 'Downloads GreenMail SMTP fixture jars into integration-tests/libs'
+    from configurations.smtpFixtureLibs
+    into "$project.projectDir/libs"
 }
 
 task updateTomlFiles {
@@ -103,6 +123,7 @@ task ballerinaTest {
     inputs.dir file(project.projectDir)
     dependsOn(":${packageName}-ballerina:build")
     dependsOn(updateTomlFiles)
+    dependsOn(prepareIntegrationTestLibs)
     dependsOn(initializeVariables)
     dependsOn(":startSharedTestServer")
     dependsOn(compileJava)

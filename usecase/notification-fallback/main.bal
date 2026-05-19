@@ -144,7 +144,11 @@ isolated function sendSms(string to, string body) returns string|error {
         From: twilioFromNumber,
         Body: body
     });
-    string sid = msg?.sid ?: "";
+    string? maybeSid = msg?.sid;
+    if maybeSid is () || maybeSid == "" {
+        return error("[twilio] SID missing from createMessage response");
+    }
+    string sid = maybeSid;
     log:printInfo("[twilio] notification SMS sent", to = to, sid = sid);
     return sid;
 }
@@ -187,10 +191,15 @@ function deliverNotification(workflow:Context ctx, NotificationRequest req)
             retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
 
     if emailResult is string {
-        string _ = check ctx->callActivity(postDeliveryAudit,
+        string|error auditResult = ctx->callActivity(postDeliveryAudit,
                 {"text": string `:email: Notification ${req.notificationId} delivered ` +
                         string `via email (${emailResult}).`},
                 retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+        if auditResult is error {
+            log:printWarn("audit post failed; delivery still successful",
+                    notificationId = req.notificationId, channel = "EMAIL",
+                    reason = auditResult.message());
+        }
         return {
             notificationId: req.notificationId,
             channel: "EMAIL",
@@ -208,11 +217,16 @@ function deliverNotification(workflow:Context ctx, NotificationRequest req)
             {"to": req.recipientPhone, "body": string `${req.subject}: ${req.body}`},
             retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
 
-    string _ = check ctx->callActivity(postDeliveryAudit,
+    string|error smsAuditResult = ctx->callActivity(postDeliveryAudit,
             {"text": string `:warning: Notification ${req.notificationId} delivered ` +
                     string `via SMS fallback (Twilio SID ${smsSid}). ` +
                     string `Email failure: ${emailErrorMsg}.`},
             retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+    if smsAuditResult is error {
+        log:printWarn("audit post failed; delivery still successful",
+                notificationId = req.notificationId, channel = "SMS",
+                reason = smsAuditResult.message());
+    }
 
     return {
         notificationId: req.notificationId,
@@ -226,6 +240,11 @@ function deliverNotification(workflow:Context ctx, NotificationRequest req)
 // HTTP listener
 // -----------------------------------------------------------------------------
 
+// In-memory idempotency store: notificationId → workflowId.
+// Prevents duplicate workflows when the caller retries the same notificationId.
+// Use a durable store in production.
+isolated map<string> notificationWorkflowIds = {};
+
 # REST API for the notification-fallback workflow.
 service /notifications on new http:Listener(servicePort) {
 
@@ -235,7 +254,27 @@ service /notifications on new http:Listener(servicePort) {
     # + return - Workflow id wrapper, or an error
     resource function post .(@http:Payload NotificationRequest req)
             returns record {|string workflowId;|}|error {
-        string workflowId = check workflow:run(deliverNotification, req);
+        lock {
+            string? existing = notificationWorkflowIds[req.notificationId];
+            if existing is string {
+                log:printInfo("notification workflow already started (idempotent hit)",
+                        workflowId = existing, notificationId = req.notificationId);
+                return {workflowId: existing};
+            }
+            // Reserve the slot atomically to prevent concurrent duplicate starts.
+            notificationWorkflowIds[req.notificationId] = "in-progress";
+        }
+        string|error workflowIdOrError = workflow:run(deliverNotification, req);
+        if workflowIdOrError is error {
+            lock {
+                _ = notificationWorkflowIds.remove(req.notificationId);
+            }
+            return workflowIdOrError;
+        }
+        string workflowId = workflowIdOrError;
+        lock {
+            notificationWorkflowIds[req.notificationId] = workflowId;
+        }
         log:printInfo("notification workflow started",
                 notificationId = req.notificationId, workflowId = workflowId);
         return {workflowId};

@@ -87,7 +87,7 @@ instruction after the mapping/filter issue is fixed or the downstream
 system is back online:
 
 ```bash
-curl -X POST http://localhost:8123/interop/messages/<workflow-id>/replay-resolution \
+curl -X POST http://localhost:8123/interop/messages/{workflow-id}/replay-resolution \
     -H "Content-Type: application/json" \
     -d '{
         "jiraIssueKey": "INTEROP-101",
@@ -102,7 +102,7 @@ curl -X POST http://localhost:8123/interop/messages/<workflow-id>/replay-resolut
 Look up the final result:
 
 ```bash
-curl http://localhost:8123/interop/messages/<workflow-id>
+curl http://localhost:8123/interop/messages/{workflow-id}
 ```
 
 ## Where this pattern shows up

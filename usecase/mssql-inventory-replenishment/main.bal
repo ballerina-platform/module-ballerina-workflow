@@ -254,13 +254,22 @@ function stringCell(record {} row, string column, string? defaultValue = ()) ret
 
 function intCell(record {} row, string column) returns int|error {
     anydata? value = row[column];
+    if value is () {
+        return error(string `CDC row column '${column}' is NULL or missing`);
+    }
     if value is int {
         return value;
+    }
+    if value is decimal {
+        return int:fromString(value.truncate().toString());
+    }
+    if value is float {
+        return <int>value;
     }
     if value is string {
         return int:fromString(value);
     }
-    return error(string `CDC row column ${column} is not an int`);
+    return error(string `CDC row column '${column}' has unexpected type`);
 }
 
 service /inventory on new http:Listener(servicePort) {

@@ -19,7 +19,7 @@ The "human in the loop" step (manager approving an equipment budget)
 follows the project-wide three-step pattern: notify → create task →
 webhook callback.
 
-```
+```text
 HRIS ── POST /hr/new-hire ──▶ workflow start
                                    │
                                    ├─▶ slack: chat.postMessage  (#onboarding)

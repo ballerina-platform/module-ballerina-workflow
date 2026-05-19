@@ -290,17 +290,25 @@ function provisionSubscription(workflow:Context ctx, SubscriptionRequest req)
     string contractId = contractResult;
 
     // Happy path — audit the success.
-    string _ = check ctx->callActivity(postProvisioningSlack,
+    string|error slackRes = ctx->callActivity(postProvisioningSlack,
             {"text": string `:rocket: Subscription *${req.companyName}* provisioned. ` +
                     string `Account ${accountId}, Contact ${contactId}, Contract ${contractId}.`},
             retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
-    string _ = check ctx->callActivity(emailBillingOps,
+    if slackRes is error {
+        log:printWarn("[saga] Slack audit notification failed",
+                requestId = req.requestId, reason = slackRes.message());
+    }
+    string|error emailRes = ctx->callActivity(emailBillingOps,
             {
                 "subject": string `Subscription provisioned: ${req.companyName}`,
                 "body": string `Request ${req.requestId} provisioned successfully. ` +
                         string `Account ${accountId}, Contact ${contactId}, Contract ${contractId}.`
             },
             retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+    if emailRes is error {
+        log:printWarn("[saga] email billing-ops notification failed",
+                requestId = req.requestId, reason = emailRes.message());
+    }
 
     return {
         requestId: req.requestId,
@@ -326,7 +334,7 @@ isolated function rollbackAfterContactFailure(workflow:Context ctx,
     () _ = check ctx->callActivity(deleteAccount,
             {"accountId": accountId},
             retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
-    check announceRollback(ctx, req, reason);
+    announceRollback(ctx, req, reason);
     return {
         requestId: req.requestId,
         status: "ROLLED_BACK",
@@ -348,13 +356,18 @@ isolated function rollbackAfterContractFailure(workflow:Context ctx,
     log:printWarn("contract creation failed; rolling back Contact + Account",
             requestId = req.requestId,
             accountId = accountId, contactId = contactId, reason = reason);
-    () _ = check ctx->callActivity(deleteContact,
+    error? contactDeleteError = ctx->callActivity(deleteContact,
             {"contactId": contactId},
             retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
-    () _ = check ctx->callActivity(deleteAccount,
+    error? accountDeleteError = ctx->callActivity(deleteAccount,
             {"accountId": accountId},
             retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
-    check announceRollback(ctx, req, reason);
+    if contactDeleteError !is () || accountDeleteError !is () {
+        string contactMsg = contactDeleteError is error ? contactDeleteError.message() : "";
+        string accountMsg = accountDeleteError is error ? accountDeleteError.message() : "";
+        return error(string `Compensation partially failed — deleteContact: '${contactMsg}', deleteAccount: '${accountMsg}'`);
+    }
+    announceRollback(ctx, req, reason);
     return {
         requestId: req.requestId,
         status: "ROLLED_BACK",
@@ -363,29 +376,43 @@ isolated function rollbackAfterContractFailure(workflow:Context ctx,
 }
 
 # Posts the rollback to Slack and emails billing operations.
+# Notification failures are logged but do not propagate so the saga
+# always completes with a ROLLED_BACK status.
 #
 # + ctx - Workflow context
 # + req - Inbound subscription request
 # + reason - Captured failure reason to publish in the audit trail
-# + return - `()` on success, or an error
 isolated function announceRollback(workflow:Context ctx,
-        SubscriptionRequest req, string reason) returns error? {
-    string _ = check ctx->callActivity(postProvisioningSlack,
+        SubscriptionRequest req, string reason) {
+    string|error slackRes = ctx->callActivity(postProvisioningSlack,
             {"text": string `:warning: Subscription provisioning for *${req.companyName}* ` +
                     string `was rolled back. Reason: ${reason}.`},
             retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
-    string _ = check ctx->callActivity(emailBillingOps,
+    if slackRes is error {
+        log:printWarn("[rollback] Slack notification failed",
+                requestId = req.requestId, reason = slackRes.message());
+    }
+    string|error emailRes = ctx->callActivity(emailBillingOps,
             {
                 "subject": string `Subscription rolled back: ${req.companyName}`,
                 "body": string `Request ${req.requestId} could not be provisioned. ` +
                         string `Salesforce state has been compensated. Reason: ${reason}.`
             },
             retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+    if emailRes is error {
+        log:printWarn("[rollback] email notification failed",
+                requestId = req.requestId, reason = emailRes.message());
+    }
 }
 
 // -----------------------------------------------------------------------------
 // HTTP listener
 // -----------------------------------------------------------------------------
+
+// In-memory idempotency store: requestId → workflowId.
+// Prevents duplicate workflows when the caller retries the same requestId.
+// Use a durable store in production.
+isolated map<string> subscriptionWorkflowIds = {};
 
 # REST API for the subscription-provisioning saga.
 service /subscriptions on new http:Listener(servicePort) {
@@ -396,7 +423,27 @@ service /subscriptions on new http:Listener(servicePort) {
     # + return - Workflow id wrapper, or an error
     resource function post .(@http:Payload SubscriptionRequest req)
             returns record {|string workflowId;|}|error {
-        string workflowId = check workflow:run(provisionSubscription, req);
+        lock {
+            string? existing = subscriptionWorkflowIds[req.requestId];
+            if existing is string {
+                log:printInfo("subscription provisioning workflow already started (idempotent hit)",
+                        workflowId = existing, requestId = req.requestId);
+                return {workflowId: existing};
+            }
+            // Reserve the slot atomically to prevent concurrent duplicate starts.
+            subscriptionWorkflowIds[req.requestId] = "in-progress";
+        }
+        string|error workflowIdOrError = workflow:run(provisionSubscription, req);
+        if workflowIdOrError is error {
+            lock {
+                _ = subscriptionWorkflowIds.remove(req.requestId);
+            }
+            return workflowIdOrError;
+        }
+        string workflowId = workflowIdOrError;
+        lock {
+            subscriptionWorkflowIds[req.requestId] = workflowId;
+        }
         log:printInfo("subscription provisioning workflow started",
                 requestId = req.requestId, workflowId = workflowId);
         return {workflowId};

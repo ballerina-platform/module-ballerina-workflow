@@ -14,7 +14,7 @@ an internal service portal, which posts the request to the workflow.
 3. **Pause** until the Jira webhook calls back with the resolution.
 4. **SMS the requester** (Twilio) with the approval/denial outcome.
 
-```
+```text
 Portal ── POST /it/access-requests ──▶ workflow start
                                             │
                                             ├─▶ slack notify approvers

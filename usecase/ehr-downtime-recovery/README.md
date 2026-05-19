@@ -18,7 +18,7 @@ This use case demonstrates that pattern end-to-end.
 
 ## Flow
 
-```
+```text
 POST /interop/dispatch
          │
          ▼
@@ -40,7 +40,7 @@ POST /interop/dispatch
  ┌────────────────────────────────────────────────┐
  │  Retry with exponential backoff                │
  │  maxRetries=20, retryDelay=30s, factor=1.5     │
- │  (30s → 45s → 67s → 101s … ≈ 10 h window)     │
+ │  (30s → 45s → 67s → 101s … ≈ 55 h window)     │
  │                                                │
  │  Workflow runtime persists state across        │
  │  restarts — no message queue needed.           │
@@ -53,7 +53,7 @@ POST /interop/dispatch
  └───────────────────┘
 ```
 
-If all 20 retries are exhausted (EHR still down after ~10 hours) the workflow transitions to `FAILED`, which is observable via `GET /interop/dispatch/{workflowId}`.
+If all 20 retries are exhausted (EHR still down after ~55 hours) the workflow transitions to `FAILED`, which is observable via `GET /interop/dispatch/{workflowId}`.
 
 ## Why no queue?
 

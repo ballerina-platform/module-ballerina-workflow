@@ -112,7 +112,7 @@ public type LeadInput record {|
 # + outcome - `Qualified`, `Disqualified`, or `Nurture`
 # + notes - Free-text notes the rep recorded
 public type QualificationDecision record {|
-    string outcome;
+    "Qualified"|"Disqualified"|"Nurture" outcome;
     string notes = "";
 |};
 
@@ -237,6 +237,10 @@ function qualifyLead(
             timeout = {hours: slaHours});
 
     if awaited is error {
+        // Only escalate on genuine SLA timeout; propagate other errors.
+        if !awaited.message().includes("Timeout waiting for futures") {
+            return awaited;
+        }
         // SLA breach — escalate.
         () _ = check ctx->callActivity(updateLeadStatus,
                 {"salesforceLeadId": sfLeadId, "status": "Stale - Escalated"},
@@ -257,6 +261,9 @@ function qualifyLead(
 
     [QualificationDecision] [decision] = awaited;
     string normalizedOutcome = decision.outcome.toLowerAscii();
+    if normalizedOutcome != "qualified" && normalizedOutcome != "disqualified" && normalizedOutcome != "nurture" {
+        return error(string `Invalid qualification outcome '${decision.outcome}'; expected Qualified, Disqualified, or Nurture.`);
+    }
     string status = normalizedOutcome == "qualified"
             ? "Working - Contacted"
             : (normalizedOutcome == "disqualified"
@@ -287,6 +294,11 @@ function qualifyLead(
 // HTTP listener
 // -----------------------------------------------------------------------------
 
+// In-memory idempotency store: leadId → workflowId.
+// Prevents duplicate workflows when the marketing form retries the same leadId.
+// Use a durable store in production.
+isolated map<string> leadWorkflowIds = {};
+
 # REST API for the lead-qualification workflow.
 service /sales on new http:Listener(servicePort) {
 
@@ -299,7 +311,27 @@ service /sales on new http:Listener(servicePort) {
         if lead.leadId.trim() == "" || lead.assignedRepPhone.trim() == "" {
             return <http:BadRequest>{body: "leadId and assignedRepPhone are required"};
         }
-        string workflowId = check workflow:run(qualifyLead, lead);
+        lock {
+            string? existing = leadWorkflowIds[lead.leadId];
+            if existing is string {
+                log:printInfo("lead-qualification workflow already started (idempotent hit)",
+                        workflowId = existing, leadId = lead.leadId);
+                return {workflowId: existing, leadId: lead.leadId};
+            }
+            // Reserve the slot atomically to prevent concurrent duplicate starts.
+            leadWorkflowIds[lead.leadId] = "in-progress";
+        }
+        string|error workflowIdOrError = workflow:run(qualifyLead, lead);
+        if workflowIdOrError is error {
+            lock {
+                _ = leadWorkflowIds.remove(lead.leadId);
+            }
+            return workflowIdOrError;
+        }
+        string workflowId = workflowIdOrError;
+        lock {
+            leadWorkflowIds[lead.leadId] = workflowId;
+        }
         log:printInfo("lead-qualification workflow started",
                 workflowId = workflowId, leadId = lead.leadId);
         return {workflowId, leadId: lead.leadId};

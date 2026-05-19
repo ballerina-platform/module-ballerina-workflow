@@ -50,7 +50,7 @@
 //
 // Retry parameters (tune for your SLA):
 //   maxRetries = 20, retryDelay = 30 s, retryBackoff = 1.5
-//   → attempts at ~30 s, 45 s, 67 s, 101 s, … up to ~10 hours total window.
+//   → attempts at ~30 s, 45 s, 67 s, 101 s, … up to ~55 hours total window.
 
 import ballerina/http;
 import ballerina/log;
@@ -179,6 +179,26 @@ isolated function notifySlackEhrDown(string messageId, string sourceSystem,
     return resp.ts;
 }
 
+# Posts a confirmation to the Slack ops channel when the message was
+# delivered on the first attempt (EHR was never down).
+#
+# + messageId - Message that was successfully delivered
+# + sourceSystem - Originating system
+# + httpStatusCode - HTTP status code from the successful delivery
+# + return - Slack message timestamp, or an error
+@workflow:Activity
+isolated function notifySlackEhrDelivered(string messageId, string sourceSystem,
+        int httpStatusCode) returns string|error {
+    slack:ChatPostMessageResponse resp = check slackClient->/chat\.postMessage.post({
+        channel: interopOpsChannel,
+        text: string `:white_check_mark: *Message Delivered*\n` +
+              string `Message *${messageId}* from *${sourceSystem}* ` +
+              string `was successfully delivered (HTTP ${httpStatusCode}) on the first attempt.`
+    });
+    log:printInfo("[slack] EHR delivery notice sent", messageId = messageId);
+    return resp.ts;
+}
+
 # Posts a recovery notice to the Slack ops channel once the EHR comes back
 # online and the deferred delivery succeeds.
 #
@@ -269,6 +289,23 @@ function notifyEhrDownIfEnabled(workflow:Context ctx, ClinicalMessageDispatch ms
             retryOnError = true, maxRetries = 3, retryDelay = 5.0, retryBackoff = 2.0);
 }
 
+# Sends a first-attempt delivery notice only when notifications are enabled.
+#
+# + ctx - Workflow context
+# + msg - Clinical message metadata
+# + statusCode - Successful EHR status code
+# + return - Error if notification fails while enabled
+function notifyEhrDeliveredIfEnabled(workflow:Context ctx, ClinicalMessageDispatch msg, int statusCode)
+        returns error? {
+    if !enableDispatchNotifications {
+        return;
+    }
+    string _ = check ctx->callActivity(notifySlackEhrDelivered,
+            {"messageId": msg.messageId, "sourceSystem": msg.sourceSystem,
+             "httpStatusCode": statusCode},
+            retryOnError = true, maxRetries = 3, retryDelay = 5.0, retryBackoff = 2.0);
+}
+
 # Sends a recovery alert only when notifications are enabled.
 #
 # + ctx - Workflow context
@@ -323,7 +360,7 @@ function dispatchClinicalMessage(workflow:Context ctx, ClinicalMessageDispatch m
 
     if firstAttempt is int {
         // Happy path — EHR accepted the message on first try.
-        check notifyEhrRecoveredIfEnabled(ctx, msg, firstAttempt);
+        check notifyEhrDeliveredIfEnabled(ctx, msg, firstAttempt);
         return {
             messageId: msg.messageId,
             status: "DELIVERED",
@@ -343,11 +380,26 @@ function dispatchClinicalMessage(workflow:Context ctx, ClinicalMessageDispatch m
 
     // ── Step 3: Retry with exponential backoff ────────────────────────────────
     // Retry window: 30 s → 45 s → 67 s → 101 s → … (factor 1.5, 20 attempts
-    // ≈ up to ~10 hours).  Tune maxRetries / retryDelay for your SLA.
+    // ≈ up to ~55 hours).  Tune maxRetries / retryDelay for your SLA.
     // The workflow runtime persists this in-progress state across restarts —
     // a "retrying workflow" is equivalent to a "queued message" in a
     // traditional pipeline — except no operator drain is required.
-    int statusCode = check retryEhrDelivery(ctx, msg);
+    int|error retryResult = retryEhrDelivery(ctx, msg);
+    if retryResult is error {
+        string exhaustedReason = retryResult.message();
+        log:printError("[workflow] EHR delivery failed after all retries exhausted",
+                messageId = msg.messageId, reason = exhaustedReason);
+        DispatchResult failedResult = {
+            messageId: msg.messageId,
+            status: "FAILED",
+            httpStatusCode: 0,
+            summary: string `Message ${msg.messageId} delivery failed after all retries exhausted: ${exhaustedReason}`
+        };
+        check notifyEhrDownIfEnabled(ctx, msg, exhaustedReason);
+        check sendDeliveryReportIfEnabled(ctx, failedResult);
+        return failedResult;
+    }
+    int statusCode = retryResult;
 
     // ── Step 4: EHR recovered — notify and report ────────────────────────────
     DispatchResult result = {

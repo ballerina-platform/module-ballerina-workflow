@@ -199,6 +199,11 @@ isolated function createReplayTask(string workflowId, ClinicalMessage req, strin
         }
     });
     string issueKey = created["key"] ?: "";
+    if issueKey == "" {
+        log:printError("[jira] replay task created but key is missing or empty",
+                workflowId = workflowId, messageId = req.messageId);
+        return error("Jira issue created but response did not include a key.");
+    }
     log:printInfo("[jira] replay task created",
             workflowId = workflowId, issueKey = issueKey, messageId = req.messageId);
     return issueKey;
@@ -326,6 +331,11 @@ function replayClinicalMessage(
         };
     }
 
+    string upperAction = instruction.action.toUpperAscii();
+    if upperAction != "RETRY_AS_IS" && upperAction != "RETRY_WITH_PATCH" {
+        return error(string `Unknown replay action '${instruction.action}'; expected RETRY_AS_IS, RETRY_WITH_PATCH, or CANCEL.`);
+    }
+
     ClinicalMessage replayRequest = applyReplayInstruction(req, instruction);
     int|error replayAttempt = attemptDelivery(ctx, replayRequest);
     if replayAttempt is error {
@@ -383,10 +393,15 @@ service /interop on new http:Listener(servicePort) {
                         workflowId = existing, messageId = req.messageId);
                 return {workflowId: existing, messageId: req.messageId};
             }
+            // Reserve the slot atomically to prevent concurrent duplicate starts.
+            messageWorkflowIds[req.messageId] = "in-progress";
         }
 
         string|error workflowIdOrError = workflow:run(replayClinicalMessage, req);
         if workflowIdOrError is error {
+            lock {
+                _ = messageWorkflowIds.remove(req.messageId);
+            }
             return workflowIdOrError;
         }
         string workflowId = workflowIdOrError;
@@ -407,11 +422,12 @@ service /interop on new http:Listener(servicePort) {
     resource function post messages/[string workflowId]/'replay\-resolution(
             http:Request request, @http:Payload ReplayInstruction instruction)
             returns record {| string status; |}|http:Unauthorized|error {
-        if jiraWebhookSecret != "" {
-            string|http:HeaderNotFoundError secret = request.getHeader("X-Webhook-Secret");
-            if secret is http:HeaderNotFoundError || secret != jiraWebhookSecret {
-                return <http:Unauthorized>{};
-            }
+        if jiraWebhookSecret == "" {
+            return <http:Unauthorized>{};
+        }
+        string|http:HeaderNotFoundError secret = request.getHeader("X-Webhook-Secret");
+        if secret is http:HeaderNotFoundError || secret != jiraWebhookSecret {
+            return <http:Unauthorized>{};
         }
         check workflow:sendData(replayClinicalMessage, workflowId, "replayInstruction", instruction);
         return {status: "accepted"};

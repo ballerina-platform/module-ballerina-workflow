@@ -251,10 +251,16 @@ service /crm on new http:Listener(servicePort) {
     # Webhook entry point. Starts one workflow per inbound customer.
     #
     # + req - Customer payload
-    # + return - Workflow id wrapper, or an error
+    # + return - Workflow id wrapper, or an InternalServerError on startup failure
     resource function post customers(@http:Payload CustomerRequest req)
-            returns record {|string workflowId;|}|error {
-        string workflowId = check workflow:run(syncCustomer, req);
+            returns record {|string workflowId;|}|http:InternalServerError {
+        string|error workflowIdOrError = workflow:run(syncCustomer, req);
+        if workflowIdOrError is error {
+            log:printError("[http] failed to start customer sync workflow",
+                    requestId = req.requestId, err = workflowIdOrError.message());
+            return <http:InternalServerError>{body: {message: workflowIdOrError.message()}};
+        }
+        string workflowId = workflowIdOrError;
         log:printInfo("customer sync workflow started",
                 requestId = req.requestId, workflowId = workflowId);
         return {workflowId};

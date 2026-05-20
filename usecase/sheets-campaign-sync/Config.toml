@@ -1,0 +1,16 @@
+[ballerina.workflow]
+mode = "IN_MEMORY"
+
+[ballerina_usecases.sheets_campaign_sync]
+spreadsheetId = "REPLACE_WITH_SPREADSHEET_ID"
+
+slackBotToken = ""
+marketingOpsChannel = "#marketing-ops"
+
+salesforceBaseUrl = "https://your-domain.my.salesforce.com"
+salesforceAccessToken = ""
+
+gmailRefreshToken = ""
+gmailClientId = ""
+gmailClientSecret = ""
+gmailFromAddress = "marketing-ops@example.com"

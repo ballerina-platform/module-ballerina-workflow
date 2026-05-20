@@ -1,0 +1,23 @@
+[package]
+org = "ballerina_usecases"
+name = "it_access_request"
+version = "0.1.0"
+distribution = "2201.13.0"
+
+[build-options]
+observabilityIncluded = true
+
+[[dependency]]
+org = "ballerinax"
+name = "slack"
+version = "5.0.1"
+
+[[dependency]]
+org = "ballerinax"
+name = "jira"
+version = "2.0.2"
+
+[[dependency]]
+org = "ballerinax"
+name = "twilio"
+version = "5.0.1"

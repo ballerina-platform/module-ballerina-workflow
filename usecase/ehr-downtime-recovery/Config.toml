@@ -1,0 +1,17 @@
+[ballerina.workflow]
+mode = "IN_MEMORY"
+
+[ballerina_usecases.ehr_downtime_recovery]
+servicePort = 8124
+
+slackBotToken = ""
+interopOpsChannel = "#interop-ops"
+enableDispatchNotifications = true
+
+gmailRefreshToken = ""
+gmailClientId = ""
+gmailClientSecret = ""
+gmailFromAddress = "interop@example.com"
+opsEmail = "ops@example.com"
+
+emrBaseUrl = "http://localhost:9080"

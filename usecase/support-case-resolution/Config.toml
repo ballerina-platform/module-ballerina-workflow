@@ -1,0 +1,19 @@
+[ballerina.workflow]
+mode = "IN_MEMORY"
+
+[ballerina_usecases.support_case_resolution]
+salesforceBaseUrl = "https://your-domain.my.salesforce.com"
+salesforceAccessToken = ""
+
+slackBotToken = ""
+supportChannel = "#support-engineering"
+incidentChannel = "#incident-response"
+
+gmailRefreshToken = ""
+gmailClientId = ""
+gmailClientSecret = ""
+gmailFromAddress = "support@example.com"
+
+diagnosticsTimeoutHours = 48
+confirmationTimeoutHours = 72
+servicePort = 8105

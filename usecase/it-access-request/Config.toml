@@ -1,0 +1,21 @@
+[ballerina.workflow]
+mode = "IN_MEMORY"
+
+[ballerina_usecases.it_access_request]
+slackBotToken = ""
+itApproversChannel = "#it-approvals"
+
+jiraBaseUrl = "https://your-org.atlassian.net/rest"
+jiraEmail = ""
+jiraApiToken = ""
+jiraProjectKey = "ITSEC"
+jiraAccessIssueType = "Service Request"
+
+twilioAccountSid = ""
+twilioAuthToken = ""
+twilioFromNumber = "+15555550100"
+
+# Shared secret for Jira webhook callback verification (X-Webhook-Secret header)
+jiraWebhookSecret = ""
+
+servicePort = 8102

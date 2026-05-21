@@ -60,7 +60,6 @@ task buildExamples {
     description = 'Builds and tests all example projects using the locally built workflow module'
     group = 'build'
     dependsOn(':workflow-ballerina:build')
-    dependsOn(':startSharedTestServer')
 
     doLast {
         def examplesDir = project.projectDir

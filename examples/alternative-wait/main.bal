@@ -209,7 +209,7 @@ service /api on new http:Listener(8090) {
     }
 
     # Retrieves the final result of a purchase workflow.
-    resource function get purchases/[string workflowId]() returns workflow:WorkflowExecutionInfo|error {
+    resource function get purchases/[string workflowId]() returns anydata|error {
         return workflow:getWorkflowResult(workflowId);
     }
 }

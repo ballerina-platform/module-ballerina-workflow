@@ -29,16 +29,13 @@ function testOrderWorkflowWithRecordResult() returns error? {
     OrderInput input = {id: testId, orderId: "ORD-12345", quantity: 10};
     string workflowId = check workflow:run(orderWorkflow, input);
     
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete successfully");
-    
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+
+    if result is map<anydata> {
         test:assertEquals(result["orderId"], "ORD-12345", "Order ID should match");
         test:assertEquals(result["status"], "PROCESSED", "Status should be PROCESSED");
         test:assertEquals(result["quantity"], 10, "Quantity should match");
     } else {
-        test:assertFail("Result should be a map representing OrderResult");
+        test:assertFail("Expected map<anydata> result");
     }
 }

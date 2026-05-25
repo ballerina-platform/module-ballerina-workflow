@@ -33,11 +33,8 @@ function testParentStartsChildWorkflow() returns error? {
     ParentInput input = {id: testId};
     string workflowId = check workflow:run(parentWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 60);
-
-    test:assertEquals(execInfo.status, "COMPLETED",
-        "Parent workflow should complete after child workflow finishes");
-    test:assertTrue((<string>execInfo.result).startsWith("Parent received: child-processed:"),
+    anydata result = check workflow:getWorkflowResult(workflowId, 60);
+    test:assertTrue((<string>result).startsWith("Parent received: child-processed:"),
         "Parent result should contain the child workflow's processed output");
 }
 
@@ -56,15 +53,11 @@ function testSenderSendsDataToReceiver() returns error? {
     string senderWorkflowId = check workflow:run(senderWorkflow, senderInput);
 
     // Wait for both workflows to complete
-    workflow:WorkflowExecutionInfo senderResult = check workflow:getWorkflowResult(senderWorkflowId, 60);
-    test:assertEquals(senderResult.status, "COMPLETED",
-        "Sender workflow should complete after sending data");
-    test:assertTrue((<string>senderResult.result).startsWith("sent-to:"),
+    anydata senderResult = check workflow:getWorkflowResult(senderWorkflowId, 60);
+    test:assertTrue((<string>senderResult).startsWith("sent-to:"),
         "Sender result should confirm data was sent");
 
-    workflow:WorkflowExecutionInfo receiverResult = check workflow:getWorkflowResult(receiverWorkflowId, 60);
-    test:assertEquals(receiverResult.status, "COMPLETED",
-        "Receiver workflow should complete after receiving data");
-    test:assertEquals(<string>receiverResult.result, "received:hello-from-sender",
+    anydata receiverResult = check workflow:getWorkflowResult(receiverWorkflowId, 60);
+    test:assertEquals(<string>receiverResult, "received:hello-from-sender",
         "Receiver should have received the correct message");
 }

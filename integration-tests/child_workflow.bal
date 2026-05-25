@@ -107,18 +107,14 @@ function parentWorkflow(workflow:Context ctx, ParentInput input) returns string|
     // implicit activity for deterministic execution.
     string childWorkflowId = check workflow:run(childWorkflow, {value: "from-parent-" + input.id});
 
-    // Wait for the child workflow to complete and get its result
-    workflow:WorkflowExecutionInfo childResult = check workflow:getWorkflowResult(childWorkflowId, 30);
+    // Wait for the child workflow to complete and get its raw result value.
+    anydata childResult = check workflow:getWorkflowResult(childWorkflowId, 30);
+    string resultStr = <string> childResult;
 
-    if childResult.status == "COMPLETED" {
-        string resultStr = <string>childResult.result;
-        // Process the child result through an activity
-        string formatted = check ctx->callActivity(formatChildResultActivity,
-            {"childResult": resultStr});
-        return formatted;
-    }
-
-    return error("Child workflow failed: " + (childResult.errorMessage ?: "unknown"));
+    // Process the child result through an activity
+    string formatted = check ctx->callActivity(formatChildResultActivity,
+        {"childResult": resultStr});
+    return formatted;
 }
 
 # A receiver workflow that waits for data sent via workflow:sendData.

@@ -21,6 +21,7 @@
 import ballerina/test;
 import ballerina/lang.runtime;
 import ballerina/workflow;
+import ballerina/workflow.management;
 
 @test:Config {
     groups: ["integration"]
@@ -29,16 +30,16 @@ function testGetWorkflowInfo() returns error? {
     string testId = uniqueId("info-test");
     InfoTestInput input = {id: testId, name: "Charlie"};
     string workflowId = check workflow:run(infoTestWorkflow, input);
-    
+
     // Give it a moment to start
     runtime:sleep(0.5);
-    
+
     // Get workflow info (may still be running or completed)
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowInfo(workflowId);
-    
+    management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);
+
     // Workflow ID must be a valid UUID v7
     test:assertTrue(isValidUuidV7(execInfo.workflowId), "Workflow ID should be a valid UUID v7");
-    test:assertTrue(execInfo.status == "RUNNING" || execInfo.status == "COMPLETED", 
+    test:assertTrue(execInfo.status == "RUNNING" || execInfo.status == "COMPLETED",
         "Status should be RUNNING or COMPLETED");
 }
 
@@ -49,11 +50,87 @@ function testGetWorkflowInfoAfterCompletion() returns error? {
     string testId = uniqueId("info-complete");
     InfoTestInput input = {id: testId, name: "Diana"};
     string workflowId = check workflow:run(infoTestWorkflow, input);
-    
-    // Wait for completion
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
+
+    // Wait for completion and verify result
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+    test:assertEquals(result, "Processed: Diana", "Result should match");
+
+    // For status/workflowId, use getWorkflowInfo
+    management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);
     test:assertEquals(execInfo.status, "COMPLETED", "Workflow should be completed");
     test:assertTrue(isValidUuidV7(execInfo.workflowId), "Workflow ID should be a valid UUID v7");
-    test:assertEquals(execInfo.result, "Processed: Diana", "Result should match");
+}
+
+// ================================================================================
+// MANAGEMENT API - listWorkflowDefinitions
+// ================================================================================
+
+@test:Config {
+    groups: ["integration"]
+}
+function testListWorkflowDefinitions() returns error? {
+    management:WorkflowDefinition[] defs = check management:listWorkflowDefinitions();
+
+    test:assertTrue(defs.length() > 0, "Should have at least one workflow definition registered");
+
+    foreach management:WorkflowDefinition def in defs {
+        test:assertFalse(def.workflowType == "", "workflowType must not be empty");
+    }
+}
+
+// ================================================================================
+// MANAGEMENT API - suspendWorkflow / resumeWorkflow
+// ================================================================================
+
+@test:Config {
+    groups: ["integration"]
+}
+function testSuspendAndResumeWorkflow() returns error? {
+    string testId = uniqueId("suspend-resume");
+    // Use a signal-based workflow so it stays RUNNING while waiting for the signal
+    SimpleSignalInput input = {id: testId, message: "suspend-resume-test"};
+    string workflowId = check workflow:run(simpleSignalWorkflow, input);
+
+    // Give the workflow time to reach the signal-wait point
+    runtime:sleep(0.5);
+
+    // Suspend should succeed without error
+    check management:suspendWorkflow(workflowId);
+
+    // Resume should succeed without error
+    check management:resumeWorkflow(workflowId);
+
+    // Send the signal to complete the workflow after it has been resumed
+    check workflow:sendData(simpleSignalWorkflow, workflowId, "response", {
+        id: testId,
+        response: "resume-ok"
+    });
+
+    _ = check workflow:getWorkflowResult(workflowId, 30);
+    management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);
+    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete after suspend/resume cycle");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testGetWorkflowInfoNonExistentWorkflowReturnsError() returns error? {
+    management:WorkflowExecutionInfo|error result = management:getWorkflowInfo("non-existent-workflow-id-xyz");
+    test:assertTrue(result is error, "Getting info for a non-existent workflow should return an error");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testSuspendNonExistentWorkflowReturnsError() returns error? {
+    error? result = management:suspendWorkflow("non-existent-workflow-id-xyz");
+    test:assertTrue(result is error, "Suspending a non-existent workflow should return an error");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testResumeNonExistentWorkflowReturnsError() returns error? {
+    error? result = management:resumeWorkflow("non-existent-workflow-id-xyz");
+    test:assertTrue(result is error, "Resuming a non-existent workflow should return an error");
 }

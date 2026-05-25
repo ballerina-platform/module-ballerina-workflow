@@ -17,6 +17,7 @@
 import ballerina/http;
 import ballerina/workflow;
 import ballerina/io;
+import ballerina/workflow.management;
 
 // HTTP Service for Order Processing
 // Provides REST endpoints to trigger workflows
@@ -49,12 +50,12 @@ service /orders on new http:Listener(9090) {
     # + workflowId - The workflow execution ID
     # + return - Workflow execution result or error
     resource function get [string workflowId]/result() returns json|error {
-        workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-        
-        json result = check execInfo.result.cloneWithType(json);
+        anydata rawResult = check workflow:getWorkflowResult(workflowId, 30);
+        management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);
+        json result = check rawResult.cloneWithType(json);
         return {
             workflowId: workflowId,
-            status: execInfo.status.toString(),
+            status: execInfo.status,
             result: result
         };
     }

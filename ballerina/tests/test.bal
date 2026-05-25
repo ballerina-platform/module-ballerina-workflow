@@ -17,6 +17,7 @@
 import ballerina/test;
 import ballerina/jballerina.java;
 import ballerina/workflow.internal as wfInternal;
+import ballerina/workflow.management;
 
 // Note: Module-level tests focus on registration and introspection.
 // These tests work with the lazy gRPC connection (no active workflow server needed).
@@ -595,7 +596,8 @@ function testGetWorkflowResultStatusCompleted() returns error? {
     }
     string workflowId = runResult;
 
-    WorkflowExecutionInfo info = check getWorkflowResult(workflowId, 15);
+    _ = check getWorkflowResult(workflowId, 15);
+    management:WorkflowExecutionInfo info = check management:getWorkflowInfo(workflowId);
 
     test:assertEquals(info.status, "COMPLETED", "Completed workflow should have status COMPLETED");
     test:assertEquals(info.workflowId, workflowId, "workflowId should match");
@@ -614,7 +616,8 @@ function testGetWorkflowResultWorkflowType() returns error? {
     }
     string workflowId = runResult;
 
-    WorkflowExecutionInfo info = check getWorkflowResult(workflowId, 15);
+    _ = check getWorkflowResult(workflowId, 15);
+    management:WorkflowExecutionInfo info = check management:getWorkflowInfo(workflowId);
 
     test:assertEquals(info.workflowType, "simple-workflow-type-test",
             "workflowType should match the registered workflow name");
@@ -635,16 +638,18 @@ function testGetWorkflowResultStatusFailedOnActivityError() returns error? {
     }
     string workflowId = runResult;
 
-    WorkflowExecutionInfo info = check getWorkflowResult(workflowId, 15);
+        anydata|error result = getWorkflowResult(workflowId, 15);
+        test:assertTrue(result is error,
+            "Failed workflow should return an error from getWorkflowResult");
+
+        management:WorkflowExecutionInfo info = check management:getWorkflowInfo(workflowId);
 
     test:assertEquals(info.status, "FAILED",
             "Workflow whose activity returned error should have status FAILED");
-    test:assertTrue(info.errorMessage is string,
-            "errorMessage should be set when workflow fails");
-    string? errMsg = info.errorMessage;
-    if errMsg is string {
+    if result is error {
+        string errMsg = result.message();
         test:assertTrue(errMsg.includes("Activity intentionally failed") || errMsg.includes("failed"),
-                "errorMessage should contain the original activity error: " + errMsg);
+                "error message should contain the original activity error: " + errMsg);
     }
 }
 
@@ -672,7 +677,8 @@ function testActivityInvocationsTrackedOnSuccess() returns error? {
     }
     string workflowId = runResult;
 
-    WorkflowExecutionInfo info = check getWorkflowResult(workflowId, 15);
+    _ = check getWorkflowResult(workflowId, 15);
+    management:WorkflowExecutionInfo info = check management:getWorkflowInfo(workflowId);
 
     test:assertEquals(info.status, "COMPLETED",
             "Workflow should complete successfully");
@@ -680,12 +686,12 @@ function testActivityInvocationsTrackedOnSuccess() returns error? {
     // Should have at least 2 user activity invocations (COMPLETED).
     // The history may also include built-in implicit activities, so we filter
     // for the two user activities by name prefix.
-    ActivityInvocation[] invocations = info.activityInvocations;
+    management:ActivityInvocation[] invocations = info.activityInvocations;
     test:assertTrue(invocations.length() >= 2,
             "Should have at least 2 activity invocations, got " + invocations.length().toString());
 
     // Collect user-activity invocations (their names contain a '.' separator)
-    ActivityInvocation[] userActivities = from ActivityInvocation inv in invocations
+    management:ActivityInvocation[] userActivities = from management:ActivityInvocation inv in invocations
         where inv.activityName.includes("testActivityFunction")
         select inv;
 
@@ -718,19 +724,23 @@ function testActivityInvocationsShowRetriesOnFailure() returns error? {
     }
     string workflowId = runResult;
 
-    WorkflowExecutionInfo info = check getWorkflowResult(workflowId, 30);
+        anydata|error result = getWorkflowResult(workflowId, 30);
+        test:assertTrue(result is error,
+            "Workflow should return an error after retries are exhausted");
+
+        management:WorkflowExecutionInfo info = check management:getWorkflowInfo(workflowId);
 
     test:assertEquals(info.status, "FAILED",
             "Workflow should fail after retries exhausted");
 
     // The failing activity should appear once in the invocations as FAILED
     // with the final attempt number reflecting the total attempts made.
-    ActivityInvocation[] invocations = info.activityInvocations;
+    management:ActivityInvocation[] invocations = info.activityInvocations;
     test:assertTrue(invocations.length() >= 1,
             "Should have at least 1 activity invocation, got " + invocations.length().toString());
 
     // Find the failing user activity
-    ActivityInvocation[] failedActivities = from ActivityInvocation inv in invocations
+    management:ActivityInvocation[] failedActivities = from management:ActivityInvocation inv in invocations
         where inv.activityName.includes("alwaysFailingActivity") && inv.status == "FAILED"
         select inv;
 
@@ -738,7 +748,7 @@ function testActivityInvocationsShowRetriesOnFailure() returns error? {
             "Should have at least one FAILED alwaysFailingActivity invocation");
 
     // The last failed invocation should have attempt >= 3 (1 initial + 2 retries)
-    ActivityInvocation lastFailed = failedActivities[failedActivities.length() - 1];
+    management:ActivityInvocation lastFailed = failedActivities[failedActivities.length() - 1];
     int? lastAttempt = lastFailed.attempt;
     test:assertTrue(lastAttempt is int && lastAttempt >= 3,
             "Final failed invocation should be attempt >= 3, got " + (lastAttempt ?: 0).toString());
@@ -763,12 +773,16 @@ function testActivityInvocationsOnSingleFailNoRetry() returns error? {
     }
     string workflowId = runResult;
 
-    WorkflowExecutionInfo info = check getWorkflowResult(workflowId, 15);
+        anydata|error result = getWorkflowResult(workflowId, 15);
+        test:assertTrue(result is error,
+            "Workflow should return an error when activity fails without retries");
+
+        management:WorkflowExecutionInfo info = check management:getWorkflowInfo(workflowId);
 
     test:assertEquals(info.status, "FAILED",
             "Workflow should fail on activity error");
 
-    ActivityInvocation[] failedActivities = from ActivityInvocation inv in info.activityInvocations
+    management:ActivityInvocation[] failedActivities = from management:ActivityInvocation inv in info.activityInvocations
         where inv.activityName.includes("alwaysFailingActivity") && inv.status == "FAILED"
         select inv;
 

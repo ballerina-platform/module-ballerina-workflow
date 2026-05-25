@@ -145,7 +145,7 @@ service /api on new http:Listener(8092) {
     }
 
     # Retrieves the workflow result. Blocks until complete.
-    resource function get transfers/[string workflowId]() returns workflow:WorkflowExecutionInfo|error {
+    resource function get transfers/[string workflowId]() returns anydata|error {
         return workflow:getWorkflowResult(workflowId);
     }
 }

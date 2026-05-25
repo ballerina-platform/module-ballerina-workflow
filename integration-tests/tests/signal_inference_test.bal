@@ -50,16 +50,13 @@ function testSingleSignalInference() returns error? {
     check workflow:sendData(singleSignalInferWorkflow, workflowId, "onlySignal", signalData);
     
     // Wait for workflow to complete
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete successfully");
-    
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+
+    if result is map<anydata> {
         test:assertEquals(result["inputData"], "test input data", "Input data should be preserved");
         test:assertEquals(result["signalResponse"], "inferred response", "Signal response should be captured");
     } else {
-        test:assertFail("Result should be a map");
+        test:assertFail("Expected map<anydata> result");
     }
 }
 
@@ -97,12 +94,9 @@ function testDistinctTypesSignalInference() returns error? {
     check workflow:sendData(distinctTypesWorkflow, workflowId, "feedback", feedbackData);
     
     // Wait for workflow to complete
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete successfully");
-    
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+
+    if result is map<anydata> {
         test:assertEquals(result["wasApproved"], true, "Approval should be captured");
         // Note: decimal values are serialized as floats in workflow results
         anydata paymentAmount = result["paymentAmount"];
@@ -115,7 +109,7 @@ function testDistinctTypesSignalInference() returns error? {
         }
         test:assertEquals(result["feedbackRating"], 5, "Feedback rating should be captured");
     } else {
-        test:assertFail("Result should be a map");
+        test:assertFail("Expected map<anydata> result");
     }
 }
 
@@ -147,16 +141,13 @@ function testExplicitSignalNameWithAmbiguousTypes() returns error? {
     check workflow:sendData(explicitSignalNameWorkflow, workflowId, "ambig2", signal2Data);
     
     // Wait for workflow to complete
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete successfully");
-    
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+
+    if result is map<anydata> {
         test:assertEquals(result["fromSignal1"], "value from signal 1", "Signal 1 value should be captured");
         test:assertEquals(result["fromSignal2"], "value from signal 2", "Signal 2 value should be captured");
     } else {
-        test:assertFail("Result should be a map");
+        test:assertFail("Expected map<anydata> result");
     }
 }
 
@@ -182,15 +173,12 @@ function testMixedSignalsWorkflow() returns error? {
     check workflow:sendData(mixedSignalsWorkflow, workflowId, "statusUpdate", statusData);
     
     // Wait for workflow to complete
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete successfully");
-    
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+
+    if result is map<anydata> {
         test:assertEquals(result["finalStatus"], 200, "Status code should be captured");
     } else {
-        test:assertFail("Result should be a map");
+        test:assertFail("Expected map<anydata> result");
     }
 }
 

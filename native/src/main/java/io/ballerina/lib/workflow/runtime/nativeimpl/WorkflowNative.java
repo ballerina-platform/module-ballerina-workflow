@@ -390,12 +390,13 @@ public final class WorkflowNative {
     /**
      * Native implementation for getWorkflowResult function.
      * <p>
-     * Gets the execution result of a workflow, waiting for completion if necessary.
-     * Returns detailed information including the workflow result and activity invocations.
+     * Waits for a workflow to complete and returns its result value directly.
+     * Returns the raw workflow return value on success, or an error if the workflow
+     * failed, was cancelled, or timed out.
      *
      * @param workflowId the ID of the workflow to get the result for
      * @param timeoutSeconds maximum time to wait for workflow completion
-     * @return a WorkflowExecutionInfo record or an error
+     * @return the workflow result value as anydata, or an error
      */
     @SuppressWarnings("unchecked")
     public static Object getWorkflowResult(BString workflowId, long timeoutSeconds) {
@@ -412,52 +413,18 @@ public final class WorkflowNative {
             }
 
             String wfId = workflowId.getValue();
-
-            // Fetch workflowType via DescribeWorkflowExecution (best-effort; non-fatal).
-            // This is done first so the type is available even when the workflow has already
-            // completed and the stub.getResult() call below returns immediately.
-            String workflowType = "";
-            try {
-                DescribeWorkflowExecutionRequest describeRequest =
-                        DescribeWorkflowExecutionRequest.newBuilder()
-                                .setNamespace(client.getOptions().getNamespace())
-                                .setExecution(io.temporal.api.common.v1.WorkflowExecution.newBuilder()
-                                        .setWorkflowId(wfId)
-                                        .build())
-                                .build();
-                DescribeWorkflowExecutionResponse describeResponse = client.getWorkflowServiceStubs()
-                        .blockingStub()
-                        .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                        .describeWorkflowExecution(describeRequest);
-                workflowType = describeResponse.getWorkflowExecutionInfo().getType().getName();
-            } catch (Exception e) {
-                // Non-fatal: workflowType stays empty if the describe call fails
-            }
-
-            // Create an untyped stub to get the result
             WorkflowStub stub = client.newUntypedWorkflowStub(wfId);
 
-            // Wait for the workflow to complete and get the result
-            Object result = null;
-            String status;
-            String errorMessage = null;
-
             try {
-                // Get the result with a timeout
-                result = stub.getResult(timeoutSeconds, TimeUnit.SECONDS, Object.class);
-                status = "COMPLETED";
+                Object result = stub.getResult(timeoutSeconds, TimeUnit.SECONDS, Object.class);
+                return result != null ? TypesUtil.convertJavaToBallerinaType(result) : null;
             } catch (io.temporal.client.WorkflowFailedException e) {
-                status = "FAILED";
-                errorMessage = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
+                String errorMsg = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
+                return ErrorCreator.createError(StringUtils.fromString(ERR_GET_RESULT + errorMsg));
             } catch (java.util.concurrent.TimeoutException e) {
-                status = "RUNNING"; // Still running after timeout
-            } catch (Exception e) {
-                status = "FAILED";
-                errorMessage = e.getMessage();
+                return ErrorCreator.createError(StringUtils.fromString(
+                        ERR_GET_RESULT + "Workflow timed out after " + timeoutSeconds + " seconds"));
             }
-
-            // Build the WorkflowExecutionInfo record (with activity history)
-            return buildWorkflowExecutionInfo(wfId, workflowType, status, result, errorMessage, client);
 
         } catch (Exception e) {
             return ErrorCreator.createError(
@@ -467,12 +434,11 @@ public final class WorkflowNative {
 
     /**
      * Routes a {@code workflow:getWorkflowResult} call through a built-in implicit activity.
-     * The activity returns a serializable Map which is then converted to a WorkflowExecutionInfo record.
+     * Returns the raw workflow result value, or an error if the workflow failed.
      */
     @SuppressWarnings("unchecked")
     private static Object getWorkflowResultAsImplicitActivity(String workflowId, int timeoutSeconds) {
         try {
-            // Use a timeout that accounts for the workflow's own timeout plus buffer
             Duration activityTimeout = Duration.ofSeconds(timeoutSeconds + 30);
             io.temporal.workflow.ActivityStub stub =
                     Workflow.newUntypedActivityStub(buildImplicitActivityOptions(activityTimeout));
@@ -484,9 +450,13 @@ public final class WorkflowNative {
             String status = (String) info.get("status");
             Object result = info.get("result");
             String errorMessage = (String) info.get("errorMessage");
-            String workflowType = (String) info.getOrDefault("workflowType", "");
 
-            return buildWorkflowExecutionInfo(workflowId, workflowType, status, result, errorMessage);
+            if ("FAILED".equals(status)) {
+                return ErrorCreator.createError(
+                        StringUtils.fromString(ERR_GET_RESULT + errorMessage));
+            }
+
+            return result != null ? TypesUtil.convertJavaToBallerinaType(result) : null;
         } catch (Exception e) {
             return handleImplicitActivityError(e, ERR_GET_RESULT);
         }
@@ -538,7 +508,7 @@ public final class WorkflowNative {
             String workflowType = execInfo.getType().getName();
             String status = convertStatus(execInfo.getStatus());
 
-            return buildWorkflowExecutionInfo(wfId, workflowType, status, null, null);
+            return buildWorkflowExecutionInfo(wfId, workflowType, status, null, null, client);
 
         } catch (Exception e) {
             return ErrorCreator.createError(
@@ -564,7 +534,7 @@ public final class WorkflowNative {
             String workflowType = (String) info.getOrDefault("workflowType", "");
             String status = (String) info.getOrDefault("status", "UNKNOWN");
 
-            return buildWorkflowExecutionInfo(workflowId, workflowType, status, null, null);
+            return buildWorkflowExecutionInfo(workflowId, workflowType, status, null, null, null);
         } catch (Exception e) {
             return handleImplicitActivityError(e, ERR_GET_INFO);
         }
@@ -587,23 +557,11 @@ public final class WorkflowNative {
     }
 
     /**
-     * Builds a WorkflowExecutionInfo Ballerina record.
-     * When a {@link WorkflowClient} is provided, activity invocations are fetched
-     * from the workflow's event history; otherwise the array is left empty.
+     * Builds a WorkflowExecutionInfo Ballerina record using the management module types.
+     * When a {@link WorkflowClient} is provided and the status is terminal (COMPLETED or FAILED),
+     * activity invocations are fetched from the workflow's event history.
      */
-    private static BMap<BString, Object> buildWorkflowExecutionInfo(
-            String workflowId,
-            String workflowType,
-            String status,
-            Object result,
-            String errorMessage) {
-        return buildWorkflowExecutionInfo(workflowId, workflowType, status, result, errorMessage, null);
-    }
-
-    /**
-     * Overload that accepts an optional {@link WorkflowClient} to fetch activity history.
-     */
-    private static BMap<BString, Object> buildWorkflowExecutionInfo(
+    public static BMap<BString, Object> buildWorkflowExecutionInfo(
             String workflowId,
             String workflowType,
             String status,
@@ -612,7 +570,7 @@ public final class WorkflowNative {
             WorkflowClient client) {
 
         BMap<BString, Object> record = ValueCreator.createRecordValue(
-                ModuleUtils.getModule(), "WorkflowExecutionInfo");
+                ModuleUtils.getManagementModule(), "WorkflowExecutionInfo");
 
         record.put(StringUtils.fromString("workflowId"), StringUtils.fromString(workflowId));
         record.put(StringUtils.fromString("workflowType"), StringUtils.fromString(workflowType));
@@ -630,7 +588,6 @@ public final class WorkflowNative {
             record.put(StringUtils.fromString("errorMessage"), null);
         }
 
-        // Fetch activity invocations from workflow event history when a client is available
         BArray activityInvocations;
         if (client != null && ("COMPLETED".equals(status) || "FAILED".equals(status))) {
             activityInvocations = fetchActivityInvocations(client, workflowId);
@@ -643,11 +600,12 @@ public final class WorkflowNative {
     }
 
     /**
-     * Creates an empty typed array for the {@code activityInvocations} field.
+     * Creates an empty typed array for the {@code activityInvocations} field
+     * using the management module's ActivityInvocation type.
      */
-    private static BArray createEmptyActivityInvocationsArray() {
+    public static BArray createEmptyActivityInvocationsArray() {
         RecordType invocationType = (RecordType) ValueCreator.createRecordValue(
-                ModuleUtils.getModule(), "ActivityInvocation").getType();
+                ModuleUtils.getManagementModule(), "ActivityInvocation").getType();
         return ValueCreator.createArrayValue(
                 TypeCreator.createArrayType(invocationType));
     }
@@ -671,7 +629,7 @@ public final class WorkflowNative {
      */
     private static BArray fetchActivityInvocations(WorkflowClient client, String workflowId) {
         RecordType invocationType = (RecordType) ValueCreator.createRecordValue(
-                ModuleUtils.getModule(), "ActivityInvocation").getType();
+            ModuleUtils.getManagementModule(), "ActivityInvocation").getType();
         BArray invocations = ValueCreator.createArrayValue(
                 TypeCreator.createArrayType(invocationType));
 
@@ -759,12 +717,12 @@ public final class WorkflowNative {
     }
 
     /**
-     * Creates a single {@code ActivityInvocation} Ballerina record.
+     * Creates a single {@code ActivityInvocation} Ballerina record using management module types.
      */
     private static BMap<BString, Object> createActivityInvocation(
             String activityName, String status, String errorMessage, int attempt) {
         BMap<BString, Object> record = ValueCreator.createRecordValue(
-                ModuleUtils.getModule(), "ActivityInvocation");
+                ModuleUtils.getManagementModule(), "ActivityInvocation");
         record.put(StringUtils.fromString("activityName"), StringUtils.fromString(activityName));
         record.put(StringUtils.fromString("input"), ValueCreator.createArrayValue(new BString[0]));
         record.put(StringUtils.fromString("output"), null);

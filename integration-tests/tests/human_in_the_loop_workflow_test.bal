@@ -45,11 +45,9 @@ function testHitlPaymentSucceeds() returns error? {
     };
 
     string workflowId = check workflow:run(hitlForwardRecoveryWorkflow, input);
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
 
-    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete");
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    if result is map<anydata> {
         test:assertEquals(result["status"], "COMPLETED");
         test:assertTrue((<string>result["message"]).startsWith("TXN-tok_ok"),
                 "Message should contain the transaction ID");
@@ -87,11 +85,9 @@ function testHitlForwardRecoveryApproved() returns error? {
         note: "Gateway recovered"
     });
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
 
-    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete after approval");
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    if result is map<anydata> {
         test:assertEquals(result["orderId"], "ORD-HITL-02");
         test:assertEquals(result["status"], "COMPLETED");
         test:assertEquals(result["message"], "TXN-MANUAL-tok_fail",
@@ -130,12 +126,9 @@ function testHitlForwardRecoveryRejected() returns error? {
         note: "Suspected fraud"
     });
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
 
-    test:assertEquals(execInfo.status, "COMPLETED",
-            "Workflow completes (with CANCELLED result, not a failed workflow)");
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    if result is map<anydata> {
         test:assertEquals(result["orderId"], "ORD-HITL-03");
         test:assertEquals(result["status"], "CANCELLED");
         test:assertTrue((<string>result["message"]).includes("reviewer-2"),

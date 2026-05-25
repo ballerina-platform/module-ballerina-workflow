@@ -17,6 +17,7 @@
 import ballerina/http;
 import ballerina/workflow;
 import ballerina/io;
+import ballerina/workflow.management;
 
 // Tracks running workflow IDs keyed by orderId so payment data can be
 // routed to the correct workflow instance.
@@ -51,12 +52,8 @@ service /orders on new http:Listener(9094) {
     resource function post .(OrderRequest request) returns json|error {
         string workflowId = check workflow:run(processOrderWithPayment, request);
         orderWorkflowIds[request.orderId] = workflowId;
-
-        io:println(string `Started order workflow: ${workflowId}`);
-
         return {
             "status": "success",
-            "workflowId": workflowId,
             "orderId": request.orderId,
             "message": "Order placed. Awaiting payment."
         };
@@ -108,12 +105,12 @@ service /orders on new http:Listener(9094) {
     # + workflowId - The workflow execution ID
     # + return - Workflow execution result or error
     resource function get [string workflowId]/result() returns json|error {
-        workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-
-        json result = check execInfo.result.cloneWithType(json);
+        anydata rawResult = check workflow:getWorkflowResult(workflowId, 30);
+        management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);
+        json result = check rawResult.cloneWithType(json);
         return {
             workflowId: workflowId,
-            status: execInfo.status.toString(),
+            status: execInfo.status,
             result: result
         };
     }

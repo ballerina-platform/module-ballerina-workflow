@@ -119,7 +119,7 @@ service /api on new http:Listener(8093) {
     }
 
     # Retrieves the workflow result. Blocks until complete.
-    resource function get notifications/[string workflowId]() returns workflow:WorkflowExecutionInfo|error {
+    resource function get notifications/[string workflowId]() returns anydata|error {
         return workflow:getWorkflowResult(workflowId);
     }
 }

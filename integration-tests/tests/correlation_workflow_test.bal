@@ -63,19 +63,16 @@ function testSimpleCorrelatedWorkflow() returns error? {
     check workflow:sendData(simpleCorrelatedWorkflow, workflowId, "response", signalData);
     
     // Wait for workflow to complete
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete successfully");
-    
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+
+    if result is map<anydata> {
         test:assertEquals(result["requestId"], requestId, "Request ID should match");
-        test:assertEquals(result["originalMessage"], "Hello with correlation", 
+        test:assertEquals(result["originalMessage"], "Hello with correlation",
                 "Original message should be preserved");
-        test:assertEquals(result["response"], "Correlated response!", 
+        test:assertEquals(result["response"], "Correlated response!",
                 "Signal response should be captured");
     } else {
-        test:assertFail("Result should be a map representing SimpleCorrelatedResult");
+        test:assertFail("Expected map<anydata> result");
     }
 }
 
@@ -130,19 +127,16 @@ function testCorrelatedOrderWorkflow() returns error? {
     check workflow:sendData(correlatedOrderWorkflow, workflowId, "shipment", shipment);
     
     // Wait for workflow to complete
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete successfully");
-    
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+
+    if result is map<anydata> {
         test:assertEquals(result["customerId"], customerId, "Customer ID should match");
         test:assertEquals(result["orderId"], orderId, "Order ID should match");
         test:assertEquals(result["status"], "COMPLETED", "Status should be COMPLETED");
         test:assertEquals(result["txnId"], "TXN-123", "Transaction ID should be captured");
         test:assertEquals(result["trackingNumber"], "TRACK-456", "Tracking number should be captured");
     } else {
-        test:assertFail("Result should be a map representing CorrelatedOrderResult");
+        test:assertFail("Expected map<anydata> result");
     }
 }
 
@@ -181,17 +175,14 @@ function testCorrelatedOrderWorkflowInvalidPayment() returns error? {
     check workflow:sendData(correlatedOrderWorkflow, workflowId, "payment", payment);
     
     // Wait for workflow to complete (with payment invalid status)
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete");
-    
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+
+    if result is map<anydata> {
         test:assertEquals(result["status"], "PAYMENT_INVALID", "Status should be PAYMENT_INVALID");
         test:assertEquals(result["txnId"], "TXN-INVALID", "Transaction ID should be captured");
         test:assertEquals(result["trackingNumber"], (), "Tracking number should be nil");
     } else {
-        test:assertFail("Result should be a map");
+        test:assertFail("Expected map<anydata> result");
     }
 }
 
@@ -224,21 +215,20 @@ function testMultipleConcurrentCorrelatedWorkflows() returns error? {
     check workflow:sendData(simpleCorrelatedWorkflow, workflowId1, "response", signal1);
     
     // Verify each workflow got the correct signal
-    workflow:WorkflowExecutionInfo execInfo1 = check workflow:getWorkflowResult(workflowId1, 30);
-    workflow:WorkflowExecutionInfo execInfo2 = check workflow:getWorkflowResult(workflowId2, 30);
-    
-    test:assertEquals(execInfo1.status, "COMPLETED", "First workflow should complete");
-    test:assertEquals(execInfo2.status, "COMPLETED", "Second workflow should complete");
-    
-    if execInfo1.result is map<anydata> {
-        map<anydata> result1 = <map<anydata>>execInfo1.result;
-        test:assertEquals(result1["response"], "Response 1", 
+    anydata result1 = check workflow:getWorkflowResult(workflowId1, 30);
+    anydata result2 = check workflow:getWorkflowResult(workflowId2, 30);
+
+    if result1 is map<anydata> {
+        test:assertEquals(result1["response"], "Response 1",
             "First workflow should get Response 1");
+    } else {
+        test:assertFail("Expected map<anydata> result for first workflow");
     }
-    
-    if execInfo2.result is map<anydata> {
-        map<anydata> result2 = <map<anydata>>execInfo2.result;
-        test:assertEquals(result2["response"], "Response 2", 
+
+    if result2 is map<anydata> {
+        test:assertEquals(result2["response"], "Response 2",
             "Second workflow should get Response 2");
+    } else {
+        test:assertFail("Expected map<anydata> result for second workflow");
     }
 }

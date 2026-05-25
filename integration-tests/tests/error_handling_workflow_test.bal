@@ -30,19 +30,15 @@ function testActivityErrorHandling() returns error? {
     ErrorHandlingInput input1 = {id: testId1, shouldFail: true};
     string workflowId1 = check workflow:run(errorHandlingWorkflow, input1);
     
-    workflow:WorkflowExecutionInfo execInfo1 = check workflow:getWorkflowResult(workflowId1, 30);
-    
-    test:assertEquals(execInfo1.status, "COMPLETED", "Workflow should complete (error was handled)");
-    test:assertTrue((<string>execInfo1.result).startsWith("Activity error caught:"), 
+    anydata result1 = check workflow:getWorkflowResult(workflowId1, 30);
+    test:assertTrue((<string>result1).startsWith("Activity error caught:"),
         "Result should indicate error was caught");
-    
+
     // Test with successful path
     string testId2 = uniqueId("error-test-success");
     ErrorHandlingInput input2 = {id: testId2, shouldFail: false};
     string workflowId2 = check workflow:run(errorHandlingWorkflow, input2);
-    
-    workflow:WorkflowExecutionInfo execInfo2 = check workflow:getWorkflowResult(workflowId2, 30);
-    
-    test:assertEquals(execInfo2.status, "COMPLETED", "Workflow should complete successfully");
-    test:assertEquals(execInfo2.result, "Hello, World!", "Result should be the greeting");
+
+    anydata result2 = check workflow:getWorkflowResult(workflowId2, 30);
+    test:assertEquals(result2, "Hello, World!", "Result should be the greeting");
 }

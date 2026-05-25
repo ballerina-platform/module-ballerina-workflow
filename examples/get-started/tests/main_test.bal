@@ -9,11 +9,10 @@ function testProcessOrderSuccess() returns error? {
         quantity: 2
     });
 
-    workflow:WorkflowExecutionInfo result = check workflow:getWorkflowResult(workflowId);
-    test:assertEquals(result.status, "COMPLETED");
+    anydata result = check workflow:getWorkflowResult(workflowId);
 
-    if result.result is string {
-        string resultStr = <string>result.result;
+    if result is string {
+        string resultStr = <string> result;
         test:assertTrue(resultStr.includes("ORD-TEST-001"), "Should contain order ID");
         test:assertTrue(resultStr.includes("RES-ORD-TEST-001"), "Should contain reservation ID");
     } else {

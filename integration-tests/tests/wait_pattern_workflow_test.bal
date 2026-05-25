@@ -46,15 +46,13 @@ function testAlternateWaitApproverA() returns error? {
     WaitDecision decision = {approverId: "alice", approved: true};
     check workflow:sendData(alternateWaitWorkflow, workflowId, "approverA", decision);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    test:assertEquals(execInfo.status, "COMPLETED");
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
 
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    if result is map<anydata> {
         test:assertEquals(result["status"], "APPROVED");
         test:assertEquals(result["decidedBy"], "alice");
     } else {
-        test:assertFail("Result should be a map");
+        test:assertFail("Expected map<anydata> result");
     }
 }
 
@@ -76,15 +74,13 @@ function testAlternateWaitApproverB() returns error? {
     WaitDecision decision = {approverId: "bob", approved: false};
     check workflow:sendData(alternateWaitWorkflow, workflowId, "approverB", decision);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    test:assertEquals(execInfo.status, "COMPLETED");
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
 
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    if result is map<anydata> {
         test:assertEquals(result["status"], "REJECTED");
         test:assertEquals(result["decidedBy"], "bob");
     } else {
-        test:assertFail("Result should be a map");
+        test:assertFail("Expected map<anydata> result");
     }
 }
 
@@ -112,16 +108,14 @@ function testAlternateWaitBothRespond() returns error? {
     error? sendErr = workflow:sendData(alternateWaitWorkflow, workflowId, "approverB", decisionB);
     // sendErr is expected if workflow already completed after first signal
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    test:assertEquals(execInfo.status, "COMPLETED");
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
 
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    if result is map<anydata> {
         // First responder wins
         test:assertEquals(result["status"], "APPROVED");
         test:assertEquals(result["decidedBy"], "alice");
     } else {
-        test:assertFail("Result should be a map");
+        test:assertFail("Expected map<anydata> result");
     }
 }
 
@@ -145,15 +139,13 @@ function testWaitAllBothApprove() returns error? {
     WaitDecision decisionB = {approverId: "bob", approved: true};
     check workflow:sendData(waitAllWorkflow, workflowId, "approverB", decisionB);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    test:assertEquals(execInfo.status, "COMPLETED");
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
 
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    if result is map<anydata> {
         test:assertEquals(result["status"], "APPROVED");
         test:assertEquals(result["decidedBy"], "both");
     } else {
-        test:assertFail("Result should be a map");
+        test:assertFail("Expected map<anydata> result");
     }
 }
 
@@ -177,15 +169,13 @@ function testWaitAllFirstRejects() returns error? {
     WaitDecision decisionB = {approverId: "bob", approved: true};
     check workflow:sendData(waitAllWorkflow, workflowId, "approverB", decisionB);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    test:assertEquals(execInfo.status, "COMPLETED");
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
 
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    if result is map<anydata> {
         test:assertEquals(result["status"], "REJECTED");
         test:assertEquals(result["decidedBy"], "alice");
     } else {
-        test:assertFail("Result should be a map");
+        test:assertFail("Expected map<anydata> result");
     }
 }
 
@@ -210,15 +200,13 @@ function testWaitAllReverseOrder() returns error? {
     WaitDecision decisionA = {approverId: "alice", approved: true};
     check workflow:sendData(waitAllWorkflow, workflowId, "approverA", decisionA);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    test:assertEquals(execInfo.status, "COMPLETED");
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
 
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    if result is map<anydata> {
         test:assertEquals(result["status"], "APPROVED");
         test:assertEquals(result["decidedBy"], "both");
     } else {
-        test:assertFail("Result should be a map");
+        test:assertFail("Expected map<anydata> result");
     }
 }
 
@@ -240,15 +228,13 @@ function testWaitOneOfThree() returns error? {
     WaitDecision decision = {approverId: "charlie", approved: true};
     check workflow:sendData(waitOneOfThreeWorkflow, workflowId, "approverC", decision);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    test:assertEquals(execInfo.status, "COMPLETED");
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
 
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    if result is map<anydata> {
         test:assertEquals(result["status"], "APPROVED");
         test:assertEquals(result["decidedBy"], "charlie");
     } else {
-        test:assertFail("Result should be a map");
+        test:assertFail("Expected map<anydata> result");
     }
 }
 
@@ -270,15 +256,13 @@ function testAwaitSignalWinsBeforeTimeout() returns error? {
     WaitDecision decision = {approverId: "alice", approved: true};
     check workflow:sendData(awaitOneWithTimeoutWorkflow, workflowId, "approverA", decision);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    test:assertEquals(execInfo.status, "COMPLETED");
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
 
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    if result is map<anydata> {
         test:assertEquals(result["status"], "APPROVED", "Signal should win: status must be APPROVED");
         test:assertEquals(result["decidedBy"], "alice");
     } else {
-        test:assertFail("Result should be a map");
+        test:assertFail("Expected map<anydata> result");
     }
 }
 
@@ -297,14 +281,11 @@ function testAwaitTimeoutFiresBeforeSignal() returns error? {
     // Do NOT send any signal — let the 5 s timeout inside the workflow fire.
     // getWorkflowResult blocks until the workflow completes (up to 30 s).
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    test:assertEquals(execInfo.status, "COMPLETED",
-            "Workflow should complete (not fail) when timeout fires — it handles timeout gracefully");
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
 
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    if result is map<anydata> {
         test:assertEquals(result["status"], "TIMED_OUT", "Timeout should fire: status must be TIMED_OUT");
     } else {
-        test:assertFail("Result should be a map");
+        test:assertFail("Expected map<anydata> result");
     }
 }

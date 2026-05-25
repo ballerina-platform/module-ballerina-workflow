@@ -52,11 +52,7 @@ function testSendEmail() returns error? {
     };
     string workflowId = check workflow:run(sendEmailWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo =
-            check workflow:getWorkflowResult(workflowId, 30);
-    test:assertEquals(execInfo.status, "COMPLETED",
-            "sendEmailWorkflow should complete. Error: "
-                    + (execInfo.errorMessage ?: "none"));
+    _ = check workflow:getWorkflowResult(workflowId, 30);
 
         int afterCount = gmReceivedCount(gm);
         int delivered = afterCount - beforeCount;

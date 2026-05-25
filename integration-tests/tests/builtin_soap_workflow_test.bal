@@ -25,15 +25,11 @@ function testCallSoapAPI() returns error? {
     SoapAddInput input = {id: testId, intA: 2, intB: 3};
     string workflowId = check workflow:run(soapAddWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo =
-            check workflow:getWorkflowResult(workflowId, 30);
-    test:assertEquals(execInfo.status, "COMPLETED",
-            "soapAddWorkflow should complete. Error: "
-                    + (execInfo.errorMessage ?: "none"));
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
 
     // Mock SOAP service always replies with <quer:AddResult>5</quer:AddResult>
     // — assert that the returned envelope contains it.
-    string resultStr = execInfo.result.toString();
+    string resultStr = result.toString();
     test:assertTrue(resultStr.includes("<quer:AddResult>5</quer:AddResult>"),
             "Expected SOAP response to contain <quer:AddResult>5</quer:AddResult> "
                     + "but was: " + resultStr);

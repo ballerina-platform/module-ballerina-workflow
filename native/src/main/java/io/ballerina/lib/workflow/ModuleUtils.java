@@ -29,6 +29,7 @@ import io.ballerina.runtime.api.Module;
 public final class ModuleUtils {
 
     private static Module workflowModule;
+    private static Module managementModule;
 
     private ModuleUtils() {
         // Private constructor to prevent instantiation
@@ -51,5 +52,25 @@ public final class ModuleUtils {
      */
     public static Module getModule() {
         return workflowModule;
+    }
+
+    /**
+     * Sets the workflow.management submodule reference.
+     * Called from {@code management.bal} init so that native code can create
+     * {@code WorkflowInstanceSummary} records belonging to that submodule.
+     *
+     * @param env the Ballerina runtime environment (current module = management)
+     */
+    public static void setManagementModule(Environment env) {
+        managementModule = env.getCurrentModule();
+    }
+
+    /**
+     * Gets the workflow.management submodule reference.
+     *
+     * @return the management module
+     */
+    public static Module getManagementModule() {
+        return managementModule;
     }
 }

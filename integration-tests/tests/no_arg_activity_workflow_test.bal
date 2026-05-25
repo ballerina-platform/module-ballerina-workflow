@@ -37,10 +37,8 @@ function testSingleNoArgActivityExecution() returns error? {
     // Verify workflow ID is a valid UUID v7
     test:assertTrue(isValidUuidV7(workflowId), "Workflow ID should be a valid UUID v7");
     
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete successfully");
-    test:assertEquals(execInfo.result, "Hello from no-arg activity!", 
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+    test:assertEquals(result, "Hello from no-arg activity!",
         "Result should match the static greeting");
 }
 
@@ -55,12 +53,10 @@ function testMultipleNoArgActivitiesExecution() returns error? {
     // Verify workflow ID is a valid UUID v7
     test:assertTrue(isValidUuidV7(workflowId), "Workflow ID should be a valid UUID v7");
     
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete successfully");
-    
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+
     // Verify the combined result from multiple no-arg activities
     string expectedResult = "Hello from no-arg activity! Number: 42, Version: 1.0.0, Enabled: true";
-    test:assertEquals(execInfo.result, expectedResult, 
+    test:assertEquals(result, expectedResult,
         "Result should contain combined output from all activities");
 }

@@ -29,8 +29,6 @@ function testArrayProcessingWithLargerArray() returns error? {
     ArrayProcessInput input = {id: testId, numbers: [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]};
     string workflowId = check workflow:run(arrayProcessingWorkflow, input);
     
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete successfully");
-    test:assertEquals(execInfo.result, 550, "Sum should be 550");
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+    test:assertEquals(result, 550, "Sum should be 550");
 }

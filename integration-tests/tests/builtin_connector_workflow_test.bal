@@ -38,14 +38,10 @@ function testCallRestAPIGet() returns error? {
     ConnectorInput input = {id: testId, userId: 1};
     string workflowId = check workflow:run(fetchUserWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo =
-            check workflow:getWorkflowResult(workflowId, 30);
-    test:assertEquals(execInfo.status, "COMPLETED",
-            "fetchUserWorkflow should complete. Error: "
-                    + (execInfo.errorMessage ?: "none"));
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
 
     json expected = {id: 1, name: "Alice"};
-    test:assertEquals(execInfo.result, expected,
+    test:assertEquals(result, expected,
             "Builtin callRestAPI activity should return the mocked JSON body");
 }
 
@@ -57,13 +53,9 @@ function testCallRestAPIPost() returns error? {
     EchoInput input = {id: testId, payload: {message: "hello", count: 3}};
     string workflowId = check workflow:run(echoWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo =
-            check workflow:getWorkflowResult(workflowId, 30);
-    test:assertEquals(execInfo.status, "COMPLETED",
-            "echoWorkflow should complete. Error: "
-                    + (execInfo.errorMessage ?: "none"));
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
 
     json expected = {echo: {message: "hello", count: 3}};
-    test:assertEquals(execInfo.result, expected,
+    test:assertEquals(result, expected,
             "Builtin callRestAPI activity should round-trip the POST payload");
 }

@@ -31,6 +31,7 @@
 import ballerina/http;
 import ballerina/io;
 import ballerina/workflow;
+import ballerina/workflow.management;
 
 // ---------------------------------------------------------------------------
 // TYPES
@@ -145,7 +146,12 @@ service /api on new http:Listener(8092) {
     }
 
     # Retrieves the workflow result. Blocks until complete.
-    resource function get transfers/[string workflowId]() returns anydata|error {
-        return workflow:getWorkflowResult(workflowId);
+    resource function get transfers/[string workflowId]() returns json|error {
+        anydata rawResult = check workflow:getWorkflowResult(workflowId);
+        management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);
+        return {
+            status: execInfo.status,
+            result: check rawResult.cloneWithType(json)
+        };
     }
 }

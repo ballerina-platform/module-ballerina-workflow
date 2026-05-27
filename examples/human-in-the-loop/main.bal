@@ -32,6 +32,7 @@
 import ballerina/http;
 import ballerina/io;
 import ballerina/workflow;
+import ballerina/workflow.management;
 
 // ---------------------------------------------------------------------------
 // TYPES
@@ -207,7 +208,12 @@ service /api on new http:Listener(8090) {
     }
 
     # Retrieves the final result of a workflow. Blocks until the workflow completes.
-    resource function get orders/[string workflowId]() returns anydata|error {
-        return workflow:getWorkflowResult(workflowId);
+    resource function get orders/[string workflowId]() returns json|error {
+        anydata rawResult = check workflow:getWorkflowResult(workflowId);
+        management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);
+        return {
+            status: execInfo.status,
+            result: check rawResult.cloneWithType(json)
+        };
     }
 }

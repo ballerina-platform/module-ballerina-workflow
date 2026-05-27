@@ -54,6 +54,7 @@ service /orders on new http:Listener(9094) {
         orderWorkflowIds[request.orderId] = workflowId;
         return {
             "status": "success",
+            "workflowId": workflowId,
             "orderId": request.orderId,
             "message": "Order placed. Awaiting payment."
         };
@@ -102,14 +103,23 @@ service /orders on new http:Listener(9094) {
     # Get workflow result
     # GET /orders/{workflowId}/result
     #
-    # + workflowId - The workflow execution ID
+    # + workflowId - The workflow execution ID (or orderId mapped to a workflow)
     # + return - Workflow execution result or error
     resource function get [string workflowId]/result() returns json|error {
-        anydata rawResult = check workflow:getWorkflowResult(workflowId, 30);
-        management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);
+        // Accept either the workflow ID or the order ID used by this sample API.
+        string resolvedWorkflowId = workflowId;
+        if orderWorkflowIds.hasKey(workflowId) {
+            string? mappedWorkflowId = orderWorkflowIds[workflowId];
+            if mappedWorkflowId is string {
+                resolvedWorkflowId = mappedWorkflowId;
+            }
+        }
+
+        anydata rawResult = check workflow:getWorkflowResult(resolvedWorkflowId, 30);
+        management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(resolvedWorkflowId);
         json result = check rawResult.cloneWithType(json);
         return {
-            workflowId: workflowId,
+            workflowId: resolvedWorkflowId,
             status: execInfo.status,
             result: result
         };

@@ -31,8 +31,7 @@ isolated function initManagementModule() = @java:Method {
 // ================================================================================
 
 # Gets current execution info for a workflow without waiting for it to finish.
-# Returns the status, workflow type, and ID. Result and activity invocations are
-# not populated (use `workflow:getWorkflowResult` for those).
+# Returns the status, workflow type, and ID.
 #
 # ```ballerina
 # import ballerina/workflow.management;

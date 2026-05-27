@@ -451,7 +451,7 @@ public final class WorkflowNative {
             Object result = info.get("result");
             String errorMessage = (String) info.get("errorMessage");
 
-            if ("FAILED".equals(status)) {
+            if ("FAILED".equals(status) || "CANCELED".equals(status) || "TIMED_OUT".equals(status)) {
                 return ErrorCreator.createError(
                         StringUtils.fromString(ERR_GET_RESULT + errorMessage));
             }

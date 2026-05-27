@@ -82,11 +82,10 @@ function testActivityInvocationsOnRetryFailure() returns error? {
     ActivityInvocationInput input = {id: testId, value: "trigger"};
     string workflowId = check workflow:run(retryInvocationWorkflow, input);
 
-    // Wait for it to finish (error expected since workflow fails)
+    // Wait for it to finish — must be an error since the workflow fails
     anydata|error ignoredResult = workflow:getWorkflowResult(workflowId, 60);
-    if ignoredResult is error {
-        // Expected for this test path.
-    }
+    test:assertTrue(ignoredResult is error,
+        "getWorkflowResult should return an error for a failed workflow");
     // Get full info including activity invocations
     management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);
 
@@ -102,11 +101,11 @@ function testActivityInvocationsOnRetryFailure() returns error? {
     test:assertTrue(failedActivities.length() >= 1,
         "Should have at least one FAILED invocationFailActivity invocation");
 
-    // With maxRetries=2, the final attempt should be >= 3 (1 initial + 2 retries)
+    // With maxRetries=2, maximumAttempts = 3 (1 initial + 2 retries); final attempt must be exactly 3
     management:ActivityInvocation lastFailed = failedActivities[failedActivities.length() - 1];
     int? lastAttempt = lastFailed.attempt;
-    test:assertTrue(lastAttempt is int && lastAttempt >= 3,
-        "Final failed invocation should be attempt >= 3, got " + (lastAttempt ?: 0).toString());
+    test:assertTrue(lastAttempt is int && lastAttempt == 3,
+        "Final failed invocation should be attempt 3, got " + (lastAttempt ?: 0).toString());
 
     // Verify error message is captured
     test:assertTrue(lastFailed.errorMessage is string,
@@ -125,11 +124,10 @@ function testActivityInvocationsOnSingleFailure() returns error? {
     ActivityInvocationInput input = {id: testId, value: "boom"};
     string workflowId = check workflow:run(singleFailInvocationWorkflow, input);
 
-    // Wait for it to finish (error expected since workflow fails)
+    // Wait for it to finish — must be an error since the workflow fails
     anydata|error ignoredResult = workflow:getWorkflowResult(workflowId, 30);
-    if ignoredResult is error {
-        // Expected for this test path.
-    }
+    test:assertTrue(ignoredResult is error,
+        "getWorkflowResult should return an error for a failed workflow");
     // Get full info including activity invocations
     management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);
 

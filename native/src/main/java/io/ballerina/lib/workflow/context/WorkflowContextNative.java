@@ -413,7 +413,18 @@ public final class WorkflowContextNative {
             // --- Extract config fields -----------------------------------------------
             String taskName = ((BString) config.get(StringUtils.fromString("taskName"))).getValue();
 
-            // title defaults to taskName when absent
+            // taskName must be non-blank and must not contain '.' (qualifier separator) or '|' (timeout msg separator)
+            if (taskName.isBlank()) {
+                throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
+                        "HumanTask taskName must not be blank", "HUMANTASK_CONFIG_ERROR");
+            }
+            if (taskName.contains(".") || taskName.contains("|")) {
+                throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
+                        "HumanTask taskName '" + taskName + "' must not contain '.' or '|'",
+                        "HUMANTASK_CONFIG_ERROR");
+            }
+
+            // title defaults to the user-provided (unqualified) taskName when absent
             Object titleObj = config.get(StringUtils.fromString("title"));
             String title = (titleObj instanceof BString bs) ? bs.getValue() : taskName;
 
@@ -443,21 +454,29 @@ public final class WorkflowContextNative {
                 timeoutSeconds = computeTimeoutSeconds((BMap<BString, Object>) timeoutObj);
             }
 
-            // --- Ensure taskName is registered as a human task type -----------------
-            // Lazy registration covers ad-hoc / test usage without compiler-plugin support.
-            WorkflowWorkerNative.registerHumanTask(StringUtils.fromString(taskName));
-
             // --- Build child workflow identity ---------------------------------------
+            // Qualify taskName as "workflowType.taskName" to ensure uniqueness across
+            // different workflow definitions that may reuse the same short task name.
             String parentWorkflowId = Workflow.getInfo().getWorkflowId();
             String workflowDefinitionName = Workflow.getInfo().getWorkflowType();
+            String qualifiedTaskName = workflowDefinitionName + "." + taskName;
+
+            // --- Ensure qualifiedTaskName is registered as a human task type --------
+            // Lazy registration covers ad-hoc / test usage without compiler-plugin support.
+            // The contains check makes this a no-op on replay when already registered
+            // from module init (compiler-plugin path) or a prior workflow task.
+            if (!WorkflowWorkerNative.getHumanTaskRegistry().contains(qualifiedTaskName)) {
+                WorkflowWorkerNative.registerHumanTask(StringUtils.fromString(qualifiedTaskName));
+            }
+
             // Workflow.randomUUID() is deterministic across Temporal replays
-            String taskWorkflowId = "humantask-" + parentWorkflowId + "-" + taskName
+            String taskWorkflowId = "humantask-" + parentWorkflowId + "-" + qualifiedTaskName
                     + "-" + Workflow.randomUUID();
 
             // --- Memo (immutable, readable without full history) --------------------
             Map<String, Object> memo = new HashMap<>();
             memo.put("workflowKind", "HUMAN_TASK");
-            memo.put("taskName", taskName);
+            memo.put("taskName", qualifiedTaskName);
             memo.put("parentWorkflowId", parentWorkflowId);
             memo.put("title", title);
             memo.put("description", description);
@@ -470,7 +489,7 @@ public final class WorkflowContextNative {
 
             // --- Build input map passed to the child workflow -----------------------
             Map<String, Object> inputs = new HashMap<>();
-            inputs.put("taskName", taskName);
+            inputs.put("taskName", qualifiedTaskName);
             inputs.put("title", title);
             inputs.put("description", description);
             inputs.put("userRoles", userRoles);
@@ -488,9 +507,10 @@ public final class WorkflowContextNative {
                     .setMemo(memo)
                     .build();
 
-            // The child workflow type IS the taskName — each task is its own type
+            // The child workflow type IS the qualifiedTaskName — each task is its own type,
+            // scoped to the parent workflow to avoid collisions across workflow definitions.
             ChildWorkflowStub childStub = Workflow.newUntypedChildWorkflowStub(
-                    taskName, childOptions);
+                    qualifiedTaskName, childOptions);
 
             Object rawResult = childStub.execute(Object.class, inputs);
 
@@ -568,15 +588,17 @@ public final class WorkflowContextNative {
 
     /**
      * Extracts the {@code result} field from the signal completion payload.
-     * If the payload is a Map with a "result" key, that value is returned.
-     * Otherwise the whole payload is returned (forward-compatible).
+     * Uses {@code containsKey} so that an explicit {@code null} result (tasks completed
+     * with no input value) is returned as {@code null} rather than falling back to the
+     * whole payload map.
+     * If the payload is not a Map or has no "result" key, the raw value is returned as-is.
      */
     @SuppressWarnings("unchecked")
     private static Object extractResultField(Object rawResult) {
-        if (rawResult instanceof Map<?, ?> map) {
-            Object result = ((Map<String, Object>) map).get("result");
-            if (result != null) {
-                return result;
+        if (rawResult instanceof Map<?, ?> rawMap) {
+            Map<String, Object> map = (Map<String, Object>) rawMap;
+            if (map.containsKey("result")) {
+                return map.get("result"); // may be null — valid for tasks with no input
             }
         }
         return rawResult;
@@ -609,8 +631,8 @@ public final class WorkflowContextNative {
                             "Human task '" + taskName + "' timed out after " + timedOutAfter),
                     null,
                     detail);
-        } catch (BError e) {
-            // Fallback if the module type hasn't been initialised yet (e.g. in tests)
+        } catch (Exception e) {
+            // Fallback if the module type hasn't been initialised yet (e.g. in unit tests)
             return ErrorCreator.createError(
                     StringUtils.fromString("HumanTaskTimeoutError: Human task '" + taskName
                             + "' timed out after " + timedOutAfter),

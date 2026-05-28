@@ -137,6 +137,10 @@ public enum WorkflowDiagnostic {
     WORKFLOW_127("WORKFLOW_127",
             "Activity simple name collision: '%s' resolves to both '%s' and '%s'. "
                     + "Use unique activity function names or avoid ambiguous qualified references",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_128("WORKFLOW_128",
+            "Invalid human task name '%s'. Task names must not contain '.' or '|'. "
+                    + "The runtime qualifies the name as '<workflowFunction>.<taskName>'",
             DiagnosticSeverity.ERROR);
 
     private final String code;

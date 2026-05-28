@@ -790,8 +790,8 @@ public final class WorkflowNative {
                     taskWorkflowId.getValue(), "taskCompletion", payload);
             if (!delivered) {
                 return ErrorCreator.createError(StringUtils.fromString(
-                        "Failed to complete human task: task workflow not found: "
-                                + taskWorkflowId.getValue()));
+                        "Failed to complete human task: task '" + taskWorkflowId.getValue()
+                                + "' completed or was no longer running when signal was delivered"));
             }
             return null;
         } catch (Exception e) {
@@ -830,8 +830,18 @@ public final class WorkflowNative {
                     .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
                     .describeWorkflowExecution(req);
 
+            WorkflowExecutionInfo execInfo = resp.getWorkflowExecutionInfo();
+
+            // 0. Status check — reject tasks that are no longer running
+            WorkflowExecutionStatus execStatus = execInfo.getStatus();
+            if (execStatus != WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Human task '" + taskWorkflowId + "' is not running (status="
+                                + convertStatus(execStatus) + ")"));
+            }
+
             Map<String, io.temporal.api.common.v1.Payload> memoFields =
-                    resp.getWorkflowExecutionInfo().getMemo().getFieldsMap();
+                    execInfo.getMemo().getFieldsMap();
             io.temporal.common.converter.DataConverter dc = client.getOptions().getDataConverter();
 
             // 1. workflowKind check — always enforced

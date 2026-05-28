@@ -181,7 +181,16 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
             } else if (WorkflowConstants.CALL_HUMAN_TASK_METHOD.equals(methodName)) {
                 String taskName = extractHumanTaskName(remoteCallNode.arguments());
                 if (taskName != null) {
-                    humanTaskNames.add(taskName);
+                    if (taskName.contains(".") || taskName.contains("|")) {
+                        DiagnosticInfo info = new DiagnosticInfo(
+                                WorkflowDiagnostic.WORKFLOW_128.getCode(),
+                                WorkflowDiagnostic.WORKFLOW_128.getMessage(taskName),
+                                WorkflowDiagnostic.WORKFLOW_128.getSeverity());
+                        context.reportDiagnostic(DiagnosticFactory.createDiagnostic(
+                                info, remoteCallNode.location()));
+                    } else {
+                        humanTaskNames.add(taskName);
+                    }
                 }
             }
 

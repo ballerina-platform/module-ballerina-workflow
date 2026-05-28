@@ -250,15 +250,19 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                     .append(activitiesArg).append(");").append(System.lineSeparator());
         }
 
-        // Collect all unique human task names across every workflow in this module.
-        // Use a sorted set for deterministic code generation across compiler runs.
-        Set<String> allHumanTaskNames = new TreeSet<>();
+        // Collect qualified human task names ("workflowFunctionName.taskName") across every
+        // workflow in this module. Qualification ensures uniqueness across workflows that
+        // reuse the same short task name and matches the runtime qualification in callHumanTask.
+        // A sorted set is used for deterministic code generation across compiler runs.
+        Set<String> qualifiedHumanTaskNames = new TreeSet<>();
         for (ProcessFunctionInfo processInfo : allProcessInfos) {
-            allHumanTaskNames.addAll(processInfo.humanTaskNames());
+            for (String taskName : processInfo.humanTaskNames()) {
+                qualifiedHumanTaskNames.add(processInfo.functionName() + "." + taskName);
+            }
         }
-        for (String taskName : allHumanTaskNames) {
+        for (String qualifiedName : qualifiedHumanTaskNames) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerHumanTask(\"").append(taskName).append("\");")
+                    .append(":registerHumanTask(\"").append(qualifiedName).append("\");")
                     .append(System.lineSeparator());
         }
 

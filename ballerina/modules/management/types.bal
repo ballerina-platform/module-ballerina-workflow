@@ -60,3 +60,59 @@ public type ActivityInvocation record {
     string? errorMessage;
     int attempt?;
 };
+
+# Groups human task instances by task type for a single parent workflow.
+#
+# + taskName - The task type name (the `taskName` field from `HumanTaskConfig`)
+# + taskIds - Child workflow IDs of pending instances of this task type,
+#             in the order they were started
+public type HumanTaskGroup record {|
+    string taskName;
+    string[] taskIds;
+|};
+
+# Summary of a human task instance for list views.
+#
+# + taskId - Child workflow ID of this task instance (`humantask-{parentId}-{taskName}-{uuid}`)
+# + taskName - Task type name (the `taskName` from `HumanTaskConfig`)
+# + parentWorkflowId - Workflow ID of the parent that created this task
+# + status - Current status: PENDING | COMPLETED | TIMED_OUT | CANCELED | TERMINATED
+# + startTime - ISO-8601 timestamp when the task was created
+# + closeTime - ISO-8601 timestamp when the task ended, or `()` if still pending
+public type HumanTaskSummary record {|
+    string taskId;
+    string taskName;
+    string parentWorkflowId;
+    string status;
+    string startTime;
+    string? closeTime;
+|};
+
+# Detailed info about a human task, including memo fields set at task creation.
+#
+# + taskId - Child workflow ID of this task instance
+# + taskName - Task type name
+# + parentWorkflowId - Workflow ID of the parent that created this task
+# + status - Current status: PENDING | COMPLETED | TIMED_OUT | CANCELED | TERMINATED
+# + startTime - ISO-8601 timestamp when the task was created
+# + closeTime - ISO-8601 timestamp when the task ended, or `()` if still pending
+# + title - Display title shown in the task inbox
+# + description - Supporting context for the reviewer
+# + userRoles - Roles permitted to complete this task
+# + payload - Read-only context map rendered alongside the form
+# + createdAt - ISO-8601 timestamp stored in memo at task start
+# + formSchema - JSON Schema for the completion form (populated by compiler plugin; `()` until then)
+public type HumanTaskInfo record {|
+    string taskId;
+    string taskName;
+    string parentWorkflowId;
+    string status;
+    string startTime;
+    string? closeTime;
+    string title;
+    string description;
+    string[] userRoles;
+    map<json>? payload;
+    string createdAt;
+    string? formSchema;
+|};

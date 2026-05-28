@@ -68,6 +68,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -122,6 +123,17 @@ public final class WorkflowWorkerNative {
 
     // Static registry to store event names per process (process name to list of event names)
     private static final Map<String, List<String>> EVENT_REGISTRY = new ConcurrentHashMap<>();
+
+    /** ApplicationFailure type tag used to propagate a human task timeout through the child workflow boundary. */
+    public static final String HUMANTASK_TIMEOUT_FAILURE_TYPE = "HUMANTASK_TIMEOUT";
+
+    /**
+     * Set of taskNames registered as human task workflow types.
+     * Each entry equals a Temporal workflow type that should be handled by the
+     * built-in human task execution path inside {@link BallerinaWorkflowAdapter}.
+     * Populated by {@link #registerHumanTask(BString)} at module init time.
+     */
+    private static final Set<String> HUMANTASK_REGISTRY = ConcurrentHashMap.newKeySet();
 
     /**
      * Marker prefix used to ferry module-level client object references through
@@ -715,6 +727,33 @@ public final class WorkflowWorkerNative {
     }
 
     /**
+     * Registers {@code taskName} as a human task workflow type.
+     *
+     * <p>After registration, any Temporal child workflow started with
+     * {@code workflowType == taskName} is routed to the built-in human task
+     * execution path inside {@link BallerinaWorkflowAdapter}.
+     *
+     * <p>Registration is idempotent: re-registering the same name is a no-op
+     * and returns {@code true}.
+     *
+     * @param taskName the task name (also the Temporal workflow type)
+     * @return {@code true} on success
+     */
+    public static Object registerHumanTask(BString taskName) {
+        HUMANTASK_REGISTRY.add(taskName.getValue());
+        LOGGER.debug("[WorkflowWorkerNative] Registered human task type: {}", taskName.getValue());
+        return true;
+    }
+
+    /**
+     * Returns an unmodifiable view of the registered human task names.
+     * Exposed for testing and introspection.
+     */
+    public static Set<String> getHumanTaskRegistry() {
+        return Collections.unmodifiableSet(HUMANTASK_REGISTRY);
+    }
+
+    /**
      * Gets the activity registry for testing purposes.
      *
      * @return the activity registry map
@@ -1174,6 +1213,11 @@ public final class WorkflowWorkerNative {
                 // Fall back to service registry for backward compatibility
                 BObject templateService = SERVICE_REGISTRY.get(workflowType);
 
+                // Route human task workflow types before looking in user registries
+                if (HUMANTASK_REGISTRY.contains(workflowType)) {
+                    return executeBuiltinHumanTask(args);
+                }
+
                 if (processFunction == null && templateService == null) {
                     String errorMsg = String.format("Workflow '%s' is not registered. " +
                             "Please call registerWorkflow() for this workflow.", workflowType);
@@ -1455,6 +1499,71 @@ public final class WorkflowWorkerNative {
                     "Context",
                     nativeContextHandle
                                                  );
+        }
+
+        /**
+         * Executes the built-in human task child workflow.
+         *
+         * <p>Waits for a {@code "taskCompletion"} signal or a durable timer (if a timeout is
+         * configured).  On signal, returns the {@code result} payload from the signal data.
+         * On timeout, throws a non-retryable {@link io.temporal.failure.ApplicationFailure} with type
+         * {@link WorkflowWorkerNative#HUMANTASK_TIMEOUT_FAILURE_TYPE} whose message encodes four
+         * pipe-separated fields unpacked by {@code WorkflowContextNative.callHumanTask}:
+         * {@code taskName|taskWorkflowId|timedOutAfter|timedOutAt}.
+         *
+         * @param args Temporal-encoded input; index 0 is the input map set by callHumanTask
+         * @return the signal result map on success; throws ApplicationFailure on timeout
+         */
+        @SuppressWarnings("unchecked")
+        private Object executeBuiltinHumanTask(EncodedValues args) {
+            Map<String, Object> input;
+            try {
+                input = args.get(0, Map.class);
+            } catch (Exception e) {
+                throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
+                        "Invalid humantask input: " + e.getMessage(), "HUMANTASK_INPUT_ERROR");
+            }
+
+            String taskName = String.valueOf(input.getOrDefault("taskName", "unknown"));
+            // timeoutSeconds: null or absent → wait indefinitely
+            Object timeoutRaw = input.get("timeoutSeconds");
+            Long timeoutSeconds = (timeoutRaw instanceof Number n) ? n.longValue() : null;
+            String thisWorkflowId = Workflow.getInfo().getWorkflowId();
+
+            // Block until the "taskCompletion" signal arrives or the optional timeout fires.
+            // The DynamicSignalHandler registered in the constructor records all signals
+            // in signalWrapper, so getSignalFuture("taskCompletion") is already
+            // replay-safe — it returns a completed promise during history replay.
+            io.temporal.workflow.CompletablePromise<SignalAwaitWrapper.SignalData> signalFuture =
+                    signalWrapper.getSignalFuture("taskCompletion");
+
+            boolean signalArrived;
+            if (timeoutSeconds != null) {
+                signalArrived = Workflow.await(
+                        java.time.Duration.ofSeconds(timeoutSeconds),
+                        signalFuture::isCompleted);
+            } else {
+                // No timeout — block indefinitely until the signal arrives
+                Workflow.await(signalFuture::isCompleted);
+                signalArrived = true;
+            }
+
+            if (signalArrived) {
+                SignalAwaitWrapper.SignalData signalData = signalFuture.get();
+                // Return the raw signal data — callHumanTask extracts the "result" field
+                // and coerces it to the caller's typedesc T.
+                return signalData.data();
+            } else {
+                // Timer fired — no human acted within the deadline
+                String timedOutAt = java.time.Instant
+                        .ofEpochMilli(Workflow.currentTimeMillis()).toString();
+                // timeoutSeconds is non-null here (we only enter else when timeout was set)
+                String timedOutAfter = "PT" + timeoutSeconds + "S";
+                // Pipe-delimited message unpacked by callHumanTask to build HumanTaskTimeoutDetail
+                String msg = taskName + "|" + thisWorkflowId + "|" + timedOutAfter + "|" + timedOutAt;
+                throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
+                        msg, HUMANTASK_TIMEOUT_FAILURE_TYPE);
+            }
         }
     }
 

@@ -14,6 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import ballerina/time;
+
 # Deployment mode for the workflow runtime.
 #
 # + LOCAL - Local development server (e.g., `temporal server start-dev`)
@@ -68,3 +70,42 @@ type ProcessRegistration record {
 # Information about all registered workflows.
 # This is a map where keys are process names and values are their registration info.
 type WorkflowRegistry map<ProcessRegistration>;
+
+// ---------------------------------------------------------------------------
+// HumanTask types
+// ---------------------------------------------------------------------------
+
+# Configuration passed to `callHumanTask`.
+#
+# + taskName - Identifies the task type; used as the Temporal workflow type and child workflow ID.
+# + title - Short summary shown in the inbox. Defaults to `taskName` when omitted.
+# + description - Additional context shown alongside the form. Optional.
+# + userRoles - One or more roles permitted to complete this task. Defaults to `["admin"]`.
+# + payload - Read-only JSON object rendered as key-value pairs next to the form.
+#             Use `map<json>` to ensure each entry has a meaningful label.
+# + timeout - Maximum time to wait. Omit (or pass `()`) to wait indefinitely.
+public type HumanTaskConfig record {|
+    string taskName; // Must match a registered HumanTask type (see `wfInternal:registerHumanTask`)
+    string? title = ();
+    string? description = ();
+    string[] userRoles = ["admin"];
+    map<json> payload = {};
+    time:Duration? timeout = ();
+|};
+
+# Detail fields carried by a `HumanTaskTimeoutError`.
+#
+# + taskName - The `taskName` value passed to `callHumanTask`
+# + taskWorkflowId - Temporal child workflow ID of the timed-out task instance
+# + timedOutAfter - Configured deadline as an ISO-8601 duration (e.g. `"PT24H"`)
+# + timedOutAt - ISO-8601 timestamp at which the timeout was recorded
+public type HumanTaskTimeoutDetail record {|
+    string taskName;
+    string taskWorkflowId;
+    string timedOutAfter;
+    string timedOutAt;
+|};
+
+# Returned by `callHumanTask` when no human acts within the configured deadline.
+# Catch with `on fail workflow:HumanTaskTimeoutError e` to run compensation logic.
+public type HumanTaskTimeoutError distinct error<HumanTaskTimeoutDetail>;

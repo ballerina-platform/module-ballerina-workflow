@@ -749,4 +749,36 @@ public final class WorkflowNative {
             throw ErrorCreator.createError(throwable);
         }
     }
+
+    // -------------------------------------------------------------------------
+    // completeHumanTask
+    // -------------------------------------------------------------------------
+
+    /**
+     * Sends a {@code "taskCompletion"} signal to the human task child workflow identified
+     * by {@code taskWorkflowId}, completing the task with the supplied result.
+     *
+     * @param taskWorkflowId the Temporal workflow ID of the human task child workflow
+     * @param result         the value to return to the waiting {@code callHumanTask} call
+     * @return {@code null} on success, or a Ballerina error
+     */
+    public static Object completeHumanTask(BString taskWorkflowId, Object result) {
+        try {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(
+                        StringUtils.fromString("Workflow client not initialized"));
+            }
+            Object javaResult = TypesUtil.convertBallerinaToJavaType(result);
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("result", javaResult);
+
+            WorkflowRuntime.getInstance().sendSignalToWorkflow(
+                    taskWorkflowId.getValue(), "taskCompletion", payload);
+            return null;
+        } catch (Exception e) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to complete human task: " + e.getMessage()));
+        }
+    }
 }

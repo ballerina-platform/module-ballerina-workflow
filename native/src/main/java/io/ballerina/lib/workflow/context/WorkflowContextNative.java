@@ -18,19 +18,26 @@
 
 package io.ballerina.lib.workflow.context;
 
+import io.ballerina.lib.workflow.ModuleUtils;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
 import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.utils.StringUtils;
+import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BObject;
 import io.ballerina.runtime.api.values.BString;
 import io.ballerina.runtime.api.values.BTypedesc;
+import io.temporal.failure.ApplicationFailure;
+import io.temporal.failure.ChildWorkflowFailure;
+import io.temporal.workflow.ChildWorkflowOptions;
+import io.temporal.workflow.ChildWorkflowStub;
 import io.temporal.workflow.Workflow;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -373,5 +380,241 @@ public final class WorkflowContextNative {
      * @param workflowType the workflow type
      */
     public record ContextInfo(String workflowId, String workflowType) {
+    }
+
+    // -----------------------------------------------------------------------
+    // callHumanTask
+    // -----------------------------------------------------------------------
+
+    /**
+     * Starts a built-in human task child workflow and blocks until a human completes it
+     * (via a {@code "taskCompletion"} signal) or an optional timeout elapses.
+     *
+     * <p>The child workflow type equals {@code taskName}, which must have been registered
+     * in the {@code HUMANTASK_REGISTRY} via {@code WorkflowWorkerNative.registerHumanTask}
+     * before the worker started.  {@code callHumanTask} also performs a lazy in-workflow
+     * registration so that ad-hoc calls work without compile-time plugin support.
+     *
+     * <p>On success the {@code result} field of the signal payload is coerced to the
+     * caller's {@code typedesc T} and returned.
+     *
+     * <p>When {@code timeout} is absent (nil) the workflow waits indefinitely.
+     * When a timeout is set and fires, a {@code HumanTaskTimeoutError} distinct error
+     * is returned.
+     *
+     * @param self     the Context BObject (unused; present for Ballerina calling convention)
+     * @param typedesc the expected result type descriptor (for dependent-typing and coercion)
+     * @param config   the HumanTaskConfig BMap (taskName, title?, description?, userRoles, payload, timeout?)
+     * @return the coerced result value, or a {@code HumanTaskTimeoutError} BError
+     */
+    @SuppressWarnings("unchecked")
+    public static Object callHumanTask(BObject self, BMap<BString, Object> config, BTypedesc typedesc) {
+        try {
+            // --- Extract config fields -----------------------------------------------
+            String taskName = ((BString) config.get(StringUtils.fromString("taskName"))).getValue();
+
+            // title defaults to taskName when absent
+            Object titleObj = config.get(StringUtils.fromString("title"));
+            String title = (titleObj instanceof BString bs) ? bs.getValue() : taskName;
+
+            Object descObj = config.get(StringUtils.fromString("description"));
+            String description = (descObj instanceof BString bs) ? bs.getValue() : "";
+
+            // userRoles: BArray of BString; default is ["admin"] from the type default
+            io.ballerina.runtime.api.values.BArray rolesArray =
+                    (io.ballerina.runtime.api.values.BArray)
+                            config.get(StringUtils.fromString("userRoles"));
+            java.util.List<String> userRoles = new java.util.ArrayList<>();
+            if (rolesArray != null) {
+                for (int i = 0; i < rolesArray.size(); i++) {
+                    userRoles.add(rolesArray.get(i).toString());
+                }
+            }
+            if (userRoles.isEmpty()) {
+                userRoles.add("admin");
+            }
+
+            Object payload = config.get(StringUtils.fromString("payload"));
+
+            // timeout: nil (BNull/null) means wait indefinitely
+            Object timeoutObj = config.get(StringUtils.fromString("timeout"));
+            Long timeoutSeconds = null;
+            if (timeoutObj instanceof BMap) {
+                timeoutSeconds = computeTimeoutSeconds((BMap<BString, Object>) timeoutObj);
+            }
+
+            // --- Ensure taskName is registered as a human task type -----------------
+            // Lazy registration covers ad-hoc / test usage without compiler-plugin support.
+            WorkflowWorkerNative.registerHumanTask(StringUtils.fromString(taskName));
+
+            // --- Build child workflow identity ---------------------------------------
+            String parentWorkflowId = Workflow.getInfo().getWorkflowId();
+            String workflowDefinitionName = Workflow.getInfo().getWorkflowType();
+            // Workflow.randomUUID() is deterministic across Temporal replays
+            String taskWorkflowId = "humantask-" + parentWorkflowId + "-" + taskName
+                    + "-" + Workflow.randomUUID();
+
+            // --- Memo (immutable, readable without full history) --------------------
+            Map<String, Object> memo = new HashMap<>();
+            memo.put("workflowKind", "HUMAN_TASK");
+            memo.put("taskName", taskName);
+            memo.put("parentWorkflowId", parentWorkflowId);
+            memo.put("title", title);
+            memo.put("description", description);
+            memo.put("userRoles", userRoles);
+            memo.put("payload", TypesUtil.convertBallerinaToJavaType(payload));
+            memo.put("createdAt",
+                    Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString());
+            // formSchema will be added by the compiler plugin once JSON Schema generation is implemented
+            memo.put("formSchema", null);
+
+            // --- Build input map passed to the child workflow -----------------------
+            Map<String, Object> inputs = new HashMap<>();
+            inputs.put("taskName", taskName);
+            inputs.put("title", title);
+            inputs.put("description", description);
+            inputs.put("userRoles", userRoles);
+            inputs.put("payload", TypesUtil.convertBallerinaToJavaType(payload));
+            // null means no timeout (wait indefinitely)
+            inputs.put("timeoutSeconds", timeoutSeconds);
+            inputs.put("parentWorkflowId", parentWorkflowId);
+            inputs.put("workflowDefinitionName", workflowDefinitionName);
+
+            // --- Start child workflow and block until completion --------------------
+            ChildWorkflowOptions childOptions = ChildWorkflowOptions.newBuilder()
+                    .setWorkflowId(taskWorkflowId)
+                    .setParentClosePolicy(
+                            io.temporal.api.enums.v1.ParentClosePolicy.PARENT_CLOSE_POLICY_TERMINATE)
+                    .setMemo(memo)
+                    .build();
+
+            // The child workflow type IS the taskName — each task is its own type
+            ChildWorkflowStub childStub = Workflow.newUntypedChildWorkflowStub(
+                    taskName, childOptions);
+
+            Object rawResult = childStub.execute(Object.class, inputs);
+
+            // --- Extract the "result" field from the signal payload -----------------
+            // Signal payload shape: { completedBy: {...}, result: <json> }
+            Object formResult = extractResultField(rawResult);
+
+            // Coerce to the caller's typedesc T
+            Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(formResult);
+            Type targetType = typedesc.getDescribingType();
+            return TypesUtil.cloneWithType(ballerinaResult, targetType);
+
+        } catch (ChildWorkflowFailure e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof ApplicationFailure af
+                    && WorkflowWorkerNative.HUMANTASK_TIMEOUT_FAILURE_TYPE.equals(af.getType())) {
+                return buildTimeoutError(af.getOriginalMessage());
+            }
+            // Some other child workflow failure — surface as a generic error
+            String msg = cause != null ? cause.getMessage() : e.getMessage();
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Human task failed: " + msg));
+
+        } catch (io.temporal.worker.NonDeterministicException
+                 | io.temporal.failure.TemporalFailure e) {
+            throw e;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "callHumanTask failed: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Converts a {@code time:Duration} BMap to total seconds as a {@code long}.
+     * Returns {@code null} to indicate "no timeout" when the duration map is absent.
+     */
+    @SuppressWarnings("unchecked")
+    private static Long computeTimeoutSeconds(BMap<BString, Object> duration) {
+        if (duration == null) {
+            return null; // no timeout — wait indefinitely
+        }
+        long hours = getLongField(duration, "hours");
+        long minutes = getLongField(duration, "minutes");
+        double seconds = getDoubleField(duration, "seconds");
+        return hours * 3600L + minutes * 60L + (long) seconds;
+    }
+
+    private static long getLongField(BMap<BString, Object> map, String key) {
+        Object val = map.get(StringUtils.fromString(key));
+        if (val instanceof Long l) {
+            return l;
+        }
+        if (val instanceof io.ballerina.runtime.api.values.BDecimal bd) {
+            return bd.value().longValue();
+        }
+        if (val instanceof Number n) {
+            return n.longValue();
+        }
+        return 0L;
+    }
+
+    private static double getDoubleField(BMap<BString, Object> map, String key) {
+        Object val = map.get(StringUtils.fromString(key));
+        if (val instanceof Double d) {
+            return d;
+        }
+        if (val instanceof io.ballerina.runtime.api.values.BDecimal bd) {
+            return bd.value().doubleValue();
+        }
+        if (val instanceof Number n) {
+            return n.doubleValue();
+        }
+        return 0.0;
+    }
+
+    /**
+     * Extracts the {@code result} field from the signal completion payload.
+     * If the payload is a Map with a "result" key, that value is returned.
+     * Otherwise the whole payload is returned (forward-compatible).
+     */
+    @SuppressWarnings("unchecked")
+    private static Object extractResultField(Object rawResult) {
+        if (rawResult instanceof Map<?, ?> map) {
+            Object result = ((Map<String, Object>) map).get("result");
+            if (result != null) {
+                return result;
+            }
+        }
+        return rawResult;
+    }
+
+    /**
+     * Builds a Ballerina {@code HumanTaskTimeoutError} from the pipe-delimited
+     * message encoded by {@code executeBuiltinHumanTask}.
+     * Format: {@code taskName|taskWorkflowId|timedOutAfter|timedOutAt}
+     */
+    private static BError buildTimeoutError(String msg) {
+        String[] parts = msg == null ? new String[0] : msg.split("\\|", -1);
+        String taskName = parts.length > 0 ? parts[0] : "unknown";
+        String taskWorkflowId = parts.length > 1 ? parts[1] : "unknown";
+        String timedOutAfter = parts.length > 2 ? parts[2] : "unknown";
+        String timedOutAt = parts.length > 3 ? parts[3] : "unknown";
+
+        BMap<BString, Object> detail = io.ballerina.runtime.api.creators.ValueCreator
+                .createMapValue();
+        detail.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+        detail.put(StringUtils.fromString("taskWorkflowId"), StringUtils.fromString(taskWorkflowId));
+        detail.put(StringUtils.fromString("timedOutAfter"), StringUtils.fromString(timedOutAfter));
+        detail.put(StringUtils.fromString("timedOutAt"), StringUtils.fromString(timedOutAt));
+
+        try {
+            return ErrorCreator.createError(
+                    ModuleUtils.getModule(),
+                    "HumanTaskTimeoutError",
+                    StringUtils.fromString(
+                            "Human task '" + taskName + "' timed out after " + timedOutAfter),
+                    null,
+                    detail);
+        } catch (BError e) {
+            // Fallback if the module type hasn't been initialised yet (e.g. in tests)
+            return ErrorCreator.createError(
+                    StringUtils.fromString("HumanTaskTimeoutError: Human task '" + taskName
+                            + "' timed out after " + timedOutAfter),
+                    detail);
+        }
     }
 }

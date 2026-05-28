@@ -87,3 +87,57 @@ public isolated function suspendWorkflow(string workflowId) returns error? = @ja
 public isolated function resumeWorkflow(string workflowId) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
+
+// ================================================================================
+// HUMAN TASKS
+// ================================================================================
+
+# Returns the pending human task child workflows started by the given parent workflow,
+# grouped by task type and sorted alphabetically by task name. Scans the parent's
+# event history for child workflow start events whose ID matches the
+# `humantask-<parentWorkflowId>-` prefix.
+#
+# ```ballerina
+# management:HumanTaskGroup[] groups = check management:listPendingHumanTasks(parentWorkflowId);
+# // groups are sorted alphabetically by taskName
+# foreach management:HumanTaskGroup group in groups {
+#     foreach string taskId in group.taskIds {
+#         check workflow:completeHumanTask(taskId, decision);
+#     }
+# }
+# ```
+#
+# + parentWorkflowId - The Temporal workflow ID of the parent workflow
+# + return - Array of task groups sorted by task name, or an error
+public isolated function listPendingHumanTasks(string parentWorkflowId) returns HumanTaskGroup[]|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
+# Lists all human task instances across all parent workflows, optionally filtered by status.
+# Queries Temporal's visibility API and filters executions whose workflow ID starts with
+# `humantask-`. The `taskName` and `parentWorkflowId` fields are extracted from the task's
+# Temporal memo (set when the task was created by `callHumanTask`).
+#
+# ```ballerina
+# management:HumanTaskSummary[] pending =
+#     check management:listAllHumanTasks(status = "PENDING");
+# ```
+#
+# + status - Optional status filter: PENDING | COMPLETED | TIMED_OUT | CANCELED | TERMINATED
+# + return - Array of human task summaries, or an error
+public isolated function listAllHumanTasks(string? status = ()) returns HumanTaskSummary[]|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
+# Returns detailed info for a single human task, including memo fields.
+# Calls Temporal DescribeWorkflowExecution to read the memo set at task creation.
+#
+# ```ballerina
+# management:HumanTaskInfo info = check management:getHumanTaskInfo(taskId);
+# ```
+#
+# + taskId - The child workflow ID of the human task (`humantask-{parentId}-{taskName}-{uuid}`)
+# + return - Full task info including title, userRoles, payload, and formSchema, or an error
+public isolated function getHumanTaskInfo(string taskId) returns HumanTaskInfo|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;

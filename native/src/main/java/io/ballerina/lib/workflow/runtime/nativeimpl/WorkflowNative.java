@@ -773,13 +773,13 @@ public final class WorkflowNative {
                         StringUtils.fromString("Workflow client not initialized"));
             }
 
-            // Role validation: if callerRoles is provided, fetch the task's userRoles from
-            // memo and verify at least one caller role matches.
-            if (callerRoles instanceof BArray callerRolesArray) {
-                Object roleError = validateCallerRoles(client, taskWorkflowId.getValue(), callerRolesArray);
-                if (roleError != null) {
-                    return roleError;
-                }
+            // Always verify the target is a HUMAN_TASK workflow; also enforce role
+            // intersection when callerRoles is provided.
+            BArray callerRolesArray = (callerRoles instanceof BArray ba) ? ba : null;
+            Object validationError = validateHumanTaskAndRoles(
+                    client, taskWorkflowId.getValue(), callerRolesArray);
+            if (validationError != null) {
+                return validationError;
             }
 
             Object javaResult = TypesUtil.convertBallerinaToJavaType(result);
@@ -801,15 +801,21 @@ public final class WorkflowNative {
     }
 
     /**
-     * Validates that at least one of the caller's roles is present in the {@code userRoles}
-     * stored in the task's Temporal memo.  Returns {@code null} when authorized, or a
-     * Ballerina error when the check fails or the caller is unauthorized.
+     * Fetches the Temporal memo for {@code taskWorkflowId} and:
+     * <ol>
+     *   <li>Always asserts {@code workflowKind == "HUMAN_TASK"} — prevents signalling
+     *       non-human workflows via {@code completeHumanTask}.</li>
+     *   <li>When {@code callerRolesArray} is non-null, additionally verifies that at least
+     *       one caller role is present in the task's {@code userRoles} memo field.</li>
+     * </ol>
      *
-     * <p>If the memo is absent or the {@code userRoles} field cannot be decoded the check is
-     * skipped (returns {@code null}), preserving backward compatibility with tasks that were
-     * started before role metadata was added.
+     * <p>Returns {@code null} when all checks pass, or a Ballerina error otherwise.
+     *
+     * <p>If the {@code userRoles} memo field is absent or cannot be decoded the role
+     * intersection is skipped (backward-compatible with tasks started before role metadata
+     * was added).  The {@code workflowKind} check is never skipped.
      */
-    private static Object validateCallerRoles(WorkflowClient client, String taskWorkflowId,
+    private static Object validateHumanTaskAndRoles(WorkflowClient client, String taskWorkflowId,
             BArray callerRolesArray) {
         try {
             DescribeWorkflowExecutionRequest req = DescribeWorkflowExecutionRequest.newBuilder()
@@ -827,6 +833,29 @@ public final class WorkflowNative {
             Map<String, io.temporal.api.common.v1.Payload> memoFields =
                     resp.getWorkflowExecutionInfo().getMemo().getFieldsMap();
             io.temporal.common.converter.DataConverter dc = client.getOptions().getDataConverter();
+
+            // 1. workflowKind check — always enforced
+            String workflowKind = null;
+            try {
+                io.temporal.api.common.v1.Payload kindPl = memoFields.get("workflowKind");
+                if (kindPl != null) {
+                    workflowKind = dc.fromPayload(kindPl, String.class, String.class);
+                }
+            } catch (Exception e) {
+                LOGGER.debug("Could not decode workflowKind from memo for '{}': {}",
+                        taskWorkflowId, e.getMessage());
+            }
+            if (!"HUMAN_TASK".equals(workflowKind)) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Invalid task: '" + taskWorkflowId
+                                + "' is not a human task workflow (workflowKind="
+                                + workflowKind + ")"));
+            }
+
+            // 2. Role intersection — only when callerRoles was supplied
+            if (callerRolesArray == null) {
+                return null;
+            }
 
             Set<String> allowedRoles = new HashSet<>();
             try {
@@ -857,8 +886,7 @@ public final class WorkflowNative {
                             + taskWorkflowId + "'. Required one of: " + allowedRoles));
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
-                    "Failed to validate caller roles for task '" + taskWorkflowId
-                            + "': " + e.getMessage()));
+                    "Failed to validate task '" + taskWorkflowId + "': " + e.getMessage()));
         }
     }
 }

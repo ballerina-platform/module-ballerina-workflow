@@ -16,18 +16,19 @@
 
 // Human-in-the-Loop Example
 //
-// Demonstrates a workflow that pauses for a human decision before proceeding.
+// Demonstrates a workflow that pauses for a human decision using callHumanTask.
 // Every order above a configured threshold requires manager approval — the
-// workflow durably pauses until a reviewer sends their decision via the
-// HTTP API. Low-value orders are auto-approved.
+// workflow durably pauses until a reviewer completes the task. Low-value orders
+// are auto-approved.
 //
 // Start the service:
 //   bal run
 //
 // Then use the HTTP API to drive the workflow:
-//   POST /api/orders               — start a new order
-//   POST /api/orders/{id}/approve  — send the approval decision
-//   GET  /api/orders/{id}          — get the final result
+//   POST /api/orders                     — start a new order
+//   GET  /api/orders/{id}/tasks          — list pending approval tasks
+//   POST /api/tasks/{taskId}/complete    — submit the approval decision
+//   GET  /api/orders/{id}               — get the final result
 
 import ballerina/http;
 import ballerina/io;
@@ -50,13 +51,11 @@ type OrderResult record {|
     string message;
 |};
 
-# Approval decision sent by a manager.
+# Approval decision submitted by a manager via the task inbox.
 #
-# + approverId - ID of the approver
 # + approved - true to approve the order, false to reject
 # + reason - Optional reason for the decision
 type ApprovalDecision record {|
-    string approverId;
     boolean approved;
     string? reason;
 |};
@@ -73,7 +72,7 @@ const decimal APPROVAL_THRESHOLD = 500.00;
 # + orderId - Order identifier
 # + item - Item name
 # + amount - Order amount
-# + return - Error if validation fails
+# + return - Validation confirmation or error
 @workflow:Activity
 function validateOrder(string orderId, string item, decimal amount) returns string|error {
     io:println(string `[Activity] Validating order ${orderId}: ${item}, $${amount}`);
@@ -81,18 +80,6 @@ function validateOrder(string orderId, string item, decimal amount) returns stri
         return error("Invalid amount: must be positive");
     }
     return "valid";
-}
-
-# Notifies the approval team that a new order needs review.
-#
-# + orderId - The order identifier
-# + item - The item being ordered
-# + amount - The order amount
-# + return - Confirmation or error
-@workflow:Activity
-function notifyApprover(string orderId, string item, decimal amount) returns string|error {
-    io:println(string `[APPROVAL NEEDED] Order ${orderId}: ${item} ($${amount}) requires manager approval`);
-    return "Notified";
 }
 
 # Fulfills an approved order.
@@ -113,23 +100,18 @@ function fulfillOrder(string orderId, string item) returns string|error {
 # Processes an order with human-in-the-loop approval for high-value orders.
 #
 # 1. Validates the order
-# 2. If amount > threshold — notifies the approval team and pauses
-# 3. Waits for a manager's approval decision
-# 4. If approved (or auto-approved) — fulfills the order
+# 2. If amount > threshold — creates an approval task and durably pauses
+# 3. A manager submits their decision via the task inbox (or HTTP API)
+# 4. If approved (or auto-approved for low-value orders) — fulfills the order
 # 5. If rejected — returns REJECTED
 #
 # The workflow is fully durable while paused — worker restarts do not lose state.
 #
 # + ctx - Workflow context for calling activities
 # + input - Order details
-# + events - Record containing the approval decision future
 # + return - Final order result or error
 @workflow:Workflow
-function processOrder(
-    workflow:Context ctx,
-    OrderInput input,
-    record {| future<ApprovalDecision> approval; |} events
-) returns OrderResult|error {
+function processOrder(workflow:Context ctx, OrderInput input) returns OrderResult|error {
 
     // Step 1: Validate the order
     string _ = check ctx->callActivity(validateOrder, {
@@ -140,23 +122,22 @@ function processOrder(
 
     // Step 2: Check if approval is needed
     if input.amount > APPROVAL_THRESHOLD {
-        // Notify the approval team
-        string _ = check ctx->callActivity(notifyApprover, {
-            "orderId": input.orderId,
-            "item": input.item,
-            "amount": input.amount
+        // callHumanTask creates a child workflow and durably pauses here
+        // until a manager submits a decision via the task inbox or HTTP API.
+        io:println(string `[Workflow] Creating approval task for order ${input.orderId}`);
+        ApprovalDecision decision = check ctx->callHumanTask({
+            taskName:  "approveOrder",
+            title:     string `Approve ${input.item} for $${input.amount}`,
+            userRoles: ["MANAGER"],
+            payload:   {orderId: input.orderId, item: input.item, amount: input.amount.toString()}
         });
-
-        // Workflow durably pauses here until the "approval" data arrives
-        io:println(string `[Workflow] Waiting for approval for order: ${input.orderId}`);
-        ApprovalDecision decision = check wait events.approval;
-        io:println(string `[Workflow] Decision from ${decision.approverId}: approved=${decision.approved}`);
+        io:println(string `[Workflow] Decision received: approved=${decision.approved}`);
 
         if !decision.approved {
             return {
                 orderId: input.orderId,
-                status: "REJECTED",
-                message: string `Rejected by ${decision.approverId}: ${decision.reason ?: "no reason given"}`
+                status:  "REJECTED",
+                message: string `Rejected: ${decision.reason ?: "no reason given"}`
             };
         }
     } else {
@@ -171,7 +152,7 @@ function processOrder(
 
     return {
         orderId: input.orderId,
-        status: "COMPLETED",
+        status:  "COMPLETED",
         message: string `Order fulfilled: ${fulfillmentId}`
     };
 }
@@ -183,9 +164,10 @@ function processOrder(
 # HTTP service that exposes the human-in-the-loop workflow over REST.
 #
 # Endpoints:
-#   POST /api/orders               — creates a new order workflow
-#   POST /api/orders/{id}/approve  — sends the approval decision
-#   GET  /api/orders/{id}          — retrieves the workflow result
+#   POST /api/orders                   — creates a new order workflow
+#   GET  /api/orders/{id}/tasks        — lists pending approval tasks for a workflow
+#   POST /api/tasks/{taskId}/complete  — submits an approval decision for a task
+#   GET  /api/orders/{id}             — retrieves the workflow result
 service /api on new http:Listener(8090) {
 
     # Starts a new order processing workflow.
@@ -195,16 +177,20 @@ service /api on new http:Listener(8090) {
         return {workflowId};
     }
 
-    # Sends the manager's approval decision to a waiting workflow.
-    # workflow:sendData is asynchronous — it signals the workflow engine and
-    # returns once the engine has accepted the signal. The workflow processes
-    # the signal and resumes independently. The response confirms engine
-    # acceptance, not that the workflow has already acted on the decision.
-    resource function post orders/[string workflowId]/approve(@http:Payload ApprovalDecision decision)
-            returns record {|string status; string message;|}|error {
-        check workflow:sendData(processOrder, workflowId, "approval", decision);
-        io:println(string `Approval decision accepted by engine for workflow ${workflowId}`);
-        return {status: "accepted", message: "Approval signal accepted by the workflow engine"};
+    # Lists pending approval task groups for a workflow, sorted alphabetically by task name.
+    # Returns an empty array if the workflow has no pending human tasks.
+    resource function get orders/[string workflowId]/tasks() returns management:HumanTaskGroup[]|error {
+        return management:listPendingHumanTasks(workflowId);
+    }
+
+    # Submits a manager's approval decision for a pending task.
+    # workflowCompleteHumanTask sends a "taskCompletion" signal to the child workflow,
+    # unblocking the parent and returning the typed decision to the workflow.
+    resource function post tasks/[string taskId]/complete(@http:Payload ApprovalDecision decision)
+            returns record {|string status;|}|error {
+        check workflow:completeHumanTask(taskId, decision);
+        io:println(string `Task ${taskId} completed`);
+        return {status: "accepted"};
     }
 
     # Retrieves the final result of a workflow. Blocks until the workflow completes.

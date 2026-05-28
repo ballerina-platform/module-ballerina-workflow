@@ -6,9 +6,10 @@ type StartResponse record {|
     string workflowId;
 |};
 
-type ApproveResponse record {|
-    string status;
-    string message;
+// Matches management:HumanTaskGroup for HTTP response deserialization
+type HumanTaskGroup record {|
+    string taskName;
+    string[] taskIds;
 |};
 
 type WorkflowResponse record {
@@ -24,7 +25,7 @@ type WorkflowResponse record {
 function testApprovedOrder() returns error? {
     http:Client cl = check new ("http://localhost:8090/api");
 
-    // Start a high-value order (above threshold)
+    // Start a high-value order (above APPROVAL_THRESHOLD)
     StartResponse startResp = check cl->post("/orders", {
         orderId: "ORD-TEST-001",
         item: "standing-desk",
@@ -32,18 +33,21 @@ function testApprovedOrder() returns error? {
     });
     test:assertNotEquals(startResp.workflowId, "", "Workflow ID should not be empty");
 
-    // Wait for workflow to reach the approval wait point
-    runtime:sleep(5);
+    // Allow the humantask child workflow to start
+    runtime:sleep(3);
 
-    // Approve the order
-    ApproveResponse approveResp = check cl->post(string `/orders/${startResp.workflowId}/approve`, {
-        approverId: "manager-1",
+    // List pending tasks and verify one task type with one instance is waiting
+    HumanTaskGroup[] groups = check cl->get(string `/orders/${startResp.workflowId}/tasks`);
+    test:assertEquals(groups.length(), 1, "Should have one pending task type");
+    test:assertEquals(groups[0].taskIds.length(), 1, "Should have one pending task instance");
+
+    // Manager approves
+    record {|string status;|} _ = check cl->post(string `/tasks/${groups[0].taskIds[0]}/complete`, {
         approved: true,
         reason: "Approved for Q2 budget"
     });
-    test:assertEquals(approveResp.status, "accepted");
 
-    // Get workflow result
+    // Workflow completes — fulfilled
     WorkflowResponse result = check cl->get(string `/orders/${startResp.workflowId}`);
     test:assertEquals(result.status, "COMPLETED");
     test:assertEquals(result.result.status, "COMPLETED");
@@ -66,22 +70,26 @@ function testRejectedOrder() returns error? {
         amount: 2500.00
     });
 
-    // Wait for workflow to reach the approval wait point
-    runtime:sleep(5);
+    // Allow the humantask child workflow to start
+    runtime:sleep(3);
 
-    // Reject the order
-    ApproveResponse _ = check cl->post(string `/orders/${startResp.workflowId}/approve`, {
-        approverId: "manager-2",
+    // List pending tasks
+    HumanTaskGroup[] groups = check cl->get(string `/orders/${startResp.workflowId}/tasks`);
+    test:assertEquals(groups.length(), 1, "Should have one pending task type");
+    test:assertEquals(groups[0].taskIds.length(), 1, "Should have one pending task instance");
+
+    // Manager rejects
+    record {|string status;|} _ = check cl->post(string `/tasks/${groups[0].taskIds[0]}/complete`, {
         approved: false,
         reason: "Budget exceeded"
     });
 
-    // Get workflow result
+    // Workflow completes — rejected
     WorkflowResponse result = check cl->get(string `/orders/${startResp.workflowId}`);
     test:assertEquals(result.status, "COMPLETED");
     test:assertEquals(result.result.status, "REJECTED");
     test:assertEquals(result.result.orderId, "ORD-TEST-002");
-    test:assertTrue(result.result.message.includes("manager-2"), "Should contain approver ID");
+    test:assertTrue(result.result.message.includes("Budget exceeded"), "Should contain rejection reason");
 }
 
 // ---------------------------------------------------------------------------
@@ -92,14 +100,14 @@ function testRejectedOrder() returns error? {
 function testAutoApprovedOrder() returns error? {
     http:Client cl = check new ("http://localhost:8090/api");
 
-    // Start a low-value order (below threshold)
+    // Start a low-value order (below APPROVAL_THRESHOLD)
     StartResponse startResp = check cl->post("/orders", {
         orderId: "ORD-TEST-003",
         item: "mouse-pad",
         amount: 25.00
     });
 
-    // Get workflow result — should complete without approval
+    // Workflow completes without any human task
     WorkflowResponse result = check cl->get(string `/orders/${startResp.workflowId}`);
     test:assertEquals(result.status, "COMPLETED");
     test:assertEquals(result.result.status, "COMPLETED");

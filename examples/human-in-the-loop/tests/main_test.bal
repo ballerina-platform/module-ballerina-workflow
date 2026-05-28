@@ -20,14 +20,14 @@ type WorkflowResponse record {
 // Polls the tasks endpoint until a non-empty task group appears or timeout elapses.
 function waitForPendingTasks(http:Client cl, string workflowId, decimal timeoutSecs = 15)
         returns HumanTaskGroup[]|error {
-    decimal elapsed = 0.0;
+    decimal elapsed = 0.0d;
     while elapsed < timeoutSecs {
         HumanTaskGroup[] groups = check cl->get(string `/orders/${workflowId}/tasks`);
         if groups.length() > 0 && groups[0].taskIds.length() > 0 {
             return groups;
         }
-        runtime:sleep(0.3);
-        elapsed += 0.3;
+        runtime:sleep(0.3d);
+        elapsed += 0.3d;
     }
     return error("Timed out waiting for pending tasks for workflow: " + workflowId);
 }

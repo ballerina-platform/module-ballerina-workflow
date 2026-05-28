@@ -48,6 +48,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * Source modifier that transforms workflow process functions.
@@ -219,8 +220,9 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
      * Generates a private function that registers all workflows and starts the runtime.
      * <pre>
      * function __registerWorkflowsAndStart() returns boolean|error {
+     *     _ = check wfInternal:registerConnection("db", db);
      *     _ = check wfInternal:registerWorkflow(wf1, "wf1", {"act": act});
-     *     _ = check wfInternal:registerWorkflow(wf2, "wf2");
+     *     _ = check wfInternal:registerHumanTask("approveExpense");
      *     _ = check wfInternal:startWorkflowRuntime();
      *     return true;
      * }
@@ -246,6 +248,18 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                     .append(":registerWorkflow(").append(processInfo.functionName())
                     .append(", \"").append(processInfo.functionName()).append("\", ")
                     .append(activitiesArg).append(");").append(System.lineSeparator());
+        }
+
+        // Collect all unique human task names across every workflow in this module.
+        // Use a sorted set for deterministic code generation across compiler runs.
+        Set<String> allHumanTaskNames = new TreeSet<>();
+        for (ProcessFunctionInfo processInfo : allProcessInfos) {
+            allHumanTaskNames.addAll(processInfo.humanTaskNames());
+        }
+        for (String taskName : allHumanTaskNames) {
+            body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                    .append(":registerHumanTask(\"").append(taskName).append("\");")
+                    .append(System.lineSeparator());
         }
 
         body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)

@@ -43,7 +43,7 @@ import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
 import io.ballerina.tools.diagnostics.DiagnosticFactory;
 import io.ballerina.tools.diagnostics.DiagnosticInfo;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Optional;
@@ -77,7 +77,7 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
         String functionName = functionNode.functionName().text();
 
         // Collect activity calls and human task names within this workflow function
-        Map<String, String> activityMap = new HashMap<>();
+        Map<String, String> activityMap = new LinkedHashMap<>();
         Set<String> humanTaskNames = new LinkedHashSet<>();
         ActivityCallCollector collector = new ActivityCallCollector(context, activityMap, humanTaskNames);
         functionNode.functionBody().accept(collector);

@@ -49,9 +49,12 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -762,23 +765,100 @@ public final class WorkflowNative {
      * @param result         the value to return to the waiting {@code callHumanTask} call
      * @return {@code null} on success, or a Ballerina error
      */
-    public static Object completeHumanTask(BString taskWorkflowId, Object result) {
+    public static Object completeHumanTask(BString taskWorkflowId, Object result, Object callerRoles) {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
                 return ErrorCreator.createError(
                         StringUtils.fromString("Workflow client not initialized"));
             }
+
+            // Role validation: if callerRoles is provided, fetch the task's userRoles from
+            // memo and verify at least one caller role matches.
+            if (callerRoles instanceof BArray callerRolesArray) {
+                Object roleError = validateCallerRoles(client, taskWorkflowId.getValue(), callerRolesArray);
+                if (roleError != null) {
+                    return roleError;
+                }
+            }
+
             Object javaResult = TypesUtil.convertBallerinaToJavaType(result);
             Map<String, Object> payload = new HashMap<>();
             payload.put("result", javaResult);
 
-            WorkflowRuntime.getInstance().sendSignalToWorkflow(
+            boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(
                     taskWorkflowId.getValue(), "taskCompletion", payload);
+            if (!delivered) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Failed to complete human task: task workflow not found: "
+                                + taskWorkflowId.getValue()));
+            }
             return null;
         } catch (Exception e) {
             return ErrorCreator.createError(
                     StringUtils.fromString("Failed to complete human task: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Validates that at least one of the caller's roles is present in the {@code userRoles}
+     * stored in the task's Temporal memo.  Returns {@code null} when authorized, or a
+     * Ballerina error when the check fails or the caller is unauthorized.
+     *
+     * <p>If the memo is absent or the {@code userRoles} field cannot be decoded the check is
+     * skipped (returns {@code null}), preserving backward compatibility with tasks that were
+     * started before role metadata was added.
+     */
+    private static Object validateCallerRoles(WorkflowClient client, String taskWorkflowId,
+            BArray callerRolesArray) {
+        try {
+            DescribeWorkflowExecutionRequest req = DescribeWorkflowExecutionRequest.newBuilder()
+                    .setNamespace(client.getOptions().getNamespace())
+                    .setExecution(io.temporal.api.common.v1.WorkflowExecution.newBuilder()
+                            .setWorkflowId(taskWorkflowId)
+                            .build())
+                    .build();
+
+            DescribeWorkflowExecutionResponse resp = client.getWorkflowServiceStubs()
+                    .blockingStub()
+                    .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                    .describeWorkflowExecution(req);
+
+            Map<String, io.temporal.api.common.v1.Payload> memoFields =
+                    resp.getWorkflowExecutionInfo().getMemo().getFieldsMap();
+            io.temporal.common.converter.DataConverter dc = client.getOptions().getDataConverter();
+
+            Set<String> allowedRoles = new HashSet<>();
+            try {
+                io.temporal.api.common.v1.Payload rolesPl = memoFields.get("userRoles");
+                if (rolesPl != null) {
+                    String[] rolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
+                    allowedRoles.addAll(Arrays.asList(rolesArr));
+                }
+            } catch (Exception e) {
+                LOGGER.debug("Could not decode userRoles from task memo; skipping role check: {}",
+                        e.getMessage());
+                return null;
+            }
+
+            if (allowedRoles.isEmpty()) {
+                // No roles configured on the task — nothing to enforce.
+                return null;
+            }
+
+            for (int i = 0; i < callerRolesArray.size(); i++) {
+                if (allowedRoles.contains(callerRolesArray.get(i).toString())) {
+                    return null; // at least one matching role — authorized
+                }
+            }
+
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Unauthorized: caller does not have a required role to complete task '"
+                            + taskWorkflowId + "'. Required one of: " + allowedRoles));
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to validate caller roles for task '" + taskWorkflowId
+                            + "': " + e.getMessage()));
         }
     }
 }

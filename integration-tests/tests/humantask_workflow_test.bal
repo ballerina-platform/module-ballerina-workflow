@@ -37,6 +37,21 @@ import ballerina/test;
 import ballerina/workflow;
 import ballerina/workflow.management;
 
+// Polls until at least one pending task appears (with at least one task ID) or timeout elapses.
+function waitForPendingHumanTask(string parentWorkflowId, decimal timeoutSecs = 10)
+        returns management:HumanTaskGroup[]|error {
+    decimal elapsed = 0.0;
+    while elapsed < timeoutSecs {
+        management:HumanTaskGroup[] groups = check management:listPendingHumanTasks(parentWorkflowId);
+        if groups.length() > 0 && groups[0].taskIds.length() > 0 {
+            return groups;
+        }
+        runtime:sleep(0.3);
+        elapsed += 0.3;
+    }
+    return error("Timed out waiting for pending human task for workflow: " + parentWorkflowId);
+}
+
 // ================================================================================
 // TEST 1 — Happy path: task approved, reimbursement processed
 // ================================================================================
@@ -54,11 +69,9 @@ function testHumanTaskApprovedPath() returns error? {
 
     string parentWorkflowId = check workflow:run(expenseApprovalWorkflow, input);
 
-    // Allow time for the child task workflow to start and set its search attributes
-    runtime:sleep(2);
-
-    management:HumanTaskGroup[] groups = check management:listPendingHumanTasks(parentWorkflowId);
+    management:HumanTaskGroup[] groups = check waitForPendingHumanTask(parentWorkflowId);
     test:assertEquals(groups.length(), 1, "Exactly one pending human task should exist");
+    test:assertTrue(groups[0].taskIds.length() > 0, "Task group should have at least one task ID");
 
     check workflow:completeHumanTask(groups[0].taskIds[0], {approved: true, comment: "LGTM"});
 
@@ -91,10 +104,9 @@ function testHumanTaskRejectedPath() returns error? {
 
     string parentWorkflowId = check workflow:run(expenseApprovalWorkflow, input);
 
-    runtime:sleep(2);
-
-    management:HumanTaskGroup[] groups = check management:listPendingHumanTasks(parentWorkflowId);
+    management:HumanTaskGroup[] groups = check waitForPendingHumanTask(parentWorkflowId);
     test:assertEquals(groups.length(), 1, "Exactly one pending human task should exist");
+    test:assertTrue(groups[0].taskIds.length() > 0, "Task group should have at least one task ID");
 
     check workflow:completeHumanTask(groups[0].taskIds[0], {approved: false, comment: "Amount too high"});
 
@@ -167,10 +179,9 @@ function testHumanTaskMinimalConfig() returns error? {
 
     string parentWorkflowId = check workflow:run(expenseApprovalMinimalWorkflow, input);
 
-    runtime:sleep(2);
-
-    management:HumanTaskGroup[] groups = check management:listPendingHumanTasks(parentWorkflowId);
+    management:HumanTaskGroup[] groups = check waitForPendingHumanTask(parentWorkflowId);
     test:assertEquals(groups.length(), 1, "One pending task should exist for minimal config");
+    test:assertTrue(groups[0].taskIds.length() > 0, "Task group should have at least one task ID");
 
     // Approve — the default roles include "admin" so any caller can complete
     check workflow:completeHumanTask(groups[0].taskIds[0], {approved: true, comment: "OK"});
@@ -201,10 +212,9 @@ function testHumanTaskMultipleUserRoles() returns error? {
 
     string parentWorkflowId = check workflow:run(expenseApprovalMultiRoleWorkflow, input);
 
-    runtime:sleep(2);
-
-    management:HumanTaskGroup[] groups = check management:listPendingHumanTasks(parentWorkflowId);
+    management:HumanTaskGroup[] groups = check waitForPendingHumanTask(parentWorkflowId);
     test:assertEquals(groups.length(), 1, "One pending task should exist for multi-role workflow");
+    test:assertTrue(groups[0].taskIds.length() > 0, "Task group should have at least one task ID");
 
     // Complete as a MANAGER
     check workflow:completeHumanTask(groups[0].taskIds[0], {approved: true, comment: "Approved by manager"});

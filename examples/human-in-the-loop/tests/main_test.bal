@@ -17,6 +17,21 @@ type WorkflowResponse record {
     OrderResult result;
 };
 
+// Polls the tasks endpoint until a non-empty task group appears or timeout elapses.
+function waitForPendingTasks(http:Client cl, string workflowId, decimal timeoutSecs = 15)
+        returns HumanTaskGroup[]|error {
+    decimal elapsed = 0.0;
+    while elapsed < timeoutSecs {
+        HumanTaskGroup[] groups = check cl->get(string `/orders/${workflowId}/tasks`);
+        if groups.length() > 0 && groups[0].taskIds.length() > 0 {
+            return groups;
+        }
+        runtime:sleep(0.3);
+        elapsed += 0.3;
+    }
+    return error("Timed out waiting for pending tasks for workflow: " + workflowId);
+}
+
 // ---------------------------------------------------------------------------
 // HIGH-VALUE ORDER — requires approval, manager approves
 // ---------------------------------------------------------------------------
@@ -33,11 +48,8 @@ function testApprovedOrder() returns error? {
     });
     test:assertNotEquals(startResp.workflowId, "", "Workflow ID should not be empty");
 
-    // Allow the humantask child workflow to start
-    runtime:sleep(3);
-
-    // List pending tasks and verify one task type with one instance is waiting
-    HumanTaskGroup[] groups = check cl->get(string `/orders/${startResp.workflowId}/tasks`);
+    // Poll until the humantask child workflow becomes visible
+    HumanTaskGroup[] groups = check waitForPendingTasks(cl, startResp.workflowId);
     test:assertEquals(groups.length(), 1, "Should have one pending task type");
     test:assertEquals(groups[0].taskIds.length(), 1, "Should have one pending task instance");
 
@@ -71,10 +83,8 @@ function testRejectedOrder() returns error? {
     });
 
     // Allow the humantask child workflow to start
-    runtime:sleep(3);
-
-    // List pending tasks
-    HumanTaskGroup[] groups = check cl->get(string `/orders/${startResp.workflowId}/tasks`);
+    // Poll until the humantask child workflow becomes visible
+    HumanTaskGroup[] groups = check waitForPendingTasks(cl, startResp.workflowId);
     test:assertEquals(groups.length(), 1, "Should have one pending task type");
     test:assertEquals(groups[0].taskIds.length(), 1, "Should have one pending task instance");
 

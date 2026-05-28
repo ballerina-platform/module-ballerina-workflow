@@ -23,6 +23,24 @@ import ballerina/lang.runtime;
 import ballerina/workflow;
 import ballerina/workflow.management;
 
+// Polls getWorkflowInfo until status matches one of the expected values or timeout elapses.
+function waitForWorkflowState(string workflowId, string[] expected, decimal timeoutSecs = 10)
+        returns management:WorkflowExecutionInfo|error {
+    decimal elapsed = 0.0;
+    while elapsed < timeoutSecs {
+        management:WorkflowExecutionInfo info = check management:getWorkflowInfo(workflowId);
+        foreach string s in expected {
+            if info.status == s {
+                return info;
+            }
+        }
+        runtime:sleep(0.1);
+        elapsed += 0.1;
+    }
+    return error("Timed out waiting for workflow " + workflowId + " to reach state: "
+            + string:'join(", ", ...expected));
+}
+
 @test:Config {
     groups: ["integration"]
 }
@@ -31,11 +49,9 @@ function testGetWorkflowInfo() returns error? {
     InfoTestInput input = {id: testId, name: "Charlie"};
     string workflowId = check workflow:run(infoTestWorkflow, input);
 
-    // Give it a moment to start
-    runtime:sleep(0.5);
-
-    // Get workflow info (may still be running or completed)
-    management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);
+    // Poll until the workflow is in a stable state (RUNNING or COMPLETED)
+    management:WorkflowExecutionInfo execInfo =
+            check waitForWorkflowState(workflowId, ["RUNNING", "COMPLETED"]);
 
     // Workflow ID must be a valid UUID v7
     test:assertTrue(isValidUuidV7(execInfo.workflowId), "Workflow ID should be a valid UUID v7");
@@ -91,8 +107,8 @@ function testSuspendAndResumeWorkflow() returns error? {
     SimpleSignalInput input = {id: testId, message: "suspend-resume-test"};
     string workflowId = check workflow:run(simpleSignalWorkflow, input);
 
-    // Give the workflow time to reach the signal-wait point
-    runtime:sleep(0.5);
+    // Wait until workflow reaches RUNNING (signal-wait point)
+    _ = check waitForWorkflowState(workflowId, ["RUNNING"]);
 
     // Suspend should succeed without error
     check management:suspendWorkflow(workflowId);

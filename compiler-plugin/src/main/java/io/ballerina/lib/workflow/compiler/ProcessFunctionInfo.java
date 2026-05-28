@@ -37,13 +37,16 @@ public record ProcessFunctionInfo(String functionName, Map<String, String> activ
                                   Set<String> humanTaskNames) {
 
     /**
-     * Creates a new ProcessFunctionInfo.
+     * Creates a new ProcessFunctionInfo with defensive copies of the supplied collections
+     * to prevent external mutation from affecting the stored state.
      *
      * @param functionName  the name of the process function
      * @param activityMap   map of activity function names to their references
      * @param humanTaskNames set of task names found at callHumanTask call sites
      */
     public ProcessFunctionInfo {
+        activityMap = Map.copyOf(activityMap);
+        humanTaskNames = Set.copyOf(humanTaskNames);
     }
 
     /**

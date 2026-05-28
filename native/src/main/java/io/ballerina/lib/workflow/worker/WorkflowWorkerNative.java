@@ -1213,12 +1213,12 @@ public final class WorkflowWorkerNative {
                 // Fall back to service registry for backward compatibility
                 BObject templateService = SERVICE_REGISTRY.get(workflowType);
 
-                // Route human task workflow types before looking in user registries
-                if (HUMANTASK_REGISTRY.contains(workflowType)) {
-                    return executeBuiltinHumanTask(args);
-                }
-
                 if (processFunction == null && templateService == null) {
+                    // Route human task workflow types before reporting "not registered"
+                    if (HUMANTASK_REGISTRY.contains(workflowType)) {
+                        return executeBuiltinHumanTask(args);
+                    }
+
                     String errorMsg = String.format("Workflow '%s' is not registered. " +
                             "Please call registerWorkflow() for this workflow.", workflowType);
                     LOGGER.error("[JWorkflowAdapter] {}", errorMsg);
@@ -1930,7 +1930,8 @@ public final class WorkflowWorkerNative {
                 status = "FAILED";
                 errorMessage = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
             } catch (java.util.concurrent.TimeoutException e) {
-                status = "RUNNING";
+                status = "FAILED";
+                errorMessage = "Workflow wait timed out: " + e.getMessage();
             } catch (Exception e) {
                 status = "FAILED";
                 errorMessage = e.getMessage();

@@ -183,28 +183,34 @@ public final class ManagementNative {
             String query = temporalStatus != null
                     ? String.format("ExecutionStatus = \"%s\"", temporalStatus) : "";
 
-            ListWorkflowExecutionsRequest request = ListWorkflowExecutionsRequest.newBuilder()
-                    .setNamespace(client.getOptions().getNamespace())
-                    .setQuery(query)
-                    .setPageSize(100)
-                    .build();
-
-            ListWorkflowExecutionsResponse response = client.getWorkflowServiceStubs()
-                    .blockingStub()
-                    .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                    .listWorkflowExecutions(request);
-
             RecordType summaryType = (RecordType) ValueCreator.createRecordValue(
                     ModuleUtils.getManagementModule(), "HumanTaskSummary").getType();
             BArray result = ValueCreator.createArrayValue(TypeCreator.createArrayType(summaryType));
 
-            for (io.temporal.api.workflow.v1.WorkflowExecutionInfo wfInfo : response.getExecutionsList()) {
-                String wfId = wfInfo.getExecution().getWorkflowId();
-                if (!wfId.startsWith("humantask-")) {
-                    continue;
+            com.google.protobuf.ByteString pageToken = com.google.protobuf.ByteString.EMPTY;
+            do {
+                ListWorkflowExecutionsRequest request = ListWorkflowExecutionsRequest.newBuilder()
+                        .setNamespace(client.getOptions().getNamespace())
+                        .setQuery(query)
+                        .setPageSize(100)
+                        .setNextPageToken(pageToken)
+                        .build();
+
+                ListWorkflowExecutionsResponse response = client.getWorkflowServiceStubs()
+                        .blockingStub()
+                        .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                        .listWorkflowExecutions(request);
+
+                for (io.temporal.api.workflow.v1.WorkflowExecutionInfo wfInfo : response.getExecutionsList()) {
+                    String wfId = wfInfo.getExecution().getWorkflowId();
+                    if (!wfId.startsWith("humantask-")) {
+                        continue;
+                    }
+                    result.append(toHumanTaskSummaryRecord(client, wfInfo));
                 }
-                result.append(toHumanTaskSummaryRecord(client, wfInfo));
-            }
+
+                pageToken = response.getNextPageToken();
+            } while (!pageToken.isEmpty());
 
             return result;
 
@@ -375,6 +381,22 @@ public final class ManagementNative {
                                     : remainder;
                             byTaskName.computeIfAbsent(taskName, k -> new ArrayList<>()).add(childId);
                         }
+                    } else {
+                        // Remove child workflows that have reached a terminal state
+                        String completedChildId = getTerminalChildWorkflowId(event);
+                        if (completedChildId != null && completedChildId.startsWith(prefix)) {
+                            String remainder = completedChildId.substring(prefix.length());
+                            String taskName = remainder.length() > 37
+                                    ? remainder.substring(0, remainder.length() - 37)
+                                    : remainder;
+                            List<String> ids = byTaskName.get(taskName);
+                            if (ids != null) {
+                                ids.remove(completedChildId);
+                                if (ids.isEmpty()) {
+                                    byTaskName.remove(taskName);
+                                }
+                            }
+                        }
                     }
                 }
                 nextPageToken = resp.getNextPageToken();
@@ -410,6 +432,31 @@ public final class ManagementNative {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Extracts the child workflow ID from a terminal child-workflow history event, or returns
+     * {@code null} if the event is not a terminal child-workflow event type.
+     */
+    private static String getTerminalChildWorkflowId(HistoryEvent event) {
+        return switch (event.getEventType()) {
+            case EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED ->
+                    event.getChildWorkflowExecutionCompletedEventAttributes()
+                            .getWorkflowExecution().getWorkflowId();
+            case EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED ->
+                    event.getChildWorkflowExecutionFailedEventAttributes()
+                            .getWorkflowExecution().getWorkflowId();
+            case EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TIMED_OUT ->
+                    event.getChildWorkflowExecutionTimedOutEventAttributes()
+                            .getWorkflowExecution().getWorkflowId();
+            case EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED ->
+                    event.getChildWorkflowExecutionCanceledEventAttributes()
+                            .getWorkflowExecution().getWorkflowId();
+            case EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TERMINATED ->
+                    event.getChildWorkflowExecutionTerminatedEventAttributes()
+                            .getWorkflowExecution().getWorkflowId();
+            default -> null;
+        };
+    }
 
     /**
      * Converts a {@link io.temporal.api.workflow.v1.WorkflowExecutionInfo} to a Ballerina

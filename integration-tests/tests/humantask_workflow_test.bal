@@ -40,14 +40,14 @@ import ballerina/workflow.management;
 // Polls until at least one pending task appears (with at least one task ID) or timeout elapses.
 function waitForPendingHumanTask(string parentWorkflowId, decimal timeoutSecs = 10)
         returns management:HumanTaskGroup[]|error {
-    decimal elapsed = 0.0;
+    decimal elapsed = 0.0d;
     while elapsed < timeoutSecs {
         management:HumanTaskGroup[] groups = check management:listPendingHumanTasks(parentWorkflowId);
         if groups.length() > 0 && groups[0].taskIds.length() > 0 {
             return groups;
         }
-        runtime:sleep(0.3);
-        elapsed += 0.3;
+        runtime:sleep(0.3d);
+        elapsed += 0.3d;
     }
     return error("Timed out waiting for pending human task for workflow: " + parentWorkflowId);
 }

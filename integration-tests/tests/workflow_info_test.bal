@@ -26,7 +26,7 @@ import ballerina/workflow.management;
 // Polls getWorkflowInfo until status matches one of the expected values or timeout elapses.
 function waitForWorkflowState(string workflowId, string[] expected, decimal timeoutSecs = 10)
         returns management:WorkflowExecutionInfo|error {
-    decimal elapsed = 0.0;
+    decimal elapsed = 0.0d;
     while elapsed < timeoutSecs {
         management:WorkflowExecutionInfo info = check management:getWorkflowInfo(workflowId);
         foreach string s in expected {
@@ -34,8 +34,8 @@ function waitForWorkflowState(string workflowId, string[] expected, decimal time
                 return info;
             }
         }
-        runtime:sleep(0.1);
-        elapsed += 0.1;
+        runtime:sleep(0.1d);
+        elapsed += 0.1d;
     }
     return error("Timed out waiting for workflow " + workflowId + " to reach state: "
             + string:'join(", ", ...expected));

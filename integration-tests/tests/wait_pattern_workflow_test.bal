@@ -105,8 +105,7 @@ function testAlternateWaitBothRespond() returns error? {
 
     // Then approverB — workflow may have already completed, so ignore send errors
     WaitDecision decisionB = {approverId: "bob", approved: false};
-    error? sendErr = workflow:sendData(alternateWaitWorkflow, workflowId, "approverB", decisionB);
-    // sendErr is expected if workflow already completed after first signal
+    _ = workflow:sendData(alternateWaitWorkflow, workflowId, "approverB", decisionB);
 
     anydata result = check workflow:getWorkflowResult(workflowId, 30);
 

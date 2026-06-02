@@ -81,6 +81,10 @@ isolated function htNotifyEscalation(string orderId, string taskName, string tim
 // ================================================================================
 
 # Standard expense approval: waits for a human decision, processes or rejects.
+#
+# + ctx - Workflow context
+# + input - Expense request details
+# + return - Approval result, or an error if a step fails
 @workflow:Workflow
 function expenseApprovalWorkflow(workflow:Context ctx, ExpenseRequest input) returns ExpenseResult|error {
     string _ = check ctx->callActivity(htValidateExpense, {"orderId": input.orderId});
@@ -100,6 +104,10 @@ function expenseApprovalWorkflow(workflow:Context ctx, ExpenseRequest input) ret
 }
 
 # Expense approval with a 5-second timeout and escalation on timeout.
+#
+# + ctx - Workflow context
+# + input - Expense request details
+# + return - Approval result, or an error if a step fails
 @workflow:Workflow
 function expenseApprovalWithTimeoutWorkflow(workflow:Context ctx, ExpenseRequest input) returns ExpenseResult|error {
     string _ = check ctx->callActivity(htValidateExpense, {"orderId": input.orderId});
@@ -134,6 +142,10 @@ function expenseApprovalWithTimeoutWorkflow(workflow:Context ctx, ExpenseRequest
 }
 
 # Expense approval using only the required taskName field (all other fields take defaults).
+#
+# + ctx - Workflow context
+# + input - Expense request details
+# + return - Approval result, or an error if a step fails
 @workflow:Workflow
 function expenseApprovalMinimalWorkflow(workflow:Context ctx, ExpenseRequest input) returns ExpenseResult|error {
     ApprovalDecision decision = check ctx->callHumanTask({
@@ -148,6 +160,10 @@ function expenseApprovalMinimalWorkflow(workflow:Context ctx, ExpenseRequest inp
 }
 
 # Expense approval requiring either a FINANCE_APPROVER or MANAGER role.
+#
+# + ctx - Workflow context
+# + input - Expense request details
+# + return - Approval result, or an error if a step fails
 @workflow:Workflow
 function expenseApprovalMultiRoleWorkflow(workflow:Context ctx, ExpenseRequest input) returns ExpenseResult|error {
     ApprovalDecision decision = check ctx->callHumanTask({

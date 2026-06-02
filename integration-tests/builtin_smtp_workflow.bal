@@ -45,6 +45,11 @@ public type GreenMail handle;
 public const int SMTP_TEST_PORT = 3025;
 
 # Constructs a `ServerSetup` configured for SMTP on the given port.
+#
+# + port - TCP port the SMTP server will listen on
+# + bindAddress - Host/IP address to bind (Java `String` handle)
+# + protocol - Protocol name, e.g. `"smtp"` (Java `String` handle)
+# + return - Opaque handle to the constructed `ServerSetup`
 isolated function newServerSetup(int port, handle bindAddress, handle protocol)
         returns handle = @java:Constructor {
     'class: "com.icegreen.greenmail.util.ServerSetup",
@@ -52,12 +57,17 @@ isolated function newServerSetup(int port, handle bindAddress, handle protocol)
 } external;
 
 # Constructs a `GreenMail` instance with a single `ServerSetup`.
+#
+# + setup - Handle to the `ServerSetup` that configures the embedded server
+# + return - New `GreenMail` instance
 isolated function newGreenMail(handle setup) returns GreenMail = @java:Constructor {
     'class: "com.icegreen.greenmail.util.GreenMail",
     paramTypes: ["com.icegreen.greenmail.util.ServerSetup"]
 } external;
 
 # Starts the embedded server.
+#
+# + gm - Handle to the `GreenMail` instance
 isolated function gmStart(handle gm) = @java:Method {
     name: "start",
     'class: "com.icegreen.greenmail.util.GreenMail",
@@ -65,6 +75,8 @@ isolated function gmStart(handle gm) = @java:Method {
 } external;
 
 # Stops the embedded server.
+#
+# + gm - Handle to the `GreenMail` instance
 isolated function gmStop(handle gm) = @java:Method {
     name: "stop",
     'class: "com.icegreen.greenmail.util.GreenMail",
@@ -72,6 +84,12 @@ isolated function gmStop(handle gm) = @java:Method {
 } external;
 
 # Provisions a user mailbox so the SMTP server accepts authenticated submissions.
+#
+# + gm - Handle to the `GreenMail` instance
+# + email - Email address (Java `String` handle)
+# + login - SMTP login username (Java `String` handle)
+# + password - SMTP login password (Java `String` handle)
+# + return - Opaque handle returned by `GreenMail.setUser`
 isolated function gmSetUser(handle gm, handle email, handle login, handle password)
         returns handle = @java:Method {
     name: "setUser",
@@ -80,6 +98,9 @@ isolated function gmSetUser(handle gm, handle email, handle login, handle passwo
 } external;
 
 # Returns a handle to the received SMTP messages array.
+#
+# + gm - Handle to the `GreenMail` instance
+# + return - Handle to the Java `MimeMessage[]` array of received messages
 isolated function gmReceivedMessages(handle gm) returns handle = @java:Method {
     name: "getReceivedMessages",
     'class: "com.icegreen.greenmail.util.GreenMail",
@@ -87,6 +108,9 @@ isolated function gmReceivedMessages(handle gm) returns handle = @java:Method {
 } external;
 
 # Returns the length of a Java array referenced by the given handle.
+#
+# + array - Handle to a Java array object
+# + return - Number of elements in the array
 isolated function arrayLength(handle array) returns int = @java:Method {
     name: "getLength",
     'class: "java.lang.reflect.Array",
@@ -94,12 +118,17 @@ isolated function arrayLength(handle array) returns int = @java:Method {
 } external;
 
 # Returns the count of received SMTP messages.
+#
+# + gm - The `GreenMail` instance to query
+# + return - Number of messages received so far
 public isolated function gmReceivedCount(GreenMail gm) returns int {
     return arrayLength(gmReceivedMessages(gm));
 }
 
 # Convenience: starts a GreenMail SMTP server on the configured test port and
 # provisions a single user.
+#
+# + return - Running `GreenMail` instance, or an error if startup fails
 public isolated function startSmtpFixture() returns GreenMail|error {
     handle setup = newServerSetup(SMTP_TEST_PORT, java:fromString("127.0.0.1"),
             java:fromString("smtp"));

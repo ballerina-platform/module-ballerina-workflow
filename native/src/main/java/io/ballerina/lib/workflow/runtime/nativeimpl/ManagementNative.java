@@ -552,4 +552,486 @@ public final class ManagementNative {
             default                                         -> "UNKNOWN";
         };
     }
+
+    // -------------------------------------------------------------------------
+    // completeHumanTask (management module entry point)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Completes a pending human task. Delegates to
+     * {@link WorkflowNative#completeHumanTask(BString, Object, Object)}.
+     *
+     * @param taskWorkflowId the Temporal workflow ID of the human task child workflow
+     * @param result         the value to return to the waiting workflow
+     * @param callerRoles    optional caller roles for authorization enforcement
+     * @return {@code null} on success, or a Ballerina error
+     */
+    public static Object completeHumanTask(BString taskWorkflowId, Object result, Object callerRoles) {
+        return WorkflowNative.completeHumanTask(taskWorkflowId, result, callerRoles);
+    }
+
+    // -------------------------------------------------------------------------
+    // MANUAL RETRY TASKS
+    // -------------------------------------------------------------------------
+
+    /**
+     * Sends a {@code "taskDecision"} signal to the retry task child workflow identified
+     * by {@code taskWorkflowId}, resolving the manual retry with the supplied decision.
+     *
+     * @param taskWorkflowId the Temporal workflow ID of the retry task child workflow
+     * @param decision       the {@code RetryDecision} BMap ({@code action} + optional {@code input})
+     * @param callerRoles    optional caller roles for authorization enforcement
+     * @return {@code null} on success, or a Ballerina error
+     */
+    @SuppressWarnings("unchecked")
+    public static Object completeRetryTask(BString taskWorkflowId, BMap<BString, Object> decision,
+            Object callerRoles) {
+        try {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+
+            // Validate workflowKind and optionally enforce caller roles
+            BArray callerRolesArray = (callerRoles instanceof BArray ba) ? ba : null;
+            Object validationError = validateRetryTaskAndRoles(
+                    client, taskWorkflowId.getValue(), callerRolesArray);
+            if (validationError != null) {
+                return validationError;
+            }
+
+            // Convert RetryDecision BMap → serializable Java map
+            Map<String, Object> javaDecision = new java.util.LinkedHashMap<>();
+            Object actionVal = decision.get(StringUtils.fromString("action"));
+            javaDecision.put("action", actionVal != null ? actionVal.toString() : "fail");
+
+            Object inputVal = decision.get(StringUtils.fromString("input"));
+            if (inputVal != null) {
+                javaDecision.put("input",
+                        io.ballerina.lib.workflow.utils.TypesUtil.convertBallerinaToJavaType(inputVal));
+            }
+
+            boolean delivered = io.ballerina.lib.workflow.runtime.WorkflowRuntime.getInstance()
+                    .sendSignalToWorkflow(taskWorkflowId.getValue(), "taskDecision", javaDecision);
+
+            if (!delivered) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Failed to complete retry task: task '" + taskWorkflowId.getValue()
+                                + "' was no longer running when signal was delivered"));
+            }
+            return null;
+        } catch (Exception e) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to complete retry task: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Validates that {@code taskWorkflowId} is a running RETRY_TASK workflow and optionally
+     * checks that at least one of the caller's roles appears in the task's {@code userRoles}.
+     *
+     * @return {@code null} if all checks pass, or a Ballerina error
+     */
+    @SuppressWarnings("unchecked")
+    private static Object validateRetryTaskAndRoles(WorkflowClient client, String taskWorkflowId,
+            BArray callerRolesArray) {
+        try {
+            io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest req =
+                    io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest.newBuilder()
+                            .setNamespace(client.getOptions().getNamespace())
+                            .setExecution(io.temporal.api.common.v1.WorkflowExecution.newBuilder()
+                                    .setWorkflowId(taskWorkflowId)
+                                    .build())
+                            .build();
+
+            io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionResponse resp =
+                    client.getWorkflowServiceStubs().blockingStub()
+                            .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                            .describeWorkflowExecution(req);
+
+            io.temporal.api.workflow.v1.WorkflowExecutionInfo execInfo =
+                    resp.getWorkflowExecutionInfo();
+
+            WorkflowExecutionStatus execStatus = execInfo.getStatus();
+            if (execStatus != WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Retry task '" + taskWorkflowId + "' is not running (status="
+                                + convertStatus(execStatus) + ")"));
+            }
+
+            Map<String, io.temporal.api.common.v1.Payload> memoFields =
+                    execInfo.getMemo().getFieldsMap();
+            io.temporal.common.converter.DataConverter dc = client.getOptions().getDataConverter();
+
+            // workflowKind check
+            String workflowKind = decodeMemoString(dc, memoFields, "workflowKind", null);
+            if (!"RETRY_TASK".equals(workflowKind)) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Invalid task: '" + taskWorkflowId
+                                + "' is not a retry task workflow (workflowKind="
+                                + workflowKind + ")"));
+            }
+
+            if (callerRolesArray == null) {
+                return null;
+            }
+
+            java.util.Set<String> allowedRoles = new java.util.HashSet<>();
+            try {
+                io.temporal.api.common.v1.Payload rolesPl = memoFields.get("userRoles");
+                if (rolesPl != null) {
+                    String[] rolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
+                    allowedRoles.addAll(java.util.Arrays.asList(rolesArr));
+                }
+            } catch (Exception e) {
+                LOGGER.debug("Could not decode userRoles from retry task memo; skipping role check: {}",
+                        e.getMessage());
+                return null;
+            }
+
+            if (allowedRoles.isEmpty()) {
+                return null;
+            }
+
+            for (int i = 0; i < callerRolesArray.size(); i++) {
+                if (allowedRoles.contains(callerRolesArray.get(i).toString())) {
+                    return null;
+                }
+            }
+
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Unauthorized: caller does not have a required role to complete retry task '"
+                            + taskWorkflowId + "'. Required one of: " + allowedRoles));
+
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to validate retry task '" + taskWorkflowId + "': " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Scans the parent workflow's event history for child retry task workflows and
+     * returns them as {@code RetryTaskSummary} records sorted alphabetically by task name.
+     * <p>
+     * Child workflow ID format: {@code retrytask-{parentId}-{taskName}-{uuid}}
+     * where UUID is always 36 characters.
+     *
+     * @param parentWorkflowId the parent workflow ID
+     * @return a Ballerina {@code RetryTaskSummary[]} or an error
+     */
+    public static Object listPendingRetryTasks(BString parentWorkflowId) {
+        try {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+
+            String parentId = parentWorkflowId.getValue();
+            String prefix = "retrytask-" + parentId + "-";
+
+            java.util.TreeMap<String, List<String>> byTaskName = new java.util.TreeMap<>();
+            com.google.protobuf.ByteString nextPageToken = com.google.protobuf.ByteString.EMPTY;
+
+            do {
+                GetWorkflowExecutionHistoryRequest req = GetWorkflowExecutionHistoryRequest.newBuilder()
+                        .setNamespace(client.getOptions().getNamespace())
+                        .setExecution(io.temporal.api.common.v1.WorkflowExecution.newBuilder()
+                                .setWorkflowId(parentId)
+                                .build())
+                        .setNextPageToken(nextPageToken)
+                        .build();
+
+                GetWorkflowExecutionHistoryResponse resp = client.getWorkflowServiceStubs()
+                        .blockingStub()
+                        .withDeadlineAfter(10, TimeUnit.SECONDS)
+                        .getWorkflowExecutionHistory(req);
+
+                for (HistoryEvent event : resp.getHistory().getEventsList()) {
+                    if (event.getEventType()
+                            == io.temporal.api.enums.v1.EventType.EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED) {
+                        String childId = event
+                                .getStartChildWorkflowExecutionInitiatedEventAttributes()
+                                .getWorkflowId();
+                        if (childId.startsWith(prefix)) {
+                            String remainder = childId.substring(prefix.length());
+                            // remainder = "{taskName}-{uuid}", UUID is always 36 chars
+                            String taskName = remainder.length() > 37
+                                    ? remainder.substring(0, remainder.length() - 37)
+                                    : remainder;
+                            byTaskName.computeIfAbsent(taskName,
+                                    k -> new ArrayList<>()).add(childId);
+                        }
+                    } else {
+                        String completedChildId = getTerminalChildWorkflowId(event);
+                        if (completedChildId != null && completedChildId.startsWith(prefix)) {
+                            String remainder = completedChildId.substring(prefix.length());
+                            String taskName = remainder.length() > 37
+                                    ? remainder.substring(0, remainder.length() - 37)
+                                    : remainder;
+                            List<String> ids = byTaskName.get(taskName);
+                            if (ids != null) {
+                                ids.remove(completedChildId);
+                                if (ids.isEmpty()) {
+                                    byTaskName.remove(taskName);
+                                }
+                            }
+                        }
+                    }
+                }
+                nextPageToken = resp.getNextPageToken();
+            } while (!nextPageToken.isEmpty());
+
+            RecordType summaryType = (RecordType) ValueCreator.createRecordValue(
+                    ModuleUtils.getManagementModule(), "RetryTaskSummary").getType();
+            BArray result = ValueCreator.createArrayValue(TypeCreator.createArrayType(summaryType));
+
+            for (Map.Entry<String, List<String>> entry : byTaskName.entrySet()) {
+                for (String childId : entry.getValue()) {
+                    result.append(buildRetryTaskSummaryFromId(client, childId, entry.getKey()));
+                }
+            }
+
+            return result;
+
+        } catch (Exception e) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to list pending retry tasks: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Lists all manual retry task instances via Temporal's visibility API.
+     * Filters executions whose workflow ID starts with {@code retrytask-}.
+     *
+     * @param status optional status filter
+     * @return a Ballerina {@code RetryTaskSummary[]} or an error
+     */
+    public static Object listAllRetryTasks(Object status) {
+        try {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+
+            String statusFilter = status instanceof BString bs ? bs.getValue() : null;
+            String temporalStatus = statusFilter != null
+                    ? toHumanTaskTemporalStatus(statusFilter) : null;
+            String query = temporalStatus != null
+                    ? String.format("ExecutionStatus = \"%s\"", temporalStatus) : "";
+
+            RecordType summaryType = (RecordType) ValueCreator.createRecordValue(
+                    ModuleUtils.getManagementModule(), "RetryTaskSummary").getType();
+            BArray result = ValueCreator.createArrayValue(TypeCreator.createArrayType(summaryType));
+
+            com.google.protobuf.ByteString pageToken = com.google.protobuf.ByteString.EMPTY;
+            do {
+                ListWorkflowExecutionsRequest request = ListWorkflowExecutionsRequest.newBuilder()
+                        .setNamespace(client.getOptions().getNamespace())
+                        .setQuery(query)
+                        .setPageSize(100)
+                        .setNextPageToken(pageToken)
+                        .build();
+
+                ListWorkflowExecutionsResponse response = client.getWorkflowServiceStubs()
+                        .blockingStub()
+                        .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                        .listWorkflowExecutions(request);
+
+                for (io.temporal.api.workflow.v1.WorkflowExecutionInfo wfInfo
+                        : response.getExecutionsList()) {
+                    String wfId = wfInfo.getExecution().getWorkflowId();
+                    if (!wfId.startsWith("retrytask-")) {
+                        continue;
+                    }
+                    result.append(toRetryTaskSummaryRecord(client, wfInfo));
+                }
+
+                pageToken = response.getNextPageToken();
+            } while (!pageToken.isEmpty());
+
+            return result;
+
+        } catch (Exception e) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to list retry tasks: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Returns detailed info for a single retry task by reading its Temporal memo.
+     *
+     * @param taskId the child workflow ID of the retry task
+     * @return a Ballerina {@code RetryTaskInfo} record or an error
+     */
+    @SuppressWarnings("unchecked")
+    public static Object getRetryTaskInfo(BString taskId) {
+        try {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+
+            String taskIdStr = taskId.getValue();
+
+            io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest request =
+                    io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest.newBuilder()
+                            .setNamespace(client.getOptions().getNamespace())
+                            .setExecution(io.temporal.api.common.v1.WorkflowExecution.newBuilder()
+                                    .setWorkflowId(taskIdStr)
+                                    .build())
+                            .build();
+
+            io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionResponse response =
+                    client.getWorkflowServiceStubs().blockingStub()
+                            .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                            .describeWorkflowExecution(request);
+
+            io.temporal.api.workflow.v1.WorkflowExecutionInfo execInfo =
+                    response.getWorkflowExecutionInfo();
+            Map<String, io.temporal.api.common.v1.Payload> memoFields =
+                    execInfo.getMemo().getFieldsMap();
+            io.temporal.common.converter.DataConverter dc = client.getOptions().getDataConverter();
+
+            String activityName  = decodeMemoString(dc, memoFields, "activityName", "");
+            String taskName      = decodeMemoString(dc, memoFields, "taskName", "");
+            String parentId      = decodeMemoString(dc, memoFields, "parentWorkflowId", "");
+            String errorMessage  = decodeMemoString(dc, memoFields, "errorMessage", "");
+            String createdAt     = decodeMemoString(dc, memoFields, "createdAt", "");
+
+            String[] userRolesArr = new String[0];
+            try {
+                io.temporal.api.common.v1.Payload rolesPl = memoFields.get("userRoles");
+                if (rolesPl != null) {
+                    userRolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
+                }
+            } catch (Exception e) {
+                LOGGER.debug("Could not decode userRoles memo field: {}", e.getMessage());
+            }
+
+            Object activityArgsRaw = null;
+            try {
+                io.temporal.api.common.v1.Payload argsPl = memoFields.get("activityArgs");
+                if (argsPl != null) {
+                    activityArgsRaw = dc.fromPayload(argsPl, Object.class, Object.class);
+                }
+            } catch (Exception e) {
+                LOGGER.debug("Could not decode activityArgs memo field: {}", e.getMessage());
+            }
+
+            String statusStr = convertStatus(execInfo.getStatus());
+            com.google.protobuf.Timestamp st = execInfo.getStartTime();
+            String startTime = Instant.ofEpochSecond(st.getSeconds(), st.getNanos()).toString();
+            String closeTime = null;
+            com.google.protobuf.Timestamp ct = execInfo.getCloseTime();
+            if (ct.getSeconds() > 0 || ct.getNanos() > 0) {
+                closeTime = Instant.ofEpochSecond(ct.getSeconds(), ct.getNanos()).toString();
+            }
+
+            BMap<BString, Object> record = ValueCreator.createRecordValue(
+                    ModuleUtils.getManagementModule(), "RetryTaskInfo");
+            record.put(StringUtils.fromString("taskId"), StringUtils.fromString(taskIdStr));
+            record.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+            record.put(StringUtils.fromString("activityName"), StringUtils.fromString(activityName));
+            record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentId));
+            record.put(StringUtils.fromString("status"), StringUtils.fromString(statusStr));
+            record.put(StringUtils.fromString("startTime"), StringUtils.fromString(startTime));
+            record.put(StringUtils.fromString("closeTime"),
+                    closeTime != null ? StringUtils.fromString(closeTime) : null);
+
+            BArray roles = ValueCreator.createArrayValue(
+                    TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING));
+            for (String role : userRolesArr) {
+                roles.append(StringUtils.fromString(role));
+            }
+            record.put(StringUtils.fromString("userRoles"), roles);
+            record.put(StringUtils.fromString("errorMessage"), StringUtils.fromString(errorMessage));
+
+            Object bArgs = activityArgsRaw != null
+                    ? io.ballerina.lib.workflow.utils.TypesUtil.convertJavaToBallerinaType(activityArgsRaw)
+                    : null;
+            record.put(StringUtils.fromString("activityArgs"), bArgs);
+            record.put(StringUtils.fromString("createdAt"), StringUtils.fromString(createdAt));
+
+            return record;
+
+        } catch (Exception e) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to get retry task info: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Builds a minimal {@code RetryTaskSummary} record from a known task ID by calling
+     * {@code DescribeWorkflowExecution} to read status and timestamps. Reads {@code taskName}
+     * and {@code activityName} from memo.
+     */
+    @SuppressWarnings("unchecked")
+    private static BMap<BString, Object> buildRetryTaskSummaryFromId(
+            WorkflowClient client, String taskId, String fallbackTaskName) {
+        try {
+            io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionResponse resp =
+                    client.getWorkflowServiceStubs().blockingStub()
+                            .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                            .describeWorkflowExecution(
+                                    io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest.newBuilder()
+                                            .setNamespace(client.getOptions().getNamespace())
+                                            .setExecution(io.temporal.api.common.v1.WorkflowExecution.newBuilder()
+                                                    .setWorkflowId(taskId).build())
+                                            .build());
+            return toRetryTaskSummaryRecord(client, resp.getWorkflowExecutionInfo());
+        } catch (Exception e) {
+            // Fallback: minimal record with the info we already have
+            BMap<BString, Object> record = ValueCreator.createRecordValue(
+                    ModuleUtils.getManagementModule(), "RetryTaskSummary");
+            record.put(StringUtils.fromString("taskId"), StringUtils.fromString(taskId));
+            record.put(StringUtils.fromString("taskName"), StringUtils.fromString(fallbackTaskName));
+            record.put(StringUtils.fromString("activityName"), StringUtils.fromString(""));
+            record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(""));
+            record.put(StringUtils.fromString("status"), StringUtils.fromString("UNKNOWN"));
+            record.put(StringUtils.fromString("startTime"), StringUtils.fromString(""));
+            record.put(StringUtils.fromString("closeTime"), null);
+            return record;
+        }
+    }
+
+    /**
+     * Converts a {@link io.temporal.api.workflow.v1.WorkflowExecutionInfo} to a Ballerina
+     * {@code RetryTaskSummary} record. Reads {@code taskName}, {@code activityName}, and
+     * {@code parentWorkflowId} from the execution's Temporal memo.
+     */
+    @SuppressWarnings("unchecked")
+    private static BMap<BString, Object> toRetryTaskSummaryRecord(
+            WorkflowClient client,
+            io.temporal.api.workflow.v1.WorkflowExecutionInfo wfInfo) {
+
+        String wfId = wfInfo.getExecution().getWorkflowId();
+        Map<String, io.temporal.api.common.v1.Payload> memoFields = wfInfo.getMemo().getFieldsMap();
+        io.temporal.common.converter.DataConverter dc = client.getOptions().getDataConverter();
+
+        String taskName     = decodeMemoString(dc, memoFields, "taskName", "");
+        String activityName = decodeMemoString(dc, memoFields, "activityName", "");
+        String parentId     = decodeMemoString(dc, memoFields, "parentWorkflowId", "");
+
+        BMap<BString, Object> record = ValueCreator.createRecordValue(
+                ModuleUtils.getManagementModule(), "RetryTaskSummary");
+        record.put(StringUtils.fromString("taskId"), StringUtils.fromString(wfId));
+        record.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+        record.put(StringUtils.fromString("activityName"), StringUtils.fromString(activityName));
+        record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentId));
+        record.put(StringUtils.fromString("status"),
+                StringUtils.fromString(convertStatus(wfInfo.getStatus())));
+
+        com.google.protobuf.Timestamp st = wfInfo.getStartTime();
+        record.put(StringUtils.fromString("startTime"),
+                StringUtils.fromString(Instant.ofEpochSecond(st.getSeconds(), st.getNanos()).toString()));
+
+        com.google.protobuf.Timestamp ct = wfInfo.getCloseTime();
+        if (ct.getSeconds() > 0 || ct.getNanos() > 0) {
+            record.put(StringUtils.fromString("closeTime"),
+                    StringUtils.fromString(Instant.ofEpochSecond(ct.getSeconds(), ct.getNanos()).toString()));
+        } else {
+            record.put(StringUtils.fromString("closeTime"), null);
+        }
+        return record;
+    }
 }

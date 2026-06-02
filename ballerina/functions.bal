@@ -77,7 +77,7 @@ public isolated function getWorkflowResult(string workflowId, int timeoutSeconds
 # + callerRoles - Roles held by the caller; validated against the task's configured `userRoles`
 # + return - An error if the task cannot be found, is already completed, or the caller is unauthorized
 public isolated function completeHumanTask(string taskWorkflowId, anydata result,
-        string[]? callerRoles = ()) returns error? = @java:Method {
+        [string, string...]? callerRoles = ()) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
     name: "completeHumanTask"
 } external;

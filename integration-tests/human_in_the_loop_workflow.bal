@@ -141,7 +141,7 @@ function hitlForwardRecoveryWorkflow(
         "cardToken": input.cardToken,
         "amount": input.amount,
         "shouldFail": input.shouldFailPayment
-    }, retryOnError = true, maxRetries = 2, retryDelay = 1.0, retryBackoff = 2.0);
+    }, retryPolicy = <workflow:AutoRetry>{maxRetries: 2, retryDelay: 1.0d, retryBackoff: 2.0d});
 
     if paymentResult is error {
         // Notify the review team

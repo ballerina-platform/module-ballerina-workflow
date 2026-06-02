@@ -111,8 +111,70 @@ public type HumanTaskInfo record {|
     string? closeTime;
     string title;
     string description;
-    string[] userRoles;
+    [string, string...] userRoles;
     map<json>? payload;
     string createdAt;
     string? formSchema;
+|};
+
+// ================================================================================
+// MANUAL RETRY TASK TYPES
+// ================================================================================
+
+# Decision submitted by a human to resolve a failed activity.
+#
+# + action - `"retry"` re-runs the activity with the original arguments;
+#            `"retry-with-input"` re-runs it with the `input` map overriding arguments;
+#            `"fail"` surfaces the original error back to the workflow.
+# + input - New named arguments for the activity. Only relevant when `action` is
+#           `"retry-with-input"`. Keys must match the activity's parameter names.
+public type RetryDecision record {|
+    "retry"|"retry-with-input"|"fail" action;
+    map<anydata>? input = ();
+|};
+
+# Summary of a manual retry task instance for list views.
+#
+# + taskId - Temporal workflow ID of this retry task (`retrytask-{parentId}-{taskName}-{uuid}`)
+# + taskName - User-facing task name (from `ManualRetry.taskName`, qualified with workflow type)
+# + activityName - Fully-qualified name of the failed activity (`workflowType.activityName`)
+# + parentWorkflowId - Workflow ID of the parent that triggered this task
+# + status - Current status: `PENDING` | `COMPLETED` | `CANCELED` | `TERMINATED`
+# + startTime - ISO-8601 timestamp when the task was created
+# + closeTime - ISO-8601 timestamp when the task ended, or `()` if still pending
+public type RetryTaskSummary record {|
+    string taskId;
+    string taskName;
+    string activityName;
+    string parentWorkflowId;
+    string status;
+    string startTime;
+    string? closeTime;
+|};
+
+# Detailed info about a manual retry task, including the failure context.
+#
+# + taskId - Temporal workflow ID of this retry task
+# + taskName - User-facing task name
+# + activityName - Fully-qualified name of the failed activity
+# + parentWorkflowId - Workflow ID of the parent that triggered this task
+# + status - Current status: `PENDING` | `COMPLETED` | `CANCELED` | `TERMINATED`
+# + startTime - ISO-8601 timestamp when the task was created
+# + closeTime - ISO-8601 timestamp when the task ended, or `()` if still pending
+# + userRoles - Roles permitted to complete this retry task
+# + errorMessage - Error message from the failed activity invocation
+# + activityArgs - Arguments that were passed to the failed activity invocation
+# + createdAt - ISO-8601 timestamp stored in memo at task creation
+public type RetryTaskInfo record {|
+    string taskId;
+    string taskName;
+    string activityName;
+    string parentWorkflowId;
+    string status;
+    string startTime;
+    string? closeTime;
+    [string, string...] userRoles;
+    string errorMessage;
+    map<json>? activityArgs;
+    string createdAt;
 |};

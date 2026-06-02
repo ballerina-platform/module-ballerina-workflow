@@ -141,3 +141,91 @@ public isolated function listAllHumanTasks(string? status = ()) returns HumanTas
 public isolated function getHumanTaskInfo(string taskId) returns HumanTaskInfo|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
+
+# Completes a pending human task by sending the result back to the waiting workflow.
+# This is the preferred API location; `workflow:completeHumanTask` delegates here.
+#
+# ```ballerina
+# check management:completeHumanTask(taskWorkflowId, {approved: true, comment: "LGTM"});
+# ```
+#
+# + taskWorkflowId - Temporal workflow ID of the human task child workflow
+# + result - The value to return to the workflow
+# + callerRoles - Roles held by the caller; validated against the task's configured `userRoles`
+# + return - An error if the task cannot be found, is already completed, or the caller is unauthorized
+public isolated function completeHumanTask(string taskWorkflowId, anydata result,
+        [string, string...]? callerRoles = ()) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
+// ================================================================================
+// MANUAL RETRY TASKS
+// ================================================================================
+
+# Completes a pending manual retry task by sending the human's decision back to
+# the waiting workflow. The `taskWorkflowId` is the child workflow ID of the
+# retry task, available via `listPendingRetryTasks` or `listAllRetryTasks`.
+#
+# ```ballerina
+# // Retry with original arguments
+# check management:completeRetryTask(taskId, {action: "retry"});
+#
+# // Retry with different input
+# check management:completeRetryTask(taskId, {action: "retry-with-input", input: {"orderId": "NEW-123"}});
+#
+# // Permanently fail the activity
+# check management:completeRetryTask(taskId, {action: "fail"});
+# ```
+#
+# + taskWorkflowId - Temporal workflow ID of the retry task child workflow (`retrytask-...`)
+# + decision - The retry decision: retry, retry with new input, or fail
+# + callerRoles - Roles held by the caller; validated against the task's configured `userRoles`
+# + return - An error if the task cannot be found, is already completed, or the caller is unauthorized
+public isolated function completeRetryTask(string taskWorkflowId, RetryDecision decision,
+        [string, string...]? callerRoles = ()) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
+# Returns pending manual retry task child workflows started by the given parent workflow,
+# grouped by task name and sorted alphabetically. Scans the parent's event history for
+# child workflow start events whose ID starts with the `retrytask-{parentWorkflowId}-` prefix.
+#
+# ```ballerina
+# management:RetryTaskSummary[] tasks = check management:listPendingRetryTasks(parentWorkflowId);
+# foreach management:RetryTaskSummary task in tasks {
+#     check management:completeRetryTask(task.taskId, {action: "retry"});
+# }
+# ```
+#
+# + parentWorkflowId - The Temporal workflow ID of the parent workflow
+# + return - Array of pending retry task summaries, or an error
+public isolated function listPendingRetryTasks(string parentWorkflowId) returns RetryTaskSummary[]|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
+# Lists all manual retry task instances across all parent workflows, optionally filtered
+# by status. Queries Temporal's visibility API for executions whose workflow ID starts
+# with `retrytask-`.
+#
+# ```ballerina
+# management:RetryTaskSummary[] pending = check management:listAllRetryTasks(status = "PENDING");
+# ```
+#
+# + status - Optional status filter: `PENDING` | `COMPLETED` | `CANCELED` | `TERMINATED`
+# + return - Array of retry task summaries, or an error
+public isolated function listAllRetryTasks(string? status = ()) returns RetryTaskSummary[]|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
+# Returns detailed info for a single manual retry task, including the failure context
+# and activity arguments that triggered the task.
+#
+# ```ballerina
+# management:RetryTaskInfo info = check management:getRetryTaskInfo(taskId);
+# ```
+#
+# + taskId - The child workflow ID of the retry task (`retrytask-{parentId}-{taskName}-{uuid}`)
+# + return - Full retry task info including errorMessage, activityArgs, and userRoles, or an error
+public isolated function getRetryTaskInfo(string taskId) returns RetryTaskInfo|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;

@@ -100,3 +100,8 @@ configurable int activityRetryMaximumInterval = 0;
 # - 0 means unlimited retries.
 # - Any positive value sets the retry cap.
 configurable int activityRetryMaximumAttempts = 1;
+
+# Default role granted access to human tasks and manual retry tasks when no
+# explicit `userRoles` list is supplied.
+# Override this in `Config.toml` to match your deployment's role naming convention.
+configurable string defaultAdminRole = "admin";

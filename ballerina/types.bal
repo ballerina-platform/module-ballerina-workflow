@@ -41,6 +41,38 @@ type ActivityRetryPolicy record {|
     int maximumAttempts = 1;
 |};
 
+// ---------------------------------------------------------------------------
+// Activity retry policy types
+// ---------------------------------------------------------------------------
+
+# No retry. Errors from the activity are returned directly to the caller.
+# This is the default behaviour when no `retryPolicy` is specified.
+public const NoRetry  = ();
+
+# Automatic retry configuration. When the activity fails, it is automatically
+# retried according to the configured backoff policy.
+#
+# + maxRetries - Maximum retry attempts (default: 3)
+# + retryDelay - Initial delay in seconds before the first retry (default: 1.0)
+# + retryBackoff - Multiplier applied to delay after each retry (default: 2.0)
+# + maxRetryDelay - Cap on the delay between retries, in seconds
+public type AutoRetry record {|
+    int maxRetries = 3;
+    decimal retryDelay = 1.0;
+    decimal retryBackoff = 2.0;
+    decimal maxRetryDelay?;
+|};
+
+# Manual retry configuration. When the activity fails, a retry task is created
+# so a human can decide whether to retry, retry with different input, or fail.
+#
+# + taskName - Name identifying the retry task in the task inbox
+# + userRoles - One or more roles permitted to complete this task. Defaults to `[defaultAdminRole]`.
+public type ManualRetry record {|
+    string taskName;
+    [string, string...] userRoles = [defaultAdminRole];
+|};
+
 # Options for activity execution via `callActivity`.
 #
 # + retryOnError - Enable automatic retries on failure (default: `false`)

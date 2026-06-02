@@ -91,7 +91,7 @@ function sendNotification(workflow:Context ctx, NotificationInput input) returns
     // Try email with 2 Temporal retries (3 total attempts)
     string|error emailResult = ctx->callActivity(sendEmailNotification,
             {"email": input.email, "message": input.message},
-            retryOnError = true, maxRetries = 2, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 2, retryDelay: 1.0, retryBackoff: 2.0});
 
     if emailResult is error {
         io:println("Email failed after retries: " + emailResult.message());

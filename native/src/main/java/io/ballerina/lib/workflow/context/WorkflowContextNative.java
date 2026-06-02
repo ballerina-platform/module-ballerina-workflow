@@ -77,90 +77,79 @@ public final class WorkflowContextNative {
      * The method uses dependent typing - the return type is determined by the typedesc
      * parameter and the result is converted using cloneWithType.
      * <p>
-     * By default ({@code retryOnError = false}), if the activity function returns an error,
-     * it is passed back to the workflow as a normal return value. Setting
-     * {@code retryOnError} to {@code true} enables Temporal retries based on the per-call
-     * policy ({@code maxRetries}, {@code retryDelay}, {@code retryBackoff}, {@code maxRetryDelay}).
+     * The {@code retryPolicy} parameter controls failure behaviour:
+     * <ul>
+     *   <li>{@code null} / NoRetry — the error is returned as a Ballerina value; no retry.</li>
+     *   <li>AutoRetry BMap — Temporal automatic backoff retry using the configured fields.</li>
+     *   <li>ManualRetry BMap (has {@code taskName} field) — on failure a built-in RetryTask
+     *       child workflow is started; execution blocks until a human decides to retry,
+     *       retry with different input, or permanently fail the activity.</li>
+     * </ul>
      *
      * @param self the Context BObject (self reference from Ballerina)
      * @param activityFunction the activity function to execute
-     * @param args the map<anydata> args containing arguments to pass to the activity
-     * @param options ActivityOptions record with retryOnError, maxRetries, retryDelay, retryBackoff, maxRetryDelay
+     * @param args the map&lt;anydata&gt; args containing arguments to pass to the activity
      * @param typedesc the expected return type descriptor for dependent typing
+     * @param retryPolicy null for NoRetry, AutoRetry BMap, or ManualRetry BMap
      * @return the result of the activity execution converted to the expected type, or an error
      */
     @SuppressWarnings("unchecked")
-    public static Object callActivity(BObject self, BFunctionPointer activityFunction, 
-            BMap<BString, Object> args, BTypedesc typedesc, BMap<BString, Object> options) {
+    public static Object callActivity(BObject self, BFunctionPointer activityFunction,
+            BMap<BString, Object> args, BTypedesc typedesc, Object retryPolicy) {
         try {
-            // Get the activity name from the function pointer
             String simpleActivityName = activityFunction.getType().getName();
-            
-            // Get the current workflow type from Temporal context to build the full activity name
-            // Activities are registered as "workflowType.activityName"
             String workflowType = Workflow.getInfo().getWorkflowType();
             String fullActivityName = workflowType + "." + simpleActivityName;
 
-            // Convert args map (BMap) to a Java Map for Temporal serialization.
-            // We pass the entire named map as a single argument so that the
-            // BallerinaActivityAdapter can reconstruct positional args using the
-            // function's parameter names. This avoids misalignment when optional
-            // parameters are omitted from the args map.
-            //
-            // Client object values (declared parameter type is `client object`)
-            // cannot be serialized, so they are first replaced with the marker
-            // string "connection:<name>" via the connection registry. The
-            // activity-side adapter resolves the marker back to the BObject
-            // before invoking the activity function.
             Map<String, Object> namedArgs = convertArgsMapWithConnectionMarkers(args);
 
-            // Parse ActivityOptions from the included record param
-            boolean retryOnError = false;
-
-            // Extract retryOnError flag (default: false — errors are returned as values)
-            Object retryOnErrorVal = options.get(StringUtils.fromString(RETRY_ON_ERROR_KEY));
-            if (retryOnErrorVal instanceof Boolean) {
-                retryOnError = (Boolean) retryOnErrorVal;
+            // Classify the retry policy
+            boolean isManualRetry = false;
+            boolean isAutoRetry = false;
+            BMap<BString, Object> retryPolicyMap = null;
+            if (retryPolicy instanceof BMap<?, ?>) {
+                retryPolicyMap = (BMap<BString, Object>) retryPolicy;
+                isManualRetry = retryPolicyMap.containsKey(StringUtils.fromString("taskName"));
+                isAutoRetry = !isManualRetry;
             }
 
+            // Build the call config map forwarded to the activity adapter
+            Map<String, Object> callConfig = new HashMap<>();
+            callConfig.put(CALL_CONFIG_MARKER, true);
+            callConfig.put(RETRY_ON_ERROR_KEY, isAutoRetry);
+
+            if (isManualRetry) {
+                // Manual retry: run activity in a loop; on failure start a RetryTask
+                // child workflow and wait for a human decision.
+                return executeWithManualRetry(
+                        fullActivityName, workflowType, namedArgs, callConfig,
+                        retryPolicyMap, typedesc);
+            }
+
+            // AutoRetry or NoRetry — single Temporal activity invocation
             io.temporal.activity.ActivityOptions.Builder optionsBuilder =
                     io.temporal.activity.ActivityOptions.newBuilder()
-                        .setStartToCloseTimeout(java.time.Duration.ofMinutes(5));
+                            .setStartToCloseTimeout(java.time.Duration.ofMinutes(5));
 
-            if (!retryOnError) {
-                // retryOnError=false: disable Temporal retries so errors surface as return values
+            if (!isAutoRetry) {
                 optionsBuilder.setRetryOptions(
                         io.temporal.common.RetryOptions.newBuilder()
                                 .setMaximumAttempts(1)
                                 .build());
             } else {
-                // retryOnError=true: build retry policy from per-call flat fields
-                optionsBuilder.setRetryOptions(buildPerCallRetryOptions(options));
+                optionsBuilder.setRetryOptions(buildPerCallRetryOptions(retryPolicyMap));
             }
 
-            io.temporal.activity.ActivityOptions activityOptions = optionsBuilder.build();
             io.temporal.workflow.ActivityStub activityStub =
-                    Workflow.newUntypedActivityStub(activityOptions);
+                    Workflow.newUntypedActivityStub(optionsBuilder.build());
 
-            // Pass the retryOnError flag to the activity adapter as a call config map
-            // The adapter receives [namedArgs, callConfig] as Temporal arguments
-            Map<String, Object> callConfig = new HashMap<>();
-            callConfig.put(CALL_CONFIG_MARKER, true);
-            callConfig.put(RETRY_ON_ERROR_KEY, retryOnError);
-
-            // Execute the activity through Temporal's activity mechanism with the full name
             Object result = activityStub.execute(fullActivityName, Object.class,
-                    new Object[] { namedArgs, callConfig });
+                    new Object[]{namedArgs, callConfig});
 
-            // Convert result back to Ballerina type
             Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(result);
-            
-            // Use cloneWithType to convert to the expected type from typedesc
-            Type targetType = typedesc.getDescribingType();
-            return TypesUtil.cloneWithType(ballerinaResult, targetType);
+            return TypesUtil.cloneWithType(ballerinaResult, typedesc.getDescribingType());
 
         } catch (io.temporal.failure.ActivityFailure e) {
-            // Activity failed - extract the original error message from the cause
             Throwable cause = e.getCause();
             String errorMsg;
             if (cause instanceof io.temporal.failure.ApplicationFailure appFailure) {
@@ -168,15 +157,10 @@ public final class WorkflowContextNative {
             } else {
                 errorMsg = cause != null ? cause.getMessage() : e.getMessage();
             }
-            return ErrorCreator.createError(
-                    StringUtils.fromString(errorMsg));
+            return ErrorCreator.createError(StringUtils.fromString(errorMsg));
         } catch (io.temporal.worker.NonDeterministicException e) {
-            // Re-throw non-determinism exceptions so Temporal's replay engine handles them.
-            // Swallowing this would produce FAIL_WORKFLOW_EXECUTION instead of the expected
-            // next command, causing a cascade of NonDeterministicException SEVERE log entries.
             throw e;
         } catch (io.temporal.failure.TemporalFailure e) {
-            // Re-throw other Temporal failures (cancellation, etc.) — not activity errors.
             throw e;
         } catch (Exception e) {
             return ErrorCreator.createError(
@@ -185,28 +169,190 @@ public final class WorkflowContextNative {
     }
 
     /**
-     * Builds a Temporal {@link io.temporal.common.RetryOptions} from the flat per-call
-     * {@code ActivityOptions} fields ({@code maxRetries}, {@code retryDelay},
-     * {@code retryBackoff}, {@code maxRetryDelay}).
+     * Executes the given activity in a loop, starting a built-in RetryTask child workflow
+     * whenever the activity fails, and repeating based on the human's decision.
+     * <p>
+     * Loop exits when:
+     * <ul>
+     *   <li>The activity succeeds — result is returned.</li>
+     *   <li>The human chooses {@code "fail"} — the original error is returned.</li>
+     * </ul>
+     * Between attempts the human can choose {@code "retry"} (same args) or
+     * {@code "retry-with-input"} (override args map).
+     */
+    @SuppressWarnings("unchecked")
+    private static Object executeWithManualRetry(
+            String fullActivityName,
+            String workflowType,
+            Map<String, Object> initialArgs,
+            Map<String, Object> callConfig,
+            BMap<BString, Object> manualRetryPolicy,
+            BTypedesc typedesc) {
+
+        io.temporal.activity.ActivityOptions activityOptions =
+                io.temporal.activity.ActivityOptions.newBuilder()
+                        .setStartToCloseTimeout(java.time.Duration.ofMinutes(5))
+                        .setRetryOptions(io.temporal.common.RetryOptions.newBuilder()
+                                .setMaximumAttempts(1)
+                                .build())
+                        .build();
+        io.temporal.workflow.ActivityStub activityStub =
+                Workflow.newUntypedActivityStub(activityOptions);
+
+        Map<String, Object> currentArgs = initialArgs;
+        String lastErrorMsg = null;
+
+        while (true) {
+            try {
+                Object result = activityStub.execute(fullActivityName, Object.class,
+                        new Object[]{currentArgs, callConfig});
+                Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(result);
+                return TypesUtil.cloneWithType(ballerinaResult, typedesc.getDescribingType());
+
+            } catch (io.temporal.failure.ActivityFailure e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof io.temporal.failure.ApplicationFailure appFailure) {
+                    lastErrorMsg = appFailure.getOriginalMessage();
+                } else {
+                    lastErrorMsg = cause != null ? cause.getMessage() : e.getMessage();
+                }
+            }
+
+            // Activity failed — start a RetryTask child workflow and await the human decision
+            Map<String, Object> decision = callBuiltinRetryTask(
+                    manualRetryPolicy, fullActivityName, currentArgs, lastErrorMsg, workflowType);
+
+            String action = decision.containsKey("action")
+                    ? String.valueOf(decision.get("action"))
+                    : "fail";
+
+            switch (action) {
+                case "retry" -> {
+                    // Re-run with the same arguments
+                }
+                case "retry-with-input" -> {
+                    // Replace args with the new input map provided by the human
+                    Object newInput = decision.get("input");
+                    if (newInput instanceof Map<?, ?> inputMap) {
+                        currentArgs = (Map<String, Object>) inputMap;
+                    }
+                    // else: keep existing args (safety fallback)
+                }
+                default -> {
+                    // "fail" or any unknown action — surface the original error
+                    return ErrorCreator.createError(
+                            StringUtils.fromString(lastErrorMsg != null ? lastErrorMsg
+                                    : "Activity failed and manual retry decision was 'fail'"));
+                }
+            }
+        }
+    }
+
+    /**
+     * Starts a built-in RetryTask child workflow and blocks until a human sends a
+     * {@code "taskDecision"} signal. Returns the signal payload map
+     * ({@code action}, optionally {@code input}).
+     */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> callBuiltinRetryTask(
+            BMap<BString, Object> manualRetryPolicy,
+            String fullActivityName,
+            Map<String, Object> activityArgs,
+            String errorMessage,
+            String workflowType) {
+
+        String taskName = ((BString) manualRetryPolicy.get(
+                StringUtils.fromString("taskName"))).getValue();
+
+        // Qualify with workflow type for namespace isolation
+        String qualifiedTaskName = workflowType + "." + taskName;
+
+        io.ballerina.runtime.api.values.BArray rolesArray =
+                (io.ballerina.runtime.api.values.BArray)
+                        manualRetryPolicy.get(StringUtils.fromString("userRoles"));
+        java.util.List<String> userRoles = new java.util.ArrayList<>();
+        if (rolesArray != null) {
+            for (int i = 0; i < rolesArray.size(); i++) {
+                userRoles.add(rolesArray.get(i).toString());
+            }
+        }
+        if (userRoles.isEmpty()) {
+            userRoles.add("admin");
+        }
+
+        String parentWorkflowId = Workflow.getInfo().getWorkflowId();
+        String retryTaskId = "retrytask-" + parentWorkflowId + "-"
+                + qualifiedTaskName + "-" + Workflow.randomUUID();
+
+        // Ensure the built-in retry task workflow type is registered
+        WorkflowWorkerNative.ensureRetryTaskRegistered();
+
+        // Memo — readable without fetching full history
+        Map<String, Object> memo = new HashMap<>();
+        memo.put("workflowKind", "RETRY_TASK");
+        memo.put("activityName", fullActivityName);
+        memo.put("taskName", qualifiedTaskName);
+        memo.put("parentWorkflowId", parentWorkflowId);
+        memo.put("userRoles", userRoles);
+        memo.put("errorMessage", errorMessage != null ? errorMessage : "");
+        memo.put("activityArgs", activityArgs);
+        memo.put("createdAt",
+                java.time.Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString());
+
+        // Input passed into the child workflow's execute()
+        Map<String, Object> inputs = new HashMap<>();
+        inputs.put("activityName", fullActivityName);
+        inputs.put("taskName", qualifiedTaskName);
+        inputs.put("parentWorkflowId", parentWorkflowId);
+        inputs.put("userRoles", userRoles);
+        inputs.put("errorMessage", errorMessage != null ? errorMessage : "");
+        inputs.put("activityArgs", activityArgs);
+
+        io.temporal.workflow.ChildWorkflowOptions childOptions =
+                io.temporal.workflow.ChildWorkflowOptions.newBuilder()
+                        .setWorkflowId(retryTaskId)
+                        .setParentClosePolicy(
+                                io.temporal.api.enums.v1.ParentClosePolicy.PARENT_CLOSE_POLICY_TERMINATE)
+                        .setMemo(memo)
+                        .build();
+
+        io.temporal.workflow.ChildWorkflowStub childStub =
+                Workflow.newUntypedChildWorkflowStub(
+                        WorkflowWorkerNative.RETRYTASK_WORKFLOW_TYPE, childOptions);
+
+        Object rawResult = childStub.execute(Object.class, inputs);
+
+        if (rawResult instanceof Map<?, ?> resultMap) {
+            return (Map<String, Object>) resultMap;
+        }
+        // Fallback: treat any unexpected result as "fail"
+        Map<String, Object> failDecision = new HashMap<>();
+        failDecision.put("action", "fail");
+        return failDecision;
+    }
+
+    /**
+     * Builds Temporal {@link io.temporal.common.RetryOptions} from an {@code AutoRetry} BMap.
+     * Fields: {@code maxRetries}, {@code retryDelay}, {@code retryBackoff}, {@code maxRetryDelay}.
      *
-     * @param options the ActivityOptions BMap passed to callActivity
-     * @return RetryOptions configured from the per-call fields
+     * @param autoRetryMap the AutoRetry BMap passed as retryPolicy
+     * @return configured RetryOptions
      */
     private static io.temporal.common.RetryOptions buildPerCallRetryOptions(
-            BMap<BString, Object> options) {
+            BMap<BString, Object> autoRetryMap) {
         io.temporal.common.RetryOptions.Builder builder =
                 io.temporal.common.RetryOptions.newBuilder();
 
         // maxRetries → maximumAttempts (maxRetries=0 means 1 total attempt, no retries)
-        Object maxRetriesVal = options.get(StringUtils.fromString("maxRetries"));
-        int maxRetries = 0;
+        Object maxRetriesVal = autoRetryMap.get(StringUtils.fromString("maxRetries"));
+        int maxRetries = 3; // AutoRetry default
         if (maxRetriesVal instanceof Long longVal) {
             maxRetries = Math.toIntExact(longVal);
         }
         builder.setMaximumAttempts(maxRetries + 1);
 
         // retryDelay → initialInterval (decimal seconds)
-        Object retryDelayVal = options.get(StringUtils.fromString("retryDelay"));
+        Object retryDelayVal = autoRetryMap.get(StringUtils.fromString("retryDelay"));
         if (retryDelayVal instanceof io.ballerina.runtime.api.values.BDecimal bDecimal) {
             double delaySeconds = bDecimal.floatValue();
             if (delaySeconds > 0) {
@@ -216,7 +362,7 @@ public final class WorkflowContextNative {
         }
 
         // retryBackoff → backoffCoefficient
-        Object retryBackoffVal = options.get(StringUtils.fromString("retryBackoff"));
+        Object retryBackoffVal = autoRetryMap.get(StringUtils.fromString("retryBackoff"));
         if (retryBackoffVal instanceof io.ballerina.runtime.api.values.BDecimal bDecimal) {
             double backoff = bDecimal.floatValue();
             if (backoff >= 1.0) {
@@ -225,7 +371,7 @@ public final class WorkflowContextNative {
         }
 
         // maxRetryDelay → maximumInterval (optional, decimal seconds)
-        Object maxRetryDelayVal = options.get(StringUtils.fromString("maxRetryDelay"));
+        Object maxRetryDelayVal = autoRetryMap.get(StringUtils.fromString("maxRetryDelay"));
         if (maxRetryDelayVal instanceof io.ballerina.runtime.api.values.BDecimal bDecimal) {
             double maxDelaySeconds = bDecimal.floatValue();
             if (maxDelaySeconds > 0) {

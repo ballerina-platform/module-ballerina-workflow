@@ -114,7 +114,7 @@ function transferFunds(workflow:Context ctx, TransferInput input) returns string
     string|error creditResult = ctx->callActivity(creditAccount, {
         "accountId": input.destAccount,
         "amount": input.amount
-    }, retryOnError = true, maxRetries = 2, retryDelay = 1.0, retryBackoff = 2.0);
+    }, retryPolicy = {maxRetries: 2, retryDelay: 1.0, retryBackoff: 2.0});
 
     if creditResult is error {
         io:println("Step 2 failed after retries: " + creditResult.message());

@@ -24,13 +24,15 @@ import ballerina/workflow;
 import ballerina/workflow.management;
 import ballerina/lang.runtime;
 
-function waitForPendingRetryTask(string parentWorkflowId, decimal timeoutSecs = 12)
-        returns management:RetryTaskSummary|error {
+function waitForPendingRetryTask(string parentWorkflowId, decimal timeoutSecs = 12,
+        string? excludeTaskId = ()) returns management:RetryTaskSummary|error {
     decimal elapsed = 0.0d;
     while elapsed < timeoutSecs {
         management:RetryTaskSummary[] tasks = check management:listPendingRetryTasks(parentWorkflowId);
-        if tasks.length() > 0 {
-            return tasks[0];
+        foreach management:RetryTaskSummary task in tasks {
+            if excludeTaskId is () || task.taskId != excludeTaskId {
+                return task;
+            }
         }
         runtime:sleep(0.3d);
         elapsed += 0.3d;
@@ -326,7 +328,8 @@ function testManualRetrySameInputThenFail() returns error? {
     management:RetryTaskSummary firstTask = check waitForPendingRetryTask(workflowId);
     check management:completeRetryTask(firstTask.taskId, {action: "retry"});
 
-    management:RetryTaskSummary secondTask = check waitForPendingRetryTask(workflowId);
+    management:RetryTaskSummary secondTask = check waitForPendingRetryTask(workflowId,
+            excludeTaskId = firstTask.taskId);
     test:assertTrue(secondTask.taskId != firstTask.taskId,
         "A new retry task should be created after retry decision");
 

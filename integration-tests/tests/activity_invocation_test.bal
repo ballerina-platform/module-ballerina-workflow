@@ -22,6 +22,7 @@
 
 import ballerina/test;
 import ballerina/workflow;
+import ballerina/workflow.management;
 
 // ================================================================================
 // SUCCESS PATH — two activities complete on first attempt
@@ -35,21 +36,23 @@ function testActivityInvocationsOnSuccess() returns error? {
     ActivityInvocationInput input = {id: testId, value: "hello"};
     string workflowId = check workflow:run(twoActivityInvocationWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo =
-            check workflow:getWorkflowResult(workflowId, 30);
-
-    test:assertEquals(execInfo.status, "COMPLETED",
-        "Workflow should complete successfully");
-    test:assertEquals(execInfo.result, "HELLO:5",
+    // Wait for completion and verify result
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+    test:assertEquals(result, "HELLO:5",
         "Result should be uppercased value + length");
 
+    // Get full info including activity invocations
+    management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);
+    test:assertEquals(execInfo.status, "COMPLETED",
+        "Workflow should complete successfully");
+
     // Verify activity invocations are populated
-    workflow:ActivityInvocation[] invocations = execInfo.activityInvocations;
+    management:ActivityInvocation[] invocations = execInfo.activityInvocations;
     test:assertTrue(invocations.length() >= 2,
         "Should have at least 2 activity invocations, got " + invocations.length().toString());
 
     // Filter for the two user activities by name
-    workflow:ActivityInvocation[] userActivities = from workflow:ActivityInvocation inv in invocations
+    management:ActivityInvocation[] userActivities = from management:ActivityInvocation inv in invocations
         where inv.activityName.includes("uppercaseActivity") ||
               inv.activityName.includes("lengthActivity")
         select inv;
@@ -58,7 +61,7 @@ function testActivityInvocationsOnSuccess() returns error? {
         "Should have exactly 2 user activity invocations");
 
     // Both should be COMPLETED with attempt == 1 (no retries)
-    foreach workflow:ActivityInvocation inv in userActivities {
+    foreach management:ActivityInvocation inv in userActivities {
         test:assertEquals(inv.status, "COMPLETED",
             "Activity " + inv.activityName + " should be COMPLETED");
         int? attempt = inv.attempt;
@@ -79,26 +82,30 @@ function testActivityInvocationsOnRetryFailure() returns error? {
     ActivityInvocationInput input = {id: testId, value: "trigger"};
     string workflowId = check workflow:run(retryInvocationWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo =
-            check workflow:getWorkflowResult(workflowId, 60);
+    // Wait for it to finish — must be an error since the workflow fails
+    anydata|error ignoredResult = workflow:getWorkflowResult(workflowId, 60);
+    test:assertTrue(ignoredResult is error,
+        "getWorkflowResult should return an error for a failed workflow");
+    // Get full info including activity invocations
+    management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);
 
     test:assertEquals(execInfo.status, "FAILED",
         "Workflow should fail after retries exhausted");
 
     // Find the FAILED invocation for invocationFailActivity
-    workflow:ActivityInvocation[] failedActivities =
-            from workflow:ActivityInvocation inv in execInfo.activityInvocations
+    management:ActivityInvocation[] failedActivities =
+            from management:ActivityInvocation inv in execInfo.activityInvocations
             where inv.activityName.includes("invocationFailActivity") && inv.status == "FAILED"
             select inv;
 
     test:assertTrue(failedActivities.length() >= 1,
         "Should have at least one FAILED invocationFailActivity invocation");
 
-    // With maxRetries=2, the final attempt should be >= 3 (1 initial + 2 retries)
-    workflow:ActivityInvocation lastFailed = failedActivities[failedActivities.length() - 1];
+    // With maxRetries=2, maximumAttempts = 3 (1 initial + 2 retries); final attempt must be exactly 3
+    management:ActivityInvocation lastFailed = failedActivities[failedActivities.length() - 1];
     int? lastAttempt = lastFailed.attempt;
-    test:assertTrue(lastAttempt is int && lastAttempt >= 3,
-        "Final failed invocation should be attempt >= 3, got " + (lastAttempt ?: 0).toString());
+    test:assertTrue(lastAttempt is int && lastAttempt == 3,
+        "Final failed invocation should be attempt 3, got " + (lastAttempt ?: 0).toString());
 
     // Verify error message is captured
     test:assertTrue(lastFailed.errorMessage is string,
@@ -117,15 +124,19 @@ function testActivityInvocationsOnSingleFailure() returns error? {
     ActivityInvocationInput input = {id: testId, value: "boom"};
     string workflowId = check workflow:run(singleFailInvocationWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo =
-            check workflow:getWorkflowResult(workflowId, 30);
+    // Wait for it to finish — must be an error since the workflow fails
+    anydata|error ignoredResult = workflow:getWorkflowResult(workflowId, 30);
+    test:assertTrue(ignoredResult is error,
+        "getWorkflowResult should return an error for a failed workflow");
+    // Get full info including activity invocations
+    management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);
 
     test:assertEquals(execInfo.status, "FAILED",
         "Workflow should fail on activity error");
 
     // Find the FAILED invocation
-    workflow:ActivityInvocation[] failedActivities =
-            from workflow:ActivityInvocation inv in execInfo.activityInvocations
+    management:ActivityInvocation[] failedActivities =
+            from management:ActivityInvocation inv in execInfo.activityInvocations
             where inv.activityName.includes("invocationFailActivity") && inv.status == "FAILED"
             select inv;
 

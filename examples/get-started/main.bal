@@ -60,6 +60,6 @@ public function main() returns error? {
     string workflowId = check workflow:run(processOrder, {orderId: "ORD-001", item: "laptop", quantity: 2});
     io:println("Workflow started with ID: " + workflowId);
 
-    workflow:WorkflowExecutionInfo result = check workflow:getWorkflowResult(workflowId);
-    io:println("Result: " + result.result.toString());
+    anydata result = check workflow:getWorkflowResult(workflowId);
+    io:println("Result: " + result.toString());
 }

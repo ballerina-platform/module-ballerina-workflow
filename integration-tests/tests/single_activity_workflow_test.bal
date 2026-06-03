@@ -32,8 +32,6 @@ function testSingleActivityExecution() returns error? {
     // Workflow ID must be a valid UUID v7
     test:assertTrue(isValidUuidV7(workflowId), "Workflow ID should be a valid UUID v7");
     
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete successfully");
-    test:assertEquals(execInfo.result, "Hello, Alice!", "Result should be the greeting");
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+    test:assertEquals(result, "Hello, Alice!", "Result should be the greeting");
 }

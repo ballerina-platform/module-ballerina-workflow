@@ -16,6 +16,10 @@ export = true
 name = "workflow.activity"
 export = true
 
+[[package.modules]]
+name = "workflow.management"
+export = true
+
 [platform.java21]
 graalvmCompatible = false
 

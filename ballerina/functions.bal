@@ -46,15 +46,20 @@ public isolated function sendData(function workflow, string workflowId, string d
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative"
 } external;
 
-// Internal functions
-
-# Starts the workflow runtime (called after all workflows are registered).
+# Waits for a workflow to complete and returns its result.
 #
-# + return - An error if starting fails
-isolated function startWorkflowRuntime() returns error? = @java:Method {
-    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
-    name: "startSingletonWorker"
+# ```ballerina
+# anydata raw = check workflow:getWorkflowResult(workflowId);
+# ```
+#
+# + workflowId - The workflow ID
+# + timeoutSeconds - Maximum wait time in seconds
+# + return - Result of the workflow as anydata, or an error
+public isolated function getWorkflowResult(string workflowId, int timeoutSeconds = 30) returns anydata|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative"
 } external;
+
+// Internal functions
 
 # Stops the workflow runtime gracefully, draining in-progress tasks.
 #
@@ -62,46 +67,4 @@ isolated function startWorkflowRuntime() returns error? = @java:Method {
 isolated function stopWorkflowRuntime() returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
     name: "stopSingletonWorker"
-} external;
-
-# Stops the workflow runtime immediately, interrupting in-flight tasks.
-#
-# + return - An error if stopping fails
-isolated function stopWorkflowRuntimeNow() returns error? = @java:Method {
-    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
-    name: "stopSingletonWorkerNow"
-} external;
-
-# Returns all registered workflows and their activities.
-#
-# + return - Registry map, or an error
-isolated function getRegisteredWorkflows() returns WorkflowRegistry|error {
-    return getRegisteredWorkflowsNative();
-}
-
-# + return - Registry map, or an error
-isolated function getRegisteredWorkflowsNative() returns WorkflowRegistry|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
-    name: "getRegisteredWorkflows"
-} external;
-
-# Waits for a workflow to complete and returns its result.
-#
-# ```ballerina
-# workflow:WorkflowExecutionInfo info = check workflow:getWorkflowResult(workflowId);
-# ```
-#
-# + workflowId - The workflow ID
-# + timeoutSeconds - Maximum wait time in seconds
-# + return - Execution info with result, or an error
-public isolated function getWorkflowResult(string workflowId, int timeoutSeconds = 30) returns WorkflowExecutionInfo|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative"
-} external;
-
-# Gets current workflow execution info without waiting for completion.
-#
-# + workflowId - The workflow ID
-# + return - Execution info, or an error
-public isolated function getWorkflowInfo(string workflowId) returns WorkflowExecutionInfo|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative"
 } external;

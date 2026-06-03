@@ -34,12 +34,10 @@ function testCurrentTime() returns error? {
     time:Utc beforeTime = time:utcNow();
     string workflowId = check workflow:run(currentTimeWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
     time:Utc afterTime = time:utcNow();
-    test:assertEquals(execInfo.status, "COMPLETED", "currentTime workflow should complete. Error: " + (execInfo.errorMessage ?: "none"));
 
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    if result is map<anydata> {
         int seconds = <int>result["seconds"];
         // Workflow time should fall within the wall-clock window of the test (±5 s tolerance)
         test:assertTrue(seconds >= beforeTime[0] - 5, "Workflow time should be at or after test start");
@@ -59,9 +57,8 @@ function testSleep() returns error? {
     BuiltinActivityInput input = {id: testId};
     string workflowId = check workflow:run(sleepWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    test:assertEquals(execInfo.status, "COMPLETED", "sleep workflow should complete. Error: " + (execInfo.errorMessage ?: "none"));
-    test:assertEquals(execInfo.result, "slept successfully", "Result should confirm sleep completed");
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+    test:assertEquals(result, "slept successfully", "Result should confirm sleep completed");
 }
 
 // --- sleep with time advancement test ---
@@ -74,11 +71,9 @@ function testSleepWithTimeAdvancement() returns error? {
     BuiltinActivityInput input = {id: testId};
     string workflowId = check workflow:run(sleepWithTimeWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    test:assertEquals(execInfo.status, "COMPLETED", "sleep-with-time workflow should complete");
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
 
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    if result is map<anydata> {
         int beforeSleep = <int>result["beforeSleep"];
         int afterSleep = <int>result["afterSleep"];
         // time:Utc[0] is epoch seconds, so after sleeping 2s the difference should be >= 2

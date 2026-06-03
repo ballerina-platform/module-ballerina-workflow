@@ -29,16 +29,13 @@ function testMultiActivityExecution() returns error? {
     MultiActivityInput input = {id: testId, name: "Bob"};
     string workflowId = check workflow:run(multiActivityWorkflow, input);
     
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete successfully");
-    
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+
+    if result is map<anydata> {
         test:assertEquals(result["greeting"], "Hello, Bob!", "Greeting should match");
         test:assertEquals(result["product"], 35, "Product should be 5 * 7 = 35");
         test:assertEquals(result["timestamp"], "2026-01-31T12:00:00Z", "Timestamp should match");
     } else {
-        test:assertFail("Result should be a map");
+        test:assertFail("Expected map<anydata> result");
     }
 }

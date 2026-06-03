@@ -31,10 +31,9 @@ function testDefaultFailOnError() returns error? {
     string testId = uniqueId("retry-default-fail");
     RetryActivityInput input = {id: testId, mode: "default_fail"};
     string workflowId = check workflow:run(retryDefaultFailWorkflow, input);
-    
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "FAILED",
+
+    anydata|error rawResult = workflow:getWorkflowResult(workflowId, 30);
+    test:assertTrue(rawResult is error,
         "Workflow should fail when activity fails with default retryOnError=false (error propagated via check)");
 }
 
@@ -47,12 +46,9 @@ function testFailOnErrorFalse() returns error? {
     string testId = uniqueId("retry-fail-on-error-false");
     RetryActivityInput input = {id: testId, mode: "fail_on_error_false"};
     string workflowId = check workflow:run(retryFailOnErrorFalseWorkflow, input);
-    
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "COMPLETED",
-        "Workflow should complete when retryOnError=false (error treated as value)");
-    test:assertTrue((<string>execInfo.result).startsWith("Handled error:"),
+
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+    test:assertTrue((<string>result).startsWith("Handled error:"),
         "Result should show error was handled as a value");
 }
 
@@ -65,10 +61,9 @@ function testCustomRetryPolicy() returns error? {
     string testId = uniqueId("retry-custom-policy");
     RetryActivityInput input = {id: testId, mode: "custom_retry"};
     string workflowId = check workflow:run(retryCustomPolicyWorkflow, input);
-    
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "FAILED", 
+
+    anydata|error rawResult = workflow:getWorkflowResult(workflowId, 30);
+    test:assertTrue(rawResult is error,
         "Workflow should fail after custom retry policy is exhausted");
 }
 
@@ -82,9 +77,8 @@ function testFailWithErrorDetails() returns error? {
     RetryActivityInput input = {id: testId, mode: "fail_with_details"};
     string workflowId = check workflow:run(retryFailWithDetailsWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-
-    test:assertEquals(execInfo.status, "FAILED",
+    anydata|error rawResult = workflow:getWorkflowResult(workflowId, 30);
+    test:assertTrue(rawResult is error,
         "Workflow should fail when activity returns error with details");
 }
 
@@ -98,9 +92,8 @@ function testFailWithErrorCause() returns error? {
     RetryActivityInput input = {id: testId, mode: "fail_with_cause"};
     string workflowId = check workflow:run(retryFailWithCauseWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-
-    test:assertEquals(execInfo.status, "FAILED",
+    anydata|error rawResult = workflow:getWorkflowResult(workflowId, 30);
+    test:assertTrue(rawResult is error,
         "Workflow should fail when activity returns error with cause chain");
 }
 
@@ -114,11 +107,8 @@ function testHandleErrorWithDetails() returns error? {
     RetryActivityInput input = {id: testId, mode: "handle_details"};
     string workflowId = check workflow:run(retryHandleDetailsWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-
-    test:assertEquals(execInfo.status, "COMPLETED",
-        "Workflow should complete when retryOnError=false with detailed error");
-    test:assertTrue((<string>execInfo.result).startsWith("Handled:"),
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+    test:assertTrue((<string>result).startsWith("Handled:"),
         "Result should show error was handled as a value");
 }
 
@@ -132,11 +122,8 @@ function testHandleErrorWithCause() returns error? {
     RetryActivityInput input = {id: testId, mode: "handle_cause"};
     string workflowId = check workflow:run(retryHandleCauseWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-
-    test:assertEquals(execInfo.status, "COMPLETED",
-        "Workflow should complete when retryOnError=false with cause chain error");
-    test:assertTrue((<string>execInfo.result).startsWith("Handled:"),
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+    test:assertTrue((<string>result).startsWith("Handled:"),
         "Result should show error was handled as a value");
 }
 
@@ -155,12 +142,13 @@ function testRetryExhaustUnhandled() returns error? {
     RetryActivityInput input = {id: testId, mode: "exhaust_unhandled"};
     string workflowId = check workflow:run(retryExhaustUnhandledWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 60);
-
-    test:assertEquals(execInfo.status, "FAILED",
+    anydata|error rawResult = workflow:getWorkflowResult(workflowId, 60);
+    test:assertTrue(rawResult is error,
         "Scenario A: workflow must FAIL when retries are exhausted and error is unhandled");
-    test:assertTrue(execInfo.errorMessage != () && (<string>execInfo.errorMessage).includes("exhaust unhandled"),
-        "Error message should carry the original activity error text");
+    if rawResult is error {
+        test:assertTrue(rawResult.message().includes("exhaust unhandled"),
+            "Error message should carry the original activity error text");
+    }
 }
 
 @test:Config {
@@ -174,11 +162,8 @@ function testRetryExhaustFallback() returns error? {
     RetryActivityInput input = {id: testId, mode: "exhaust_fallback"};
     string workflowId = check workflow:run(retryExhaustFallbackWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 60);
-
-    test:assertEquals(execInfo.status, "COMPLETED",
-        "Scenario B1: workflow must COMPLETE via the fallback activity after primary exhausts retries");
-    test:assertTrue((<string>execInfo.result).startsWith("Fallback:"),
+    anydata result = check workflow:getWorkflowResult(workflowId, 60);
+    test:assertTrue((<string>result).startsWith("Fallback:"),
         "Result should indicate the fallback path was taken");
 }
 
@@ -193,11 +178,8 @@ function testRetryExhaustCompensation() returns error? {
     RetryActivityInput input = {id: testId, mode: "exhaust_compensate"};
     string workflowId = check workflow:run(retryExhaustCompensateWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 60);
-
-    test:assertEquals(execInfo.status, "COMPLETED",
-        "Scenario B2: workflow must COMPLETE after running compensation activity (Saga pattern)");
-    test:assertTrue((<string>execInfo.result).includes("Compensated"),
+    anydata result = check workflow:getWorkflowResult(workflowId, 60);
+    test:assertTrue((<string>result).includes("Compensated"),
         "Result should confirm the compensation activity ran");
 }
 
@@ -212,11 +194,8 @@ function testRetryExhaustGracefulCompletion() returns error? {
     RetryActivityInput input = {id: testId, mode: "exhaust_graceful"};
     string workflowId = check workflow:run(retryExhaustGracefulWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 60);
-
-    test:assertEquals(execInfo.status, "COMPLETED",
-        "Scenario B3: workflow must COMPLETE even though the non-critical activity exhausted retries");
-    test:assertTrue((<string>execInfo.result).includes("notification skipped"),
+    anydata result = check workflow:getWorkflowResult(workflowId, 60);
+    test:assertTrue((<string>result).includes("notification skipped"),
         "Result should note that the non-critical step was gracefully skipped");
 }
 
@@ -234,13 +213,10 @@ function testMultiTierFallback() returns error? {
     RetryActivityInput input = {id: testId, mode: "multi_tier_fallback"};
     string workflowId = check workflow:run(multiTierFallbackWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 60);
-
-    test:assertEquals(execInfo.status, "COMPLETED",
-        "Multi-tier fallback: workflow must COMPLETE via the final fallback tier");
-    test:assertTrue((<string>execInfo.result).startsWith("Fallback:ticket:"),
+    anydata result = check workflow:getWorkflowResult(workflowId, 60);
+    test:assertTrue((<string>result).startsWith("Fallback:ticket:"),
         "Result should indicate the support ticket fallback was used");
-    test:assertTrue((<string>execInfo.result).includes("TICKET-001"),
+    test:assertTrue((<string>result).includes("TICKET-001"),
         "Result should contain the ticket ID from the final fallback");
 }
 
@@ -255,14 +231,11 @@ function testMultiStepCompensation() returns error? {
     RetryActivityInput input = {id: testId, mode: "multi_step_compensate"};
     string workflowId = check workflow:run(multiStepCompensationWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 60);
-
-    test:assertEquals(execInfo.status, "COMPLETED",
-        "Multi-step compensation: workflow must COMPLETE after compensating in reverse order");
-    test:assertTrue((<string>execInfo.result).startsWith("ROLLED_BACK:"),
+    anydata result = check workflow:getWorkflowResult(workflowId, 60);
+    test:assertTrue((<string>result).startsWith("ROLLED_BACK:"),
         "Result should indicate a rollback occurred");
     // Verify reverse order: charge-card compensated first, then reserve-inventory
-    string resultStr = <string>execInfo.result;
+    string resultStr = <string>result;
     test:assertTrue(resultStr.includes("compensated:charge-card") && resultStr.includes("compensated:reserve-inventory"),
         "Result should confirm both steps were compensated");
 }
@@ -278,11 +251,8 @@ function testMultiNonCriticalGraceful() returns error? {
     RetryActivityInput input = {id: testId, mode: "multi_graceful"};
     string workflowId = check workflow:run(multiNonCriticalGracefulWorkflow, input);
 
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 60);
-
-    test:assertEquals(execInfo.status, "COMPLETED",
-        "Multi non-critical graceful: workflow must COMPLETE despite both optional steps failing");
-    string resultStr = <string>execInfo.result;
+    anydata result = check workflow:getWorkflowResult(workflowId, 60);
+    string resultStr = <string>result;
     test:assertTrue(resultStr.startsWith("RSV-"),
         "Result should contain the reservation ID from the critical step");
     test:assertTrue(resultStr.includes("skipped: email, audit"),

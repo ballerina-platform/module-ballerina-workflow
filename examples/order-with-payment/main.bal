@@ -17,6 +17,7 @@
 import ballerina/http;
 import ballerina/workflow;
 import ballerina/io;
+import ballerina/workflow.management;
 
 // Tracks running workflow IDs keyed by orderId so payment data can be
 // routed to the correct workflow instance.
@@ -51,9 +52,6 @@ service /orders on new http:Listener(9094) {
     resource function post .(OrderRequest request) returns json|error {
         string workflowId = check workflow:run(processOrderWithPayment, request);
         orderWorkflowIds[request.orderId] = workflowId;
-
-        io:println(string `Started order workflow: ${workflowId}`);
-
         return {
             "status": "success",
             "workflowId": workflowId,
@@ -105,15 +103,24 @@ service /orders on new http:Listener(9094) {
     # Get workflow result
     # GET /orders/{workflowId}/result
     #
-    # + workflowId - The workflow execution ID
+    # + workflowId - The workflow execution ID (or orderId mapped to a workflow)
     # + return - Workflow execution result or error
     resource function get [string workflowId]/result() returns json|error {
-        workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
+        // Accept either the workflow ID or the order ID used by this sample API.
+        string resolvedWorkflowId = workflowId;
+        if orderWorkflowIds.hasKey(workflowId) {
+            string? mappedWorkflowId = orderWorkflowIds[workflowId];
+            if mappedWorkflowId is string {
+                resolvedWorkflowId = mappedWorkflowId;
+            }
+        }
 
-        json result = check execInfo.result.cloneWithType(json);
+        anydata rawResult = check workflow:getWorkflowResult(resolvedWorkflowId, 30);
+        management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(resolvedWorkflowId);
+        json result = check rawResult.cloneWithType(json);
         return {
-            workflowId: workflowId,
-            status: execInfo.status.toString(),
+            workflowId: resolvedWorkflowId,
+            status: execInfo.status,
             result: result
         };
     }

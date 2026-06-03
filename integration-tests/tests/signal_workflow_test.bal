@@ -50,18 +50,15 @@ function testSimpleSignalWorkflow() returns error? {
     check workflow:sendData(simpleSignalWorkflow, workflowId, "response", signalData);
     
     // Wait for workflow to complete
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete successfully");
-    
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
-        test:assertEquals(result["originalMessage"], "Hello from workflow", 
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+
+    if result is map<anydata> {
+        test:assertEquals(result["originalMessage"], "Hello from workflow",
                 "Original message should be preserved");
-        test:assertEquals(result["response"], "Response received!", 
+        test:assertEquals(result["response"], "Response received!",
                 "Signal response should be captured");
     } else {
-        test:assertFail("Result should be a map representing SimpleSignalResult");
+        test:assertFail("Expected map<anydata> result");
     }
 }
 
@@ -103,18 +100,15 @@ function testApprovalWorkflowApprovedPath() returns error? {
     check workflow:sendData(approvalWorkflow, workflowId, "payment", payment);
     
     // Wait for workflow to complete
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete successfully");
-    
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+
+    if result is map<anydata> {
         test:assertEquals(result["orderId"], "ORD-001", "Order ID should match");
         test:assertEquals(result["status"], "COMPLETED", "Status should be COMPLETED");
         test:assertEquals(result["approvedBy"], "manager-123", "Approver should be captured");
         test:assertEquals(result["txnId"], "TXN-456", "Transaction ID should be captured");
     } else {
-        test:assertFail("Result should be a map representing ApprovalResult");
+        test:assertFail("Expected map<anydata> result");
     }
 }
 
@@ -145,18 +139,15 @@ function testApprovalWorkflowRejectedPath() returns error? {
     check workflow:sendData(approvalWorkflow, workflowId, "approval", rejection);
     
     // Wait for workflow to complete
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete (with rejection result)");
-    
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+
+    if result is map<anydata> {
         test:assertEquals(result["orderId"], "ORD-002", "Order ID should match");
         test:assertEquals(result["status"], "REJECTED", "Status should be REJECTED");
         test:assertEquals(result["approvedBy"], "manager-456", "Approver should be captured");
         test:assertEquals(result["txnId"], (), "Transaction ID should be null for rejected orders");
     } else {
-        test:assertFail("Result should be a map representing ApprovalResult");
+        test:assertFail("Expected map<anydata> result");
     }
 }
 
@@ -198,15 +189,12 @@ function testApprovalWorkflowInsufficientPayment() returns error? {
     check workflow:sendData(approvalWorkflow, workflowId, "payment", payment);
     
     // Wait for workflow to complete
-    workflow:WorkflowExecutionInfo execInfo = check workflow:getWorkflowResult(workflowId, 30);
-    
-    test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete");
-    
-    if execInfo.result is map<anydata> {
-        map<anydata> result = <map<anydata>>execInfo.result;
-        test:assertEquals(result["status"], "PAYMENT_INSUFFICIENT", 
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+
+    if result is map<anydata> {
+        test:assertEquals(result["status"], "PAYMENT_INSUFFICIENT",
                 "Status should be PAYMENT_INSUFFICIENT");
     } else {
-        test:assertFail("Result should be a map representing ApprovalResult");
+        test:assertFail("Expected map<anydata> result");
     }
 }

@@ -68,24 +68,3 @@ isolated function stopWorkflowRuntime() returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
     name: "stopSingletonWorker"
 } external;
-
-# Stops the workflow runtime immediately, interrupting in-flight tasks.
-#
-# + return - An error if stopping fails
-isolated function stopWorkflowRuntimeNow() returns error? = @java:Method {
-    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
-    name: "stopSingletonWorkerNow"
-} external;
-
-# Returns all registered workflows and their activities.
-#
-# + return - Registry map, or an error
-isolated function getRegisteredWorkflows() returns WorkflowRegistry|error {
-    return getRegisteredWorkflowsNative();
-}
-
-# + return - Registry map, or an error
-isolated function getRegisteredWorkflowsNative() returns WorkflowRegistry|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
-    name: "getRegisteredWorkflows"
-} external;

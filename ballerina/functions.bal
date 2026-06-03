@@ -61,14 +61,6 @@ public isolated function getWorkflowResult(string workflowId, int timeoutSeconds
 
 // Internal functions
 
-# Starts the workflow runtime (called after all workflows are registered).
-#
-# + return - An error if starting fails
-isolated function startWorkflowRuntime() returns error? = @java:Method {
-    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
-    name: "startSingletonWorker"
-} external;
-
 # Stops the workflow runtime gracefully, draining in-progress tasks.
 #
 # + return - An error if stopping fails

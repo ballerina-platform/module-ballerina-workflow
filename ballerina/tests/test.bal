@@ -20,6 +20,27 @@ import ballerina/lang.runtime;
 import ballerina/workflow.internal as wfInternal;
 import ballerina/workflow.management;
 
+// ============================================================================
+// Test Helper Functions
+// ============================================================================
+
+# Returns all registered workflows and their activities.
+#
+# + return - Registry map, or an error
+isolated function getRegisteredWorkflows() returns WorkflowRegistry|error {
+    return getRegisteredWorkflowsNative();
+}
+
+# + return - Registry map, or an error
+isolated function getRegisteredWorkflowsNative() returns WorkflowRegistry|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
+    name: "getRegisteredWorkflows"
+} external;
+
+// ============================================================================
+// Test Setup
+// ============================================================================
+
 // Note: Module-level tests focus on registration and introspection.
 // These tests work with the lazy gRPC connection (no active workflow server needed).
 // For workflow execution tests (run, sendData), a separate integration test 

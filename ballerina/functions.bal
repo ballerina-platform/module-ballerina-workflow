@@ -84,39 +84,10 @@ public isolated function completeHumanTask(string taskWorkflowId, anydata result
 
 // Internal functions
 
-# Starts the workflow runtime (called after all workflows are registered).
-#
-# + return - An error if starting fails
-isolated function startWorkflowRuntime() returns error? = @java:Method {
-    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
-    name: "startSingletonWorker"
-} external;
-
 # Stops the workflow runtime gracefully, draining in-progress tasks.
 #
 # + return - An error if stopping fails
 isolated function stopWorkflowRuntime() returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
     name: "stopSingletonWorker"
-} external;
-
-# Stops the workflow runtime immediately, interrupting in-flight tasks.
-#
-# + return - An error if stopping fails
-isolated function stopWorkflowRuntimeNow() returns error? = @java:Method {
-    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
-    name: "stopSingletonWorkerNow"
-} external;
-
-# Returns all registered workflows and their activities.
-#
-# + return - Registry map, or an error
-isolated function getRegisteredWorkflows() returns WorkflowRegistry|error {
-    return getRegisteredWorkflowsNative();
-}
-
-# + return - Registry map, or an error
-isolated function getRegisteredWorkflowsNative() returns WorkflowRegistry|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
-    name: "getRegisteredWorkflows"
 } external;

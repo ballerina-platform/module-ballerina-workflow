@@ -129,6 +129,8 @@ public type AccessResult record {|
 // -----------------------------------------------------------------------------
 
 # Masks a phone number to avoid logging PII. Returns all but last 4 digits masked.
+# + phone - The phone number to mask.
+# + return - The masked phone number with all but the last 4 digits replaced by `*`.
 isolated function maskPhone(string phone) returns string {
     if phone.length() <= 4 {
         return "****";

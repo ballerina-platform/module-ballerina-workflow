@@ -130,6 +130,8 @@ public type OnboardingResult record {|
 // -----------------------------------------------------------------------------
 
 # Masks an email address to avoid logging PII. Returns `****@domain`.
+# + email - The email address to mask.
+# + return - The masked email address with the local part replaced by `****`.
 isolated function maskEmail(string email) returns string {
     int? atIdx = email.indexOf("@");
     if atIdx is int {

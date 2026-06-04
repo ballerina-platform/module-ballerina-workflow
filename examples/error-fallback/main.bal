@@ -113,6 +113,8 @@ function sendNotification(workflow:Context ctx, NotificationInput input) returns
 service /api on new http:Listener(8093) {
 
     # Sends a notification (email with SMS fallback).
+    # + input - Notification details including email, phone, and message.
+    # + return - Workflow handle containing the started workflow ID, or an error.
     resource function post notifications(@http:Payload NotificationInput input) returns record {|string workflowId;|}|error {
         string workflowId = check workflow:run(sendNotification, input);
         io:println(string `Workflow started: ${workflowId}`);
@@ -120,6 +122,8 @@ service /api on new http:Listener(8093) {
     }
 
     # Retrieves the workflow result. Blocks until complete.
+    # + workflowId - The workflow instance ID.
+    # + return - Workflow status and result as JSON, or an error.
     resource function get notifications/[string workflowId]() returns json|error {
         anydata rawResult = check workflow:getWorkflowResult(workflowId);
         management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);

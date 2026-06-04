@@ -171,6 +171,8 @@ function processOrder(workflow:Context ctx, OrderInput input) returns OrderResul
 service /api on new http:Listener(8090) {
 
     # Starts a new order processing workflow.
+    # + input - Order details including orderId, item, amount, and customerId.
+    # + return - Workflow handle containing the started workflow ID, or an error.
     resource function post orders(@http:Payload OrderInput input) returns record {|string workflowId;|}|error {
         string workflowId = check workflow:run(processOrder, input);
         io:println(string `Workflow started: ${workflowId}`);
@@ -179,6 +181,8 @@ service /api on new http:Listener(8090) {
 
     # Lists pending approval task groups for a workflow, sorted alphabetically by task name.
     # Returns an empty array if the workflow has no pending human tasks.
+    # + workflowId - The workflow instance ID.
+    # + return - Pending task groups for the workflow, or an error.
     resource function get orders/[string workflowId]/tasks() returns management:HumanTaskGroup[]|error {
         return management:listPendingHumanTasks(workflowId);
     }
@@ -186,6 +190,9 @@ service /api on new http:Listener(8090) {
     # Submits a manager's approval decision for a pending task.
     # workflowCompleteHumanTask sends a "taskCompletion" signal to the child workflow,
     # unblocking the parent and returning the typed decision to the workflow.
+    # + taskId - The human task workflow ID.
+    # + decision - The approval or rejection decision.
+    # + return - Acceptance status, or an error.
     resource function post tasks/[string taskId]/complete(@http:Payload ApprovalDecision decision)
             returns record {|string status;|}|error {
         check workflow:completeHumanTask(taskId, decision);
@@ -194,6 +201,8 @@ service /api on new http:Listener(8090) {
     }
 
     # Retrieves the final result of a workflow. Blocks until the workflow completes.
+    # + workflowId - The workflow instance ID.
+    # + return - Workflow status and result as JSON, or an error.
     resource function get orders/[string workflowId]() returns json|error {
         anydata rawResult = check workflow:getWorkflowResult(workflowId);
         management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);

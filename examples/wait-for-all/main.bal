@@ -206,6 +206,8 @@ function transferApproval(
 service /api on new http:Listener(8090) {
 
     # Submits a new fund transfer request.
+    # + input - Transfer details including transferId, accounts, and amount.
+    # + return - Workflow handle containing the started workflow ID, or an error.
     resource function post transfers(@http:Payload TransferInput input) returns record {|string workflowId;|}|error {
         string workflowId = check workflow:run(transferApproval, input);
         io:println(string `Workflow started: ${workflowId}`);
@@ -213,6 +215,9 @@ service /api on new http:Listener(8090) {
     }
 
     # Sends the Operations team's authorization decision.
+    # + workflowId - The transfer workflow instance ID.
+    # + decision - The authorization decision from the Operations team.
+    # + return - Acceptance status and confirmation message, or an error.
     resource function post transfers/[string workflowId]/operationsApproval(
             @http:Payload ApprovalDecision decision) returns record {|string status; string message;|}|error {
         check workflow:sendData(transferApproval, workflowId, "operationsApproval", decision);
@@ -221,6 +226,9 @@ service /api on new http:Listener(8090) {
     }
 
     # Sends the Compliance team's authorization decision.
+    # + workflowId - The transfer workflow instance ID.
+    # + decision - The authorization decision from the Compliance team.
+    # + return - Acceptance status and confirmation message, or an error.
     resource function post transfers/[string workflowId]/complianceApproval(
             @http:Payload ApprovalDecision decision) returns record {|string status; string message;|}|error {
         check workflow:sendData(transferApproval, workflowId, "complianceApproval", decision);
@@ -229,6 +237,8 @@ service /api on new http:Listener(8090) {
     }
 
     # Retrieves the final result of a transfer workflow.
+    # + workflowId - The transfer workflow instance ID.
+    # + return - Workflow status and result as JSON, or an error.
     resource function get transfers/[string workflowId]() returns json|error {
         anydata rawResult = check workflow:getWorkflowResult(workflowId);
         management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);

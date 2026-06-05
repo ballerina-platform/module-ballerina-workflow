@@ -1,0 +1,9 @@
+# Workflow engine — runs in-memory for local development and tests.
+[ballerina.workflow]
+mode = "LOCAL"
+
+# Management API — exposed at http://localhost:7234/workflow/
+[ballerina.workflow.management]
+enableManagementApi = true
+port              = 7234
+enableBasicAuth   = false

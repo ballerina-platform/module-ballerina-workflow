@@ -765,7 +765,8 @@ public final class WorkflowNative {
      * @param result         the value to return to the waiting {@code callHumanTask} call
      * @return {@code null} on success, or a Ballerina error
      */
-    public static Object completeHumanTask(BString taskWorkflowId, Object result, Object callerRoles) {
+    public static Object completeHumanTask(BString taskWorkflowId, Object result,
+            Object callerRoles, Object userId) {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
@@ -785,6 +786,9 @@ public final class WorkflowNative {
             Object javaResult = TypesUtil.convertBallerinaToJavaType(result);
             Map<String, Object> payload = new HashMap<>();
             payload.put("result", javaResult);
+            // Embed audit fields so executeBuiltinHumanTask can store them in workflow history
+            payload.put("completedBy", userId instanceof BString bs ? bs.getValue() : "unknown");
+            payload.put("completedAt", java.time.Instant.now().toString());
 
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(
                     taskWorkflowId.getValue(), "taskCompletion", payload);

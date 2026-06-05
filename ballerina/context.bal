@@ -22,6 +22,8 @@ import ballerina/time;
 public client class Context {
     private handle nativeContext;
 
+    # Creates a workflow execution context wrapping the native context handle.
+    # This constructor is called by the workflow runtime; do not instantiate `Context` directly.
     # + nativeContext - Native context handle from the workflow engine
     public isolated function init(handle nativeContext) {
         self.nativeContext = nativeContext;

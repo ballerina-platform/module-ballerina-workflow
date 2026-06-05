@@ -15,6 +15,7 @@
 // under the License.
 
 import ballerina/jballerina.java;
+import ballerina/log;
 
 # Registers a workflow function with the program runtime.
 #
@@ -39,7 +40,11 @@ public isolated function registerWorkflow(function workflowFunction, string work
 #
 # + return - `true` if the worker started successfully, or an error if starting fails
 public isolated function startWorkflowRuntime() returns boolean|error {
-    check startWorkflowRuntimeNative();
+    error? err = startWorkflowRuntimeNative();
+    if err is error {
+        log:printError("Workflow runtime failed to start", 'error = err);
+        return err;
+    }
     return true;
 }
 

@@ -44,6 +44,9 @@ dependencies {
     implementation "com.fasterxml.jackson.core:jackson-core:${jacksonVersion}"
     implementation "com.fasterxml.jackson.core:jackson-annotations:${jacksonVersion}"
     
+    // Protobuf JSON format utilities (used for history event serialization in Temporal)
+    implementation "com.google.protobuf:protobuf-java-util:${protobufVersion}"
+
     // gRPC dependencies - force consistent version to avoid conflicts
     implementation "io.grpc:grpc-api:${grpcVersion}"
     implementation "io.grpc:grpc-context:${grpcVersion}"

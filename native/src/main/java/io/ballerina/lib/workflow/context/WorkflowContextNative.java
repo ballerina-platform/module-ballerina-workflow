@@ -624,6 +624,7 @@ public final class WorkflowContextNative {
             memo.put("workflowKind", "HUMAN_TASK");
             memo.put("taskName", qualifiedTaskName);
             memo.put("parentWorkflowId", parentWorkflowId);
+            memo.put("parentWorkflowType", workflowDefinitionName);
             memo.put("title", title);
             memo.put("description", description);
             memo.put("userRoles", userRoles);

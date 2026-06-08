@@ -442,6 +442,8 @@ public final class WorkflowWorkerNative {
         try {
             inMemoryMode = true;
             taskQueue = "BALLERINA_WORKFLOW_TASK_QUEUE";
+            serverUrl = "in-memory";
+            serverNamespace = "default";
 
             LOGGER.debug("Initializing in-memory workflow worker with TestWorkflowEnvironment");
 

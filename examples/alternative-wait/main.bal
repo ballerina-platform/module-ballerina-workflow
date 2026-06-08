@@ -194,7 +194,7 @@ function purchaseApproval(
 service /api on new http:Listener(8090) {
 
     # Submits a new purchase request.
-    # + input - Purchase details including purchaseId, item, amount, and requesterId.
+    # + input - Purchase details including requestId, item, amount, and requestedBy.
     # + return - Workflow handle containing the started workflow ID, or an error.
     resource function post purchases(@http:Payload PurchaseInput input) returns record {|string workflowId;|}|error {
         string workflowId = check workflow:run(purchaseApproval, input);

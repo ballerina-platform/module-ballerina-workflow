@@ -171,7 +171,7 @@ function processOrder(workflow:Context ctx, OrderInput input) returns OrderResul
 service /api on new http:Listener(8090) {
 
     # Starts a new order processing workflow.
-    # + input - Order details including orderId, item, amount, and customerId.
+    # + input - Order details including orderId, item, and amount.
     # + return - Workflow handle containing the started workflow ID, or an error.
     resource function post orders(@http:Payload OrderInput input) returns record {|string workflowId;|}|error {
         string workflowId = check workflow:run(processOrder, input);

@@ -71,6 +71,23 @@ configurable boolean enableCors = true;
 # in production, e.g. `["https://portal.example.com"]`.
 configurable string[] corsAllowOrigins = ["*"];
 
+# Allowed HTTP methods for CORS requests.
+# Defaults to all standard REST methods.
+configurable string[] corsAllowMethods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"];
+
+# Allowed request headers for CORS requests.
+# Defaults to common headers used by the management API.
+# If you customize `apiKeyHeader`, ensure it's included in this list.
+configurable string[] corsAllowHeaders = ["Content-Type", "x-user-id", "x-user-roles", "Authorization", "x-api-key"];
+
+# Whether to allow credentials (cookies, authorization headers) in CORS requests.
+# Set to `true` if your frontend needs to send credentials.
+configurable boolean corsAllowCredentials = false;
+
+# Maximum age (in seconds) for caching CORS preflight responses.
+# Defaults to ~24 hours (84900 seconds).
+configurable decimal corsMaxAge = 84900;
+
 # Enables HTTP Basic Authentication via Ballerina's built-in file user store.
 # Defaults to `true` so that accidentally enabling the management API without
 # any auth is caught at startup rather than silently exposing an endpoint.
@@ -286,7 +303,10 @@ service class ManagementGatewayInterceptor {
 @http:ServiceConfig {
     cors: {
         allowOrigins: corsAllowOrigins,
-        allowHeaders: ["Content-Type", "x-user-id", "x-user-roles", "Authorization", apiKeyHeader]
+        allowHeaders: corsAllowHeaders,
+        allowMethods: corsAllowMethods,
+        allowCredentials: corsAllowCredentials,
+        maxAge: corsMaxAge
     },
     auth: buildAuthConfigs()
 }
@@ -597,11 +617,21 @@ service http:InterceptableService /workflow on mgmtListener {
             .filter(t => userRole is () || t.userRoles.some(r => r == userRole));
         // Apply onlyMyTasks and canComplete in a foreach (avoids lambda isolation constraint
         // on computed local variables in this Ballerina version)
-        string callerUserId = userId is string ? userId : "";
         HumanTaskSummary[] enriched = [];
         foreach HumanTaskSummary t in preFiltered {
-            if onlyMyTasks && t.userRoles.indexOf(callerUserId) is () {
-                continue;
+            if onlyMyTasks {
+                boolean hasMatchingRole = false;
+                if callerRoles is [string, string...] {
+                    foreach string role in t.userRoles {
+                        if callerRoles.indexOf(role) != () {
+                            hasMatchingRole = true;
+                            break;
+                        }
+                    }
+                }
+                if !hasMatchingRole {
+                    continue;
+                }
             }
             boolean canComplete = false;
             if callerRoles is [string, string...] {

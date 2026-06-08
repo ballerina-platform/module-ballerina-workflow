@@ -194,6 +194,8 @@ function purchaseApproval(
 service /api on new http:Listener(8090) {
 
     # Submits a new purchase request.
+    # + input - Purchase details including requestId, item, amount, and requestedBy.
+    # + return - Workflow handle containing the started workflow ID, or an error.
     resource function post purchases(@http:Payload PurchaseInput input) returns record {|string workflowId;|}|error {
         string workflowId = check workflow:run(purchaseApproval, input);
         io:println(string `Workflow started: ${workflowId}`);
@@ -202,6 +204,9 @@ service /api on new http:Listener(8090) {
 
     # Sends an approval decision to a waiting workflow.
     # Both the Manager and the Director call this endpoint — the first response wins.
+    # + workflowId - The purchase workflow instance ID.
+    # + decision - The approval or rejection decision.
+    # + return - Acceptance status and confirmation message, or an error.
     resource function post purchases/[string workflowId]/approval(
             @http:Payload ApprovalDecision decision) returns record {|string status; string message;|}|error {
         check workflow:sendData(purchaseApproval, workflowId, "approval", decision);
@@ -210,6 +215,8 @@ service /api on new http:Listener(8090) {
     }
 
     # Retrieves the final result of a purchase workflow.
+    # + workflowId - The purchase workflow instance ID.
+    # + return - Workflow status and result as JSON, or an error.
     resource function get purchases/[string workflowId]() returns json|error {
         anydata rawResult = check workflow:getWorkflowResult(workflowId);
         management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);

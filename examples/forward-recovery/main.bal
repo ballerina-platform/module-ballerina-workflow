@@ -190,6 +190,8 @@ function processOrder(
 service /api on new http:Listener(8090) {
 
     # Starts a new order processing workflow.
+    # + input - Order details.
+    # + return - Workflow handle containing the started workflow ID, or an error.
     resource function post orders(@http:Payload OrderInput input) returns record {|string workflowId;|}|error {
         string workflowId = check workflow:run(processOrder, input);
         io:println(string `Workflow started: ${workflowId}`);
@@ -197,6 +199,9 @@ service /api on new http:Listener(8090) {
     }
 
     # Sends corrected payment details to a waiting workflow.
+    # + workflowId - The order workflow instance ID.
+    # + correction - Corrected payment details.
+    # + return - Acceptance status and confirmation message, or an error.
     resource function post orders/[string workflowId]/retryPayment(@http:Payload PaymentCorrection correction)
             returns record {|string status; string message;|}|error {
         check workflow:sendData(processOrder, workflowId, "paymentRetry", correction);
@@ -205,6 +210,8 @@ service /api on new http:Listener(8090) {
     }
 
     # Retrieves the final result of a workflow. Blocks until the workflow completes.
+    # + workflowId - The order workflow instance ID.
+    # + return - Workflow status and result as JSON, or an error.
     resource function get orders/[string workflowId]() returns json|error {
         anydata rawResult = check workflow:getWorkflowResult(workflowId);
         management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);

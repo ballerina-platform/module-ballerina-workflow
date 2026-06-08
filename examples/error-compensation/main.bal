@@ -139,6 +139,8 @@ function transferFunds(workflow:Context ctx, TransferInput input) returns string
 service /api on new http:Listener(8092) {
 
     # Starts a new fund transfer workflow.
+    # + input - Transfer details.
+    # + return - Workflow handle containing the started workflow ID, or an error.
     resource function post transfers(@http:Payload TransferInput input) returns record {|string workflowId;|}|error {
         string workflowId = check workflow:run(transferFunds, input);
         io:println(string `Workflow started: ${workflowId}`);
@@ -146,6 +148,8 @@ service /api on new http:Listener(8092) {
     }
 
     # Retrieves the workflow result. Blocks until complete.
+    # + workflowId - The workflow instance ID.
+    # + return - Workflow status and result as JSON, or an error.
     resource function get transfers/[string workflowId]() returns json|error {
         anydata rawResult = check workflow:getWorkflowResult(workflowId);
         management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);

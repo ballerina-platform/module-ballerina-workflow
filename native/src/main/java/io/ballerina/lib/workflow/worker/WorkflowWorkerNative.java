@@ -168,6 +168,8 @@ public final class WorkflowWorkerNative {
     private static volatile WorkerFactory workerFactory;
     private static volatile Worker singletonWorker;
     private static volatile String taskQueue;
+    private static volatile String serverUrl;
+    private static volatile String serverNamespace;
     private static volatile TestWorkflowEnvironment testEnvironment;
 
     // Flags for singleton state
@@ -310,8 +312,9 @@ public final class WorkflowWorkerNative {
         }
 
         try {
-            String serverUrl = url.getValue();
+            serverUrl = url.getValue();
             String ns = namespace.getValue();
+            serverNamespace = ns;
             taskQueue = workerTaskQueue.getValue();
             String apiKeyValue = apiKey.getValue();
             String mtlsCertPath = mtlsCert.getValue();
@@ -439,6 +442,8 @@ public final class WorkflowWorkerNative {
         try {
             inMemoryMode = true;
             taskQueue = "BALLERINA_WORKFLOW_TASK_QUEUE";
+            serverUrl = "in-memory";
+            serverNamespace = "default";
 
             LOGGER.debug("Initializing in-memory workflow worker with TestWorkflowEnvironment");
 
@@ -613,7 +618,18 @@ public final class WorkflowWorkerNative {
 
         } catch (Exception e) {
             started.set(false);
-            LOGGER.error("Failed to start worker: {}", e.getMessage(), e);
+            String context = "url=" + serverUrl + ", namespace=" + serverNamespace + ", taskQueue=" + taskQueue;
+            if (e instanceof io.grpc.StatusRuntimeException) {
+                io.grpc.Status status = ((io.grpc.StatusRuntimeException) e).getStatus();
+                LOGGER.error("Failed to start worker [{}]: gRPC {} - {} ({})",
+                        context, status.getCode(), status.getDescription(), e.getMessage(), e);
+                if (status.getCode() == io.grpc.Status.Code.UNAVAILABLE) {
+                    LOGGER.error("Hint: UNAVAILABLE usually means the Temporal server at '{}' is not running "
+                            + "or is unreachable. Verify the server is up and the URL/port are correct.", serverUrl);
+                }
+            } else {
+                LOGGER.error("Failed to start worker [{}]: {}", context, e.getMessage(), e);
+            }
             return ErrorCreator.createError(
                     StringUtils.fromString("Failed to start worker: " + e.getMessage()));
         }

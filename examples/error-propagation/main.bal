@@ -109,6 +109,8 @@ function processOrder(workflow:Context ctx, OrderInput input) returns OrderResul
 service /api on new http:Listener(8091) {
 
     # Starts a new order processing workflow.
+    # + input - Order details.
+    # + return - Workflow handle containing the started workflow ID, or an error.
     resource function post orders(@http:Payload OrderInput input) returns record {|string workflowId;|}|error {
         string workflowId = check workflow:run(processOrder, input);
         io:println(string `Workflow started: ${workflowId}`);
@@ -116,6 +118,8 @@ service /api on new http:Listener(8091) {
     }
 
     # Retrieves the workflow result. Blocks until complete.
+    # + workflowId - The workflow instance ID.
+    # + return - Workflow status and result as JSON, or an error.
     resource function get orders/[string workflowId]() returns json|error {
         anydata|error rawResult = workflow:getWorkflowResult(workflowId);
         management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);

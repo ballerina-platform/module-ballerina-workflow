@@ -69,8 +69,12 @@ public final class ModuleUtils {
      * Gets the workflow.management submodule reference.
      *
      * @return the management module
+     * @throws IllegalStateException if the management module has not been initialized
      */
     public static Module getManagementModule() {
+        if (managementModule == null) {
+            throw new IllegalStateException("workflow.management module not initialized");
+        }
         return managementModule;
     }
 }

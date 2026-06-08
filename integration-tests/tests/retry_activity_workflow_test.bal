@@ -21,6 +21,24 @@
 
 import ballerina/test;
 import ballerina/workflow;
+import ballerina/workflow.management;
+import ballerina/lang.runtime;
+
+function waitForPendingRetryTask(string parentWorkflowId, decimal timeoutSecs = 12,
+        string? excludeTaskId = ()) returns management:RetryTaskSummary|error {
+    decimal elapsed = 0.0d;
+    while elapsed < timeoutSecs {
+        management:RetryTaskSummary[] tasks = check management:listPendingRetryTasks(parentWorkflowId);
+        foreach management:RetryTaskSummary task in tasks {
+            if excludeTaskId is () || task.taskId != excludeTaskId {
+                return task;
+            }
+        }
+        runtime:sleep(0.3d);
+        elapsed += 0.3d;
+    }
+    return error("Timed out waiting for pending retry task for workflow: " + parentWorkflowId);
+}
 
 @test:Config {
     groups: ["integration"]
@@ -257,4 +275,67 @@ function testMultiNonCriticalGraceful() returns error? {
         "Result should contain the reservation ID from the critical step");
     test:assertTrue(resultStr.includes("skipped: email, audit"),
         "Result should list both skipped non-critical steps");
+}
+
+// ================================================================================
+// MANUAL RETRY SCENARIOS
+// ================================================================================
+
+@test:Config {
+    groups: ["integration"]
+}
+function testManualRetryWithInputRecovery() returns error? {
+    string testId = uniqueId("manual-retry-input");
+    RetryActivityInput input = {id: testId, mode: "manual_retry_input"};
+    string workflowId = check workflow:run(manualRetryWithInputWorkflow, input);
+
+    management:RetryTaskSummary retryTask = check waitForPendingRetryTask(workflowId);
+    test:assertTrue(retryTask.taskId.startsWith("retrytask-"),
+        "Manual retry task ID should use retrytask prefix");
+
+    check management:completeRetryTask(retryTask.taskId,
+        {action: "retry-with-input", input: {mode: "ok"}});
+
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+    test:assertEquals(<string>result, "Recovered with manual input",
+        "Workflow should recover after retry-with-input decision");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testManualRetryFailDecision() returns error? {
+    string testId = uniqueId("manual-retry-fail");
+    RetryActivityInput input = {id: testId, mode: "manual_retry_fail"};
+    string workflowId = check workflow:run(manualRetryFailDecisionWorkflow, input);
+
+    management:RetryTaskSummary retryTask = check waitForPendingRetryTask(workflowId);
+    check management:completeRetryTask(retryTask.taskId, {action: "fail"});
+
+    anydata|error rawResult = workflow:getWorkflowResult(workflowId, 30);
+    test:assertTrue(rawResult is error,
+        "Workflow should fail when manual retry decision is fail");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testManualRetrySameInputThenFail() returns error? {
+    string testId = uniqueId("manual-retry-same-input");
+    RetryActivityInput input = {id: testId, mode: "manual_retry_same_input"};
+    string workflowId = check workflow:run(manualRetrySameInputWorkflow, input);
+
+    management:RetryTaskSummary firstTask = check waitForPendingRetryTask(workflowId);
+    check management:completeRetryTask(firstTask.taskId, {action: "retry"});
+
+    management:RetryTaskSummary secondTask = check waitForPendingRetryTask(workflowId,
+            excludeTaskId = firstTask.taskId);
+    test:assertTrue(secondTask.taskId != firstTask.taskId,
+        "A new retry task should be created after retry decision");
+
+    check management:completeRetryTask(secondTask.taskId, {action: "fail"});
+
+    anydata|error rawResult = workflow:getWorkflowResult(workflowId, 30);
+    test:assertTrue(rawResult is error,
+        "Workflow should fail after retry then fail decision");
 }

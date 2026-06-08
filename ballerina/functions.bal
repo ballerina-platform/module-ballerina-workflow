@@ -59,6 +59,29 @@ public isolated function getWorkflowResult(string workflowId, int timeoutSeconds
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative"
 } external;
 
+# Completes a pending human task by sending the result back to the waiting workflow.
+# The `taskWorkflowId` is the child workflow ID of the task, which is
+# available via the inbox/task-listing API and is composed as:
+# `"humantask-<parentWorkflowId>-<taskName>-<uuid>"`.
+#
+# ```ballerina
+# check workflow:completeHumanTask(taskWorkflowId, {approved: true, comment: "LGTM"});
+# ```
+#
+# If `callerRoles` is provided the function fetches the `userRoles` stored on the task
+# and returns an error when none of the caller's roles appear in that list.
+# When omitted the role check is skipped; enforcement is then the caller's responsibility.
+#
+# + taskWorkflowId - Temporal workflow ID of the human task child workflow
+# + result - The value to return to the workflow (must be compatible with the declared `T`)
+# + callerRoles - Roles held by the caller; validated against the task's configured `userRoles`
+# + return - An error if the task cannot be found, is already completed, or the caller is unauthorized
+public isolated function completeHumanTask(string taskWorkflowId, anydata result,
+        [string, string...]? callerRoles = ()) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
+    name: "completeHumanTask"
+} external;
+
 // Internal functions
 
 # Stops the workflow runtime gracefully, draining in-progress tasks.

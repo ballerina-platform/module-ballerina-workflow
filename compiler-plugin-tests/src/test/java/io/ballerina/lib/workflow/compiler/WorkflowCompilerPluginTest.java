@@ -281,6 +281,42 @@ public class WorkflowCompilerPluginTest {
                         + getDiagnosticMessages(diagnosticResult));
     }
 
+    @Test(groups = "valid")
+    public void testValidCallHumanTaskWithTimeout() {
+        String packagePath = "valid_timeout";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for callHumanTask with time:Duration timeout field. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidCallHumanTaskTimeoutNoValue() {
+        String packagePath = "invalid_timeout_no_value";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected type error for callHumanTask with int literal 30 as timeout "
+                        + "(not assignable to time:Duration?)");
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidCallHumanTaskTimeoutNotDuration() {
+        String packagePath = "invalid_timeout_not_future";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected type error for callHumanTask with future<int> passed as timeout "
+                        + "(not assignable to time:Duration?)");
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidCallHumanTaskTimeoutStringValue() {
+        String packagePath = "invalid_timeout_string_value";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected type error for callHumanTask with string value passed as timeout "
+                        + "(not assignable to time:Duration?)");
+    }
+
     @Test(groups = "invalid")
     public void testInvalidAwaitNotFromEvents() {
         String packagePath = "invalid_wait_for_data_not_from_events";

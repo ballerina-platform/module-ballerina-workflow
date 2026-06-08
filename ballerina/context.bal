@@ -41,11 +41,15 @@ public client class Context {
     #          `"connection:<name>"` marker for transport across the workflow
     #          execution boundary.
     # + T - Expected return type (inferred from context)
-    # + options - Retry and error-handling options
+    # + retryPolicy - Retry behaviour on failure:
+    #   - `()` / `NoRetry` (default) — error is returned as-is, no retry.
+    #   - `AutoRetry` — automatic backoff retry with configurable attempts and delays.
+    #   - `ManualRetry` — on failure a retry task is created for a human to decide
+    #     whether to retry (optionally with new input) or permanently fail the activity.
     # + return - The activity result as `T`, or an error
     remote isolated function callActivity(function activityFunction,
             map<anydata|object {}> args = {},
-            typedesc<anydata> T = <>, *ActivityOptions options) 
+            typedesc<anydata> T = <>, AutoRetry|ManualRetry|NoRetry retryPolicy = NoRetry)
             returns T|error = @java:Method {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
         name: "callActivity"
@@ -123,6 +127,34 @@ public client class Context {
             typedesc<anydata> T = <>) returns T|error = @java:Method {
         'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WaitUtils",
         name: "awaitFutures"
+    } external;
+
+    # Creates a human task and blocks until a human completes it or the optional timeout elapses.
+    # Internally, the task is modelled as a durable Temporal child workflow whose type is `config.taskName`,
+    # so the task survives worker restarts.  Register the task name at module init time via
+    # `wfInternal:registerHumanTask(taskName)` (the compiler plugin generates this call automatically).
+    #
+    # ```ballerina
+    # ApprovalDecision d = check ctx->callHumanTask({
+    #     taskName: "approveExpense",
+    #     title:    "Approve order",
+    #     userRoles: ["FINANCE_APPROVER"],
+    #     payload:  {"amount": 1200, "currency": "USD"},
+    #     timeout:  { hours: 24 }
+    # }) on fail workflow:HumanTaskTimeoutError e {
+    #     check ctx->callActivity(notifyEscalation, args = {"taskName": e.detail().taskName});
+    #     return e;
+    # };
+    # ```
+    #
+    # + T - Expected result type; drives form schema generation and runtime validation
+    # + config - Task configuration: name, roles, payload, and optional timeout
+    # + return - The typed value submitted by the human, or a `HumanTaskTimeoutError`
+    remote isolated function callHumanTask(HumanTaskConfig config,
+            typedesc<anydata> T = <>)
+            returns T|HumanTaskTimeoutError = @java:Method {
+        'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
+        name: "callHumanTask"
     } external;
 }
 

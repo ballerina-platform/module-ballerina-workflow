@@ -68,6 +68,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -122,6 +123,30 @@ public final class WorkflowWorkerNative {
 
     // Static registry to store event names per process (process name to list of event names)
     private static final Map<String, List<String>> EVENT_REGISTRY = new ConcurrentHashMap<>();
+
+    /** ApplicationFailure type tag used to propagate a human task timeout through the child workflow boundary. */
+    public static final String HUMANTASK_TIMEOUT_FAILURE_TYPE = "HUMANTASK_TIMEOUT";
+
+    /**
+     * Temporal workflow type used for all built-in manual retry task child workflows.
+     * A single fixed type keeps the implementation simple; individual retry tasks are
+     * distinguished by their workflow ID ({@code retrytask-{parentId}-{taskName}-{uuid}}).
+     */
+    public static final String RETRYTASK_WORKFLOW_TYPE = "__workflow_retry_task__";
+
+    /**
+     * Set of taskNames registered as human task workflow types.
+     * Each entry equals a Temporal workflow type that should be handled by the
+     * built-in human task execution path inside {@link BallerinaWorkflowAdapter}.
+     * Populated by {@link #registerHumanTask(BString)} at module init time.
+     */
+    private static final Set<String> HUMANTASK_REGISTRY = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Tracks whether the built-in retry task workflow type has been registered.
+     * Populated lazily on the first {@code ManualRetry} activity call.
+     */
+    private static final Set<String> RETRYTASK_REGISTRY = ConcurrentHashMap.newKeySet();
 
     /**
      * Marker prefix used to ferry module-level client object references through
@@ -715,6 +740,51 @@ public final class WorkflowWorkerNative {
     }
 
     /**
+     * Registers {@code taskName} as a human task workflow type.
+     *
+     * <p>After registration, any Temporal child workflow started with
+     * {@code workflowType == taskName} is routed to the built-in human task
+     * execution path inside {@link BallerinaWorkflowAdapter}.
+     *
+     * <p>Registration is idempotent: re-registering the same name is a no-op
+     * and returns {@code true}.
+     *
+     * @param taskName the task name (also the Temporal workflow type)
+     * @return {@code true} on success
+     */
+    public static Object registerHumanTask(BString taskName) {
+        HUMANTASK_REGISTRY.add(taskName.getValue());
+        LOGGER.debug("[WorkflowWorkerNative] Registered human task type: {}", taskName.getValue());
+        return true;
+    }
+
+    /**
+     * Returns an unmodifiable view of the registered human task names.
+     * Exposed for testing and introspection.
+     */
+    public static Set<String> getHumanTaskRegistry() {
+        return Collections.unmodifiableSet(HUMANTASK_REGISTRY);
+    }
+
+    /**
+     * Ensures the built-in retry task workflow type is registered exactly once.
+     * Called lazily from {@link io.ballerina.lib.workflow.context.WorkflowContextNative}
+     * when a {@code ManualRetry} activity is first encountered during a workflow execution.
+     * Idempotent — safe to call on every retry task creation.
+     */
+    public static void ensureRetryTaskRegistered() {
+        RETRYTASK_REGISTRY.add(RETRYTASK_WORKFLOW_TYPE);
+    }
+
+    /**
+     * Returns an unmodifiable view of the retry task workflow types registry.
+     * Exposed for testing and introspection.
+     */
+    public static Set<String> getRetryTaskRegistry() {
+        return Collections.unmodifiableSet(RETRYTASK_REGISTRY);
+    }
+
+    /**
      * Gets the activity registry for testing purposes.
      *
      * @return the activity registry map
@@ -1175,6 +1245,16 @@ public final class WorkflowWorkerNative {
                 BObject templateService = SERVICE_REGISTRY.get(workflowType);
 
                 if (processFunction == null && templateService == null) {
+                    // Route human task workflow types before reporting "not registered"
+                    if (HUMANTASK_REGISTRY.contains(workflowType)) {
+                        return executeBuiltinHumanTask(args);
+                    }
+
+                    // Route built-in manual retry task workflow type
+                    if (RETRYTASK_REGISTRY.contains(workflowType)) {
+                        return executeBuiltinRetryTask(args);
+                    }
+
                     String errorMsg = String.format("Workflow '%s' is not registered. " +
                             "Please call registerWorkflow() for this workflow.", workflowType);
                     LOGGER.error("[JWorkflowAdapter] {}", errorMsg);
@@ -1455,6 +1535,119 @@ public final class WorkflowWorkerNative {
                     "Context",
                     nativeContextHandle
                                                  );
+        }
+
+        /**
+         * Executes the built-in human task child workflow.
+         *
+         * <p>Waits for a {@code "taskCompletion"} signal or a durable timer (if a timeout is
+         * configured).  On signal, returns the {@code result} payload from the signal data.
+         * On timeout, throws a non-retryable {@link io.temporal.failure.ApplicationFailure} with type
+         * {@link WorkflowWorkerNative#HUMANTASK_TIMEOUT_FAILURE_TYPE} whose message encodes four
+         * pipe-separated fields unpacked by {@code WorkflowContextNative.callHumanTask}:
+         * {@code taskName|taskWorkflowId|timedOutAfter|timedOutAt}.
+         *
+         * @param args Temporal-encoded input; index 0 is the input map set by callHumanTask
+         * @return the signal result map on success; throws ApplicationFailure on timeout
+         */
+        @SuppressWarnings("unchecked")
+        private Object executeBuiltinHumanTask(EncodedValues args) {
+            Map<String, Object> input;
+            try {
+                input = args.get(0, Map.class);
+            } catch (Exception e) {
+                throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
+                        "Invalid humantask input: " + e.getMessage(), "HUMANTASK_INPUT_ERROR");
+            }
+
+            String taskName = String.valueOf(input.getOrDefault("taskName", "unknown"));
+            // timeoutSeconds: null or absent → wait indefinitely
+            Object timeoutRaw = input.get("timeoutSeconds");
+            Long timeoutSeconds = (timeoutRaw instanceof Number n) ? n.longValue() : null;
+            String thisWorkflowId = Workflow.getInfo().getWorkflowId();
+
+            // Block until the "taskCompletion" signal arrives or the optional timeout fires.
+            // The DynamicSignalHandler registered in the constructor records all signals
+            // in signalWrapper, so getSignalFuture("taskCompletion") is already
+            // replay-safe — it returns a completed promise during history replay.
+            io.temporal.workflow.CompletablePromise<SignalAwaitWrapper.SignalData> signalFuture =
+                    signalWrapper.getSignalFuture("taskCompletion");
+
+            boolean signalArrived;
+            if (timeoutSeconds != null) {
+                signalArrived = Workflow.await(
+                        java.time.Duration.ofSeconds(timeoutSeconds),
+                        signalFuture::isCompleted);
+            } else {
+                // No timeout — block indefinitely until the signal arrives
+                Workflow.await(signalFuture::isCompleted);
+                signalArrived = true;
+            }
+
+            if (signalArrived) {
+                SignalAwaitWrapper.SignalData signalData = signalFuture.get();
+                // Return the raw signal data — callHumanTask extracts the "result" field
+                // and coerces it to the caller's typedesc T.
+                return signalData.data();
+            } else {
+                // Timer fired — no human acted within the deadline
+                String timedOutAt = java.time.Instant
+                        .ofEpochMilli(Workflow.currentTimeMillis()).toString();
+                // timeoutSeconds is non-null here (we only enter else when timeout was set)
+                String timedOutAfter = "PT" + timeoutSeconds + "S";
+                // Pipe-delimited message unpacked by callHumanTask to build HumanTaskTimeoutDetail
+                String msg = taskName + "|" + thisWorkflowId + "|" + timedOutAfter + "|" + timedOutAt;
+                throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
+                        msg, HUMANTASK_TIMEOUT_FAILURE_TYPE);
+            }
+        }
+
+        /**
+         * Executes the built-in manual retry task child workflow.
+         *
+         * <p>Waits indefinitely for a {@code "taskDecision"} signal from a human operator.
+         * The signal payload is a map with the following fields:
+         * <ul>
+         *   <li>{@code action} — {@code "retry"}, {@code "retry-with-input"}, or {@code "fail"}</li>
+         *   <li>{@code input} — (optional) new named arguments map for {@code "retry-with-input"}</li>
+         * </ul>
+         *
+         * <p>The decision map is returned directly to the parent workflow via the child-workflow
+         * result channel; {@code callBuiltinRetryTask} in
+         * {@link io.ballerina.lib.workflow.context.WorkflowContextNative} unpacks it.
+         *
+         * @param args Temporal-encoded input; index 0 is the input map set by callBuiltinRetryTask
+         * @return the decision map ({@code {action, input?}})
+         */
+        @SuppressWarnings("unchecked")
+        private Object executeBuiltinRetryTask(EncodedValues args) {
+            // Input validation — failure is non-retryable to avoid infinite loops
+            try {
+                args.get(0, Map.class);
+            } catch (Exception e) {
+                throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
+                        "Invalid retry task input: " + e.getMessage(), "RETRYTASK_INPUT_ERROR");
+            }
+
+            // Block indefinitely until the "taskDecision" signal arrives.
+            // The DynamicSignalHandler registered in the constructor records all signals
+            // in signalWrapper, so getSignalFuture("taskDecision") is replay-safe.
+            io.temporal.workflow.CompletablePromise<SignalAwaitWrapper.SignalData> signalFuture =
+                    signalWrapper.getSignalFuture("taskDecision");
+
+            Workflow.await(signalFuture::isCompleted);
+
+            SignalAwaitWrapper.SignalData signalData = signalFuture.get();
+            // Return the raw decision map — executeWithManualRetry in
+            // WorkflowContextNative processes action + optional input.
+            Object decision = signalData.data();
+            if (decision instanceof Map<?, ?>) {
+                return decision;
+            }
+            // Fallback: treat any unexpected payload as "fail"
+            Map<String, Object> failDecision = new HashMap<>();
+            failDecision.put("action", "fail");
+            return failDecision;
         }
     }
 
@@ -1821,7 +2014,8 @@ public final class WorkflowWorkerNative {
                 status = "FAILED";
                 errorMessage = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
             } catch (java.util.concurrent.TimeoutException e) {
-                status = "RUNNING";
+                status = "FAILED";
+                errorMessage = "Workflow wait timed out: " + e.getMessage();
             } catch (Exception e) {
                 status = "FAILED";
                 errorMessage = e.getMessage();

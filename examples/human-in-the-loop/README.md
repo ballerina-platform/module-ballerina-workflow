@@ -1,17 +1,15 @@
 # Human-in-the-Loop Example
 
-This example demonstrates a workflow that pauses for **human approval** before proceeding. High-value orders require a manager's decision — the workflow durably pauses until a reviewer sends their approval via the HTTP API. Low-value orders are auto-approved.
+This example demonstrates a workflow that pauses for **human approval** using `callHumanTask`. High-value orders require a manager's decision — the workflow durably pauses until a reviewer submits their decision. Low-value orders are auto-approved.
 
-An HTTP service exposes the workflow, allowing external systems (dashboards, Slack bots, etc.) to start orders and submit approval decisions via REST.
-
-See the full pattern explanation in [Human in the Loop](../../docs/patterns/human-in-the-loop.md).
+The task is modelled as a Temporal child workflow. No separate HTTP callback endpoint or `sendData` call is needed in the workflow code.
 
 ## What This Example Shows
 
-- Pausing a workflow at `wait events.approval` for a human decision
+- Pausing a workflow at `ctx->callHumanTask(...)` for a human decision
 - Conditional approval: only high-value orders require human input
-- Sending external data to a waiting workflow via `workflow:sendData`
-- Exposing the workflow via an HTTP service (`POST /api/orders`, `POST /api/orders/{id}/approve`)
+- Listing pending tasks via `management:listPendingHumanTasks`
+- Completing a task via `workflow:completeHumanTask`
 - Workflow durability: state is preserved across worker restarts while paused
 - Three outcomes: approved, rejected, or auto-approved (below threshold)
 
@@ -29,7 +27,7 @@ bal run
 
 The HTTP service starts on port **8090**.
 
-### Start a high-value order (requires approval)
+### Step 1 — Start a high-value order (requires approval)
 
 ```bash
 curl -s -X POST http://localhost:8090/api/orders \
@@ -47,23 +45,38 @@ Response:
 {"workflowId":"<uuid>"}
 ```
 
-The workflow validates the order, notifies the approval team, and pauses waiting for a decision.
+The workflow validates the order, then calls `callHumanTask` and pauses durably, waiting for a manager's decision.
 
-### Send the manager's decision (approve)
-
-Replace `<workflow-id>` with the ID from the previous response:
+### Step 2 — List pending approval tasks
 
 ```bash
-curl -s -X POST http://localhost:8090/api/orders/<workflow-id>/approve \
+curl -s http://localhost:8090/api/orders/<workflow-id>/tasks
+```
+
+Response:
+
+```json
+[{"taskName":"approveOrder","taskIds":["humantask-<workflow-id>-approveOrder-<uuid>"]}]
+```
+
+Task types are sorted alphabetically. Each group lists the instance IDs under that type in start order.
+
+### Step 3 — Submit the manager's decision
+
+Replace `<task-id>` with the first element of `taskIds[0]` from the previous response:
+
+```bash
+curl -s -X POST http://localhost:8090/api/tasks/<task-id>/complete \
   -H "Content-Type: application/json" \
   -d '{
-    "approverId": "manager-ops-1",
     "approved": true,
     "reason": "Approved for Q2 budget"
   }'
 ```
 
-### Get the workflow result
+To reject instead, send `"approved": false`.
+
+### Step 4 — Get the workflow result
 
 ```bash
 curl -s http://localhost:8090/api/orders/<workflow-id>
@@ -82,7 +95,18 @@ Response (approved):
 }
 ```
 
-To reject instead, send `"approved": false`. The result will have `"status": "REJECTED"`.
+Response (rejected):
+
+```json
+{
+  "status": "COMPLETED",
+  "result": {
+    "orderId": "ORD-001",
+    "status": "REJECTED",
+    "message": "Rejected: Budget exceeded"
+  }
+}
+```
 
 ### Start a low-value order (auto-approved)
 
@@ -96,7 +120,7 @@ curl -s -X POST http://localhost:8090/api/orders \
   }'
 ```
 
-This order completes immediately without waiting for approval.
+This order completes immediately without a human task.
 
 ### Running tests
 

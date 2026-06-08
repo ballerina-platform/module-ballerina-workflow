@@ -20,25 +20,33 @@ package io.ballerina.lib.workflow.compiler;
 
 import java.util.Collections;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Holds information about a @Workflow annotated function.
  * <p>
- * Contains the function name and a map of activity functions called within it.
+ * Contains the function name, a map of activity functions called within it,
+ * and the set of human task names found in {@code callHumanTask} call sites.
  *
- * @param functionName the name of the process function
- * @param activityMap  map of activity function names to their references
+ * @param functionName  the name of the process function
+ * @param activityMap   map of activity function names to their references
+ * @param humanTaskNames set of task names passed to {@code ctx->callHumanTask}
  * @since 0.1.0
  */
-public record ProcessFunctionInfo(String functionName, Map<String, String> activityMap) {
+public record ProcessFunctionInfo(String functionName, Map<String, String> activityMap,
+                                  Set<String> humanTaskNames) {
 
     /**
-     * Creates a new ProcessFunctionInfo.
+     * Creates a new ProcessFunctionInfo with defensive copies of the supplied collections
+     * to prevent external mutation from affecting the stored state.
      *
-     * @param functionName the name of the process function
-     * @param activityMap  map of activity function names to their references
+     * @param functionName  the name of the process function
+     * @param activityMap   map of activity function names to their references
+     * @param humanTaskNames set of task names found at callHumanTask call sites
      */
     public ProcessFunctionInfo {
+        activityMap = Map.copyOf(activityMap);
+        humanTaskNames = Set.copyOf(humanTaskNames);
     }
 
     /**
@@ -61,5 +69,16 @@ public record ProcessFunctionInfo(String functionName, Map<String, String> activ
     @Override
     public Map<String, String> activityMap() {
         return Collections.unmodifiableMap(activityMap);
+    }
+
+    /**
+     * Gets the set of human task names found in {@code ctx->callHumanTask} call sites
+     * within this workflow function.
+     *
+     * @return unmodifiable set of task name strings
+     */
+    @Override
+    public Set<String> humanTaskNames() {
+        return Collections.unmodifiableSet(humanTaskNames);
     }
 }

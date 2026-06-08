@@ -143,8 +143,7 @@ function retryDefaultFailWorkflow(workflow:Context ctx, RetryActivityInput input
 @workflow:Workflow
 function retryFailOnErrorFalseWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
     // retryOnError=false (explicit): error is returned as a normal value — no Temporal retries
-    string|error result = ctx->callActivity(alwaysFailActivity, {"message": "soft failure"},
-                    retryOnError = false);
+    string|error result = ctx->callActivity(alwaysFailActivity, {"message": "soft failure"});
     if result is error {
         // Error was returned as a value, not a failure — handle gracefully
         return "Handled error: " + result.message();
@@ -162,7 +161,7 @@ function retryFailOnErrorFalseWorkflow(workflow:Context ctx, RetryActivityInput 
 function retryCustomPolicyWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
     // retryOnError=true with custom options: 3 retries, 1-second initial delay, 1.5x backoff
     string result = check ctx->callActivity(alwaysFailActivity, {"message": "custom retry"},
-                retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 1.5);
+                retryPolicy = <workflow:AutoRetry>{maxRetries: 3, retryDelay: 1.0d, retryBackoff: 1.5d});
     return result;
 }
 
@@ -203,7 +202,7 @@ function retryFailWithCauseWorkflow(workflow:Context ctx, RetryActivityInput inp
 @workflow:Workflow
 function retryHandleDetailsWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
     string|error result = ctx->callActivity(failWithDetailsActivity,
-        {"orderId": "ORD-99999", "errorCode": 5002}, retryOnError = false);
+        {"orderId": "ORD-99999", "errorCode": 5002});
     if result is error {
         return "Handled: " + result.message();
     }
@@ -219,7 +218,7 @@ function retryHandleDetailsWorkflow(workflow:Context ctx, RetryActivityInput inp
 @workflow:Workflow
 function retryHandleCauseWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
     string|error result = ctx->callActivity(failWithCauseActivity,
-        {"operation": "updateInventory"}, retryOnError = false);
+        {"operation": "updateInventory"});
     if result is error {
         return "Handled: " + result.message();
     }
@@ -251,7 +250,7 @@ function retryExhaustUnhandledWorkflow(workflow:Context ctx, RetryActivityInput 
     // retryOnError=true: Temporal retries the activity up to maxRetries times.
     // After exhaustion, the error propagates to the workflow via `check`.
     string result = check ctx->callActivity(alwaysFailActivity, {"message": "exhaust unhandled"},
-            retryOnError = true, maxRetries = 2, retryDelay = 1.0);
+            retryPolicy = <workflow:AutoRetry>{maxRetries: 2, retryDelay: 1.0d});
     // This line is never reached when the activity always fails.
     return result;
 }
@@ -268,7 +267,7 @@ function retryExhaustUnhandledWorkflow(workflow:Context ctx, RetryActivityInput 
 function retryExhaustFallbackWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
     // Try the primary activity with 2 retries.
     string|error primaryResult = ctx->callActivity(alwaysFailActivity, {"message": "primary failed"},
-            retryOnError = true, maxRetries = 2, retryDelay = 1.0);
+            retryPolicy = <workflow:AutoRetry>{maxRetries: 2, retryDelay: 1.0d});
     if primaryResult is error {
         // Primary exhausted — fall back to a secondary activity.
         string fallbackResult = check ctx->callActivity(alwaysSucceedActivity, {"value": "fallback"});
@@ -292,7 +291,7 @@ function retryExhaustCompensateWorkflow(workflow:Context ctx, RetryActivityInput
 
     // Step 2: always fails after 2 retries — need to undo step 1.
     string|error step2Result = ctx->callActivity(alwaysFailActivity, {"message": "step2 failed"},
-            retryOnError = true, maxRetries = 2, retryDelay = 1.0);
+            retryPolicy = <workflow:AutoRetry>{maxRetries: 2, retryDelay: 1.0d});
     if step2Result is error {
         // Compensate step 1 by running the undo activity.
         string compensation = check ctx->callActivity(compensateActivity,
@@ -317,7 +316,7 @@ function retryExhaustGracefulWorkflow(workflow:Context ctx, RetryActivityInput i
 
     // Non-critical notification — retried once; failure is tolerated.
     string|error notifyResult = ctx->callActivity(nonCriticalActivity, {"label": "notify-user"},
-            retryOnError = true, maxRetries = 1, retryDelay = 1.0);
+            retryPolicy = <workflow:AutoRetry>{maxRetries: 1, retryDelay: 1.0d});
     if notifyResult is error {
         // Log (via return value) that the notification was skipped, but still complete.
         return coreResult + " (notification skipped: " + notifyResult.message() + ")";
@@ -444,13 +443,13 @@ function multiTierFallbackWorkflow(workflow:Context ctx, RetryActivityInput inpu
     // Tier 1: try email with retries
     string|error emailResult = ctx->callActivity(sendEmailActivity,
             {"to": "user@example.com", "message": "Hello"},
-            retryOnError = true, maxRetries = 2, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = <workflow:AutoRetry>{maxRetries: 2, retryDelay: 1.0d, retryBackoff: 2.0d});
 
     if emailResult is error {
         // Tier 2: try SMS with retries
         string|error smsResult = ctx->callActivity(sendSmsActivity,
                 {"phone": "+1234567890", "message": "Hello"},
-                retryOnError = true, maxRetries = 1, retryDelay = 1.0);
+                retryPolicy = <workflow:AutoRetry>{maxRetries: 1, retryDelay: 1.0d});
 
         if smsResult is error {
             // Tier 3: final fallback — create support ticket
@@ -485,7 +484,7 @@ function multiStepCompensationWorkflow(workflow:Context ctx, RetryActivityInput 
 
     // Step 3: fails after retries — need to compensate step 2, then step 1
     string|error step3Result = ctx->callActivity(failingStepActivity, {"stepName": "ship-order"},
-            retryOnError = true, maxRetries = 2, retryDelay = 1.0);
+            retryPolicy = <workflow:AutoRetry>{maxRetries: 2, retryDelay: 1.0d});
 
     if step3Result is error {
         // Compensate in reverse order: step 2 first, then step 1
@@ -516,12 +515,12 @@ function multiNonCriticalGracefulWorkflow(workflow:Context ctx, RetryActivityInp
     // NON-CRITICAL 1 — tolerate failure
     string|error emailResult = ctx->callActivity(sendConfirmationEmailActivity,
             {"orderId": input.id},
-            retryOnError = true, maxRetries = 1, retryDelay = 1.0);
+            retryPolicy = <workflow:AutoRetry>{maxRetries: 1, retryDelay: 1.0d});
 
     // NON-CRITICAL 2 — tolerate failure
     string|error auditResult = ctx->callActivity(writeAuditLogActivity,
             {"orderId": input.id, "reservationId": reservationId},
-            retryOnError = true, maxRetries = 1, retryDelay = 1.0);
+            retryPolicy = <workflow:AutoRetry>{maxRetries: 1, retryDelay: 1.0d});
 
     // Build result, noting any skipped steps
     string[] skipped = [];
@@ -536,4 +535,61 @@ function multiNonCriticalGracefulWorkflow(workflow:Context ctx, RetryActivityInp
         ? string ` (skipped: ${string:'join(", ", ...skipped)})`
         : "";
     return reservationId + suffix;
+}
+
+// ================================================================================
+// MANUAL RETRY (HUMAN-IN-THE-LOOP RETRY POLICY)
+// ================================================================================
+
+# Activity that can be recovered by changing input via manual retry decision.
+#
+# + mode - "fail" to return an error, "ok" to succeed
+# + return - Success message or error
+@workflow:Activity
+function recoverableByInputActivity(string mode) returns string|error {
+    if mode == "ok" {
+        return "Recovered with manual input";
+    }
+    return error("Recoverable activity failed");
+}
+
+# Workflow that starts with failing input and expects a human manual retry decision
+# with updated input to recover.
+#
+# + ctx - Workflow context
+# + input - Workflow input
+# + return - Result or error
+@workflow:Workflow
+function manualRetryWithInputWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
+    string result = check ctx->callActivity(recoverableByInputActivity,
+            {"mode": "fail"},
+            retryPolicy = <workflow:ManualRetry>{taskName: "recoverInput", userRoles: ["ops", "admin"]});
+    return result;
+}
+
+# Workflow that always fails unless the human keeps retrying forever.
+# Used to test explicit manual retry decision "fail".
+#
+# + ctx - Workflow context
+# + input - Workflow input
+# + return - Result or error
+@workflow:Workflow
+function manualRetryFailDecisionWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
+    string result = check ctx->callActivity(alwaysFailActivity,
+            {"message": "manual retry fail decision"},
+            retryPolicy = <workflow:ManualRetry>{taskName: "manualFail", userRoles: ["ops"]});
+    return result;
+}
+
+# Workflow that always fails; tests a same-input "retry" decision followed by "fail".
+#
+# + ctx - Workflow context
+# + input - Workflow input
+# + return - Result or error
+@workflow:Workflow
+function manualRetrySameInputWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
+    string result = check ctx->callActivity(alwaysFailActivity,
+            {"message": "manual same-input retry"},
+            retryPolicy = <workflow:ManualRetry>{taskName: "manualSameInput", userRoles: ["ops"]});
+    return result;
 }

@@ -221,9 +221,9 @@ public final class WorkflowRuntime {
             return true;
 
         } catch (WorkflowNotFoundException e) {
-            // The workflow already completed before this signal was delivered.
-            // This is a normal race condition (e.g. alternate-wait, timeout) — not an error.
-            LOGGER.debug("Signal '{}' dropped: workflow {} has already completed",
+            // The workflow completed or was terminated before this signal was delivered.
+            // Returns false so the caller can decide whether to surface this as an error.
+            LOGGER.debug("Signal '{}' dropped: workflow {} is no longer running",
                     signalName, workflowId);
             return false;
         } catch (Exception e) {

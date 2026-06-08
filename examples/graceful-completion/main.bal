@@ -115,7 +115,7 @@ function processOrder(workflow:Context ctx, OrderInput input) returns string|err
     // NON-CRITICAL: confirmation email — retry once, tolerate failure
     string|error emailResult = ctx->callActivity(sendConfirmationEmail,
             {"email": input.customerEmail, "orderId": input.orderId},
-            retryOnError = true, maxRetries = 1, retryDelay = 1.0);
+            retryPolicy = {maxRetries: 1, retryDelay: 1.0});
     if emailResult is error {
         io:println("Email skipped: " + emailResult.message());
         skipped.push("email");
@@ -124,7 +124,7 @@ function processOrder(workflow:Context ctx, OrderInput input) returns string|err
     // NON-CRITICAL: audit log — retry once, tolerate failure
     string|error auditResult = ctx->callActivity(writeAuditLog,
             {"orderId": input.orderId, "reservationId": reservationId},
-            retryOnError = true, maxRetries = 1, retryDelay = 1.0);
+            retryPolicy = {maxRetries: 1, retryDelay: 1.0});
     if auditResult is error {
         io:println("Audit log skipped: " + auditResult.message());
         skipped.push("audit");

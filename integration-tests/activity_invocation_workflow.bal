@@ -97,7 +97,7 @@ function twoActivityInvocationWorkflow(workflow:Context ctx, ActivityInvocationI
 @workflow:Workflow
 function retryInvocationWorkflow(workflow:Context ctx, ActivityInvocationInput input) returns string|error {
     string result = check ctx->callActivity(invocationFailActivity, {"message": input.value},
-            retryOnError = true, maxRetries = 2, retryDelay = 0.1);
+            retryPolicy = <workflow:AutoRetry>{maxRetries: 2, retryDelay: 0.1d});
     return result;
 }
 

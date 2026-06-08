@@ -16,6 +16,7 @@
 
 import ballerina/test;
 import ballerina/jballerina.java;
+import ballerina/lang.runtime;
 import ballerina/workflow.internal as wfInternal;
 import ballerina/workflow.management;
 
@@ -599,7 +600,7 @@ function workflowWithTwoActivities(Context ctx, string input) returns string|err
 @Workflow
 function workflowWithRetryFailingActivity(Context ctx, string input) returns string|error {
     string result = check ctx->callActivity(alwaysFailingActivity, {"input": input},
-            retryOnError = true, maxRetries = 2, retryDelay = 0.1);
+            retryPolicy = {maxRetries: 2, retryDelay: 0.1});
     return result;
 }
 
@@ -813,4 +814,339 @@ function testActivityInvocationsOnSingleFailNoRetry() returns error? {
     int? singleAttempt = failedActivities[0].attempt;
     test:assertTrue(singleAttempt is int && singleAttempt == 1,
             "Without retries, failed activity should be attempt 1");
+}
+
+// ============================================================================
+// ManualRetry Type / Configuration Tests
+// ============================================================================
+
+@test:Config {groups: ["unit"]}
+function testManualRetryDefaultUserRoles() {
+    // Default userRoles must be [defaultAdminRole] — enforced at the type level.
+    ManualRetry config = {taskName: "processRefund"};
+    test:assertEquals(config.userRoles[0], defaultAdminRole,
+            "Default role should match defaultAdminRole configurable");
+    test:assertEquals(config.userRoles.length(), 1, "Default should have exactly one role");
+}
+
+@test:Config {groups: ["unit"]}
+function testManualRetryCustomUserRoles() {
+    // At least two roles must be accepted — [string, string...] enforces at least one element.
+    ManualRetry config = {taskName: "approvePayment", userRoles: ["finance", "manager"]};
+    test:assertEquals(config.taskName, "approvePayment");
+    test:assertEquals(config.userRoles.length(), 2);
+    test:assertEquals(config.userRoles[0], "finance");
+    test:assertEquals(config.userRoles[1], "manager");
+}
+
+@test:Config {groups: ["unit"]}
+function testManualRetrySingleCustomRole() {
+    // [string, string...] still accepts exactly one role.
+    ManualRetry config = {taskName: "reviewOrder", userRoles: ["ops-team"]};
+    test:assertEquals(config.userRoles.length(), 1);
+    test:assertEquals(config.userRoles[0], "ops-team");
+}
+
+@test:Config {groups: ["unit"]}
+function testAutoRetryDefaults() {
+    // AutoRetry default values should match the documented spec.
+    AutoRetry config = {};
+    test:assertEquals(config.maxRetries, 3, "Default maxRetries should be 3");
+    test:assertEquals(config.retryDelay, 1.0d, "Default retryDelay should be 1.0");
+    test:assertEquals(config.retryBackoff, 2.0d, "Default retryBackoff should be 2.0");
+    test:assertTrue(config.maxRetryDelay is (), "Default maxRetryDelay should be nil");
+}
+
+@test:Config {groups: ["unit"]}
+function testAutoRetryCustomValues() {
+    AutoRetry config = {maxRetries: 5, retryDelay: 0.5d, retryBackoff: 1.5d, maxRetryDelay: 30.0d};
+    test:assertEquals(config.maxRetries, 5);
+    test:assertEquals(config.retryDelay, 0.5d);
+    test:assertEquals(config.retryBackoff, 1.5d);
+    test:assertEquals(config.maxRetryDelay, 30.0d);
+}
+
+@test:Config {groups: ["unit"]}
+function testNoRetryIsUnit() {
+    // NoRetry is the () constant — passing it as the retryPolicy union member
+    // should be indistinguishable from omitting the parameter.
+    AutoRetry|ManualRetry|NoRetry policy = NoRetry;
+    test:assertTrue(policy is (), "NoRetry should be unit type ()");
+}
+
+// ============================================================================
+// ManualRetry Workflow Integration Tests
+// ============================================================================
+// These tests require a running Temporal server (IN_MEMORY mode started in
+// @BeforeSuite). They are skipped gracefully when no server is available.
+
+// Activity that always fails — used to trigger the ManualRetry path.
+@Activity
+function failingActivityForRetry(string orderId) returns string|error {
+    return error("Transient failure processing order: " + orderId);
+}
+
+// Workflow that uses ManualRetry for a critical step.
+@Workflow
+function workflowWithManualRetry(Context ctx, string orderId) returns string|error {
+    string result = check ctx->callActivity(failingActivityForRetry, {"orderId": orderId},
+            retryPolicy = <ManualRetry>{taskName: "retryOrder", userRoles: ["ops"]});
+    return result;
+}
+
+// Workflow that uses ManualRetry — the human will choose "fail" so the workflow errors.
+@Workflow
+function workflowWithManualRetryFail(Context ctx, string orderId) returns string|error {
+    string result = check ctx->callActivity(failingActivityForRetry, {"orderId": orderId},
+            retryPolicy = <ManualRetry>{taskName: "retryOrderFail", userRoles: ["ops"]});
+    return result;
+}
+
+@test:Config {groups: ["unit"]}
+function testManualRetryWorkflowCreatesRetryTask() returns error? {
+    // Register the workflow that uses ManualRetry.
+    map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
+    _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
+            "workflow-manual-retry-test", activities);
+
+    map<string> input = {id: "test-manual-retry-001", orderId: "ORD-MR-001"};
+    string|error runResult = run(workflowWithManualRetry, input);
+    if runResult is error {
+        return; // No server available – skip.
+    }
+    string workflowId = runResult;
+
+    // Give the workflow a moment to hit the failing activity and park at the retry task.
+    runtime:sleep(2);
+
+    // A pending retry task should have been created for this parent workflow.
+    management:RetryTaskSummary[]|error pendingTasks = management:listPendingRetryTasks(workflowId);
+    if pendingTasks is error {
+        return; // Server not reachable – skip.
+    }
+
+    test:assertTrue(pendingTasks.length() >= 1,
+            "Should have at least one pending retry task, got " + pendingTasks.length().toString());
+
+    management:RetryTaskSummary task = pendingTasks[0];
+    test:assertTrue(task.taskId.startsWith("retrytask-"),
+            "Task ID should start with 'retrytask-', got: " + task.taskId);
+    test:assertEquals(task.parentWorkflowId, workflowId, "parentWorkflowId should match");
+    test:assertEquals(task.status, "RUNNING", "Pending retry task should be in RUNNING status");
+    test:assertTrue(task.taskName.includes("retryOrder"),
+            "Task name should include configured taskName");
+}
+
+@test:Config {groups: ["unit"]}
+function testManualRetryTaskInfoContainsCorrectMetadata() returns error? {
+    map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
+    _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
+            "workflow-manual-retry-info-test", activities);
+
+    map<string> input = {id: "test-manual-retry-info-001", orderId: "ORD-MR-002"};
+    string|error runResult = run(workflowWithManualRetry, input);
+    if runResult is error {
+        return;
+    }
+    string workflowId = runResult;
+    runtime:sleep(2);
+
+    management:RetryTaskSummary[]|error pendingTasks = management:listPendingRetryTasks(workflowId);
+    if pendingTasks is error || pendingTasks.length() == 0 {
+        return;
+    }
+
+    string taskId = pendingTasks[0].taskId;
+    management:RetryTaskInfo|error infoResult = management:getRetryTaskInfo(taskId);
+    if infoResult is error {
+        return;
+    }
+
+    management:RetryTaskInfo info = infoResult;
+    test:assertEquals(info.taskId, taskId, "taskId should match");
+    test:assertEquals(info.parentWorkflowId, workflowId, "parentWorkflowId should match");
+    test:assertTrue(info.errorMessage.includes("Transient failure"),
+            "errorMessage should contain the original activity error");
+    test:assertTrue(info.activityName.includes("failingActivityForRetry"),
+            "activityName should contain the activity function name");
+    test:assertTrue(info.userRoles.length() >= 1, "userRoles should be populated");
+    test:assertEquals(info.userRoles[0], "ops", "userRole should be 'ops'");
+    test:assertFalse(info.createdAt == "", "createdAt should be populated");
+}
+
+@test:Config {groups: ["unit"]}
+function testCompleteRetryTaskWithRetry() returns error? {
+    // Complete a retry task with action="retry" — the workflow should resume and
+    // eventually fail again (because the activity always fails), creating another
+    // retry task. We verify the workflow is still running after the first decision.
+    map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
+    _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
+            "workflow-manual-retry-complete-test", activities);
+
+    map<string> input = {id: "test-manual-retry-complete-001", orderId: "ORD-MR-003"};
+    string|error runResult = run(workflowWithManualRetry, input);
+    if runResult is error {
+        return;
+    }
+    string workflowId = runResult;
+    runtime:sleep(2);
+
+    management:RetryTaskSummary[]|error tasks1 = management:listPendingRetryTasks(workflowId);
+    if tasks1 is error || tasks1.length() == 0 {
+        return;
+    }
+
+    // Complete the first retry task with action="retry".
+    error? completeResult = management:completeRetryTask(
+            tasks1[0].taskId, {action: "retry"});
+    test:assertTrue(completeResult is (), "completeRetryTask should succeed");
+
+    // After retrying, the activity fails again → another retry task is created.
+    runtime:sleep(2);
+    management:RetryTaskSummary[]|error tasks2 = management:listPendingRetryTasks(workflowId);
+    if tasks2 is error {
+        return;
+    }
+    test:assertTrue(tasks2.length() >= 1,
+            "A new retry task should appear after the activity fails again on retry");
+}
+
+@test:Config {groups: ["unit"]}
+function testCompleteRetryTaskWithFail() returns error? {
+    // Complete a retry task with action="fail" — the workflow should surface the
+    // original error and transition to FAILED.
+    map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
+    _ = check wfInternal:registerWorkflow(workflowWithManualRetryFail,
+            "workflow-manual-retry-fail-test", activities);
+
+    map<string> input = {id: "test-manual-retry-fail-001", orderId: "ORD-MR-004"};
+    string|error runResult = run(workflowWithManualRetryFail, input);
+    if runResult is error {
+        return;
+    }
+    string workflowId = runResult;
+    runtime:sleep(2);
+
+    management:RetryTaskSummary[]|error tasks = management:listPendingRetryTasks(workflowId);
+    if tasks is error || tasks.length() == 0 {
+        return;
+    }
+
+    error? completeResult = management:completeRetryTask(tasks[0].taskId, {action: "fail"});
+    test:assertTrue(completeResult is (), "completeRetryTask with fail should succeed");
+
+    // The workflow should now be FAILED.
+    anydata|error wfResult = getWorkflowResult(workflowId, 10);
+    test:assertTrue(wfResult is error,
+            "Workflow should have failed after 'fail' decision");
+
+    management:WorkflowExecutionInfo info = check management:getWorkflowInfo(workflowId);
+    test:assertEquals(info.status, "FAILED",
+            "Workflow status should be FAILED after manual retry decision 'fail'");
+}
+
+@test:Config {groups: ["unit"]}
+function testCompleteRetryTaskWithRetryWithInput() returns error? {
+    // Activity that succeeds only when a specific flag is set in the input.
+    // We test the retry-with-input path by substituting input that makes it succeed.
+    // (Here the activity always fails so we just verify the signal is accepted.)
+    map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
+    _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
+            "workflow-manual-retry-input-test", activities);
+
+    map<string> input = {id: "test-manual-retry-input-001", orderId: "ORD-MR-005"};
+    string|error runResult = run(workflowWithManualRetry, input);
+    if runResult is error {
+        return;
+    }
+    string workflowId = runResult;
+    runtime:sleep(2);
+
+    management:RetryTaskSummary[]|error tasks = management:listPendingRetryTasks(workflowId);
+    if tasks is error || tasks.length() == 0 {
+        return;
+    }
+
+    // Send retry-with-input decision — signal should be accepted without error.
+    error? completeResult = management:completeRetryTask(tasks[0].taskId, {
+        action: "retry-with-input",
+        input: {"orderId": "ORD-MR-005-CORRECTED"}
+    });
+    test:assertTrue(completeResult is (), "completeRetryTask with retry-with-input should succeed");
+}
+
+@test:Config {groups: ["unit"]}
+function testCompleteRetryTaskUnauthorizedRole() returns error? {
+    // Attempt to complete a retry task with a caller role not in the task's userRoles.
+    map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
+    _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
+            "workflow-manual-retry-auth-test", activities);
+
+    map<string> input = {id: "test-manual-retry-auth-001", orderId: "ORD-MR-006"};
+    string|error runResult = run(workflowWithManualRetry, input);
+    if runResult is error {
+        return;
+    }
+    string workflowId = runResult;
+    runtime:sleep(2);
+
+    management:RetryTaskSummary[]|error tasks = management:listPendingRetryTasks(workflowId);
+    if tasks is error || tasks.length() == 0 {
+        return;
+    }
+
+    // "guest" is not in userRoles = ["ops"] → should be rejected.
+    error? completeResult = management:completeRetryTask(
+            tasks[0].taskId, {action: "retry"}, callerRoles = ["guest"]);
+    test:assertTrue(completeResult is error,
+            "completeRetryTask with unauthorized role should fail");
+    if completeResult is error {
+        test:assertTrue(
+            completeResult.message().toLowerAscii().includes("unauthorized") ||
+            completeResult.message().toLowerAscii().includes("role"),
+            "Error should mention authorization or role: " + completeResult.message());
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testListAllRetryTasksReturnsCreatedTask() returns error? {
+    map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
+    _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
+            "workflow-list-all-retry-test", activities);
+
+    map<string> input = {id: "test-list-all-retry-001", orderId: "ORD-MR-007"};
+    string|error runResult = run(workflowWithManualRetry, input);
+    if runResult is error {
+        return;
+    }
+    runtime:sleep(2);
+
+    management:RetryTaskSummary[]|error allTasks = management:listAllRetryTasks();
+    if allTasks is error {
+        return;
+    }
+
+    // At least the task we just created should be visible.
+    test:assertTrue(allTasks.length() >= 1,
+            "listAllRetryTasks should return at least the task we created");
+
+    // Every returned task ID must start with the retrytask- prefix.
+    foreach management:RetryTaskSummary t in allTasks {
+        test:assertTrue(t.taskId.startsWith("retrytask-"),
+                "All returned tasks should have retrytask- prefix, got: " + t.taskId);
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testListAllRetryTasksStatusFilter() returns error? {
+    // Filter by RUNNING (= pending) should only return pending tasks.
+    management:RetryTaskSummary[]|error runningTasks = management:listAllRetryTasks(status = "RUNNING");
+    if runningTasks is error {
+        return;
+    }
+
+    foreach management:RetryTaskSummary t in runningTasks {
+        test:assertEquals(t.status, "RUNNING",
+                "All tasks returned with status=RUNNING filter should be RUNNING, got: " + t.status);
+    }
 }

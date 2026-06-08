@@ -49,9 +49,12 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -747,6 +750,153 @@ public final class WorkflowNative {
             throw ErrorCreator.createError(e);
         } catch (Throwable throwable) {
             throw ErrorCreator.createError(throwable);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // completeHumanTask
+    // -------------------------------------------------------------------------
+
+    /**
+     * Sends a {@code "taskCompletion"} signal to the human task child workflow identified
+     * by {@code taskWorkflowId}, completing the task with the supplied result.
+     *
+     * @param taskWorkflowId the Temporal workflow ID of the human task child workflow
+     * @param result         the value to return to the waiting {@code callHumanTask} call
+     * @return {@code null} on success, or a Ballerina error
+     */
+    public static Object completeHumanTask(BString taskWorkflowId, Object result, Object callerRoles) {
+        try {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(
+                        StringUtils.fromString("Workflow client not initialized"));
+            }
+
+            // Always verify the target is a HUMAN_TASK workflow; also enforce role
+            // intersection when callerRoles is provided.
+            BArray callerRolesArray = (callerRoles instanceof BArray ba) ? ba : null;
+            Object validationError = validateHumanTaskAndRoles(
+                    client, taskWorkflowId.getValue(), callerRolesArray);
+            if (validationError != null) {
+                return validationError;
+            }
+
+            Object javaResult = TypesUtil.convertBallerinaToJavaType(result);
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("result", javaResult);
+
+            boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(
+                    taskWorkflowId.getValue(), "taskCompletion", payload);
+            if (!delivered) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Failed to complete human task: task '" + taskWorkflowId.getValue()
+                                + "' completed or was no longer running when signal was delivered"));
+            }
+            return null;
+        } catch (Exception e) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to complete human task: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Fetches the Temporal memo for {@code taskWorkflowId} and:
+     * <ol>
+     *   <li>Always asserts {@code workflowKind == "HUMAN_TASK"} — prevents signalling
+     *       non-human workflows via {@code completeHumanTask}.</li>
+     *   <li>When {@code callerRolesArray} is non-null, additionally verifies that at least
+     *       one caller role is present in the task's {@code userRoles} memo field.</li>
+     * </ol>
+     *
+     * <p>Returns {@code null} when all checks pass, or a Ballerina error otherwise.
+     *
+     * <p>If the {@code userRoles} memo field is absent or cannot be decoded the role
+     * intersection is skipped (backward-compatible with tasks started before role metadata
+     * was added).  The {@code workflowKind} check is never skipped.
+     */
+    private static Object validateHumanTaskAndRoles(WorkflowClient client, String taskWorkflowId,
+            BArray callerRolesArray) {
+        try {
+            DescribeWorkflowExecutionRequest req = DescribeWorkflowExecutionRequest.newBuilder()
+                    .setNamespace(client.getOptions().getNamespace())
+                    .setExecution(io.temporal.api.common.v1.WorkflowExecution.newBuilder()
+                            .setWorkflowId(taskWorkflowId)
+                            .build())
+                    .build();
+
+            DescribeWorkflowExecutionResponse resp = client.getWorkflowServiceStubs()
+                    .blockingStub()
+                    .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                    .describeWorkflowExecution(req);
+
+            WorkflowExecutionInfo execInfo = resp.getWorkflowExecutionInfo();
+
+            // 0. Status check — reject tasks that are no longer running
+            WorkflowExecutionStatus execStatus = execInfo.getStatus();
+            if (execStatus != WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Human task '" + taskWorkflowId + "' is not running (status="
+                                + convertStatus(execStatus) + ")"));
+            }
+
+            Map<String, io.temporal.api.common.v1.Payload> memoFields =
+                    execInfo.getMemo().getFieldsMap();
+            io.temporal.common.converter.DataConverter dc = client.getOptions().getDataConverter();
+
+            // 1. workflowKind check — always enforced
+            String workflowKind = null;
+            try {
+                io.temporal.api.common.v1.Payload kindPl = memoFields.get("workflowKind");
+                if (kindPl != null) {
+                    workflowKind = dc.fromPayload(kindPl, String.class, String.class);
+                }
+            } catch (Exception e) {
+                LOGGER.debug("Could not decode workflowKind from memo for '{}': {}",
+                        taskWorkflowId, e.getMessage());
+            }
+            if (!"HUMAN_TASK".equals(workflowKind)) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Invalid task: '" + taskWorkflowId
+                                + "' is not a human task workflow (workflowKind="
+                                + workflowKind + ")"));
+            }
+
+            // 2. Role intersection — only when callerRoles was supplied
+            if (callerRolesArray == null) {
+                return null;
+            }
+
+            Set<String> allowedRoles = new HashSet<>();
+            try {
+                io.temporal.api.common.v1.Payload rolesPl = memoFields.get("userRoles");
+                if (rolesPl != null) {
+                    String[] rolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
+                    allowedRoles.addAll(Arrays.asList(rolesArr));
+                }
+            } catch (Exception e) {
+                LOGGER.debug("Could not decode userRoles from task memo; skipping role check: {}",
+                        e.getMessage());
+                return null;
+            }
+
+            if (allowedRoles.isEmpty()) {
+                // No roles configured on the task — nothing to enforce.
+                return null;
+            }
+
+            for (int i = 0; i < callerRolesArray.size(); i++) {
+                if (allowedRoles.contains(callerRolesArray.get(i).toString())) {
+                    return null; // at least one matching role — authorized
+                }
+            }
+
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Unauthorized: caller does not have a required role to complete task '"
+                            + taskWorkflowId + "'. Required one of: " + allowedRoles));
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to validate task '" + taskWorkflowId + "': " + e.getMessage()));
         }
     }
 }

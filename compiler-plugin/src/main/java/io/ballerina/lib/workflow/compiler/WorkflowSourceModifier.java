@@ -48,6 +48,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * Source modifier that transforms workflow process functions.
@@ -219,8 +220,9 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
      * Generates a private function that registers all workflows and starts the runtime.
      * <pre>
      * function __registerWorkflowsAndStart() returns boolean|error {
+     *     _ = check wfInternal:registerConnection("db", db);
      *     _ = check wfInternal:registerWorkflow(wf1, "wf1", {"act": act});
-     *     _ = check wfInternal:registerWorkflow(wf2, "wf2");
+     *     _ = check wfInternal:registerHumanTask("approveExpense");
      *     _ = check wfInternal:startWorkflowRuntime();
      *     return true;
      * }
@@ -246,6 +248,22 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                     .append(":registerWorkflow(").append(processInfo.functionName())
                     .append(", \"").append(processInfo.functionName()).append("\", ")
                     .append(activitiesArg).append(");").append(System.lineSeparator());
+        }
+
+        // Collect qualified human task names ("workflowFunctionName.taskName") across every
+        // workflow in this module. Qualification ensures uniqueness across workflows that
+        // reuse the same short task name and matches the runtime qualification in callHumanTask.
+        // A sorted set is used for deterministic code generation across compiler runs.
+        Set<String> qualifiedHumanTaskNames = new TreeSet<>();
+        for (ProcessFunctionInfo processInfo : allProcessInfos) {
+            for (String taskName : processInfo.humanTaskNames()) {
+                qualifiedHumanTaskNames.add(processInfo.functionName() + "." + taskName);
+            }
+        }
+        for (String qualifiedName : qualifiedHumanTaskNames) {
+            body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                    .append(":registerHumanTask(\"").append(qualifiedName).append("\");")
+                    .append(System.lineSeparator());
         }
 
         body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)

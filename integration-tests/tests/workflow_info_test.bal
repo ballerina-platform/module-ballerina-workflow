@@ -27,15 +27,24 @@ import ballerina/workflow.management;
 function waitForWorkflowState(string workflowId, string[] expected, decimal timeoutSecs = 10)
         returns management:WorkflowExecutionInfo|error {
     decimal elapsed = 0.0d;
+    error? lastError = ();
     while elapsed < timeoutSecs {
-        management:WorkflowExecutionInfo info = check management:getWorkflowInfo(workflowId);
-        foreach string s in expected {
-            if info.status == s {
-                return info;
+        management:WorkflowExecutionInfo|error infoOrErr = management:getWorkflowInfo(workflowId);
+        if infoOrErr is management:WorkflowExecutionInfo {
+            lastError = ();
+            foreach string s in expected {
+                if infoOrErr.status == s {
+                    return infoOrErr;
+                }
             }
+        } else {
+            lastError = infoOrErr;
         }
         runtime:sleep(0.1d);
         elapsed += 0.1d;
+    }
+    if lastError is error {
+        return lastError;
     }
     return error("Timed out waiting for workflow " + workflowId + " to reach state: "
             + string:'join(", ", ...expected));

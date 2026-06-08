@@ -262,7 +262,9 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         }
         for (String qualifiedName : qualifiedHumanTaskNames) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerHumanTask(\"").append(qualifiedName).append("\");")
+                    .append(":registerHumanTask(\"")
+                    .append(escapeBallerinaStringLiteral(qualifiedName))
+                    .append("\");")
                     .append(System.lineSeparator());
         }
 
@@ -508,5 +510,14 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         // Note: FunctionCallExpressionNode transformation removed.
         // Direct activity calls are now disallowed and validated by WorkflowValidatorTask.
         // Users must use ctx->callActivity(activityFunc, args...) pattern.
+    }
+
+    private static String escapeBallerinaStringLiteral(String value) {
+        return value
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
 }

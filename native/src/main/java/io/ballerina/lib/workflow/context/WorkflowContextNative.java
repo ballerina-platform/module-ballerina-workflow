@@ -67,6 +67,13 @@ public final class WorkflowContextNative {
     private static final String CALL_CONFIG_MARKER = "__callConfig__";
     private static final String RETRY_ON_ERROR_KEY = "retryOnError";
 
+    private static volatile String defaultAdminRole = "admin";
+
+    public static void setDefaultAdminRole(BString role) {
+        String value = role.getValue();
+        defaultAdminRole = (value != null && !value.isEmpty()) ? value : "admin";
+    }
+
     /**
      * Execute an activity function within the workflow context.
      * <p>
@@ -277,7 +284,7 @@ public final class WorkflowContextNative {
             }
         }
         if (userRoles.isEmpty()) {
-            userRoles.add("admin");
+            userRoles.add(defaultAdminRole);
         }
 
         String parentWorkflowId = Workflow.getInfo().getWorkflowId();
@@ -577,7 +584,7 @@ public final class WorkflowContextNative {
             Object descObj = config.get(StringUtils.fromString("description"));
             String description = (descObj instanceof BString bs) ? bs.getValue() : "";
 
-            // userRoles: BArray of BString; default is ["admin"] from the type default
+            // userRoles: BArray of BString; falls back to configured defaultAdminRole when empty
             io.ballerina.runtime.api.values.BArray rolesArray =
                     (io.ballerina.runtime.api.values.BArray)
                             config.get(StringUtils.fromString("userRoles"));
@@ -588,16 +595,16 @@ public final class WorkflowContextNative {
                 }
             }
             if (userRoles.isEmpty()) {
-                userRoles.add("admin");
+                userRoles.add(defaultAdminRole);
             }
 
             Object payload = config.get(StringUtils.fromString("payload"));
 
             // timeout: nil (BNull/null) means wait indefinitely
             Object timeoutObj = config.get(StringUtils.fromString("timeout"));
-            Long timeoutSeconds = null;
+            Long timeoutMillis = null;
             if (timeoutObj instanceof BMap) {
-                timeoutSeconds = computeTimeoutSeconds((BMap<BString, Object>) timeoutObj);
+                timeoutMillis = computeTimeoutMillis((BMap<BString, Object>) timeoutObj);
             }
 
             // --- Build child workflow identity ---------------------------------------
@@ -642,7 +649,7 @@ public final class WorkflowContextNative {
             inputs.put("userRoles", userRoles);
             inputs.put("payload", TypesUtil.convertBallerinaToJavaType(payload));
             // null means no timeout (wait indefinitely)
-            inputs.put("timeoutSeconds", timeoutSeconds);
+            inputs.put("timeoutMillis", timeoutMillis);
             inputs.put("parentWorkflowId", parentWorkflowId);
             inputs.put("workflowDefinitionName", workflowDefinitionName);
 
@@ -691,18 +698,18 @@ public final class WorkflowContextNative {
     }
 
     /**
-     * Converts a {@code time:Duration} BMap to total seconds as a {@code long}.
+     * Converts a {@code time:Duration} BMap to total milliseconds as a {@code long}.
      * Returns {@code null} to indicate "no timeout" when the duration map is absent.
      */
     @SuppressWarnings("unchecked")
-    private static Long computeTimeoutSeconds(BMap<BString, Object> duration) {
+    private static Long computeTimeoutMillis(BMap<BString, Object> duration) {
         if (duration == null) {
             return null; // no timeout — wait indefinitely
         }
         long hours = getLongField(duration, "hours");
         long minutes = getLongField(duration, "minutes");
         double seconds = getDoubleField(duration, "seconds");
-        return hours * 3600L + minutes * 60L + (long) seconds;
+        return hours * 3_600_000L + minutes * 60_000L + Math.round(seconds * 1000);
     }
 
     private static long getLongField(BMap<BString, Object> map, String key) {

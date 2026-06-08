@@ -1577,9 +1577,9 @@ public final class WorkflowWorkerNative {
             }
 
             String taskName = String.valueOf(input.getOrDefault("taskName", "unknown"));
-            // timeoutSeconds: null or absent → wait indefinitely
-            Object timeoutRaw = input.get("timeoutSeconds");
-            Long timeoutSeconds = (timeoutRaw instanceof Number n) ? n.longValue() : null;
+            // timeoutMillis: null or absent → wait indefinitely
+            Object timeoutRaw = input.get("timeoutMillis");
+            Long timeoutMillis = (timeoutRaw instanceof Number n) ? n.longValue() : null;
             String thisWorkflowId = Workflow.getInfo().getWorkflowId();
 
             // Block until the "taskCompletion" signal arrives or the optional timeout fires.
@@ -1590,9 +1590,9 @@ public final class WorkflowWorkerNative {
                     signalWrapper.getSignalFuture("taskCompletion");
 
             boolean signalArrived;
-            if (timeoutSeconds != null) {
+            if (timeoutMillis != null) {
                 signalArrived = Workflow.await(
-                        java.time.Duration.ofSeconds(timeoutSeconds),
+                        java.time.Duration.ofMillis(timeoutMillis),
                         signalFuture::isCompleted);
             } else {
                 // No timeout — block indefinitely until the signal arrives
@@ -1609,8 +1609,8 @@ public final class WorkflowWorkerNative {
                 // Timer fired — no human acted within the deadline
                 String timedOutAt = java.time.Instant
                         .ofEpochMilli(Workflow.currentTimeMillis()).toString();
-                // timeoutSeconds is non-null here (we only enter else when timeout was set)
-                String timedOutAfter = "PT" + timeoutSeconds + "S";
+                // timeoutMillis is non-null here (we only enter else when timeout was set)
+                String timedOutAfter = java.time.Duration.ofMillis(timeoutMillis).toString();
                 // Pipe-delimited message unpacked by callHumanTask to build HumanTaskTimeoutDetail
                 String msg = taskName + "|" + thisWorkflowId + "|" + timedOutAfter + "|" + timedOutAt;
                 throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(

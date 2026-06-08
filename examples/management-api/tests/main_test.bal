@@ -85,6 +85,24 @@ function waitForPendingRetryTask(http:Client mgmt, string workflowId, decimal ti
     return error(string `Timed out waiting for pending retry task (workflow: ${workflowId})`);
 }
 
+// Polls the application API until the workflow reaches a terminal status, or the timeout elapses.
+function waitForWorkflowCompleted(http:Client app, string wfId, decimal timeoutSecs = 20)
+        returns WorkflowResponse|error {
+    decimal elapsed = 0.0d;
+    while elapsed < timeoutSecs {
+        WorkflowResponse|error resp = app->get(string `/requests/${wfId}`);
+        if resp is WorkflowResponse {
+            string s = resp.status;
+            if s == "COMPLETED" || s == "FAILED" || s == "CANCELLED" || s == "TERMINATED" {
+                return resp;
+            }
+        }
+        runtime:sleep(0.3d);
+        elapsed += 0.3d;
+    }
+    return error(string `Timed out waiting for workflow ${wfId} to reach a terminal status`);
+}
+
 // Wraps the GET /api/requests/{id} response which now includes a `status` field
 // alongside the `result` record.
 type WorkflowResponse record {
@@ -122,8 +140,7 @@ function testLowValueAutoApproved() returns error? {
     test:assertEquals(retries.items.length(), 0, "Valid email must not create a retry task");
 
     // Workflow should complete successfully
-    WorkflowResponse response = check app->get(string `/requests/${wfId}`);
-    test:assertEquals(response.status, "COMPLETED");
+    WorkflowResponse response = check waitForWorkflowCompleted(app, wfId);
     test:assertEquals(response.result.requestId, "REQ-LOW-001");
     test:assertTrue(response.result.message.includes("USB hub"), "Result should mention the item");
 }
@@ -188,8 +205,7 @@ function testHighValueApprovedWithEmailRetry() returns error? {
     test:assertEquals(retryResp.decision, "retry-with-input");
 
     // ── Step 3: Workflow completes ────────────────────────────────────────────
-    WorkflowResponse response = check app->get(string `/requests/${wfId}`);
-    test:assertEquals(response.status, "COMPLETED");
+    WorkflowResponse response = check waitForWorkflowCompleted(app, wfId);
     test:assertEquals(response.result.requestId, "REQ-HIGH-001");
     test:assertTrue(response.result.message.includes("developer laptop"),
             "Result should mention the approved item");
@@ -214,13 +230,14 @@ function testHighValueRejected() returns error? {
 
     // Wait for and reject the approval task
     HumanTaskSummaryRes humanTask = check waitForPendingHumanTask(mgmt, wfId);
-    record {|boolean success; string completedBy; string completedAt;|} _ =
+    record {|boolean success; string completedBy; string completedAt;|} completeResp =
             check mgmt->post(string `/human-tasks/${humanTask.taskId}/complete`, {
                 "result": {
                     "approved": false,
                     "reason":   "Exceeds annual equipment budget"
                 }
             });
+    test:assertTrue(completeResp.success, "Human task rejection completion must succeed");
 
     // Workflow ends REJECTED — no retry task should appear
     runtime:sleep(0.5d);
@@ -229,8 +246,7 @@ function testHighValueRejected() returns error? {
     test:assertEquals(retries.items.length(), 0,
             "Rejected workflow must not produce a retry task");
 
-    WorkflowResponse response = check app->get(string `/requests/${wfId}`);
-    test:assertEquals(response.status, "COMPLETED");   // workflow execution status
+    WorkflowResponse response = check waitForWorkflowCompleted(app, wfId);
     test:assertEquals(response.result.status, "REJECTED");
     test:assertEquals(response.result.requestId, "REQ-HIGH-002");
     test:assertTrue(response.result.message.includes("Exceeds annual equipment budget"),

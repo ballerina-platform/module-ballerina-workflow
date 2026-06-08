@@ -294,27 +294,33 @@ public class WorkflowCompilerPluginTest {
     public void testInvalidCallHumanTaskTimeoutNoValue() {
         String packagePath = "invalid_timeout_no_value";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
-        Assert.assertTrue(diagnosticResult.errorCount() > 0,
-                "Expected type error for callHumanTask with int literal 30 as timeout "
-                        + "(not assignable to time:Duration?)");
+        Assert.assertEquals(diagnosticResult.errorCount(), 1,
+                "Expected exactly one type error for callHumanTask with int literal 30 as timeout "
+                        + "(not assignable to time:Duration?). Got: " + getDiagnosticMessages(diagnosticResult));
+        Assert.assertTrue(getDiagnosticMessages(diagnosticResult).contains("time:Duration"),
+                "Expected timeout type incompatibility in diagnostics: " + getDiagnosticMessages(diagnosticResult));
     }
 
     @Test(groups = "invalid")
     public void testInvalidCallHumanTaskTimeoutNotDuration() {
         String packagePath = "invalid_timeout_not_future";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
-        Assert.assertTrue(diagnosticResult.errorCount() > 0,
-                "Expected type error for callHumanTask with future<int> passed as timeout "
-                        + "(not assignable to time:Duration?)");
+        Assert.assertEquals(diagnosticResult.errorCount(), 1,
+                "Expected exactly one type error for callHumanTask with future<int> passed as timeout "
+                        + "(not assignable to time:Duration?). Got: " + getDiagnosticMessages(diagnosticResult));
+        Assert.assertTrue(getDiagnosticMessages(diagnosticResult).contains("time:Duration"),
+                "Expected timeout type incompatibility in diagnostics: " + getDiagnosticMessages(diagnosticResult));
     }
 
     @Test(groups = "invalid")
     public void testInvalidCallHumanTaskTimeoutStringValue() {
         String packagePath = "invalid_timeout_string_value";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
-        Assert.assertTrue(diagnosticResult.errorCount() > 0,
-                "Expected type error for callHumanTask with string value passed as timeout "
-                        + "(not assignable to time:Duration?)");
+        Assert.assertEquals(diagnosticResult.errorCount(), 1,
+                "Expected exactly one type error for callHumanTask with string value passed as timeout "
+                        + "(not assignable to time:Duration?). Got: " + getDiagnosticMessages(diagnosticResult));
+        Assert.assertTrue(getDiagnosticMessages(diagnosticResult).contains("time:Duration"),
+                "Expected timeout type incompatibility in diagnostics: " + getDiagnosticMessages(diagnosticResult));
     }
 
     @Test(groups = "invalid")

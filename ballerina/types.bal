@@ -112,7 +112,7 @@ type WorkflowRegistry map<ProcessRegistration>;
 # + taskName - Identifies the task type; used as the Temporal workflow type and child workflow ID.
 # + title - Short summary shown in the inbox. Defaults to `taskName` when omitted.
 # + description - Additional context shown alongside the form. Optional.
-# + userRoles - One or more roles permitted to complete this task. Defaults to `["admin"]`.
+# + userRoles - One or more roles permitted to complete this task. Defaults to `[defaultAdminRole]`.
 # + payload - Read-only JSON object rendered as key-value pairs next to the form.
 #             Use `map<json>` to ensure each entry has a meaningful label.
 # + timeout - Maximum time to wait. Omit (or pass `()`) to wait indefinitely.
@@ -120,7 +120,7 @@ public type HumanTaskConfig record {|
     string taskName; // Must match a registered HumanTask type (see `wfInternal:registerHumanTask`)
     string? title = ();
     string? description = ();
-    string[] userRoles = ["admin"];
+    string[] userRoles = [defaultAdminRole];
     map<json> payload = {};
     time:Duration? timeout = ();
 |};

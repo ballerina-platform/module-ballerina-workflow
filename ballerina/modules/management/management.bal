@@ -210,9 +210,15 @@ public isolated function failHumanTask(string taskWorkflowId, string reason,
 # + cancelledBy - Optional user ID recorded in the termination reason for audit purposes
 # + return - An error if the task cannot be found or terminated
 public isolated function cancelHumanTask(string taskWorkflowId, string? cancelledBy = ()) returns error? {
+    check assertIsHumanTaskNative(taskWorkflowId);
     return terminateWorkflow(taskWorkflowId, "",
             "Cancelled via management API" + (cancelledBy is string ? " by " + cancelledBy : ""));
 }
+
+isolated function assertIsHumanTaskNative(string taskId) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative",
+    name: "assertIsHumanTask"
+} external;
 
 // ================================================================================
 // MANUAL RETRY TASKS

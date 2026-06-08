@@ -93,7 +93,7 @@ function waitForWorkflowCompleted(http:Client app, string wfId, decimal timeoutS
         WorkflowResponse|error resp = app->get(string `/requests/${wfId}`);
         if resp is WorkflowResponse {
             string s = resp.status;
-            if s == "COMPLETED" || s == "FAILED" || s == "CANCELLED" || s == "TERMINATED" {
+            if s == "COMPLETED" || s == "FAILED" || s == "CANCELED" || s == "CANCELLED" || s == "TERMINATED" {
                 return resp;
             }
         }

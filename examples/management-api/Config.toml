@@ -1,4 +1,4 @@
-# Workflow engine — runs in-memory for local development and tests.
+# Workflow engine — runs against a local Temporal server for development and tests.
 [ballerina.workflow]
 mode = "LOCAL"
 

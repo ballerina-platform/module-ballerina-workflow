@@ -224,6 +224,19 @@ listener http:Listener mgmtListener = check new (port, buildMgmtListenerConfig()
 # Builds the `http:ListenerAuthConfig[]` from the configurable auth flags.
 # Called once at module initialization; the result is bound to `mgmtAuthConfigs`.
 # + return - Array of auth configs for the enabled auth types, or nil if none are enabled.
+isolated function buildCorsConfig() returns http:CorsConfig {
+    if !enableCors {
+        return {allowOrigins: []};
+    }
+    return {
+        allowOrigins: corsAllowOrigins,
+        allowHeaders: corsAllowHeaders,
+        allowMethods: corsAllowMethods,
+        allowCredentials: corsAllowCredentials,
+        maxAge: corsMaxAge
+    };
+}
+
 isolated function buildAuthConfigs() returns http:ListenerAuthConfig[]? {
     http:ListenerAuthConfig[] configs = [];
 
@@ -301,13 +314,7 @@ service class ManagementGatewayInterceptor {
 // Implements `http:InterceptableService` to register the `ManagementGatewayInterceptor`.
 // `@http:ServiceConfig` handles CORS and the built-in auth types (BasicAuth, JWT, OAuth2).
 @http:ServiceConfig {
-    cors: {
-        allowOrigins: corsAllowOrigins,
-        allowHeaders: corsAllowHeaders,
-        allowMethods: corsAllowMethods,
-        allowCredentials: corsAllowCredentials,
-        maxAge: corsMaxAge
-    },
+    cors: buildCorsConfig(),
     auth: buildAuthConfigs()
 }
 service http:InterceptableService /workflow on mgmtListener {
@@ -387,7 +394,10 @@ service http:InterceptableService /workflow on mgmtListener {
         if wfTypeJson is () {
             return <http:BadRequest>{body: errorBody("workflowType is required")};
         }
-        string wfType = wfTypeJson.toString();
+        if wfTypeJson !is string {
+            return <http:BadRequest>{body: errorBody("workflowType must be a string")};
+        }
+        string wfType = wfTypeJson;
         json? input = body["input"];
         string? wfId = body["workflowId"] is string ? <string>body["workflowId"] : ();
         int? timeout = body["timeoutSeconds"] is int ? <int>body["timeoutSeconds"] : ();

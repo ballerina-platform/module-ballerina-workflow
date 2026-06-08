@@ -235,6 +235,45 @@ public final class ManagementNative {
     }
 
     /**
+     * Verifies that a workflow ID refers to a human task (workflowKind == "HUMAN_TASK").
+     * Used by cancelHumanTask to validate kind without checking user roles, because the
+     * process itself may cancel a task when an alternative path makes it irrelevant.
+     *
+     * @param taskId the child workflow ID to check
+     * @return {@code null} on success, or a Ballerina error if the ID is not a human task
+     */
+    public static Object assertIsHumanTask(BString taskId) {
+        try {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+            String id = taskId.getValue();
+            io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest req =
+                    io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest.newBuilder()
+                            .setNamespace(client.getOptions().getNamespace())
+                            .setExecution(WorkflowExecution.newBuilder().setWorkflowId(id).build())
+                            .build();
+            io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionResponse resp =
+                    client.getWorkflowServiceStubs().blockingStub()
+                            .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                            .describeWorkflowExecution(req);
+            Map<String, io.temporal.api.common.v1.Payload> memoFields =
+                    resp.getWorkflowExecutionInfo().getMemo().getFieldsMap();
+            io.temporal.common.converter.DataConverter dc = client.getOptions().getDataConverter();
+            String workflowKind = decodeMemoString(dc, memoFields, "workflowKind", null);
+            if (!"HUMAN_TASK".equals(workflowKind)) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "'" + id + "' is not a human task (workflowKind=" + workflowKind + ")"));
+            }
+            return null;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to verify human task '" + taskId.getValue() + "': " + e.getMessage()));
+        }
+    }
+
+    /**
      * Returns detailed info for a single human task by calling DescribeWorkflowExecution
      * and reading the memo fields set by {@code callHumanTask} at task creation.
      *
@@ -1256,7 +1295,8 @@ public final class ManagementNative {
                 }
             }
             if (workflowType instanceof BString wt) {
-                clauses.add(String.format("WorkflowType = \"%s\"", wt.getValue()));
+                String safeWt = wt.getValue().replace("\\", "\\\\").replace("\"", "\\\"");
+                clauses.add(String.format("WorkflowType = \"%s\"", safeWt));
             }
             if (workflowId instanceof BString wi) {
                 String safeId = wi.getValue().replace("'", "\\'");
@@ -1825,7 +1865,8 @@ public final class ManagementNative {
             events.addAll(resp.getHistory().getEventsList());
             pageToken = resp.getNextPageToken();
             if (events.size() >= 2000) {
-                break;
+                throw new Exception("History for workflow '" + workflowId
+                        + "' exceeds 2000 events and cannot be loaded in full");
             }
         } while (!pageToken.isEmpty());
 

@@ -706,10 +706,23 @@ public final class WorkflowContextNative {
         if (duration == null) {
             return null; // no timeout — wait indefinitely
         }
+        long years = getLongField(duration, "years");
+        long months = getLongField(duration, "months");
+        if (years != 0 || months != 0) {
+            throw new IllegalArgumentException("HumanTask timeout does not support months or years");
+        }
+        long days = getLongField(duration, "days");
         long hours = getLongField(duration, "hours");
         long minutes = getLongField(duration, "minutes");
         double seconds = getDoubleField(duration, "seconds");
-        return hours * 3_600_000L + minutes * 60_000L + Math.round(seconds * 1000);
+        long milliSeconds = getLongField(duration, "milliSeconds");
+        long millis = Math.addExact(
+                Math.addExact(days * 86_400_000L, hours * 3_600_000L),
+                Math.addExact(minutes * 60_000L, Math.round(seconds * 1000) + milliSeconds));
+        if (millis < 0) {
+            throw new IllegalArgumentException("HumanTask timeout must be non-negative");
+        }
+        return millis;
     }
 
     private static long getLongField(BMap<BString, Object> map, String key) {

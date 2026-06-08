@@ -408,6 +408,166 @@ service http:InterceptableService /workflow on mgmtListener {
         return <http:Created>{body: wfHandle.toJson()};
     }
 
+    // ── Workflow Instance — Latest Run ───────────────────────────────────────
+    // These routes omit {runId} and always target the latest (or currently-active) run.
+    // The {runId} variants below pin the request to an exact run.
+
+    # Returns execution info for the latest run of a workflow.
+    # + workflowId - The workflow instance ID.
+    # + userId - Optional caller identity from the `x-user-id` header.
+    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
+    # + return - Workflow execution info as JSON, a not-found error, or an internal server error.
+    resource isolated function get workflows/[string workflowId](
+            @http:Header {name: "x-user-id"} string? userId,
+            @http:Header {name: "x-user-roles"} string? userRoles)
+            returns json|http:NotFound|http:InternalServerError {
+        WorkflowExecutionInfo|error info = getWorkflowInfo(workflowId);
+        if info is error {
+            string msg = info.message();
+            return msg.includes("not found") || msg.includes("NOT_FOUND")
+                ? <http:NotFound>{body: errorBody("Workflow not found: " + workflowId)}
+                : <http:InternalServerError>{body: errorBody(msg)};
+        }
+        return info.toJson();
+    }
+
+    # Suspends the latest active run of a workflow.
+    # + workflowId - The workflow instance ID.
+    # + userId - Optional caller identity from the `x-user-id` header.
+    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
+    # + return - `{success: true}` on success, a not-found error, or an internal server error.
+    resource isolated function post workflows/[string workflowId]/suspend(
+            @http:Header {name: "x-user-id"} string? userId,
+            @http:Header {name: "x-user-roles"} string? userRoles)
+            returns json|http:NotFound|http:InternalServerError {
+        error? result = suspendWorkflow(workflowId);
+        if result is error {
+            string msg = result.message();
+            return msg.includes("not found")
+                ? <http:NotFound>{body: errorBody(msg)}
+                : <http:InternalServerError>{body: errorBody(msg)};
+        }
+        return {success: true};
+    }
+
+    # Resumes the latest suspended run of a workflow.
+    # + workflowId - The workflow instance ID.
+    # + userId - Optional caller identity from the `x-user-id` header.
+    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
+    # + return - `{success: true}` on success, a not-found error, or an internal server error.
+    resource isolated function post workflows/[string workflowId]/resume(
+            @http:Header {name: "x-user-id"} string? userId,
+            @http:Header {name: "x-user-roles"} string? userRoles)
+            returns json|http:NotFound|http:InternalServerError {
+        error? result = resumeWorkflow(workflowId);
+        if result is error {
+            string msg = result.message();
+            return msg.includes("not found")
+                ? <http:NotFound>{body: errorBody(msg)}
+                : <http:InternalServerError>{body: errorBody(msg)};
+        }
+        return {success: true};
+    }
+
+    # Terminates the latest run of a workflow immediately.
+    # + workflowId - The workflow instance ID.
+    # + userId - Optional caller identity from the `x-user-id` header.
+    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
+    # + body - Optional request body with a `reason` string.
+    # + return - `{success: true}` on success, a not-found error, or an internal server error.
+    resource isolated function post workflows/[string workflowId]/terminate(
+            @http:Header {name: "x-user-id"} string? userId,
+            @http:Header {name: "x-user-roles"} string? userRoles,
+            @http:Payload map<json>? body = ())
+            returns json|http:NotFound|http:InternalServerError {
+        string? reason = body is map<json> && body["reason"] is string
+                ? <string>(<map<json>>body)["reason"] : ();
+        error? result = terminateWorkflow(workflowId, "", reason);
+        if result is error {
+            string msg = result.message();
+            return msg.includes("not found") || msg.includes("NOT_FOUND")
+                ? <http:NotFound>{body: errorBody(msg)}
+                : <http:InternalServerError>{body: errorBody(msg)};
+        }
+        return {success: true};
+    }
+
+    # Requests graceful cancellation of the latest run of a workflow.
+    # + workflowId - The workflow instance ID.
+    # + userId - Optional caller identity from the `x-user-id` header.
+    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
+    # + return - `{success: true}` on success, a not-found error, or an internal server error.
+    resource isolated function post workflows/[string workflowId]/cancel(
+            @http:Header {name: "x-user-id"} string? userId,
+            @http:Header {name: "x-user-roles"} string? userRoles)
+            returns json|http:NotFound|http:InternalServerError {
+        error? result = cancelWorkflow(workflowId, "");
+        if result is error {
+            string msg = result.message();
+            return msg.includes("not found") || msg.includes("NOT_FOUND")
+                ? <http:NotFound>{body: errorBody(msg)}
+                : <http:InternalServerError>{body: errorBody(msg)};
+        }
+        return {success: true};
+    }
+
+    # Returns all execution history events for the latest run of a workflow.
+    # + workflowId - The workflow instance ID.
+    # + userId - Optional caller identity from the `x-user-id` header.
+    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
+    # + return - History events as JSON, a not-found error, or an internal server error.
+    resource isolated function get workflows/[string workflowId]/history(
+            @http:Header {name: "x-user-id"} string? userId,
+            @http:Header {name: "x-user-roles"} string? userRoles)
+            returns json|http:NotFound|http:InternalServerError {
+        HistoryEvent[]|error events = getWorkflowHistory(workflowId, "");
+        if events is error {
+            string msg = events.message();
+            return msg.includes("not found") || msg.includes("NOT_FOUND")
+                ? <http:NotFound>{body: errorBody("Workflow not found: " + workflowId)}
+                : <http:InternalServerError>{body: errorBody("Failed to get history: " + msg)};
+        }
+        return {events: events.toJson()};
+    }
+
+    # Returns the activity tree for the latest run of a workflow.
+    # + workflowId - The workflow instance ID.
+    # + userId - Optional caller identity from the `x-user-id` header.
+    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
+    # + return - Activity tree nodes as JSON, a not-found error, or an internal server error.
+    resource isolated function get workflows/[string workflowId]/activity\-tree(
+            @http:Header {name: "x-user-id"} string? userId,
+            @http:Header {name: "x-user-roles"} string? userRoles)
+            returns json|http:NotFound|http:InternalServerError {
+        ActivityTreeNode[]|error nodes = getActivityTree(workflowId, "");
+        if nodes is error {
+            string msg = nodes.message();
+            return msg.includes("not found") || msg.includes("NOT_FOUND")
+                ? <http:NotFound>{body: errorBody("Workflow not found: " + workflowId)}
+                : <http:InternalServerError>{body: errorBody("Failed to get activity tree: " + msg)};
+        }
+        return {nodes: nodes.toJson()};
+    }
+
+    # Returns the execution graph for the latest run of a workflow.
+    # + workflowId - The workflow instance ID.
+    # + userId - Optional caller identity from the `x-user-id` header.
+    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
+    # + return - Execution graph as JSON, a not-found error, or an internal server error.
+    resource isolated function get workflows/[string workflowId]/execution\-graph(
+            @http:Header {name: "x-user-id"} string? userId,
+            @http:Header {name: "x-user-roles"} string? userRoles)
+            returns json|http:NotFound|http:InternalServerError {
+        ExecutionGraph|error graph = getExecutionGraph(workflowId, "");
+        if graph is error {
+            string msg = graph.message();
+            return msg.includes("not found") || msg.includes("NOT_FOUND")
+                ? <http:NotFound>{body: errorBody("Workflow not found: " + workflowId)}
+                : <http:InternalServerError>{body: errorBody("Failed to get execution graph: " + msg)};
+        }
+        return graph.toJson();
+    }
+
     // ── Workflow Instance — Detail ────────────────────────────────────────────
 
     # Returns execution info for a specific workflow run.
@@ -420,11 +580,11 @@ service http:InterceptableService /workflow on mgmtListener {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:InternalServerError {
-        WorkflowExecutionInfo|error info = getWorkflowInfo(workflowId);
+        WorkflowExecutionInfo|error info = getWorkflowInfoForRun(workflowId, runId);
         if info is error {
             string msg = info.message();
             if msg.includes("not found") || msg.includes("NOT_FOUND") {
-                return <http:NotFound>{body: errorBody("Workflow not found: " + workflowId)};
+                return <http:NotFound>{body: errorBody("Workflow run not found: " + workflowId + "/" + runId)};
             }
             return <http:InternalServerError>{body: errorBody(msg)};
         }
@@ -443,7 +603,7 @@ service http:InterceptableService /workflow on mgmtListener {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:InternalServerError {
-        error? result = suspendWorkflow(workflowId);
+        error? result = suspendWorkflowRun(workflowId, runId);
         if result is error {
             string msg = result.message();
             return msg.includes("not found")
@@ -463,7 +623,7 @@ service http:InterceptableService /workflow on mgmtListener {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:InternalServerError {
-        error? result = resumeWorkflow(workflowId);
+        error? result = resumeWorkflowRun(workflowId, runId);
         if result is error {
             string msg = result.message();
             return msg.includes("not found")
@@ -909,28 +1069,71 @@ isolated function parseRolesHeader(string? rolesHeader) returns [string, string.
 
 isolated function paginateHumanTasks(HumanTaskSummary[] items, int 'limit, string? pageToken)
         returns HumanTaskPage {
-    int startIdx = decodePageToken(pageToken);
-    int endIdx = int:min(startIdx + 'limit, items.length());
-    HumanTaskSummary[] pageItems = startIdx < items.length() ? items.slice(startIdx, endIdx) : [];
-    boolean hasMore = endIdx < items.length();
-    return {items: pageItems, nextPageToken: hasMore ? encodePageToken(endIdx) : (), hasMore: hasMore};
+    // Sort by (startTime asc, taskId asc) for a deterministic, stable order.
+    HumanTaskSummary[] sorted = from HumanTaskSummary t in items
+        order by t.startTime ascending, t.taskId ascending select t;
+    // Seek past the cursor item so page N+1 starts after the last item on page N.
+    HumanTaskSummary[] remaining = sorted;
+    if pageToken is string {
+        [string, string] cursor = decodeCursorToken(pageToken);
+        string cursorTime = cursor[0];
+        string cursorId = cursor[1];
+        if cursorTime != "" {
+            remaining = from HumanTaskSummary t in sorted
+                where t.startTime > cursorTime
+                    || (t.startTime == cursorTime && t.taskId > cursorId)
+                select t;
+        }
+    }
+    int count = remaining.length();
+    boolean hasMore = count > 'limit;
+    HumanTaskSummary[] pageItems = hasMore ? remaining.slice(0, 'limit) : remaining;
+    string? nextToken = ();
+    if hasMore {
+        HumanTaskSummary last = pageItems[pageItems.length() - 1];
+        nextToken = encodeCursorToken(last.startTime, last.taskId);
+    }
+    return {items: pageItems, nextPageToken: nextToken, hasMore: hasMore};
 }
 
 isolated function paginateRetryTasks(RetryTaskSummary[] items, int 'limit, string? pageToken)
         returns RetryTaskPage {
-    int startIdx = decodePageToken(pageToken);
-    int endIdx = int:min(startIdx + 'limit, items.length());
-    RetryTaskSummary[] pageItems = startIdx < items.length() ? items.slice(startIdx, endIdx) : [];
-    boolean hasMore = endIdx < items.length();
-    return {items: pageItems, nextPageToken: hasMore ? encodePageToken(endIdx) : (), hasMore: hasMore};
+    RetryTaskSummary[] sorted = from RetryTaskSummary t in items
+        order by t.startTime ascending, t.taskId ascending select t;
+    RetryTaskSummary[] remaining = sorted;
+    if pageToken is string {
+        [string, string] cursor = decodeCursorToken(pageToken);
+        string cursorTime = cursor[0];
+        string cursorId = cursor[1];
+        if cursorTime != "" {
+            remaining = from RetryTaskSummary t in sorted
+                where t.startTime > cursorTime
+                    || (t.startTime == cursorTime && t.taskId > cursorId)
+                select t;
+        }
+    }
+    int count = remaining.length();
+    boolean hasMore = count > 'limit;
+    RetryTaskSummary[] pageItems = hasMore ? remaining.slice(0, 'limit) : remaining;
+    string? nextToken = ();
+    if hasMore {
+        RetryTaskSummary last = pageItems[pageItems.length() - 1];
+        nextToken = encodeCursorToken(last.startTime, last.taskId);
+    }
+    return {items: pageItems, nextPageToken: nextToken, hasMore: hasMore};
 }
 
-isolated function encodePageToken(int offset) returns string => offset.toString();
+// Cursor format: "<ISO-8601 startTime>~<taskId>" — split on the FIRST "~" so a taskId
+// that contains "~" (e.g., when a parent workflow ID has one) is still decoded correctly.
+isolated function encodeCursorToken(string startTime, string taskId) returns string =>
+    startTime + "~" + taskId;
 
-isolated function decodePageToken(string? token) returns int {
-    if token is () { return 0; }
-    int|error parsed = int:fromString(token);
-    return parsed is int && parsed >= 0 ? parsed : 0;
+isolated function decodeCursorToken(string token) returns [string, string] {
+    int? sep = token.indexOf("~");
+    if sep is int {
+        return [token.substring(0, sep), token.substring(sep + 1)];
+    }
+    return ["", ""];
 }
 
 isolated function humanTaskErrorResponse(error err)

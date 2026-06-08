@@ -48,6 +48,17 @@ public isolated function getWorkflowInfo(string workflowId) returns WorkflowExec
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 
+# Gets execution info for a specific run of a workflow, identified by both workflow ID and run ID.
+# Unlike `getWorkflowInfo`, this targets the exact run rather than the latest run.
+#
+# + workflowId - The workflow ID
+# + runId - The specific run ID
+# + return - Execution info, or an error
+public isolated function getWorkflowInfoForRun(string workflowId, string runId)
+        returns WorkflowExecutionInfo|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
 # Lists all workflow types registered with this worker, for use in the workflow launcher UI.
 # Returns one entry per registered workflow function. The `inputSchema` field is `()` until
 # the compiler plugin generates JSON Schema at build time.
@@ -79,6 +90,16 @@ public isolated function suspendWorkflow(string workflowId) returns error? = @ja
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 
+# Suspends a specific run of a workflow. Targets the exact `runId` rather than the
+# latest run, which is correct when a workflow ID has multiple historical runs.
+#
+# + workflowId - The workflow ID to suspend
+# + runId - The specific run ID to suspend
+# + return - An error if the signal cannot be delivered
+public isolated function suspendWorkflowRun(string workflowId, string runId) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
 # Resumes a previously suspended workflow by sending a `__wf_resume` signal.
 #
 # ```ballerina
@@ -88,6 +109,16 @@ public isolated function suspendWorkflow(string workflowId) returns error? = @ja
 # + workflowId - The workflow ID to resume
 # + return - An error if the signal cannot be delivered
 public isolated function resumeWorkflow(string workflowId) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
+# Resumes a specific run of a suspended workflow. Targets the exact `runId` rather than
+# the latest run, which is correct when a workflow ID has multiple historical runs.
+#
+# + workflowId - The workflow ID to resume
+# + runId - The specific run ID to resume
+# + return - An error if the signal cannot be delivered
+public isolated function resumeWorkflowRun(string workflowId, string runId) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 

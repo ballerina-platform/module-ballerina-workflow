@@ -48,6 +48,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 
@@ -84,6 +85,50 @@ public final class ManagementNative {
      */
     public static Object getWorkflowInfo(BString workflowId) {
         return WorkflowNative.getWorkflowInfo(workflowId);
+    }
+
+    /**
+     * Returns current execution info for a specific run of a workflow.
+     * Unlike {@link #getWorkflowInfo} which targets the latest run, this method pins
+     * the Describe call to the exact runId supplied by the caller.
+     *
+     * @param workflowId the workflow ID
+     * @param runId the specific run ID
+     * @return a Ballerina {@code WorkflowExecutionInfo} record or an error
+     */
+    public static Object getWorkflowInfoForRun(BString workflowId, BString runId) {
+        try {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+            String wfId = workflowId.getValue();
+            String wfRunId = runId.getValue();
+
+            io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest request =
+                    io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest.newBuilder()
+                            .setNamespace(client.getOptions().getNamespace())
+                            .setExecution(WorkflowExecution.newBuilder()
+                                    .setWorkflowId(wfId)
+                                    .setRunId(wfRunId)
+                                    .build())
+                            .build();
+
+            io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionResponse response =
+                    client.getWorkflowServiceStubs()
+                            .blockingStub()
+                            .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                            .describeWorkflowExecution(request);
+
+            io.temporal.api.workflow.v1.WorkflowExecutionInfo execInfo = response.getWorkflowExecutionInfo();
+            String workflowType = execInfo.getType().getName();
+            String status = convertStatus(execInfo.getStatus());
+
+            return WorkflowNative.buildWorkflowExecutionInfo(wfId, workflowType, status, null, null, client);
+        } catch (Exception e) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to get workflow info: " + e.getMessage()));
+        }
     }
 
     /**
@@ -142,6 +187,33 @@ public final class ManagementNative {
     }
 
     /**
+     * Suspends a specific run of a workflow by sending a {@code __wf_suspend} signal
+     * to the exact (workflowId, runId) pair, rather than the latest run.
+     *
+     * @param workflowId the workflow ID
+     * @param runId the specific run ID to suspend
+     * @return {@code null} on success, or a Ballerina error
+     */
+    public static Object suspendWorkflowRun(BString workflowId, BString runId) {
+        try {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+            WorkflowExecution exec = WorkflowExecution.newBuilder()
+                    .setWorkflowId(workflowId.getValue())
+                    .setRunId(runId.getValue())
+                    .build();
+            WorkflowStub stub = client.newUntypedWorkflowStub(exec, Optional.empty());
+            stub.signal("__wf_suspend");
+            return null;
+        } catch (Exception e) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to suspend workflow: " + e.getMessage()));
+        }
+    }
+
+    /**
      * Resumes a previously suspended workflow by sending a {@code __wf_resume} signal.
      *
      * @param workflowId the workflow ID to resume
@@ -156,6 +228,33 @@ public final class ManagementNative {
                 StringUtils.fromString("Failed to resume workflow: workflow not found: "
                     + workflowId.getValue()));
             }
+            return null;
+        } catch (Exception e) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to resume workflow: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Resumes a specific run of a suspended workflow by sending a {@code __wf_resume} signal
+     * to the exact (workflowId, runId) pair, rather than the latest run.
+     *
+     * @param workflowId the workflow ID
+     * @param runId the specific run ID to resume
+     * @return {@code null} on success, or a Ballerina error
+     */
+    public static Object resumeWorkflowRun(BString workflowId, BString runId) {
+        try {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+            WorkflowExecution exec = WorkflowExecution.newBuilder()
+                    .setWorkflowId(workflowId.getValue())
+                    .setRunId(runId.getValue())
+                    .build();
+            WorkflowStub stub = client.newUntypedWorkflowStub(exec, Optional.empty());
+            stub.signal("__wf_resume");
             return null;
         } catch (Exception e) {
             return ErrorCreator.createError(

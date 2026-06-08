@@ -879,9 +879,8 @@ public final class WorkflowNative {
                     allowedRoles.addAll(Arrays.asList(rolesArr));
                 }
             } catch (Exception e) {
-                LOGGER.debug("Could not decode userRoles from task memo; skipping role check: {}",
-                        e.getMessage());
-                return null;
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Failed to decode task roles for '" + taskWorkflowId + "': " + e.getMessage()));
             }
 
             if (allowedRoles.isEmpty()) {

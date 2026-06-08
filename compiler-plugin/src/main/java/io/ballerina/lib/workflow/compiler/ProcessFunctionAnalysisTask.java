@@ -207,24 +207,21 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
          *         cannot be statically determined (e.g. passed as a variable)
          */
         private String extractHumanTaskName(SeparatedNodeList<FunctionArgumentNode> args) {
-            for (int i = args.size() - 1; i >= 0; i--) {
-                FunctionArgumentNode arg = args.get(i);
-                ExpressionNode expression = null;
-
-                if (arg instanceof PositionalArgumentNode posArg) {
-                    expression = posArg.expression();
-                } else if (arg instanceof NamedArgumentNode namedArg
-                        && "config".equals(namedArg.argumentName().name().text())) {
-                    expression = namedArg.expression();
-                }
-
-                if (expression instanceof MappingConstructorExpressionNode mappingNode) {
-                    String taskName = extractTaskNameFromMapping(mappingNode);
-                    if (taskName != null) {
-                        return taskName;
-                    }
+            // Prefer explicit named argument: config = {...}
+            for (FunctionArgumentNode arg : args) {
+                if (arg instanceof NamedArgumentNode namedArg
+                        && "config".equals(namedArg.argumentName().name().text())
+                        && namedArg.expression() instanceof MappingConstructorExpressionNode mappingNode) {
+                    return extractTaskNameFromMapping(mappingNode);
                 }
             }
+
+            // Positional form: config is at index 0 (the only positional mapping argument)
+            if (!args.isEmpty() && args.get(0) instanceof PositionalArgumentNode posArg
+                    && posArg.expression() instanceof MappingConstructorExpressionNode mappingNode) {
+                return extractTaskNameFromMapping(mappingNode);
+            }
+
             return null;
         }
 

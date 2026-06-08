@@ -297,7 +297,7 @@ public class WorkflowCompilerPluginTest {
         Assert.assertEquals(diagnosticResult.errorCount(), 1,
                 "Expected exactly one type error for callHumanTask with int literal 30 as timeout "
                         + "(not assignable to time:Duration?). Got: " + getDiagnosticMessages(diagnosticResult));
-        Assert.assertTrue(getDiagnosticMessages(diagnosticResult).contains("time:Duration"),
+        Assert.assertTrue(getDiagnosticMessages(diagnosticResult).contains("Duration?"),
                 "Expected timeout type incompatibility in diagnostics: " + getDiagnosticMessages(diagnosticResult));
     }
 
@@ -308,7 +308,7 @@ public class WorkflowCompilerPluginTest {
         Assert.assertEquals(diagnosticResult.errorCount(), 1,
                 "Expected exactly one type error for callHumanTask with future<int> passed as timeout "
                         + "(not assignable to time:Duration?). Got: " + getDiagnosticMessages(diagnosticResult));
-        Assert.assertTrue(getDiagnosticMessages(diagnosticResult).contains("time:Duration"),
+        Assert.assertTrue(getDiagnosticMessages(diagnosticResult).contains("Duration?"),
                 "Expected timeout type incompatibility in diagnostics: " + getDiagnosticMessages(diagnosticResult));
     }
 
@@ -319,7 +319,7 @@ public class WorkflowCompilerPluginTest {
         Assert.assertEquals(diagnosticResult.errorCount(), 1,
                 "Expected exactly one type error for callHumanTask with string value passed as timeout "
                         + "(not assignable to time:Duration?). Got: " + getDiagnosticMessages(diagnosticResult));
-        Assert.assertTrue(getDiagnosticMessages(diagnosticResult).contains("time:Duration"),
+        Assert.assertTrue(getDiagnosticMessages(diagnosticResult).contains("Duration?"),
                 "Expected timeout type incompatibility in diagnostics: " + getDiagnosticMessages(diagnosticResult));
     }
 

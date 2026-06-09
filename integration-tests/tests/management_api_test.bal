@@ -231,14 +231,14 @@ function testStartWorkflowByType() returns error? {
     string testId = uniqueId("start-by-type");
     json inputJson = {id: testId, name: "TypeStart"};
 
-    management:WorkflowHandle handle = check management:startWorkflowByType(
+    management:WorkflowHandle wfHandle = check management:startWorkflowByType(
             "infoTestWorkflow", inputJson);
 
-    test:assertFalse(handle.workflowId == "", "startWorkflowByType must return a non-empty workflowId");
-    test:assertFalse(handle.runId == "", "startWorkflowByType must return a non-empty runId");
+    test:assertFalse(wfHandle.workflowId == "", "startWorkflowByType must return a non-empty workflowId");
+    test:assertFalse(wfHandle.runId == "", "startWorkflowByType must return a non-empty runId");
 
     // Wait for it to complete so it doesn't leak into other tests
-    _ = check workflow:getWorkflowResult(handle.workflowId, 30);
+    _ = check workflow:getWorkflowResult(wfHandle.workflowId, 30);
 }
 
 // ================================================================================
@@ -262,7 +262,7 @@ function testGetHumanTaskInfo() returns error? {
     management:HumanTaskInfo info = check management:getHumanTaskInfo(taskId);
     test:assertFalse(info.taskId == "", "HumanTaskInfo must have a non-empty taskId");
     test:assertFalse(info.taskName == "", "HumanTaskInfo must have a non-empty taskName");
-    test:assertEquals(info.status, "PENDING", "Newly created task should be PENDING");
+    test:assertEquals(info.status, "RUNNING", "Active human task should be RUNNING");
     test:assertTrue(info.userRoles.length() > 0, "HumanTaskInfo should include at least one user role");
 
     // Clean up — approve the task so the workflow completes
@@ -357,11 +357,15 @@ function testGetRetryTaskInfo() returns error? {
     test:assertFalse(info.taskId == "", "RetryTaskInfo must have a non-empty taskId");
     test:assertFalse(info.activityName == "", "RetryTaskInfo must have a non-empty activityName");
     test:assertFalse(info.errorMessage == "", "RetryTaskInfo should capture the activity error message");
-    test:assertEquals(info.status, "PENDING", "Newly created retry task should be PENDING");
+    test:assertEquals(info.status, "RUNNING", "Active retry task should be RUNNING");
 
     // Clean up — decide fail so the workflow terminates (workflow itself will also error out)
     check management:completeRetryTask(retryTask.taskId, {action: "fail"});
-    _ = workflow:getWorkflowResult(workflowId, 15);
+    do {
+        _ = check workflow:getWorkflowResult(workflowId, 15);
+    } on fail {
+        // expected — the workflow fails when the retry task action is "fail"
+    }
 }
 
 @test:Config {

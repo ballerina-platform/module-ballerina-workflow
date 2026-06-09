@@ -28,7 +28,6 @@
 //
 // ================================================================================
 
-import ballerina/lang.runtime;
 import ballerina/test;
 import ballerina/workflow;
 import ballerina/workflow.management;
@@ -51,9 +50,8 @@ function testTerminateRunningWorkflow() returns error? {
     // Terminate with a reason — should succeed without error
     check management:terminateWorkflow(workflowId, "", reason = "test cleanup");
 
-    // After termination the workflow must no longer be RUNNING
-    management:WorkflowExecutionInfo info = check management:getWorkflowInfo(workflowId);
-    test:assertEquals(info.status, "TERMINATED", "Workflow should be TERMINATED after terminate call");
+    // Poll until the workflow reaches TERMINATED
+    _ = check waitForWorkflowState(workflowId, ["TERMINATED"]);
 }
 
 @test:Config {
@@ -81,12 +79,8 @@ function testCancelRunningWorkflow() returns error? {
     // cancelWorkflow requests graceful cancellation — should succeed without error
     check management:cancelWorkflow(workflowId, "");
 
-    // Allow time for the cancellation to propagate
-    runtime:sleep(2);
-
-    management:WorkflowExecutionInfo info = check management:getWorkflowInfo(workflowId);
-    test:assertTrue(info.status == "CANCELED" || info.status == "CANCELLED",
-            "Workflow should be CANCELED after cancel call, got: " + info.status);
+    // Poll until the workflow reaches a cancelled terminal state
+    _ = check waitForWorkflowState(workflowId, ["CANCELED", "CANCELLED"]);
 }
 
 @test:Config {
@@ -332,11 +326,8 @@ function testFailHumanTask() returns error? {
             details = {"missingDocs": ["receipt"]});
     test:assertTrue(failResult is (), "failHumanTask should succeed for a valid pending task");
 
-    // Allow the workflow to react to the rejection and transition out of RUNNING
-    runtime:sleep(3);
-    management:WorkflowExecutionInfo info = check management:getWorkflowInfo(parentWorkflowId);
-    test:assertFalse(info.status == "RUNNING",
-            "Workflow should no longer be RUNNING after the human task was failed");
+    // Poll until the workflow transitions out of RUNNING (any terminal state)
+    _ = check waitForWorkflowState(parentWorkflowId, ["FAILED", "COMPLETED", "CANCELED", "CANCELLED", "TERMINATED"]);
 }
 
 // ================================================================================

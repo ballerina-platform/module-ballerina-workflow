@@ -248,3 +248,63 @@ function testListPendingHumanTasksEmptyForUnknownWorkflow() returns error? {
     }
     // If the server returns an error (not-found), that is also acceptable behaviour
 }
+
+// ================================================================================
+// TEST 7 — cancelHumanTask: kind check rejects a non-human-task workflow
+// ================================================================================
+
+@test:Config {
+    groups: ["integration", "humantask"]
+}
+function testCancelHumanTaskKindCheckRejectsRegularWorkflow() returns error? {
+    // Start a regular (non-human-task) workflow and attempt to cancel it via
+    // cancelHumanTask. The kind check must reject it — no role check is needed.
+    string testId = uniqueId("cancel-kind");
+    InfoTestInput kindInput = {id: testId, name: "Ivan"};
+    string workflowId = check workflow:run(infoTestWorkflow, kindInput);
+
+    // Wait until it is visible in Temporal (RUNNING or COMPLETED)
+    _ = check waitForWorkflowState(workflowId, ["RUNNING", "COMPLETED"]);
+
+    error? result = management:cancelHumanTask(workflowId, cancelledBy = "system");
+    test:assertTrue(result is error,
+            "cancelHumanTask should reject a workflow that is not a human task");
+    if result is error {
+        string msg = result.message().toLowerAscii();
+        test:assertTrue(msg.includes("not a human task") || msg.includes("workflowkind"),
+                "Error should explain the kind mismatch, got: " + result.message());
+    }
+}
+
+// ================================================================================
+// TEST 8 — cancelHumanTask: happy path — cancel a pending human task (no role required)
+// ================================================================================
+
+@test:Config {
+    groups: ["integration", "humantask"]
+}
+function testCancelHumanTaskHappyPath() returns error? {
+    // Start a human-task workflow and cancel the pending task before any human acts.
+    // cancelHumanTask must succeed without a role check — the process itself may cancel.
+    ExpenseRequest input = {
+        id: uniqueId("ht-cancel"),
+        orderId: "ORD-HT-CANCEL-001",
+        amount: 800.0,
+        requester: "Julia"
+    };
+    string parentWorkflowId = check workflow:run(expenseApprovalWorkflow, input);
+
+    management:HumanTaskGroup[] groups = check waitForPendingHumanTask(parentWorkflowId);
+    test:assertTrue(groups.length() > 0, "A pending human task should exist before cancellation");
+    string taskId = groups[0].taskIds[0];
+
+    // Cancel without providing any user roles — kind check only
+    error? cancelResult = management:cancelHumanTask(taskId, cancelledBy = "automated-system");
+    test:assertTrue(cancelResult is (),
+            "cancelHumanTask should succeed for a valid pending human task");
+
+    // The parent workflow should now receive a terminal error or complete via error path
+    anydata|error wfResult = workflow:getWorkflowResult(parentWorkflowId, 15);
+    test:assertTrue(wfResult is error,
+            "Parent workflow should receive an error after the human task is cancelled");
+}

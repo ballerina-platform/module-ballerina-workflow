@@ -159,3 +159,93 @@ function testResumeNonExistentWorkflowReturnsError() returns error? {
     error? result = management:resumeWorkflow("non-existent-workflow-id-xyz");
     test:assertTrue(result is error, "Resuming a non-existent workflow should return an error");
 }
+
+// ================================================================================
+// MANAGEMENT API - getWorkflowInfoForRun / suspendWorkflowRun / resumeWorkflowRun
+// ================================================================================
+
+@test:Config {
+    groups: ["integration"]
+}
+function testGetWorkflowInfoForRun() returns error? {
+    string testId = uniqueId("info-for-run");
+    InfoTestInput input = {id: testId, name: "Grace"};
+    string workflowId = check workflow:run(infoTestWorkflow, input);
+
+    // Wait for completion so the run is fully visible
+    _ = check workflow:getWorkflowResult(workflowId, 30);
+
+    // Retrieve the runId from the workflow instance list
+    management:WorkflowInstancePage page = check management:listWorkflowInstances(workflowId = workflowId);
+    test:assertTrue(page.items.length() > 0, "Should find the workflow instance");
+    string runId = page.items[0].runId;
+    test:assertFalse(runId == "", "runId should not be empty");
+
+    // getWorkflowInfoForRun must return info pinned to the specific run
+    management:WorkflowExecutionInfo info = check management:getWorkflowInfoForRun(workflowId, runId);
+    test:assertEquals(info.workflowId, workflowId, "workflowId should match");
+    test:assertEquals(info.status, "COMPLETED", "Completed workflow should have COMPLETED status");
+    test:assertFalse(info.workflowType == "", "workflowType should be populated");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testGetWorkflowInfoForRunBadRunIdReturnsError() returns error? {
+    string testId = uniqueId("info-run-bad");
+    InfoTestInput input = {id: testId, name: "Henry"};
+    string workflowId = check workflow:run(infoTestWorkflow, input);
+    _ = check workflow:getWorkflowResult(workflowId, 30);
+
+    // A valid workflowId but a non-existent runId must return an error
+    management:WorkflowExecutionInfo|error result =
+            management:getWorkflowInfoForRun(workflowId, "non-existent-run-id-00000000");
+    test:assertTrue(result is error, "Bad runId should return an error");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testSuspendAndResumeWorkflowRun() returns error? {
+    string testId = uniqueId("suspend-resume-run");
+    SimpleSignalInput input = {id: testId, message: "run-suspend-resume"};
+    string workflowId = check workflow:run(simpleSignalWorkflow, input);
+
+    _ = check waitForWorkflowState(workflowId, ["RUNNING"]);
+
+    // Discover the current runId
+    management:WorkflowInstancePage page = check management:listWorkflowInstances(workflowId = workflowId);
+    test:assertTrue(page.items.length() > 0, "Should find the running instance");
+    string runId = page.items[0].runId;
+
+    // Suspend and resume using the run-specific overloads
+    check management:suspendWorkflowRun(workflowId, runId);
+    check management:resumeWorkflowRun(workflowId, runId);
+
+    // Drive the workflow to completion
+    check workflow:sendData(simpleSignalWorkflow, workflowId, "response", {
+        id: testId,
+        response: "run-ok"
+    });
+
+    _ = check workflow:getWorkflowResult(workflowId, 30);
+    management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);
+    test:assertEquals(execInfo.status, "COMPLETED",
+            "Workflow should complete after run-specific suspend/resume");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testSuspendWorkflowRunBadRunIdReturnsError() returns error? {
+    error? result = management:suspendWorkflowRun("non-existent-workflow-id-xyz", "fake-run-id");
+    test:assertTrue(result is error, "Suspending with a bad runId should return an error");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testResumeWorkflowRunBadRunIdReturnsError() returns error? {
+    error? result = management:resumeWorkflowRun("non-existent-workflow-id-xyz", "fake-run-id");
+    test:assertTrue(result is error, "Resuming with a bad runId should return an error");
+}

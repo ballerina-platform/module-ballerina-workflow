@@ -430,43 +430,52 @@ task stopSharedTestServer {
 // ============================================================================
 
 task mergeCoverageReports {
-    description = 'Merges Ballerina coverage reports from module tests, integration tests, and auth variant tests'
+    description = 'Collects coverage reports from all test suites (module, integration, examples, compiler plugin) into build/coverage/'
     group = 'verification'
-    
+
     dependsOn ':workflow-ballerina:test'
     dependsOn ':workflow-integration-tests:test'
-    
+    dependsOn ':workflow-examples:buildExamples'
+    dependsOn ':workflow-compiler-plugin-tests:test'
+
     doLast {
-        def moduleReport      = file("${project(':workflow-ballerina').projectDir}/target/report/workflow/coverage-report.xml")
-        def integrationReport = file("${project(':workflow-integration-tests').projectDir}/target/report/workflow_tests/coverage-report.xml")
-        def mergedReportDir   = file("${project.buildDir}/coverage")
-        def mergedReport      = file("${mergedReportDir}/merged-coverage-report.xml")
-        
-        mergedReportDir.mkdirs()
-        
-        logger.lifecycle("Merging coverage reports...")
-        logger.lifecycle("  Module tests:      ${moduleReport.exists() ? 'found' : 'not found'}")
-        logger.lifecycle("  Integration tests: ${integrationReport.exists() ? 'found' : 'not found'}")
-        
-        if (moduleReport.exists() && integrationReport.exists()) {
-            mergedReport.text = moduleReport.text
+        def coverageDir = file("${project.buildDir}/coverage")
+        coverageDir.mkdirs()
 
-            // Copy integration report
-            def integrationCopy = file("${mergedReportDir}/integration-coverage-report.xml")
-            integrationCopy.text = integrationReport.text
-
-            // Log any auth variant reports already saved to the coverage dir
-            mergedReportDir.listFiles()?.findAll { it.name.endsWith("-coverage-report.xml") &&
-                    it.name != 'merged-coverage-report.xml' &&
-                    it.name != 'integration-coverage-report.xml' }?.each {
-                logger.lifecycle("  Auth variant:      ${it.name}")
-            }
-
-            logger.lifecycle("Coverage reports in: ${mergedReportDir}")
-            logger.lifecycle("Upload all *-coverage-report.xml files to codecov for full coverage.")
-        } else {
-            logger.warn("Could not merge coverage reports - one or more reports missing")
+        // ── Module tests (Ballerina unit tests) ──────────────────────────────
+        def moduleReport = file(
+                "${project(':workflow-ballerina').projectDir}/target/report/workflow/coverage-report.xml")
+        if (moduleReport.exists()) {
+            new File(coverageDir, "module-coverage-report.xml").text = moduleReport.text
         }
+
+        // ── Integration tests ────────────────────────────────────────────────
+        def integrationReport = file(
+                "${project(':workflow-integration-tests').projectDir}/target/report/workflow_tests/coverage-report.xml")
+        if (integrationReport.exists()) {
+            new File(coverageDir, "integration-coverage-report.xml").text = integrationReport.text
+        }
+
+        // ── Compiler-plugin tests (JaCoCo XML) ───────────────────────────────
+        def compilerPluginReport = file(
+                "${project(':workflow-compiler-plugin-tests').projectDir}/build/reports/jacoco/test/jacocoTestReport.xml")
+        if (compilerPluginReport.exists()) {
+            new File(coverageDir, "compiler-plugin-coverage-report.xml").text = compilerPluginReport.text
+        }
+
+        // ── Example tests — already copied into coverageDir by buildExamples ─
+        // (nothing extra to do here; buildExamples writes <example-name>-coverage-report.xml)
+
+        // ── Summary ──────────────────────────────────────────────────────────
+        def allReports = coverageDir.listFiles()?.findAll { it.name.endsWith("-coverage-report.xml") }?.sort()
+        logger.lifecycle("=" * 60)
+        logger.lifecycle("Coverage reports collected in: ${coverageDir}")
+        allReports?.each { logger.lifecycle("  ${it.name}") }
+        if (!allReports) {
+            logger.warn("No coverage reports found — ensure tests ran successfully.")
+        }
+        logger.lifecycle("=" * 60)
+        logger.lifecycle("Upload all *-coverage-report.xml files to codecov for full coverage.")
     }
 }
 

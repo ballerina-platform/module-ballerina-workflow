@@ -1398,7 +1398,7 @@ public final class ManagementNative {
                 clauses.add(String.format("WorkflowType = \"%s\"", safeWt));
             }
             if (workflowId instanceof BString wi) {
-                String safeId = wi.getValue().replace("'", "\\'");
+                String safeId = wi.getValue().replace("\\", "\\\\").replace("'", "\\'");
                 clauses.add(String.format("WorkflowId STARTS_WITH '%s'", safeId));
             }
             addTimeClause(clauses, startTimeFrom, "StartTime", ">=");
@@ -1514,41 +1514,51 @@ public final class ManagementNative {
     static Object readSignalPayloadField(WorkflowClient client, String workflowId,
             String signalName, String fieldKey) {
         try {
-            GetWorkflowExecutionHistoryRequest req = GetWorkflowExecutionHistoryRequest.newBuilder()
-                    .setNamespace(client.getOptions().getNamespace())
-                    .setExecution(io.temporal.api.common.v1.WorkflowExecution.newBuilder()
+            io.temporal.api.common.v1.WorkflowExecution execution =
+                    io.temporal.api.common.v1.WorkflowExecution.newBuilder()
                             .setWorkflowId(workflowId)
-                            .build())
-                    .build();
-
-            GetWorkflowExecutionHistoryResponse resp = client.getWorkflowServiceStubs()
-                    .blockingStub()
-                    .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                    .getWorkflowExecutionHistory(req);
-
+                            .build();
+            String namespace = client.getOptions().getNamespace();
             io.temporal.common.converter.DataConverter dc = client.getOptions().getDataConverter();
+            com.google.protobuf.ByteString pageToken = com.google.protobuf.ByteString.EMPTY;
 
-            for (io.temporal.api.history.v1.HistoryEvent event : resp.getHistory().getEventsList()) {
-                if (event.getEventType()
-                        != io.temporal.api.enums.v1.EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED) {
-                    continue;
+            do {
+                GetWorkflowExecutionHistoryRequest req = GetWorkflowExecutionHistoryRequest.newBuilder()
+                        .setNamespace(namespace)
+                        .setExecution(execution)
+                        .setNextPageToken(pageToken)
+                        .build();
+
+                GetWorkflowExecutionHistoryResponse resp = client.getWorkflowServiceStubs()
+                        .blockingStub()
+                        .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                        .getWorkflowExecutionHistory(req);
+
+                for (io.temporal.api.history.v1.HistoryEvent event : resp.getHistory().getEventsList()) {
+                    if (event.getEventType()
+                            != io.temporal.api.enums.v1.EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED) {
+                        continue;
+                    }
+                    io.temporal.api.history.v1.WorkflowExecutionSignaledEventAttributes attrs =
+                            event.getWorkflowExecutionSignaledEventAttributes();
+                    if (!signalName.equals(attrs.getSignalName())) {
+                        continue;
+                    }
+                    // Decode the first payload in the signal input
+                    io.temporal.api.common.v1.Payloads payloads = attrs.getInput();
+                    if (payloads.getPayloadsCount() == 0) {
+                        continue;
+                    }
+                    Object decoded = dc.fromPayload(
+                            payloads.getPayloads(0), Object.class, Object.class);
+                    if (decoded instanceof java.util.Map<?, ?> m) {
+                        return ((java.util.Map<String, Object>) m).get(fieldKey);
+                    }
                 }
-                io.temporal.api.history.v1.WorkflowExecutionSignaledEventAttributes attrs =
-                        event.getWorkflowExecutionSignaledEventAttributes();
-                if (!signalName.equals(attrs.getSignalName())) {
-                    continue;
-                }
-                // Decode the first payload in the signal input
-                io.temporal.api.common.v1.Payloads payloads = attrs.getInput();
-                if (payloads.getPayloadsCount() == 0) {
-                    continue;
-                }
-                Object decoded = dc.fromPayload(
-                        payloads.getPayloads(0), Object.class, Object.class);
-                if (decoded instanceof java.util.Map<?, ?> m) {
-                    return ((java.util.Map<String, Object>) m).get(fieldKey);
-                }
-            }
+
+                pageToken = resp.getNextPageToken();
+            } while (!pageToken.isEmpty());
+
         } catch (Exception e) {
             LOGGER.debug("readSignalPayloadField failed for {}/{}/{}: {}",
                     workflowId, signalName, fieldKey, e.getMessage());
@@ -2127,7 +2137,7 @@ public final class ManagementNative {
      */
     private static void addTimeClause(List<String> clauses, Object param, String field, String op) {
         if (param instanceof BString bs && !bs.getValue().isBlank()) {
-            String value = bs.getValue().replace("\"", "");
+            String value = bs.getValue().replace("\\", "\\\\").replace("\"", "");
             clauses.add(String.format("%s %s \"%s\"", field, op, value));
         }
     }

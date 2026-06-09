@@ -14,6 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import ballerina/http;
 import ballerina/test;
 
 // ── Cursor token encode / decode ──────────────────────────────────────────────
@@ -211,4 +212,201 @@ function testPaginateRetryTasksTiebreakByTaskId() {
     RetryTaskPage page = paginateRetryTasks(items, 10, ());
     test:assertEquals(page.items[0].taskId, "retry-a");
     test:assertEquals(page.items[1].taskId, "retry-z");
+}
+
+// ── clampLimit ────────────────────────────────────────────────────────────────
+
+@test:Config {groups: ["unit"]}
+function testClampLimitBelowMinReturnsDefault() {
+    test:assertEquals(clampLimit(0, 100), 20, "Below-min request should return default 20");
+}
+
+@test:Config {groups: ["unit"]}
+function testClampLimitNegativeReturnsDefault() {
+    test:assertEquals(clampLimit(-5, 100), 20, "Negative request should return default 20");
+}
+
+@test:Config {groups: ["unit"]}
+function testClampLimitWithinRange() {
+    test:assertEquals(clampLimit(50, 100), 50, "In-range request should be returned as-is");
+}
+
+@test:Config {groups: ["unit"]}
+function testClampLimitExceedsMax() {
+    test:assertEquals(clampLimit(200, 100), 100, "Above-max request should be capped at max");
+}
+
+@test:Config {groups: ["unit"]}
+function testClampLimitAtMax() {
+    test:assertEquals(clampLimit(100, 100), 100, "Request equal to max should be accepted");
+}
+
+// ── parseRolesHeader ──────────────────────────────────────────────────────────
+
+@test:Config {groups: ["unit"]}
+function testParseRolesHeaderNull() {
+    test:assertTrue(parseRolesHeader(()) is (), "Null header should return ()");
+}
+
+@test:Config {groups: ["unit"]}
+function testParseRolesHeaderEmptyString() {
+    test:assertTrue(parseRolesHeader("") is (), "Empty header should return ()");
+}
+
+@test:Config {groups: ["unit"]}
+function testParseRolesHeaderBlankString() {
+    test:assertTrue(parseRolesHeader("   ") is (), "Blank-only header should return ()");
+}
+
+@test:Config {groups: ["unit"]}
+function testParseRolesHeaderSingleRole() {
+    [string, string...]? result = parseRolesHeader("admin");
+    test:assertFalse(result is (), "Single role should not be null");
+    if result is [string, string...] {
+        test:assertEquals(result[0], "admin");
+        test:assertEquals(result.length(), 1);
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testParseRolesHeaderMultipleRoles() {
+    [string, string...]? result = parseRolesHeader("admin,manager,ops");
+    test:assertFalse(result is (), "Multiple roles should not be null");
+    if result is [string, string...] {
+        test:assertEquals(result[0], "admin");
+        test:assertEquals(result.length(), 3);
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testParseRolesHeaderTrimsSpaces() {
+    [string, string...]? result = parseRolesHeader(" admin , manager ");
+    test:assertFalse(result is (), "Roles with surrounding spaces should still parse");
+    if result is [string, string...] {
+        test:assertEquals(result[0], "admin");
+        test:assertEquals(result[1], "manager");
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testParseRolesHeaderSkipsBlankEntries() {
+    // A header like "admin,,ops" should skip the blank middle entry
+    [string, string...]? result = parseRolesHeader("admin,,ops");
+    test:assertFalse(result is (), "Blank-entry header should still parse valid roles");
+    if result is [string, string...] {
+        test:assertEquals(result.length(), 2, "Blank entry should be skipped");
+    }
+}
+
+// ── errorBody ─────────────────────────────────────────────────────────────────
+
+@test:Config {groups: ["unit"]}
+function testErrorBodyStructure() {
+    map<json> body = errorBody("something went wrong");
+    test:assertTrue(body.hasKey("error"), "errorBody must have 'error' key");
+    map<json> inner = <map<json>>body["error"];
+    test:assertEquals(inner["message"], "something went wrong");
+}
+
+// ── buildCompletionResponse ───────────────────────────────────────────────────
+
+@test:Config {groups: ["unit"]}
+function testBuildCompletionResponseWithUserId() {
+    CompletionInfo info = buildCompletionResponse("alice@example.com");
+    test:assertTrue(info.success, "success must be true");
+    test:assertEquals(info.completedBy, "alice@example.com");
+    test:assertFalse(info.completedAt == "", "completedAt should be populated");
+}
+
+@test:Config {groups: ["unit"]}
+function testBuildCompletionResponseNoUserId() {
+    CompletionInfo info = buildCompletionResponse(());
+    test:assertTrue(info.success, "success must be true");
+    test:assertEquals(info.completedBy, "unknown", "missing userId should fall back to 'unknown'");
+}
+
+// ── buildRetryDecisionResponse ────────────────────────────────────────────────
+
+@test:Config {groups: ["unit"]}
+function testBuildRetryDecisionResponseWithUserId() {
+    RetryDecisionInfo info = buildRetryDecisionResponse("retry", "bob@example.com");
+    test:assertTrue(info.success, "success must be true");
+    test:assertEquals(info.decision, "retry");
+    test:assertEquals(info.decidedBy, "bob@example.com");
+    test:assertFalse(info.decidedAt == "", "decidedAt should be populated");
+}
+
+@test:Config {groups: ["unit"]}
+function testBuildRetryDecisionResponseNoUserId() {
+    RetryDecisionInfo info = buildRetryDecisionResponse("fail", ());
+    test:assertEquals(info.decidedBy, "unknown", "missing userId should fall back to 'unknown'");
+    test:assertEquals(info.decision, "fail");
+}
+
+// ── humanTaskErrorResponse ────────────────────────────────────────────────────
+
+@test:Config {groups: ["unit"]}
+function testHumanTaskErrorResponseNotFound() {
+    error err = error("workflow not found in Temporal");
+    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
+            humanTaskErrorResponse(err);
+    test:assertTrue(resp is http:NotFound, "NOT_FOUND message should produce 404");
+}
+
+@test:Config {groups: ["unit"]}
+function testHumanTaskErrorResponseForbidden() {
+    error err = error("Unauthorized: caller role not in userRoles");
+    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
+            humanTaskErrorResponse(err);
+    test:assertTrue(resp is http:Forbidden, "Unauthorized message should produce 403");
+}
+
+@test:Config {groups: ["unit"]}
+function testHumanTaskErrorResponseConflict() {
+    error err = error("task is already completed");
+    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
+            humanTaskErrorResponse(err);
+    test:assertTrue(resp is http:Conflict, "already-completed message should produce 409");
+}
+
+@test:Config {groups: ["unit"]}
+function testHumanTaskErrorResponseInternalError() {
+    error err = error("unexpected Temporal gRPC error");
+    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
+            humanTaskErrorResponse(err);
+    test:assertTrue(resp is http:InternalServerError, "Unknown error should produce 500");
+}
+
+// ── retryTaskErrorResponse ────────────────────────────────────────────────────
+
+@test:Config {groups: ["unit"]}
+function testRetryTaskErrorResponseNotFound() {
+    error err = error("workflow NOT_FOUND");
+    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
+            retryTaskErrorResponse(err);
+    test:assertTrue(resp is http:NotFound, "NOT_FOUND message should produce 404");
+}
+
+@test:Config {groups: ["unit"]}
+function testRetryTaskErrorResponseForbidden() {
+    error err = error("not authorized to complete this task");
+    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
+            retryTaskErrorResponse(err);
+    test:assertTrue(resp is http:Forbidden, "not-authorized message should produce 403");
+}
+
+@test:Config {groups: ["unit"]}
+function testRetryTaskErrorResponseConflict() {
+    error err = error("task is not running");
+    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
+            retryTaskErrorResponse(err);
+    test:assertTrue(resp is http:Conflict, "not-running message should produce 409");
+}
+
+@test:Config {groups: ["unit"]}
+function testRetryTaskErrorResponseInternalError() {
+    error err = error("some unexpected failure");
+    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
+            retryTaskErrorResponse(err);
+    test:assertTrue(resp is http:InternalServerError, "Unknown error should produce 500");
 }

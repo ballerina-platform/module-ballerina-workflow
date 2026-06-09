@@ -63,6 +63,7 @@ import org.slf4j.LoggerFactory;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -103,12 +104,13 @@ public final class WorkflowWorkerNative {
     private static final AtomicBoolean configListenerRegistered = new AtomicBoolean(false);
 
     static {
-        // Suppress Temporal SDK INFO logs at class-load time, before any Temporal
-        // initialization runs, unless the user has explicitly opted in to seeing them.
-        // The Temporal SDK logs through SLF4J which is bridged to JUL (slf4j-jdk14)
-        // by the Ballerina runtime.  Default suppression silences startup banners
-        // ("Created WorkflowServiceStubs", "MultiThreadedPoller start") while
-        // preserving genuine warnings and errors.
+        // Install Temporal log suppression at class-load time, before any Temporal
+        // initialization runs, unless the user has opted in via -Dballerina.workflow.temporal.logs=true.
+        // The Temporal SDK logs through SLF4J → slf4j-jdk14 → JUL. suppressTemporalLogs()
+        // installs a TemporalLogHandler on the io.temporal JUL logger that:
+        //   - Drops INFO/FINE startup banners ("Created WorkflowServiceStubs", etc.)
+        //   - Suppresses known-harmless WARNINGs (UnhandledCommand, HUMANTASK_TIMEOUT)
+        //   - Forwards remaining WARNINGs to Ballerina's SLF4J layer in Ballerina log format
         suppressTemporalLogs();
     }
 
@@ -195,67 +197,139 @@ public final class WorkflowWorkerNative {
     }
 
     /**
-     * Suppresses Temporal SDK INFO/FINE logs by default so that Ballerina programs are
-     * not flooded with Temporal startup banners ("Created WorkflowServiceStubs",
-     * "MultiThreadedPoller start", etc.).
+     * Suppresses Temporal SDK INFO/FINE logs by default and converts WARNING-level records
+     * into structured Ballerina log output, so that Ballerina programs are not flooded with
+     * raw JUL-formatted messages from the Temporal SDK.
      *
-     * <p>Suppression is intentionally <em>non-override-resistant</em>: if a caller later
-     * calls {@code Logger.getLogger("io.temporal").setLevel(Level.ALL)} the level change
-     * is honoured, making it easy to enable Temporal logs at runtime for debugging.
+     * <p>Two categories of Temporal WARNING records are handled:
+     * <ul>
+     *   <li><b>Expected internal noise</b> — suppressed completely:
+     *     <ul>
+     *       <li>"Failure while reporting workflow progress" — transient gRPC UnhandledCommand
+     *           that Temporal emits when a workflow task report fails (e.g. because a human
+     *           task workflow was already cancelled by an alternative execution path).</li>
+     *       <li>Workflow execution failures of type {@code HUMANTASK_TIMEOUT} — the child
+     *           human-task workflow deliberately fails with this type when the deadline
+     *           expires; Temporal's executor logs it at WARNING, but the parent workflow
+     *           already handles it through normal error flow.</li>
+     *     </ul>
+     *   </li>
+     *   <li><b>All other WARNING records</b> — forwarded to Ballerina's SLF4J logger
+     *       ({@code ballerina.workflow.temporal}) so they appear in Ballerina log format
+     *       (e.g. activity failure after retry exhaustion).</li>
+     * </ul>
      *
-     * <p>To skip suppression entirely from the start, pass the JVM system property:
+     * <p>To skip all suppression and see raw Temporal logs, pass:
      * <pre>  -Dballerina.workflow.temporal.logs=true</pre>
      *
-     * <p>Two complementary mechanisms are used in the default (suppressed) path:
-     * <ol>
-     *   <li><b>Logger-level</b> — sets the {@code io.temporal} JUL logger to WARNING so
-     *       child loggers inherit WARNING and drop INFO records immediately.</li>
-     *   <li><b>Root-handler filter</b> — installs a fallback filter on every handler of the
-     *       root JUL logger to catch records from child loggers that were obtained before
-     *       the {@code io.temporal} parent was registered in
-     *       {@link java.util.logging.LogManager} (early-obtained loggers do not inherit the
-     *       level set above).</li>
-     * </ol>
-     * Both strategies are re-applied after any {@link java.util.logging.LogManager#readConfiguration()}
+     * <p>The strategy is re-applied after any {@link java.util.logging.LogManager#readConfiguration()}
      * call via a configuration listener registered exactly once.
      */
     private static void suppressTemporalLogs() {
-        // Skip all suppression when the user has explicitly opted in to Temporal logs.
         if (TEMPORAL_LOGS_ENABLED) {
             return;
         }
 
-        // 1. Logger-level: child loggers inherit WARNING from io.temporal.
-        //    Intentionally no setFilter() here — a subsequent setLevel(ALL) call on this
-        //    logger will be respected, which allows runtime debug overrides.
+        // Drop INFO/FINE records before they reach any handler.
         TEMPORAL_JUL_LOGGER.setLevel(Level.WARNING);
 
-        // 2. Root-handler filter: fallback for records that escape mechanism 1
-        //    (e.g. child loggers obtained before the io.temporal parent was registered).
-        java.util.logging.Logger rootLogger =
-                java.util.logging.LogManager.getLogManager().getLogger("");
-        if (rootLogger != null) {
-            for (java.util.logging.Handler handler : rootLogger.getHandlers()) {
-                final java.util.logging.Filter prev = handler.getFilter();
-                handler.setFilter(record -> {
-                    if (record.getLoggerName() != null
-                            && record.getLoggerName().startsWith("io.temporal")
-                            && record.getLevel().intValue() < Level.WARNING.intValue()) {
-                        return false;
-                    }
-                    return prev == null || prev.isLoggable(record);
-                });
+        // Install the bridging handler exactly once; disable parent propagation so records
+        // from io.temporal.* do NOT reach the root JUL ConsoleHandler (which would print
+        // them in raw JUL format to stdout).
+        boolean alreadyInstalled = false;
+        for (java.util.logging.Handler h : TEMPORAL_JUL_LOGGER.getHandlers()) {
+            if (h instanceof TemporalLogHandler) {
+                alreadyInstalled = true;
+                break;
             }
         }
+        if (!alreadyInstalled) {
+            TEMPORAL_JUL_LOGGER.addHandler(new TemporalLogHandler());
+        }
+        TEMPORAL_JUL_LOGGER.setUseParentHandlers(false);
 
-        // Re-apply both strategies after any JUL configuration reload.
-        // The listener is registered exactly once — addConfigurationListener does not
-        // deduplicate, so calling it unconditionally would grow the listener list
-        // on every invocation of suppressTemporalLogs().
+        // Re-apply after any JUL configuration reload (registered exactly once).
         if (configListenerRegistered.compareAndSet(false, true)) {
             java.util.logging.LogManager.getLogManager().addConfigurationListener(
                     WorkflowWorkerNative::suppressTemporalLogs);
         }
+    }
+
+    /**
+     * JUL Handler installed on the {@code io.temporal} logger.
+     *
+     * <p>Suppresses known-expected WARNING patterns that occur during normal workflow
+     * execution (e.g. human task timeouts, task reporting after cancellation) and forwards
+     * all other WARNING-level records to Ballerina's SLF4J layer at WARN level, producing
+     * output in Ballerina log format rather than raw JUL format.
+     *
+     * <p>Uses a dedicated SLF4J logger ({@code ballerina.workflow.temporal}) to avoid
+     * routing back through the {@code io.temporal} JUL hierarchy, which would cause
+     * infinite recursion via the slf4j-jdk14 bridge.
+     */
+    private static final class TemporalLogHandler extends java.util.logging.Handler {
+
+        // Dedicated SLF4J logger — its JUL name (ballerina.workflow.temporal) is NOT under
+        // io.temporal, so forwarded records do not re-enter this handler.
+        private static final Logger FORWARD_LOGGER =
+                LoggerFactory.getLogger("ballerina.workflow.temporal");
+
+        TemporalLogHandler() {
+            setLevel(Level.WARNING);
+        }
+
+        @Override
+        public void publish(java.util.logging.LogRecord record) {
+            if (record == null || !isLoggable(record)) {
+                return;
+            }
+
+            String raw = record.getMessage();
+            if (raw == null) {
+                raw = "";
+            }
+
+            // Format JUL parameterized messages (e.g. "foo {0}" with parameters).
+            String message = raw;
+            Object[] params = record.getParameters();
+            if (params != null && params.length > 0) {
+                try {
+                    message = MessageFormat.format(raw, params);
+                } catch (IllegalArgumentException ignored) {
+                    // If the format string is invalid, fall back to the raw message string.
+                }
+            }
+
+            Throwable thrown = record.getThrown();
+
+            // Suppress transient gRPC error logged when Temporal tries to report a workflow
+            // task result after the server has already moved on (e.g. human task cancelled).
+            if (message.contains("Failure while reporting workflow progress")) {
+                return;
+            }
+
+            // Suppress expected ApplicationFailure logged when a human-task child workflow
+            // deliberately times out. The parent workflow handles this via normal error flow.
+            if (message.contains("Workflow execution failure")
+                    && thrown != null
+                    && thrown.getMessage() != null
+                    && thrown.getMessage().contains("HUMANTASK_TIMEOUT")) {
+                return;
+            }
+
+            // Forward all other WARNING records to Ballerina's log layer.
+            if (thrown != null) {
+                FORWARD_LOGGER.warn(message, thrown);
+            } else {
+                FORWARD_LOGGER.warn(message);
+            }
+        }
+
+        @Override
+        public void flush() {}
+
+        @Override
+        public void close() {}
     }
 
     /**

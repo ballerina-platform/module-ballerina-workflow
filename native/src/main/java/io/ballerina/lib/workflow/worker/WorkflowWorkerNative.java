@@ -1634,10 +1634,10 @@ public final class WorkflowWorkerNative {
          * configured).  On signal, returns the {@code result} payload from the signal data.
          * On timeout, throws a non-retryable {@link io.temporal.failure.ApplicationFailure} with type
          * {@link WorkflowWorkerNative#HUMANTASK_TIMEOUT_FAILURE_TYPE} whose message encodes four
-         * pipe-separated fields unpacked by {@code WorkflowContextNative.callHumanTask}:
+         * pipe-separated fields unpacked by {@code WorkflowContextNative.createHumanTask}:
          * {@code taskName|taskWorkflowId|timedOutAfter|timedOutAt}.
          *
-         * @param args Temporal-encoded input; index 0 is the input map set by callHumanTask
+         * @param args Temporal-encoded input; index 0 is the input map set by createHumanTask
          * @return the signal result map on success; throws ApplicationFailure on timeout
          */
         @SuppressWarnings("unchecked")
@@ -1676,7 +1676,7 @@ public final class WorkflowWorkerNative {
 
             if (signalArrived) {
                 SignalAwaitWrapper.SignalData signalData = signalFuture.get();
-                // Return the raw signal data — callHumanTask extracts the "result" field
+                // Return the raw signal data — createHumanTask extracts the "result" field
                 // and coerces it to the caller's typedesc T.
                 return signalData.data();
             } else {
@@ -1685,7 +1685,7 @@ public final class WorkflowWorkerNative {
                         .ofEpochMilli(Workflow.currentTimeMillis()).toString();
                 // timeoutMillis is non-null here (we only enter else when timeout was set)
                 String timedOutAfter = java.time.Duration.ofMillis(timeoutMillis).toString();
-                // Pipe-delimited message unpacked by callHumanTask to build HumanTaskTimeoutDetail
+                // Pipe-delimited message unpacked by createHumanTask to build HumanTaskTimeoutDetail
                 String msg = taskName + "|" + thisWorkflowId + "|" + timedOutAfter + "|" + timedOutAt;
                 throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
                         msg, HUMANTASK_TIMEOUT_FAILURE_TYPE);

@@ -821,30 +821,10 @@ function testActivityInvocationsOnSingleFailNoRetry() returns error? {
 // ============================================================================
 
 @test:Config {groups: ["unit"]}
-function testManualRetryDefaultUserRoles() {
-    // Default userRoles must be [defaultAdminRole] — enforced at the type level.
+function testManualRetryTaskName() {
+    // ManualRetry only has taskName now; userRoles are managed by the admin console.
     ManualRetry config = {taskName: "processRefund"};
-    test:assertEquals(config.userRoles[0], defaultAdminRole,
-            "Default role should match defaultAdminRole configurable");
-    test:assertEquals(config.userRoles.length(), 1, "Default should have exactly one role");
-}
-
-@test:Config {groups: ["unit"]}
-function testManualRetryCustomUserRoles() {
-    // At least two roles must be accepted — [string, string...] enforces at least one element.
-    ManualRetry config = {taskName: "approvePayment", userRoles: ["finance", "manager"]};
-    test:assertEquals(config.taskName, "approvePayment");
-    test:assertEquals(config.userRoles.length(), 2);
-    test:assertEquals(config.userRoles[0], "finance");
-    test:assertEquals(config.userRoles[1], "manager");
-}
-
-@test:Config {groups: ["unit"]}
-function testManualRetrySingleCustomRole() {
-    // [string, string...] still accepts exactly one role.
-    ManualRetry config = {taskName: "reviewOrder", userRoles: ["ops-team"]};
-    test:assertEquals(config.userRoles.length(), 1);
-    test:assertEquals(config.userRoles[0], "ops-team");
+    test:assertEquals(config.taskName, "processRefund");
 }
 
 @test:Config {groups: ["unit"]}
@@ -890,7 +870,7 @@ function failingActivityForRetry(string orderId) returns string|error {
 @Workflow
 function workflowWithManualRetry(Context ctx, string orderId) returns string|error {
     string result = check ctx->callActivity(failingActivityForRetry, {"orderId": orderId},
-            retryPolicy = <ManualRetry>{taskName: "retryOrder", userRoles: ["ops"]});
+            retryPolicy = <ManualRetry>{taskName: "retryOrder"});
     return result;
 }
 
@@ -898,7 +878,7 @@ function workflowWithManualRetry(Context ctx, string orderId) returns string|err
 @Workflow
 function workflowWithManualRetryFail(Context ctx, string orderId) returns string|error {
     string result = check ctx->callActivity(failingActivityForRetry, {"orderId": orderId},
-            retryPolicy = <ManualRetry>{taskName: "retryOrderFail", userRoles: ["ops"]});
+            retryPolicy = <ManualRetry>{taskName: "retryOrderFail"});
     return result;
 }
 
@@ -969,8 +949,6 @@ function testManualRetryTaskInfoContainsCorrectMetadata() returns error? {
             "errorMessage should contain the original activity error");
     test:assertTrue(info.activityName.includes("failingActivityForRetry"),
             "activityName should contain the activity function name");
-    test:assertTrue(info.userRoles.length() >= 1, "userRoles should be populated");
-    test:assertEquals(info.userRoles[0], "ops", "userRole should be 'ops'");
     test:assertFalse(info.createdAt == "", "createdAt should be populated");
 }
 
@@ -1077,7 +1055,7 @@ function testCompleteRetryTaskWithRetryWithInput() returns error? {
 
 @test:Config {groups: ["unit"]}
 function testCompleteRetryTaskUnauthorizedRole() returns error? {
-    // Attempt to complete a retry task with a caller role not in the task's userRoles.
+    // Attempt to complete a retry task with a caller role not in the permitted set.
     map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
     _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
             "workflow-manual-retry-auth-test", activities);
@@ -1095,7 +1073,7 @@ function testCompleteRetryTaskUnauthorizedRole() returns error? {
         return;
     }
 
-    // "guest" is not in userRoles = ["ops"] → should be rejected.
+    // "guest" is not in the permitted roles → should be rejected.
     error? completeResult = management:completeRetryTask(
             tasks[0].taskId, {action: "retry"}, callerRoles = ["guest"]);
     test:assertTrue(completeResult is error,

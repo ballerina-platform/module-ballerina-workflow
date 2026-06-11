@@ -18,7 +18,7 @@
 //
 // Demonstrates the Ballerina Workflow Management HTTP Service alongside a
 // realistic workflow that uses:
-//   - callHumanTask  — pauses execution for a human approval decision
+//   - createHumanTask — pauses execution for a human approval decision
 //   - ManualRetry    — pauses execution when an activity fails so an operator
 //                      can retry (optionally with corrected input)
 //
@@ -176,17 +176,14 @@ function processProcurementRequest(workflow:Context ctx, ProcurementRequest inpu
     if input.amount > APPROVAL_THRESHOLD {
         io:println(string `[Workflow] Requesting approval for ${input.requestId} ($${input.amount})`);
 
-        ApprovalDecision decision = check ctx->callHumanTask({
-            taskName: "approveRequest",
-            title: string `Approve purchase of '${input.item}' ($${input.amount}) ${input.requestId}`,
-            userRoles: ["MANAGER"],
-            payload: {
-                requestId: input.requestId,
-                item: input.item,
-                amount: input.amount.toString(),
-                requester: input.requesterEmail
-            }
-        });
+        ApprovalDecision decision = check ctx->createHumanTask("approveRequest", "MANAGER",
+                payload = {
+                    requestId: input.requestId,
+                    item: input.item,
+                    amount: input.amount.toString(),
+                    requester: input.requesterEmail
+                },
+                title = string `Approve purchase of '${input.item}' ($${input.amount}) ${input.requestId}`);
 
         io:println(string `[Workflow] Approval decision: approved=${decision.approved}`);
 

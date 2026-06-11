@@ -67,13 +67,6 @@ public final class WorkflowContextNative {
     private static final String CALL_CONFIG_MARKER = "__callConfig__";
     private static final String RETRY_ON_ERROR_KEY = "retryOnError";
 
-    private static volatile String defaultAdminRole = "admin";
-
-    public static void setDefaultAdminRole(BString role) {
-        String value = role.getValue();
-        defaultAdminRole = (value != null && !value.isEmpty()) ? value : "admin";
-    }
-
     /**
      * Execute an activity function within the workflow context.
      * <p>
@@ -88,16 +81,16 @@ public final class WorkflowContextNative {
      * <ul>
      *   <li>{@code null} / NoRetry — the error is returned as a Ballerina value; no retry.</li>
      *   <li>AutoRetry BMap — Temporal automatic backoff retry using the configured fields.</li>
-     *   <li>ManualRetry BMap (has {@code taskName} field) — on failure a built-in RetryTask
-     *       child workflow is started; execution blocks until a human decides to retry,
-     *       retry with different input, or permanently fail the activity.</li>
+     *   <li>ManualRetry string sentinel — on failure a built-in RetryTask child workflow is
+     *       started; execution blocks until a human decides to retry, retry with different
+     *       input, or permanently fail the activity. Task name is derived from the activity.</li>
      * </ul>
      *
      * @param self the Context BObject (self reference from Ballerina)
      * @param activityFunction the activity function to execute
      * @param args the map&lt;anydata&gt; args containing arguments to pass to the activity
      * @param typedesc the expected return type descriptor for dependent typing
-     * @param retryPolicy null for NoRetry, AutoRetry BMap, or ManualRetry BMap
+     * @param retryPolicy null for NoRetry, AutoRetry BMap, or ManualRetry string sentinel
      * @return the result of the activity execution converted to the expected type, or an error
      */
     @SuppressWarnings("unchecked")
@@ -111,13 +104,13 @@ public final class WorkflowContextNative {
             Map<String, Object> namedArgs = convertArgsMapWithConnectionMarkers(args);
 
             // Classify the retry policy
-            boolean isManualRetry = false;
+            boolean isManualRetry = retryPolicy instanceof BString s
+                    && "MANUAL_RETRY".equals(s.getValue());
             boolean isAutoRetry = false;
             BMap<BString, Object> retryPolicyMap = null;
-            if (retryPolicy instanceof BMap<?, ?>) {
+            if (!isManualRetry && retryPolicy instanceof BMap<?, ?>) {
                 retryPolicyMap = (BMap<BString, Object>) retryPolicy;
-                isManualRetry = retryPolicyMap.containsKey(StringUtils.fromString("taskName"));
-                isAutoRetry = !isManualRetry;
+                isAutoRetry = true;
             }
 
             // Build the call config map forwarded to the activity adapter
@@ -129,8 +122,7 @@ public final class WorkflowContextNative {
                 // Manual retry: run activity in a loop; on failure start a RetryTask
                 // child workflow and wait for a human decision.
                 return executeWithManualRetry(
-                        fullActivityName, workflowType, namedArgs, callConfig,
-                        retryPolicyMap, typedesc);
+                        fullActivityName, workflowType, namedArgs, callConfig, typedesc);
             }
 
             // AutoRetry or NoRetry — single Temporal activity invocation
@@ -193,7 +185,6 @@ public final class WorkflowContextNative {
             String workflowType,
             Map<String, Object> initialArgs,
             Map<String, Object> callConfig,
-            BMap<BString, Object> manualRetryPolicy,
             BTypedesc typedesc) {
 
         io.temporal.activity.ActivityOptions activityOptions =
@@ -227,7 +218,7 @@ public final class WorkflowContextNative {
 
             // Activity failed — start a RetryTask child workflow and await the human decision
             Map<String, Object> decision = callBuiltinRetryTask(
-                    manualRetryPolicy, fullActivityName, currentArgs, lastErrorMsg, workflowType);
+                    fullActivityName, currentArgs, lastErrorMsg, workflowType);
 
             String action = decision.containsKey("action")
                     ? String.valueOf(decision.get("action"))
@@ -262,30 +253,13 @@ public final class WorkflowContextNative {
      */
     @SuppressWarnings("unchecked")
     private static Map<String, Object> callBuiltinRetryTask(
-            BMap<BString, Object> manualRetryPolicy,
             String fullActivityName,
             Map<String, Object> activityArgs,
             String errorMessage,
             String workflowType) {
 
-        String taskName = ((BString) manualRetryPolicy.get(
-                StringUtils.fromString("taskName"))).getValue();
-
-        // Qualify with workflow type for namespace isolation
-        String qualifiedTaskName = workflowType + "." + taskName;
-
-        io.ballerina.runtime.api.values.BArray rolesArray =
-                (io.ballerina.runtime.api.values.BArray)
-                        manualRetryPolicy.get(StringUtils.fromString("userRoles"));
-        java.util.List<String> userRoles = new java.util.ArrayList<>();
-        if (rolesArray != null) {
-            for (int i = 0; i < rolesArray.size(); i++) {
-                userRoles.add(rolesArray.get(i).toString());
-            }
-        }
-        if (userRoles.isEmpty()) {
-            userRoles.add(defaultAdminRole);
-        }
+        // Task name is derived from the activity name (already qualified with workflow type)
+        String qualifiedTaskName = fullActivityName;
 
         String parentWorkflowId = Workflow.getInfo().getWorkflowId();
         String retryTaskId = "retrytask-" + parentWorkflowId + "-"
@@ -300,7 +274,6 @@ public final class WorkflowContextNative {
         memo.put("activityName", fullActivityName);
         memo.put("taskName", qualifiedTaskName);
         memo.put("parentWorkflowId", parentWorkflowId);
-        memo.put("userRoles", userRoles);
         memo.put("errorMessage", errorMessage != null ? errorMessage : "");
         memo.put("activityArgs", activityArgs);
         memo.put("createdAt",
@@ -311,7 +284,6 @@ public final class WorkflowContextNative {
         inputs.put("activityName", fullActivityName);
         inputs.put("taskName", qualifiedTaskName);
         inputs.put("parentWorkflowId", parentWorkflowId);
-        inputs.put("userRoles", userRoles);
         inputs.put("errorMessage", errorMessage != null ? errorMessage : "");
         inputs.put("activityArgs", activityArgs);
 
@@ -536,7 +508,7 @@ public final class WorkflowContextNative {
     }
 
     // -----------------------------------------------------------------------
-    // callHumanTask
+    // createHumanTask
     // -----------------------------------------------------------------------
 
     /**
@@ -545,7 +517,7 @@ public final class WorkflowContextNative {
      *
      * <p>The child workflow type equals {@code taskName}, which must have been registered
      * in the {@code HUMANTASK_REGISTRY} via {@code WorkflowWorkerNative.registerHumanTask}
-     * before the worker started.  {@code callHumanTask} also performs a lazy in-workflow
+     * before the worker started.  {@code createHumanTask} also performs a lazy in-workflow
      * registration so that ad-hoc calls work without compile-time plugin support.
      *
      * <p>On success the {@code result} field of the signal payload is coerced to the
@@ -555,16 +527,23 @@ public final class WorkflowContextNative {
      * When a timeout is set and fires, a {@code HumanTaskTimeoutError} distinct error
      * is returned.
      *
-     * @param self     the Context BObject (unused; present for Ballerina calling convention)
-     * @param typedesc the expected result type descriptor (for dependent-typing and coercion)
-     * @param config   the HumanTaskConfig BMap (taskName, title?, description?, userRoles, payload, timeout?)
+     * @param self          the Context BObject (unused; present for Ballerina calling convention)
+     * @param taskNameBStr  identifies the task type; used as the Temporal workflow type
+     * @param userRolesObj  one or more roles permitted to complete this task (BString or BArray)
+     * @param payloadObj    read-only JSON object rendered next to the form (BMap or null)
+     * @param titleObj      short summary shown in the inbox; defaults to taskName when null
+     * @param descriptionObj additional context shown alongside the form (BString or null)
+     * @param timeoutObj    maximum wait duration (BMap time:Duration or null for indefinite)
+     * @param typedesc      the expected result type descriptor (for dependent-typing and coercion)
      * @return the coerced result value, or a {@code HumanTaskTimeoutError} BError
      */
     @SuppressWarnings("unchecked")
-    public static Object callHumanTask(BObject self, BMap<BString, Object> config, BTypedesc typedesc) {
+    public static Object createHumanTask(BObject self, BString taskNameBStr,
+            Object userRolesObj, Object payloadObj,
+            Object titleObj, Object descriptionObj, Object timeoutObj, BTypedesc typedesc) {
         try {
-            // --- Extract config fields -----------------------------------------------
-            String taskName = ((BString) config.get(StringUtils.fromString("taskName"))).getValue();
+            // --- Extract individual params -------------------------------------------
+            String taskName = taskNameBStr.getValue();
 
             // taskName must be non-blank and must not contain '.' (qualifier separator) or '|' (timeout msg separator)
             if (taskName.isBlank()) {
@@ -577,31 +556,26 @@ public final class WorkflowContextNative {
                         "HUMANTASK_CONFIG_ERROR");
             }
 
-            // title defaults to the user-provided (unqualified) taskName when absent
-            Object titleObj = config.get(StringUtils.fromString("title"));
-            String title = (titleObj instanceof BString bs) ? bs.getValue() : taskName;
-
-            Object descObj = config.get(StringUtils.fromString("description"));
-            String description = (descObj instanceof BString bs) ? bs.getValue() : "";
-
-            // userRoles: BArray of BString; falls back to configured defaultAdminRole when empty
-            io.ballerina.runtime.api.values.BArray rolesArray =
-                    (io.ballerina.runtime.api.values.BArray)
-                            config.get(StringUtils.fromString("userRoles"));
+            // userRoles: can be BString (single role) or BArray<BString> (multiple roles)
             java.util.List<String> userRoles = new java.util.ArrayList<>();
-            if (rolesArray != null) {
+            if (userRolesObj instanceof io.ballerina.runtime.api.values.BArray rolesArray) {
                 for (int i = 0; i < rolesArray.size(); i++) {
                     userRoles.add(rolesArray.get(i).toString());
                 }
-            }
-            if (userRoles.isEmpty()) {
-                userRoles.add(defaultAdminRole);
+            } else if (userRolesObj instanceof BString roleStr) {
+                userRoles.add(roleStr.getValue());
             }
 
-            Object payload = config.get(StringUtils.fromString("payload"));
+            // title defaults to taskName when absent/null
+            String title = (titleObj instanceof BString bs) ? bs.getValue() : taskName;
+
+            // description
+            String description = (descriptionObj instanceof BString bs) ? bs.getValue() : "";
+
+            // payload
+            Object payload = (payloadObj instanceof BMap) ? payloadObj : null;
 
             // timeout: nil (BNull/null) means wait indefinitely
-            Object timeoutObj = config.get(StringUtils.fromString("timeout"));
             Long timeoutMillis = null;
             if (timeoutObj instanceof BMap) {
                 timeoutMillis = computeTimeoutMillis((BMap<BString, Object>) timeoutObj);
@@ -692,7 +666,7 @@ public final class WorkflowContextNative {
             throw e;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
-                    "callHumanTask failed: " + e.getMessage()));
+                    "createHumanTask failed: " + e.getMessage()));
         }
     }
 

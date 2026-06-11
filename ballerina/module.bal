@@ -30,7 +30,6 @@ isolated boolean programStarted = false;
 # + return - An error if initialization fails, otherwise nil
 function init() returns error? {
     initModule();
-    setDefaultAdminRoleNative(defaultAdminRole);
     check initWorkflowRuntime();
     runtime:onGracefulStop(stopWorkflowRuntime);
 }
@@ -40,11 +39,6 @@ function init() returns error? {
 function initModule() = @java:Method {
     'class: "io.ballerina.lib.workflow.ModuleUtils",
     name: "setModule"
-} external;
-
-function setDefaultAdminRoleNative(string role) = @java:Method {
-    'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
-    name: "setDefaultAdminRole"
 } external;
 
 # Initializes the workflow program with the configured settings.

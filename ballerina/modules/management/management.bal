@@ -150,7 +150,7 @@ public isolated function listPendingHumanTasks(string parentWorkflowId) returns 
 # Lists all human task instances across all parent workflows, with optional filters.
 # Queries Temporal's visibility API and filters executions whose workflow ID starts with
 # `humantask-`. The `taskName` and `parentWorkflowId` fields are extracted from the task's
-# Temporal memo (set when the task was created by `callHumanTask`).
+# Temporal memo (set when the task was created by `createHumanTask`).
 #
 # ```ballerina
 # management:HumanTaskSummary[] pending =
@@ -231,7 +231,7 @@ public isolated function failHumanTask(string taskWorkflowId, string reason,
 # Cancels a pending human task by terminating its child workflow.
 # Unlike `failHumanTask`, cancel does not send a result to the waiting workflow —
 # the child workflow is terminated immediately, which causes the parent workflow's
-# `callHumanTask` to return a `HumanTaskTimeoutError` or a terminal error.
+# `createHumanTask` to return a `HumanTaskTimeoutError` or a terminal error.
 #
 # ```ballerina
 # check management:cancelHumanTask(taskId, cancelledBy = "admin@example.com");

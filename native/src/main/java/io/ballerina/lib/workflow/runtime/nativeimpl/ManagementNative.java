@@ -455,7 +455,7 @@ public final class ManagementNative {
 
     /**
      * Returns detailed info for a single human task by calling DescribeWorkflowExecution
-     * and reading the memo fields set by {@code callHumanTask} at task creation.
+     * and reading the memo fields set by {@code createHumanTask} at task creation.
      *
      * @param taskId the child workflow ID of the human task
      * @return a Ballerina {@code HumanTaskInfo} record or an error

@@ -230,17 +230,25 @@ function testListWorkflowInstancesByStartedBy() returns error? {
 
     _ = check workflow:getWorkflowResult(wfHandle.workflowId, 30);
 
-    management:WorkflowInstancePage page =
-            check management:listWorkflowInstances(startedBy = startedBy);
-    test:assertTrue(page.items.length() > 0,
-            "Filter by startedBy should find at least one workflow started by that user");
+    // Visibility queries can be briefly stale right after completion; do bounded retries.
     boolean found = false;
-    foreach management:WorkflowInstanceSummary item in page.items {
-        if item.workflowId == wfHandle.workflowId {
-            found = true;
+    int itemCount = 0;
+    foreach int _ in 0 ..< 25 {
+        management:WorkflowInstancePage page =
+                check management:listWorkflowInstances(startedBy = startedBy);
+        itemCount = page.items.length();
+        foreach management:WorkflowInstanceSummary item in page.items {
+            if item.workflowId == wfHandle.workflowId {
+                found = true;
+                break;
+            }
+        }
+        if found {
             break;
         }
     }
+    test:assertTrue(itemCount > 0,
+            "Filter by startedBy should find at least one workflow started by that user");
     test:assertTrue(found,
             "Expected startedBy filter results to include the workflow started with the matching startedBy");
 }

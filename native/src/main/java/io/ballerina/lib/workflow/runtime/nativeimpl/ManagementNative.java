@@ -1507,64 +1507,82 @@ public final class ManagementNative {
                 }
             }
 
-            ListWorkflowExecutionsRequest request = ListWorkflowExecutionsRequest.newBuilder()
-                    .setNamespace(client.getOptions().getNamespace())
-                    .setQuery(query)
-                    .setPageSize(pageSize)
-                    .setNextPageToken(nextPageTokenBytes)
-                    .build();
-
-            ListWorkflowExecutionsResponse response = client.getWorkflowServiceStubs()
-                    .blockingStub()
-                    .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                    .listWorkflowExecutions(request);
-
             RecordType summaryType = (RecordType) ValueCreator.createRecordValue(
                     ModuleUtils.getManagementModule(), "WorkflowInstanceSummary").getType();
             BArray items = ValueCreator.createArrayValue(TypeCreator.createArrayType(summaryType));
 
-            for (io.temporal.api.workflow.v1.WorkflowExecutionInfo wfInfo
+                // `startedBy` is stored in memo, so Temporal visibility cannot filter it server-side.
+                // Scan additional pages until we collect enough matching items or exhaust results.
+                boolean hasStartedByFilter = startedBy instanceof BString starter && !starter.getValue().isBlank();
+                String startedByValue = hasStartedByFilter ? ((BString) startedBy).getValue() : null;
+                int matchedCount = 0;
+                com.google.protobuf.ByteString nextToken = nextPageTokenBytes;
+
+                while (matchedCount < pageSize) {
+                    int temporalPageSize = pageSize;
+                ListWorkflowExecutionsRequest request = ListWorkflowExecutionsRequest.newBuilder()
+                    .setNamespace(client.getOptions().getNamespace())
+                    .setQuery(query)
+                    .setPageSize(temporalPageSize)
+                    .setNextPageToken(nextToken)
+                    .build();
+
+                ListWorkflowExecutionsResponse response = client.getWorkflowServiceStubs()
+                    .blockingStub()
+                    .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                    .listWorkflowExecutions(request);
+
+                for (io.temporal.api.workflow.v1.WorkflowExecutionInfo wfInfo
                     : response.getExecutionsList()) {
-                if (startedBy instanceof BString starter && !starter.getValue().isBlank()) {
+                    if (hasStartedByFilter) {
                     String startedByMemo = decodeMemoString(
-                            client.getOptions().getDataConverter(),
-                            wfInfo.getMemo().getFieldsMap(),
-                            "startedBy",
-                            null);
-                    if (!starter.getValue().equals(startedByMemo)) {
+                        client.getOptions().getDataConverter(),
+                        wfInfo.getMemo().getFieldsMap(),
+                        "startedBy",
+                        null);
+                    if (!startedByValue.equals(startedByMemo)) {
                         continue;
+                    }
+                    }
+
+                    BMap<BString, Object> summary = ValueCreator.createRecordValue(
+                        ModuleUtils.getManagementModule(), "WorkflowInstanceSummary");
+                    summary.put(StringUtils.fromString("workflowId"),
+                        StringUtils.fromString(wfInfo.getExecution().getWorkflowId()));
+                    summary.put(StringUtils.fromString("runId"),
+                        StringUtils.fromString(wfInfo.getExecution().getRunId()));
+                    summary.put(StringUtils.fromString("workflowType"),
+                        StringUtils.fromString(wfInfo.getType().getName()));
+                    summary.put(StringUtils.fromString("status"),
+                        StringUtils.fromString(convertStatus(wfInfo.getStatus())));
+
+                    com.google.protobuf.Timestamp st = wfInfo.getStartTime();
+                    summary.put(StringUtils.fromString("startTime"),
+                        StringUtils.fromString(
+                            Instant.ofEpochSecond(st.getSeconds(), st.getNanos()).toString()));
+
+                    com.google.protobuf.Timestamp ct = wfInfo.getCloseTime();
+                    if (ct.getSeconds() > 0 || ct.getNanos() > 0) {
+                    summary.put(StringUtils.fromString("closeTime"),
+                        StringUtils.fromString(
+                            Instant.ofEpochSecond(ct.getSeconds(), ct.getNanos()).toString()));
+                    } else {
+                    summary.put(StringUtils.fromString("closeTime"), null);
+                    }
+                    summary.put(StringUtils.fromString("input"), null);
+                    items.append(summary);
+                    matchedCount++;
+                    if (matchedCount >= pageSize) {
+                    break;
                     }
                 }
 
-                BMap<BString, Object> summary = ValueCreator.createRecordValue(
-                        ModuleUtils.getManagementModule(), "WorkflowInstanceSummary");
-                summary.put(StringUtils.fromString("workflowId"),
-                        StringUtils.fromString(wfInfo.getExecution().getWorkflowId()));
-                summary.put(StringUtils.fromString("runId"),
-                        StringUtils.fromString(wfInfo.getExecution().getRunId()));
-                summary.put(StringUtils.fromString("workflowType"),
-                        StringUtils.fromString(wfInfo.getType().getName()));
-                summary.put(StringUtils.fromString("status"),
-                        StringUtils.fromString(convertStatus(wfInfo.getStatus())));
-
-                com.google.protobuf.Timestamp st = wfInfo.getStartTime();
-                summary.put(StringUtils.fromString("startTime"),
-                        StringUtils.fromString(
-                                Instant.ofEpochSecond(st.getSeconds(), st.getNanos()).toString()));
-
-                com.google.protobuf.Timestamp ct = wfInfo.getCloseTime();
-                if (ct.getSeconds() > 0 || ct.getNanos() > 0) {
-                    summary.put(StringUtils.fromString("closeTime"),
-                            StringUtils.fromString(
-                                    Instant.ofEpochSecond(ct.getSeconds(), ct.getNanos()).toString()));
-                } else {
-                    summary.put(StringUtils.fromString("closeTime"), null);
+                nextToken = response.getNextPageToken();
+                if (nextToken.isEmpty()) {
+                    break;
                 }
-                summary.put(StringUtils.fromString("input"), null);
-                items.append(summary);
-            }
+                }
 
-            com.google.protobuf.ByteString nextToken = response.getNextPageToken();
             boolean hasMore = !nextToken.isEmpty();
             String nextTokenStr = hasMore
                     ? java.util.Base64.getEncoder().encodeToString(nextToken.toByteArray())

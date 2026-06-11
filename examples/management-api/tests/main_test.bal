@@ -18,6 +18,11 @@ import ballerina/http;
 import ballerina/lang.runtime;
 import ballerina/test;
 
+final map<string|string[]> MGMT_HEADERS = {
+    "x-user-id": "manager@example.com",
+    "x-user-roles": "MANAGER,OPS"
+};
+
 // ── Management API response types ─────────────────────────────────────────────
 
 type HumanTaskSummaryRes record {
@@ -58,7 +63,8 @@ function waitForPendingHumanTask(http:Client mgmt, string workflowId, decimal ti
     decimal elapsed = 0.0d;
     while elapsed < timeoutSecs {
         HumanTaskPage page = check mgmt->get(
-                string `/human-tasks?status=PENDING&parentWorkflowId=${workflowId}`);
+                string `/human-tasks?status=PENDING&parentWorkflowId=${workflowId}`,
+                headers = MGMT_HEADERS);
         if page.items.length() > 0 {
             return page.items[0];
         }
@@ -75,7 +81,8 @@ function waitForPendingRetryTask(http:Client mgmt, string workflowId, decimal ti
     decimal elapsed = 0.0d;
     while elapsed < timeoutSecs {
         RetryTaskPage page = check mgmt->get(
-                string `/retry-tasks?status=PENDING&parentWorkflowId=${workflowId}`);
+                string `/retry-tasks?status=PENDING&parentWorkflowId=${workflowId}`,
+                headers = MGMT_HEADERS);
         if page.items.length() > 0 {
             return page.items[0];
         }
@@ -131,12 +138,14 @@ function testLowValueAutoApproved() returns error? {
     // No human task should appear
     runtime:sleep(1.0d);
     HumanTaskPage tasks = check mgmt->get(
-            string `/human-tasks?status=PENDING&parentWorkflowId=${wfId}`);
+            string `/human-tasks?status=PENDING&parentWorkflowId=${wfId}`,
+            headers = MGMT_HEADERS);
     test:assertEquals(tasks.items.length(), 0, "Low-value request must not create a human task");
 
     // No retry task should appear
     RetryTaskPage retries = check mgmt->get(
-            string `/retry-tasks?status=PENDING&parentWorkflowId=${wfId}`);
+            string `/retry-tasks?status=PENDING&parentWorkflowId=${wfId}`,
+            headers = MGMT_HEADERS);
     test:assertEquals(retries.items.length(), 0, "Valid email must not create a retry task");
 
     // Workflow should complete successfully
@@ -180,7 +189,7 @@ function testHighValueApprovedWithEmailRetry() returns error? {
                     "approved": true,
                     "reason":   "Approved for Q2 hardware refresh"
                 }
-            });
+            }, headers = MGMT_HEADERS);
     test:assertTrue(completeResp.success, "Human task completion must succeed");
 
     // ── Step 2: Retry task for failed email ───────────────────────────────────
@@ -200,7 +209,7 @@ function testHighValueApprovedWithEmailRetry() returns error? {
                     "item":      "developer laptop",
                     "amount":    1499.99
                 }
-            });
+            }, headers = MGMT_HEADERS);
     test:assertTrue(retryResp.success, "Retry decision must succeed");
     test:assertEquals(retryResp.decision, "retry-with-input");
 
@@ -236,13 +245,14 @@ function testHighValueRejected() returns error? {
                     "approved": false,
                     "reason":   "Exceeds annual equipment budget"
                 }
-            });
+            }, headers = MGMT_HEADERS);
     test:assertTrue(completeResp.success, "Human task rejection completion must succeed");
 
     // Workflow ends REJECTED — no retry task should appear
     runtime:sleep(0.5d);
     RetryTaskPage retries = check mgmt->get(
-            string `/retry-tasks?status=PENDING&parentWorkflowId=${wfId}`);
+            string `/retry-tasks?status=PENDING&parentWorkflowId=${wfId}`,
+            headers = MGMT_HEADERS);
     test:assertEquals(retries.items.length(), 0,
             "Rejected workflow must not produce a retry task");
 
@@ -259,6 +269,6 @@ function testHighValueRejected() returns error? {
 function testListWorkflowDefinitions() returns error? {
     http:Client mgmt = check new ("http://localhost:7234/workflow");
 
-    record {|record{}[] definitions;|} resp = check mgmt->get("/definitions");
+    record {|record{}[] definitions;|} resp = check mgmt->get("/definitions", headers = MGMT_HEADERS);
     test:assertTrue(resp.definitions.length() > 0, "At least one workflow must be registered");
 }

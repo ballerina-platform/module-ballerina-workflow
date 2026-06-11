@@ -638,8 +638,7 @@ public final class WorkflowContextNative {
             memo.put("payload", TypesUtil.convertBallerinaToJavaType(payload));
             memo.put("createdAt",
                     Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString());
-            // formSchema will be added by the compiler plugin once JSON Schema generation is implemented
-            memo.put("formSchema", null);
+                memo.put("formSchema", TypesUtil.toJsonSchema(typedesc.getDescribingType()));
 
             // --- Build input map passed to the child workflow -----------------------
             Map<String, Object> inputs = new HashMap<>();

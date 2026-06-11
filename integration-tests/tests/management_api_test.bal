@@ -214,6 +214,37 @@ function testListWorkflowInstancesWithLimit() returns error? {
     test:assertTrue(page.items.length() <= 2, "Returned items should not exceed the requested limit");
 }
 
+@test:Config {
+    groups: ["integration"]
+}
+function testListWorkflowInstancesByStartedBy() returns error? {
+    string startedBy = "integration-starter@example.com";
+    string testId = uniqueId("list-by-startedBy");
+
+    management:WorkflowHandle wfHandle = check management:startWorkflowByType(
+            "infoTestWorkflow",
+            {id: testId, name: "StartedByFilter"},
+            (),
+            (),
+            startedBy);
+
+    _ = check workflow:getWorkflowResult(wfHandle.workflowId, 30);
+
+    management:WorkflowInstancePage page =
+            check management:listWorkflowInstances(startedBy = startedBy);
+    test:assertTrue(page.items.length() > 0,
+            "Filter by startedBy should find at least one workflow started by that user");
+    boolean found = false;
+    foreach management:WorkflowInstanceSummary item in page.items {
+        if item.workflowId == wfHandle.workflowId {
+            found = true;
+            break;
+        }
+    }
+    test:assertTrue(found,
+            "Expected startedBy filter results to include the workflow started with the matching startedBy");
+}
+
 // ================================================================================
 // startWorkflowByType
 // ================================================================================
@@ -250,7 +281,7 @@ function testGetHumanTaskInfo() returns error? {
         requester: "Kate"
     };
     string parentWorkflowId = check workflow:run(expenseApprovalWorkflow, input);
-    management:HumanTaskGroup[] groups = check waitForPendingHumanTask(parentWorkflowId);
+    management:HumanTaskGroup[] groups = check waitForPendingHumanTask(parentWorkflowId, 20);
     string taskId = groups[0].taskIds[0];
 
     management:HumanTaskInfo info = check management:getHumanTaskInfo(taskId);
@@ -258,6 +289,15 @@ function testGetHumanTaskInfo() returns error? {
     test:assertFalse(info.taskName == "", "HumanTaskInfo must have a non-empty taskName");
     test:assertEquals(info.status, "RUNNING", "Active human task should be RUNNING");
     test:assertTrue(info.userRoles.length() > 0, "HumanTaskInfo should include at least one user role");
+        test:assertTrue(info.formSchema is string,
+            "formSchema must be populated for human task: " + taskId);
+        if info.formSchema is string {
+            string schema = <string>info.formSchema;
+            test:assertTrue(schema.indexOf("approved") != (),
+            "formSchema should include the 'approved' field");
+            test:assertTrue(schema.indexOf("comment") != (),
+            "formSchema should include the 'comment' field");
+        }
 
     // Clean up — approve the task so the workflow completes
     check workflow:completeHumanTask(taskId, {approved: true, comment: "info-test cleanup"});

@@ -196,8 +196,8 @@ function testHighValueApprovedWithEmailRetry() returns error? {
     // After approval the workflow calls sendProcurementEmail with "bad@example.com",
     // which fails. A ManualRetry task surfaces in the Management API.
     RetryTaskSummaryRes retryTask = check waitForPendingRetryTask(mgmt, wfId);
-    test:assertTrue(retryTask.taskName.includes("retryProcurementEmail"),
-            "Retry task name should include 'retryProcurementEmail'");
+    test:assertTrue(retryTask.taskName.includes("sendProcurementEmail"),
+            "Retry task name should include activity function name 'sendProcurementEmail'");
     test:assertEquals(retryTask.parentWorkflowId, wfId);
 
     // Retry with corrected email via Management API

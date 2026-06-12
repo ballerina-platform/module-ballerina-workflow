@@ -204,10 +204,7 @@ function processProcurementRequest(workflow:Context ctx, ProcurementRequest inpu
         "toEmail": input.notifyEmail,
         "item": input.item,
         "amount": input.amount
-    }, retryPolicy = <workflow:ManualRetry>{
-        taskName: "retryProcurementEmail",
-        userRoles: ["OPS"]
-    });
+    }, retryPolicy = workflow:ManualRetry);
 
     io:println(string `[Workflow] Procurement completed for ${input.requestId}`);
     return {

@@ -14,8 +14,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import ballerina/time;
-
 # Deployment mode for the workflow runtime.
 #
 # + LOCAL - Local development server (e.g., `temporal server start-dev`)

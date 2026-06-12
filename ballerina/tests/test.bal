@@ -821,10 +821,11 @@ function testActivityInvocationsOnSingleFailNoRetry() returns error? {
 // ============================================================================
 
 @test:Config {groups: ["unit"]}
-function testManualRetryTaskName() {
-    // ManualRetry only has taskName now; userRoles are managed by the admin console.
-    ManualRetry config = {taskName: "processRefund"};
-    test:assertEquals(config.taskName, "processRefund");
+function testManualRetryIsConstant() {
+    // ManualRetry is a sentinel constant; task name is derived from the activity.
+    test:assertEquals(ManualRetry, "MANUAL_RETRY");
+    AutoRetry|string|() policy = ManualRetry;
+    test:assertEquals(policy, ManualRetry);
 }
 
 @test:Config {groups: ["unit"]}
@@ -870,7 +871,7 @@ function failingActivityForRetry(string orderId) returns string|error {
 @Workflow
 function workflowWithManualRetry(Context ctx, string orderId) returns string|error {
     string result = check ctx->callActivity(failingActivityForRetry, {"orderId": orderId},
-            retryPolicy = <ManualRetry>{taskName: "retryOrder"});
+            retryPolicy = ManualRetry);
     return result;
 }
 
@@ -878,7 +879,7 @@ function workflowWithManualRetry(Context ctx, string orderId) returns string|err
 @Workflow
 function workflowWithManualRetryFail(Context ctx, string orderId) returns string|error {
     string result = check ctx->callActivity(failingActivityForRetry, {"orderId": orderId},
-            retryPolicy = <ManualRetry>{taskName: "retryOrderFail"});
+            retryPolicy = ManualRetry);
     return result;
 }
 
@@ -913,8 +914,8 @@ function testManualRetryWorkflowCreatesRetryTask() returns error? {
             "Task ID should start with 'retrytask-', got: " + task.taskId);
     test:assertEquals(task.parentWorkflowId, workflowId, "parentWorkflowId should match");
     test:assertEquals(task.status, "RUNNING", "Pending retry task should be in RUNNING status");
-    test:assertTrue(task.taskName.includes("retryOrder"),
-            "Task name should include configured taskName");
+    test:assertTrue(task.taskName.includes("failingActivityForRetry"),
+            "Task name should include the activity function name");
 }
 
 @test:Config {groups: ["unit"]}

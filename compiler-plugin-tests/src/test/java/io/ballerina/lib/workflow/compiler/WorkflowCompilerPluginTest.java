@@ -286,7 +286,7 @@ public class WorkflowCompilerPluginTest {
         String packagePath = "valid_timeout";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertEquals(diagnosticResult.errorCount(), 0,
-                "Expected no errors for callHumanTask with time:Duration timeout field. Errors: "
+                "Expected no errors for createHumanTask with time:Duration timeout field. Errors: "
                         + getDiagnosticMessages(diagnosticResult));
     }
 
@@ -295,7 +295,7 @@ public class WorkflowCompilerPluginTest {
         String packagePath = "invalid_timeout_no_value";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertEquals(diagnosticResult.errorCount(), 1,
-                "Expected exactly one type error for callHumanTask with int literal 30 as timeout "
+                "Expected exactly one type error for createHumanTask with int literal 30 as timeout "
                         + "(not assignable to time:Duration?). Got: " + getDiagnosticMessages(diagnosticResult));
         Assert.assertTrue(getDiagnosticMessages(diagnosticResult).contains("Duration?"),
                 "Expected timeout type incompatibility in diagnostics: " + getDiagnosticMessages(diagnosticResult));
@@ -306,7 +306,7 @@ public class WorkflowCompilerPluginTest {
         String packagePath = "invalid_timeout_not_future";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertEquals(diagnosticResult.errorCount(), 1,
-                "Expected exactly one type error for callHumanTask with future<int> passed as timeout "
+                "Expected exactly one type error for createHumanTask with future<int> passed as timeout "
                         + "(not assignable to time:Duration?). Got: " + getDiagnosticMessages(diagnosticResult));
         Assert.assertTrue(getDiagnosticMessages(diagnosticResult).contains("Duration?"),
                 "Expected timeout type incompatibility in diagnostics: " + getDiagnosticMessages(diagnosticResult));
@@ -317,7 +317,7 @@ public class WorkflowCompilerPluginTest {
         String packagePath = "invalid_timeout_string_value";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertEquals(diagnosticResult.errorCount(), 1,
-                "Expected exactly one type error for callHumanTask with string value passed as timeout "
+                "Expected exactly one type error for createHumanTask with string value passed as timeout "
                         + "(not assignable to time:Duration?). Got: " + getDiagnosticMessages(diagnosticResult));
         Assert.assertTrue(getDiagnosticMessages(diagnosticResult).contains("Duration?"),
                 "Expected timeout type incompatibility in diagnostics: " + getDiagnosticMessages(diagnosticResult));

@@ -539,7 +539,7 @@ public final class WorkflowContextNative {
      */
     @SuppressWarnings("unchecked")
     public static Object createHumanTask(BObject self, BString taskNameBStr,
-            Object userRolesObj, Object payloadObj,
+            Object userRolesObj, BMap<BString, Object> payloadObj,
             Object titleObj, Object descriptionObj, Object timeoutObj, BTypedesc typedesc) {
         try {
             // --- Extract individual params -------------------------------------------
@@ -572,8 +572,8 @@ public final class WorkflowContextNative {
             // description
             String description = (descriptionObj instanceof BString bs) ? bs.getValue() : "";
 
-            // payload
-            Object payload = (payloadObj instanceof BMap) ? payloadObj : null;
+            // payload (always a BMap since Ballerina default = {} guarantees non-null)
+            Object payload = payloadObj;
 
             // timeout: nil (BNull/null) means wait indefinitely
             Long timeoutMillis = null;

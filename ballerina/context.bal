@@ -137,7 +137,7 @@ public client class Context {
     # `wfInternal:registerHumanTask(taskName)` (the compiler plugin generates this call automatically).
     #
     # ```ballerina
-    # ApprovalDecision d = check ctx->createHumanTask("approveExpense", "FINANCE_APPROVER",
+    # ApprovalDecision d = check ctx->awaitHumanTask("approveExpense", "FINANCE_APPROVER",
     #     payload = {"amount": 1200, "currency": "USD"},
     #     title = "Approve order",
     #     timeout = {hours: 24}
@@ -155,7 +155,7 @@ public client class Context {
     # + timeout - Maximum time to wait. Omit (or pass `()`) to wait indefinitely
     # + T - Expected result type; drives form schema generation and runtime validation
     # + return - The typed value submitted by the human, or a `HumanTaskTimeoutError`
-    remote isolated function createHumanTask(
+    remote isolated function awaitHumanTask(
             string taskName,
             string|string[] userRoles,
             map<json> payload = {},
@@ -165,7 +165,7 @@ public client class Context {
             typedesc<anydata> T = <>)
             returns T|HumanTaskTimeoutError = @java:Method {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
-        name: "createHumanTask"
+        name: "awaitHumanTask"
     } external;
 }
 

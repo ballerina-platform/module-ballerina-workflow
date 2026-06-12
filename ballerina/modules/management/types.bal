@@ -67,7 +67,7 @@ public type ActivityInvocation record {
 
 # Groups human task instances by task type for a single parent workflow.
 #
-# + taskName - The task type name (the `taskName` passed to `createHumanTask`)
+# + taskName - The task type name (the `taskName` passed to `awaitHumanTask`)
 # + taskIds - Child workflow IDs of pending instances of this task type,
 #             in the order they were started
 public type HumanTaskGroup record {|
@@ -78,7 +78,7 @@ public type HumanTaskGroup record {|
 # Summary of a human task instance for list views.
 #
 # + taskId - Child workflow ID of this task instance (`humantask-{parentId}-{taskName}-{uuid}`)
-# + taskName - Task type name (the `taskName` passed to `createHumanTask`)
+# + taskName - Task type name (the `taskName` passed to `awaitHumanTask`)
 # + parentWorkflowId - Workflow ID of the parent that created this task
 # + parentWorkflowType - Registered workflow type of the parent, or `()` if not available
 # + status - Current status: PENDING | COMPLETED | TIMED_OUT | CANCELED | TERMINATED

@@ -26,11 +26,11 @@ import java.util.Set;
  * Holds information about a @Workflow annotated function.
  * <p>
  * Contains the function name, a map of activity functions called within it,
- * and the set of human task names found in {@code createHumanTask} call sites.
+ * and the set of human task names found in {@code awaitHumanTask} call sites.
  *
  * @param functionName  the name of the process function
  * @param activityMap   map of activity function names to their references
- * @param humanTaskNames set of task names passed to {@code ctx->createHumanTask}
+ * @param humanTaskNames set of task names passed to {@code ctx->awaitHumanTask}
  * @since 0.1.0
  */
 public record ProcessFunctionInfo(String functionName, Map<String, String> activityMap,
@@ -42,7 +42,7 @@ public record ProcessFunctionInfo(String functionName, Map<String, String> activ
      *
      * @param functionName  the name of the process function
      * @param activityMap   map of activity function names to their references
-     * @param humanTaskNames set of task names found at createHumanTask call sites
+     * @param humanTaskNames set of task names found at awaitHumanTask call sites
      */
     public ProcessFunctionInfo {
         activityMap = Map.copyOf(activityMap);
@@ -72,7 +72,7 @@ public record ProcessFunctionInfo(String functionName, Map<String, String> activ
     }
 
     /**
-     * Gets the set of human task names found in {@code ctx->createHumanTask} call sites
+     * Gets the set of human task names found in {@code ctx->awaitHumanTask} call sites
      * within this workflow function.
      *
      * @return unmodifiable set of task name strings

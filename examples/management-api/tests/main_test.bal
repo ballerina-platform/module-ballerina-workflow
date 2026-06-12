@@ -175,7 +175,7 @@ function testHighValueApprovedWithEmailRetry() returns error? {
     test:assertNotEquals(wfId, "", "Workflow ID must not be empty");
 
     // ── Step 1: Human approval task ───────────────────────────────────────────
-    // The workflow pauses at createHumanTask waiting for a MANAGER decision.
+    // The workflow pauses at awaitHumanTask waiting for a MANAGER decision.
     HumanTaskSummaryRes humanTask = check waitForPendingHumanTask(mgmt, wfId);
     test:assertTrue(humanTask.taskName.includes("approveRequest"),
             "Task name should include 'approveRequest'");

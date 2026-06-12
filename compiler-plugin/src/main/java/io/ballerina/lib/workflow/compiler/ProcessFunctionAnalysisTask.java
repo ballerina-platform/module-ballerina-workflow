@@ -47,7 +47,7 @@ import java.util.Set;
 
 /**
  * Analysis task that detects @Workflow annotated functions and collects
- * information about @Activity function calls and createHumanTask call sites within them.
+ * information about @Activity function calls and awaitHumanTask call sites within them.
  *
  * @since 0.1.0
  */
@@ -111,7 +111,7 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
      * Node visitor that collects activity calls and human task names within a workflow function.
      * <ul>
      *   <li>Calls to {@code @Activity}-annotated functions (direct or via {@code ctx->callActivity})</li>
-     *   <li>Task names passed as the first argument to {@code ctx->createHumanTask}</li>
+     *   <li>Task names passed as the first argument to {@code ctx->awaitHumanTask}</li>
      * </ul>
      */
     private static class ActivityCallCollector extends NodeVisitor {
@@ -142,7 +142,7 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
          * Visits remote method call actions to detect activity and human task call patterns.
          * <ul>
          *   <li>{@code ctx->callActivity(activityFunc, args)} — registers the activity</li>
-         *   <li>{@code ctx->createHumanTask("taskName", roles, ...)} — registers the task name</li>
+         *   <li>{@code ctx->awaitHumanTask("taskName", roles, ...)} — registers the task name</li>
          * </ul>
          */
         @Override
@@ -194,7 +194,7 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
 
         /**
          * Extracts the literal {@code taskName} value from the arguments of a
-         * {@code createHumanTask} remote call. With individual params, taskName is
+         * {@code awaitHumanTask} remote call. With individual params, taskName is
          * the first positional argument (index 0). Also handles the named-argument form
          * {@code taskName = "..."}.
          *
@@ -202,8 +202,8 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
          *         cannot be statically determined (e.g. passed as a variable)
          */
         private String extractHumanTaskName(SeparatedNodeList<FunctionArgumentNode> args) {
-            // With individual params (createHumanTask), taskName is the first positional argument.
-            // Check for named arg form first: createHumanTask(taskName = "...", ...)
+            // With individual params (awaitHumanTask), taskName is the first positional argument.
+            // Check for named arg form first: awaitHumanTask(taskName = "...", ...)
             for (FunctionArgumentNode arg : args) {
                 if (arg instanceof NamedArgumentNode namedArg
                         && "taskName".equals(namedArg.argumentName().name().text())

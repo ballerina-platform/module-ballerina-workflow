@@ -26,24 +26,24 @@ function validateItem(string id) returns string|error {
     return id;
 }
 
-// Valid createHumanTask with an explicit time:Duration timeout.
+// Valid awaitHumanTask with an explicit time:Duration timeout.
 // The timeout parameter is optional and defaults to nil, but providing a concrete
 // duration value is fully supported and must not trigger any diagnostic.
 @workflow:Workflow
 function approvalWithTimeoutWorkflow(workflow:Context ctx, string input) returns ApprovalDecision|error {
     string _ = check ctx->callActivity(validateItem, {"id": input});
 
-    ApprovalDecision decision = check ctx->createHumanTask("reviewItem", ["REVIEWER"],
+    ApprovalDecision decision = check ctx->awaitHumanTask("reviewItem", ["REVIEWER"],
             title = string `Review item ${input}`,
             payload = {"itemId": input},
             timeout = {seconds: 30});
     return decision;
 }
 
-// Valid createHumanTask with a nil timeout (same as omitting the parameter entirely).
+// Valid awaitHumanTask with a nil timeout (same as omitting the parameter entirely).
 @workflow:Workflow
 function approvalWithNilTimeoutWorkflow(workflow:Context ctx, string input) returns ApprovalDecision|error {
-    ApprovalDecision decision = check ctx->createHumanTask("reviewItemNil", ["admin"],
+    ApprovalDecision decision = check ctx->awaitHumanTask("reviewItemNil", ["admin"],
             timeout = ());
     return decision;
 }

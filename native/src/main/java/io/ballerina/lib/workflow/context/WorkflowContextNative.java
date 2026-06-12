@@ -508,7 +508,7 @@ public final class WorkflowContextNative {
     }
 
     // -----------------------------------------------------------------------
-    // createHumanTask
+    // awaitHumanTask
     // -----------------------------------------------------------------------
 
     /**
@@ -517,7 +517,7 @@ public final class WorkflowContextNative {
      *
      * <p>The child workflow type equals {@code taskName}, which must have been registered
      * in the {@code HUMANTASK_REGISTRY} via {@code WorkflowWorkerNative.registerHumanTask}
-     * before the worker started.  {@code createHumanTask} also performs a lazy in-workflow
+     * before the worker started.  {@code awaitHumanTask} also performs a lazy in-workflow
      * registration so that ad-hoc calls work without compile-time plugin support.
      *
      * <p>On success the {@code result} field of the signal payload is coerced to the
@@ -538,7 +538,7 @@ public final class WorkflowContextNative {
      * @return the coerced result value, or a {@code HumanTaskTimeoutError} BError
      */
     @SuppressWarnings("unchecked")
-    public static Object createHumanTask(BObject self, BString taskNameBStr,
+    public static Object awaitHumanTask(BObject self, BString taskNameBStr,
             Object userRolesObj, BMap<BString, Object> payloadObj,
             Object titleObj, Object descriptionObj, Object timeoutObj, BTypedesc typedesc) {
         try {
@@ -666,7 +666,7 @@ public final class WorkflowContextNative {
             throw e;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
-                    "createHumanTask failed: " + e.getMessage()));
+                    "awaitHumanTask failed: " + e.getMessage()));
         }
     }
 

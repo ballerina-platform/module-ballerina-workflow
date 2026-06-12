@@ -103,7 +103,7 @@ type WorkflowRegistry map<ProcessRegistration>;
 
 # Detail fields carried by a `HumanTaskTimeoutError`.
 #
-# + taskName - The `taskName` value passed to `createHumanTask`
+# + taskName - The `taskName` value passed to `awaitHumanTask`
 # + taskWorkflowId - Temporal child workflow ID of the timed-out task instance
 # + timedOutAfter - Configured deadline as an ISO-8601 duration (e.g. `"PT24H"`)
 # + timedOutAt - ISO-8601 timestamp at which the timeout was recorded
@@ -114,6 +114,6 @@ public type HumanTaskTimeoutDetail record {|
     string timedOutAt;
 |};
 
-# Returned by `createHumanTask` when no human acts within the configured deadline.
+# Returned by `awaitHumanTask` when no human acts within the configured deadline.
 # Catch with `on fail workflow:HumanTaskTimeoutError e` to run compensation logic.
 public type HumanTaskTimeoutError distinct error<HumanTaskTimeoutDetail>;

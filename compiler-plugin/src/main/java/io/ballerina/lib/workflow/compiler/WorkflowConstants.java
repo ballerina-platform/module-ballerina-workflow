@@ -43,7 +43,7 @@ public final class WorkflowConstants {
 
     // Function names
     public static final String CALL_ACTIVITY_FUNCTION = "callActivity";
-    public static final String CALL_HUMAN_TASK_METHOD = "createHumanTask";
+    public static final String CALL_HUMAN_TASK_METHOD = "awaitHumanTask";
 
     // Type names
     public static final String CONTEXT_TYPE = "Context";

@@ -26,7 +26,7 @@ type ApprovalDecision record {|
 // not a plain string. This should trigger a Ballerina type error.
 @workflow:Workflow
 function invalidTimeoutStringValueWorkflow(workflow:Context ctx, string input) returns ApprovalDecision|error {
-    ApprovalDecision decision = check ctx->createHumanTask("reviewItem", ["admin"],
+    ApprovalDecision decision = check ctx->awaitHumanTask("reviewItem", ["admin"],
             timeout = "30 seconds");  // ERROR: string is not compatible with time:Duration?
     return decision;
 }

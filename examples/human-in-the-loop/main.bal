@@ -16,7 +16,7 @@
 
 // Human-in-the-Loop Example
 //
-// Demonstrates a workflow that pauses for a human decision using createHumanTask.
+// Demonstrates a workflow that pauses for a human decision using awaitHumanTask.
 // Every order above a configured threshold requires manager approval — the
 // workflow durably pauses until a reviewer completes the task. Low-value orders
 // are auto-approved.
@@ -122,10 +122,10 @@ function processOrder(workflow:Context ctx, OrderInput input) returns OrderResul
 
     // Step 2: Check if approval is needed
     if input.amount > APPROVAL_THRESHOLD {
-        // createHumanTask creates a child workflow and durably pauses here
+        // awaitHumanTask creates a child workflow and durably pauses here
         // until a manager submits a decision via the task inbox or HTTP API.
         io:println(string `[Workflow] Creating approval task for order ${input.orderId}`);
-        ApprovalDecision decision = check ctx->createHumanTask("approveOrder", "MANAGER",
+        ApprovalDecision decision = check ctx->awaitHumanTask("approveOrder", "MANAGER",
                 payload = {orderId: input.orderId, item: input.item, amount: input.amount.toString()},
                 title = string `Approve ${input.item} for $${input.amount}`);
         io:println(string `[Workflow] Decision received: approved=${decision.approved}`);

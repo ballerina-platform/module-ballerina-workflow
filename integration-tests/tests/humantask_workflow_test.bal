@@ -15,7 +15,7 @@
 // under the License.
 
 // ================================================================================
-// HUMAN TASK (createHumanTask / completeHumanTask) — TESTS
+// HUMAN TASK (awaitHumanTask / completeHumanTask) — TESTS
 // ================================================================================
 //
 // Covers the scenarios from docs/humantask-temporal-native.md:

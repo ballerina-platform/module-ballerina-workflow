@@ -14,8 +14,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import ballerina/time;
-
 # Deployment mode for the workflow runtime.
 #
 # + LOCAL - Local development server (e.g., `temporal server start-dev`)
@@ -63,15 +61,11 @@ public type AutoRetry record {|
     decimal maxRetryDelay?;
 |};
 
-# Manual retry configuration. When the activity fails, a retry task is created
-# so a human can decide whether to retry, retry with different input, or fail.
-#
-# + taskName - Name identifying the retry task in the task inbox
-# + userRoles - One or more roles permitted to complete this task. Defaults to `[defaultAdminRole]`.
-public type ManualRetry record {|
-    string taskName;
-    [string, string...] userRoles = [defaultAdminRole];
-|};
+# Manual retry sentinel. When passed as the `retryPolicy`, a retry task is
+# created on activity failure so a human can decide to retry, retry with
+# different input, or permanently fail. The task name is derived automatically
+# from the activity being called.
+public const string ManualRetry = "MANUAL_RETRY";
 
 # Options for activity execution via `callActivity`.
 #
@@ -107,27 +101,9 @@ type WorkflowRegistry map<ProcessRegistration>;
 // HumanTask types
 // ---------------------------------------------------------------------------
 
-# Configuration passed to `callHumanTask`.
-#
-# + taskName - Identifies the task type; used as the Temporal workflow type and child workflow ID.
-# + title - Short summary shown in the inbox. Defaults to `taskName` when omitted.
-# + description - Additional context shown alongside the form. Optional.
-# + userRoles - One or more roles permitted to complete this task. Defaults to `[defaultAdminRole]`.
-# + payload - Read-only JSON object rendered as key-value pairs next to the form.
-#             Use `map<json>` to ensure each entry has a meaningful label.
-# + timeout - Maximum time to wait. Omit (or pass `()`) to wait indefinitely.
-public type HumanTaskConfig record {|
-    string taskName; // Must match a registered HumanTask type (see `wfInternal:registerHumanTask`)
-    string? title = ();
-    string? description = ();
-    string[] userRoles = [defaultAdminRole];
-    map<json> payload = {};
-    time:Duration? timeout = ();
-|};
-
 # Detail fields carried by a `HumanTaskTimeoutError`.
 #
-# + taskName - The `taskName` value passed to `callHumanTask`
+# + taskName - The `taskName` value passed to `awaitHumanTask`
 # + taskWorkflowId - Temporal child workflow ID of the timed-out task instance
 # + timedOutAfter - Configured deadline as an ISO-8601 duration (e.g. `"PT24H"`)
 # + timedOutAt - ISO-8601 timestamp at which the timeout was recorded
@@ -138,6 +114,6 @@ public type HumanTaskTimeoutDetail record {|
     string timedOutAt;
 |};
 
-# Returned by `callHumanTask` when no human acts within the configured deadline.
+# Returned by `awaitHumanTask` when no human acts within the configured deadline.
 # Catch with `on fail workflow:HumanTaskTimeoutError e` to run compensation logic.
 public type HumanTaskTimeoutError distinct error<HumanTaskTimeoutDetail>;

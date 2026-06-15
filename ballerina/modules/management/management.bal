@@ -150,7 +150,7 @@ public isolated function listPendingHumanTasks(string parentWorkflowId) returns 
 # Lists all human task instances across all parent workflows, with optional filters.
 # Queries Temporal's visibility API and filters executions whose workflow ID starts with
 # `humantask-`. The `taskName` and `parentWorkflowId` fields are extracted from the task's
-# Temporal memo (set when the task was created by `callHumanTask`).
+# Temporal memo (set when the task was created by `awaitHumanTask`).
 #
 # ```ballerina
 # management:HumanTaskSummary[] pending =
@@ -231,7 +231,7 @@ public isolated function failHumanTask(string taskWorkflowId, string reason,
 # Cancels a pending human task by terminating its child workflow.
 # Unlike `failHumanTask`, cancel does not send a result to the waiting workflow —
 # the child workflow is terminated immediately, which causes the parent workflow's
-# `callHumanTask` to return a `HumanTaskTimeoutError` or a terminal error.
+# `awaitHumanTask` to return a `HumanTaskTimeoutError` or a terminal error.
 #
 # ```ballerina
 # check management:cancelHumanTask(taskId, cancelledBy = "admin@example.com");
@@ -368,9 +368,11 @@ public isolated function cancelWorkflow(string workflowId, string runId) returns
 # + input - Workflow input as a JSON-compatible value
 # + workflowId - Optional explicit workflow ID; a UUID-v7 is generated if omitted
 # + timeoutSeconds - Optional workflow execution timeout in seconds
+# + startedBy - Optional starter user ID; stored with workflow metadata for filtering
 # + return - Handle with workflowId and runId, or an error
 public isolated function startWorkflowByType(string workflowType, json? input,
-        string? workflowId = (), int? timeoutSeconds = ()) returns WorkflowHandle|error = @java:Method {
+    string? workflowId = (), int? timeoutSeconds = (), string? startedBy = ())
+    returns WorkflowHandle|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 
@@ -380,6 +382,7 @@ public isolated function startWorkflowByType(string workflowType, json? input,
 # + status - Optional status filter: `RUNNING` | `COMPLETED` | `FAILED` | `CANCELED` | `TERMINATED`
 # + workflowType - Optional workflow type filter
 # + workflowId - Optional workflow ID prefix filter
+# + startedBy - Optional starter user ID filter (set via management API `x-user-id` when started)
 # + 'limit - Maximum number of results (capped at maxPageSize)
 # + pageToken - Opaque continuation token from a prior call
 # + startTimeFrom - Optional ISO-8601 lower bound on workflow start time (inclusive)
@@ -388,7 +391,7 @@ public isolated function startWorkflowByType(string workflowType, json? input,
 # + closeTimeTo - Optional ISO-8601 upper bound on workflow close time (inclusive)
 # + return - Paginated list of workflow instance summaries, or an error
 public isolated function listWorkflowInstances(string? status = (), string? workflowType = (),
-        string? workflowId = (), int 'limit = 20, string? pageToken = (),
+    string? workflowId = (), string? startedBy = (), int 'limit = 20, string? pageToken = (),
         string? startTimeFrom = (), string? startTimeTo = (),
         string? closeTimeFrom = (), string? closeTimeTo = ())
         returns WorkflowInstancePage|error = @java:Method {

@@ -252,7 +252,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
 
         // Collect qualified human task names ("workflowFunctionName.taskName") across every
         // workflow in this module. Qualification ensures uniqueness across workflows that
-        // reuse the same short task name and matches the runtime qualification in callHumanTask.
+        // reuse the same short task name and matches the runtime qualification in awaitHumanTask.
         // A sorted set is used for deterministic code generation across compiler runs.
         Set<String> qualifiedHumanTaskNames = new TreeSet<>();
         for (ProcessFunctionInfo processInfo : allProcessInfos) {

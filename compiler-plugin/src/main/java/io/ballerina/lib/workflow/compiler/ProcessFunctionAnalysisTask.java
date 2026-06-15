@@ -23,19 +23,15 @@ import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.syntax.tree.BasicLiteralNode;
-import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
 import io.ballerina.compiler.syntax.tree.FunctionCallExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
-import io.ballerina.compiler.syntax.tree.MappingConstructorExpressionNode;
-import io.ballerina.compiler.syntax.tree.MappingFieldNode;
 import io.ballerina.compiler.syntax.tree.NamedArgumentNode;
 import io.ballerina.compiler.syntax.tree.Node;
 import io.ballerina.compiler.syntax.tree.NodeVisitor;
 import io.ballerina.compiler.syntax.tree.PositionalArgumentNode;
 import io.ballerina.compiler.syntax.tree.RemoteMethodCallActionNode;
 import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
-import io.ballerina.compiler.syntax.tree.SpecificFieldNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.projects.DocumentId;
 import io.ballerina.projects.plugins.AnalysisTask;
@@ -51,7 +47,7 @@ import java.util.Set;
 
 /**
  * Analysis task that detects @Workflow annotated functions and collects
- * information about @Activity function calls and callHumanTask call sites within them.
+ * information about @Activity function calls and awaitHumanTask call sites within them.
  *
  * @since 0.1.0
  */
@@ -115,8 +111,7 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
      * Node visitor that collects activity calls and human task names within a workflow function.
      * <ul>
      *   <li>Calls to {@code @Activity}-annotated functions (direct or via {@code ctx->callActivity})</li>
-     *   <li>Task names passed to {@code ctx->callHumanTask} as the {@code taskName} field of a
-     *       literal {@code HumanTaskConfig} mapping expression</li>
+     *   <li>Task names passed as the first argument to {@code ctx->awaitHumanTask}</li>
      * </ul>
      */
     private static class ActivityCallCollector extends NodeVisitor {
@@ -147,7 +142,7 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
          * Visits remote method call actions to detect activity and human task call patterns.
          * <ul>
          *   <li>{@code ctx->callActivity(activityFunc, args)} — registers the activity</li>
-         *   <li>{@code ctx->callHumanTask(T, { taskName: "..." })} — registers the task name</li>
+         *   <li>{@code ctx->awaitHumanTask("taskName", roles, ...)} — registers the task name</li>
          * </ul>
          */
         @Override
@@ -199,52 +194,34 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
 
         /**
          * Extracts the literal {@code taskName} value from the arguments of a
-         * {@code callHumanTask} remote call. Searches all positional and named arguments
-         * for a {@link MappingConstructorExpressionNode} that contains a {@code taskName}
-         * field with a string literal value.
+         * {@code awaitHumanTask} remote call. With individual params, taskName is
+         * the first positional argument (index 0). Also handles the named-argument form
+         * {@code taskName = "..."}.
          *
          * @return the task name string (without surrounding quotes), or {@code null} if it
          *         cannot be statically determined (e.g. passed as a variable)
          */
         private String extractHumanTaskName(SeparatedNodeList<FunctionArgumentNode> args) {
-            // Prefer explicit named argument: config = {...}
+            // With individual params (awaitHumanTask), taskName is the first positional argument.
+            // Check for named arg form first: awaitHumanTask(taskName = "...", ...)
             for (FunctionArgumentNode arg : args) {
                 if (arg instanceof NamedArgumentNode namedArg
-                        && "config".equals(namedArg.argumentName().name().text())
-                        && namedArg.expression() instanceof MappingConstructorExpressionNode mappingNode) {
-                    return extractTaskNameFromMapping(mappingNode);
-                }
-            }
-
-            // Positional form: config is at index 0 (the only positional mapping argument)
-            if (!args.isEmpty() && args.get(0) instanceof PositionalArgumentNode posArg
-                    && posArg.expression() instanceof MappingConstructorExpressionNode mappingNode) {
-                return extractTaskNameFromMapping(mappingNode);
-            }
-
-            return null;
-        }
-
-        /**
-         * Searches a {@link MappingConstructorExpressionNode} for a field named
-         * {@code taskName} with a string literal value and returns the unquoted string.
-         */
-        private String extractTaskNameFromMapping(MappingConstructorExpressionNode mappingNode) {
-            for (MappingFieldNode field : mappingNode.fields()) {
-                if (!(field instanceof SpecificFieldNode specificField)) {
-                    continue;
-                }
-                String fieldName = specificField.fieldName().toString().trim();
-                if (!"taskName".equals(fieldName) || specificField.valueExpr().isEmpty()) {
-                    continue;
-                }
-                ExpressionNode valueExpr = specificField.valueExpr().get();
-                if (valueExpr instanceof BasicLiteralNode literal
+                        && "taskName".equals(namedArg.argumentName().name().text())
+                        && namedArg.expression() instanceof BasicLiteralNode literal
                         && literal.kind() == SyntaxKind.STRING_LITERAL) {
                     String raw = literal.literalToken().text();
                     if (raw.length() >= 2 && raw.startsWith("\"") && raw.endsWith("\"")) {
                         return raw.substring(1, raw.length() - 1);
                     }
+                }
+            }
+            // Positional form: taskName is at index 0
+            if (!args.isEmpty() && args.get(0) instanceof PositionalArgumentNode posArg
+                    && posArg.expression() instanceof BasicLiteralNode literal
+                    && literal.kind() == SyntaxKind.STRING_LITERAL) {
+                String raw = literal.literalToken().text();
+                if (raw.length() >= 2 && raw.startsWith("\"") && raw.endsWith("\"")) {
+                    return raw.substring(1, raw.length() - 1);
                 }
             }
             return null;

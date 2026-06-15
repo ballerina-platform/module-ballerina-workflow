@@ -21,8 +21,8 @@ type ApprovalDecision record {|
     string? reason;
 |};
 
-// Invalid: timeout field is given a future<int> value (from the events record),
-// not a time:Duration. The timeout field of HumanTaskConfig must be time:Duration?
+// Invalid: timeout is given a future<int> value (from the events record),
+// not a time:Duration. The timeout parameter must be time:Duration?
 // and cannot accept a future.
 @workflow:Workflow
 function invalidTimeoutNotFutureWorkflow(
@@ -30,9 +30,7 @@ function invalidTimeoutNotFutureWorkflow(
     string input,
     record {| future<int> ticketCount; |} events
 ) returns ApprovalDecision|error {
-    ApprovalDecision decision = check ctx->callHumanTask({
-        taskName: "reviewItem",
-        timeout: events.ticketCount  // ERROR: future<int> is not time:Duration?
-    });
+    ApprovalDecision decision = check ctx->awaitHumanTask("reviewItem", ["admin"],
+            timeout = events.ticketCount);  // ERROR: future<int> is not time:Duration?
     return decision;
 }

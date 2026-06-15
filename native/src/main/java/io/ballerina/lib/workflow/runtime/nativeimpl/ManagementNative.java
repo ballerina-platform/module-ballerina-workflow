@@ -20,14 +20,22 @@ package io.ballerina.lib.workflow.runtime.nativeimpl;
 
 import io.ballerina.lib.workflow.ModuleUtils;
 import io.ballerina.lib.workflow.runtime.WorkflowRuntime;
+import io.ballerina.lib.workflow.utils.EventExtractor;
+import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
 import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.creators.TypeCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
+import io.ballerina.runtime.api.types.FunctionType;
+import io.ballerina.runtime.api.types.IntersectionType;
+import io.ballerina.runtime.api.types.Parameter;
 import io.ballerina.runtime.api.types.PredefinedTypes;
 import io.ballerina.runtime.api.types.RecordType;
+import io.ballerina.runtime.api.types.ReferenceType;
+import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BArray;
+import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
 import io.temporal.api.common.v1.WorkflowExecution;
@@ -145,11 +153,15 @@ public final class ManagementNative {
             BArray result = ValueCreator.createArrayValue(TypeCreator.createArrayType(defType));
 
             for (String workflowType : WorkflowWorkerNative.getProcessRegistry().keySet()) {
+            BFunctionPointer processFn = WorkflowWorkerNative.getProcessRegistry().get(workflowType);
+            String inputSchema = deriveWorkflowInputSchema(processFn);
+
                 BMap<BString, Object> def = ValueCreator.createRecordValue(
                         ModuleUtils.getManagementModule(), "WorkflowDefinition");
                 def.put(StringUtils.fromString("workflowType"),
                         StringUtils.fromString(workflowType));
-                def.put(StringUtils.fromString("inputSchema"), null);
+            def.put(StringUtils.fromString("inputSchema"),
+                inputSchema != null ? StringUtils.fromString(inputSchema) : null);
                 // All registered workflow types have an active worker (this worker)
                 def.put(StringUtils.fromString("isActive"), true);
                 def.put(StringUtils.fromString("workerCount"), 1L);
@@ -162,6 +174,75 @@ public final class ManagementNative {
             return ErrorCreator.createError(
                     StringUtils.fromString("Failed to list workflow definitions: " + e.getMessage()));
         }
+    }
+
+    /**
+     * Builds a JSON schema for workflow input based on the registered workflow function signature.
+     * Skips Context and events parameters and returns the schema for the actual data input parameters.
+     */
+    private static String deriveWorkflowInputSchema(BFunctionPointer processFunction) {
+        if (processFunction == null) {
+            return TypesUtil.toJsonSchemaForParameters(new Parameter[0], 0, 0);
+        }
+
+        FunctionType functionType = resolveFunctionType(processFunction.getType(), 0);
+        if (functionType == null) {
+            return TypesUtil.toJsonSchemaForParameters(new Parameter[0], 0, 0);
+        }
+
+        Parameter[] parameters = functionType.getParameters();
+        if (parameters == null || parameters.length == 0) {
+            return TypesUtil.toJsonSchemaForParameters(new Parameter[0], 0, 0);
+        }
+
+        int startIndex = EventExtractor.hasContextParameter(processFunction) ? 1 : 0;
+        int endExclusive = parameters.length;
+        if (EventExtractor.getEventsRecordType(processFunction) != null && endExclusive > startIndex) {
+            endExclusive--;
+        }
+
+        if (endExclusive <= startIndex) {
+            return TypesUtil.toJsonSchemaForParameters(new Parameter[0], 0, 0);
+        }
+
+        // Common path: one data parameter (typically a record input).
+        if (endExclusive - startIndex == 1) {
+            return TypesUtil.toJsonSchema(parameters[startIndex].type);
+        }
+
+        // Multi-parameter workflows are represented as an object keyed by parameter names.
+        return TypesUtil.toJsonSchemaForParameters(parameters, startIndex, endExclusive);
+    }
+
+    private static FunctionType resolveFunctionType(Type type, int depth) {
+        if (type == null || depth > 12) {
+            return null;
+        }
+
+        if (type instanceof FunctionType functionType) {
+            return functionType;
+        }
+
+        if (type instanceof ReferenceType referenceType) {
+            Type referred = referenceType.getReferredType();
+            if (referred != type) {
+                FunctionType resolved = resolveFunctionType(referred, depth + 1);
+                if (resolved != null) {
+                    return resolved;
+                }
+            }
+        }
+
+        if (type instanceof IntersectionType intersectionType) {
+            for (Type constituent : intersectionType.getConstituentTypes()) {
+                FunctionType resolved = resolveFunctionType(constituent, depth + 1);
+                if (resolved != null) {
+                    return resolved;
+                }
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -374,7 +455,7 @@ public final class ManagementNative {
 
     /**
      * Returns detailed info for a single human task by calling DescribeWorkflowExecution
-     * and reading the memo fields set by {@code callHumanTask} at task creation.
+     * and reading the memo fields set by {@code awaitHumanTask} at task creation.
      *
      * @param taskId the child workflow ID of the human task
      * @return a Ballerina {@code HumanTaskInfo} record or an error
@@ -1316,10 +1397,11 @@ public final class ManagementNative {
      * @param input           workflow input (Ballerina value, may be null)
      * @param workflowIdParam optional explicit workflow ID (BString or nil)
      * @param timeoutSeconds  optional timeout in seconds (Long or nil)
+         * @param startedBy       optional starter user ID stored in workflow memo
      * @return a Ballerina {@code WorkflowHandle} record or an error
      */
     public static Object startWorkflowByType(BString workflowType, Object input,
-            Object workflowIdParam, Object timeoutSeconds) {
+             Object workflowIdParam, Object timeoutSeconds, Object startedBy) {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
@@ -1340,6 +1422,11 @@ public final class ManagementNative {
                             .setTaskQueue(taskQueue);
             if (timeoutSeconds instanceof Long secs) {
                 optBuilder.setWorkflowExecutionTimeout(java.time.Duration.ofSeconds(secs));
+            }
+            if (startedBy instanceof BString starter && !starter.getValue().isBlank()) {
+                Map<String, Object> memo = new java.util.HashMap<>();
+                memo.put("startedBy", starter.getValue());
+                optBuilder.setMemo(memo);
             }
 
             WorkflowStub stub = client.newUntypedWorkflowStub(type, optBuilder.build());
@@ -1368,13 +1455,14 @@ public final class ManagementNative {
      * @param status       optional status filter BString (RUNNING, COMPLETED, FAILED, …)
      * @param workflowType optional workflow type filter BString
      * @param workflowId   optional workflow ID prefix filter BString
+         * @param startedBy    optional starter user ID filter BString (memo field)
      * @param limit        maximum results per page
      * @param pageToken    opaque Base64-encoded continuation token BString, or null
      * @return a Ballerina {@code WorkflowInstancePage} record or an error
      */
     @SuppressWarnings("unchecked")
     public static Object listWorkflowInstances(Object status, Object workflowType,
-            Object workflowId, long limit, Object pageToken,
+             Object workflowId, Object startedBy, long limit, Object pageToken,
             Object startTimeFrom, Object startTimeTo, Object closeTimeFrom, Object closeTimeTo) {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
@@ -1419,53 +1507,82 @@ public final class ManagementNative {
                 }
             }
 
-            ListWorkflowExecutionsRequest request = ListWorkflowExecutionsRequest.newBuilder()
-                    .setNamespace(client.getOptions().getNamespace())
-                    .setQuery(query)
-                    .setPageSize(pageSize)
-                    .setNextPageToken(nextPageTokenBytes)
-                    .build();
-
-            ListWorkflowExecutionsResponse response = client.getWorkflowServiceStubs()
-                    .blockingStub()
-                    .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                    .listWorkflowExecutions(request);
-
             RecordType summaryType = (RecordType) ValueCreator.createRecordValue(
                     ModuleUtils.getManagementModule(), "WorkflowInstanceSummary").getType();
             BArray items = ValueCreator.createArrayValue(TypeCreator.createArrayType(summaryType));
 
-            for (io.temporal.api.workflow.v1.WorkflowExecutionInfo wfInfo
+                // `startedBy` is stored in memo, so Temporal visibility cannot filter it server-side.
+                // Scan additional pages until we collect enough matching items or exhaust results.
+                boolean hasStartedByFilter = startedBy instanceof BString starter && !starter.getValue().isBlank();
+                String startedByValue = hasStartedByFilter ? ((BString) startedBy).getValue() : null;
+                int matchedCount = 0;
+                com.google.protobuf.ByteString nextToken = nextPageTokenBytes;
+
+                while (matchedCount < pageSize) {
+                    int temporalPageSize = pageSize;
+                ListWorkflowExecutionsRequest request = ListWorkflowExecutionsRequest.newBuilder()
+                    .setNamespace(client.getOptions().getNamespace())
+                    .setQuery(query)
+                    .setPageSize(temporalPageSize)
+                    .setNextPageToken(nextToken)
+                    .build();
+
+                ListWorkflowExecutionsResponse response = client.getWorkflowServiceStubs()
+                    .blockingStub()
+                    .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                    .listWorkflowExecutions(request);
+
+                for (io.temporal.api.workflow.v1.WorkflowExecutionInfo wfInfo
                     : response.getExecutionsList()) {
-                BMap<BString, Object> summary = ValueCreator.createRecordValue(
+                    if (hasStartedByFilter) {
+                    String startedByMemo = decodeMemoString(
+                        client.getOptions().getDataConverter(),
+                        wfInfo.getMemo().getFieldsMap(),
+                        "startedBy",
+                        null);
+                    if (!startedByValue.equals(startedByMemo)) {
+                        continue;
+                    }
+                    }
+
+                    BMap<BString, Object> summary = ValueCreator.createRecordValue(
                         ModuleUtils.getManagementModule(), "WorkflowInstanceSummary");
-                summary.put(StringUtils.fromString("workflowId"),
+                    summary.put(StringUtils.fromString("workflowId"),
                         StringUtils.fromString(wfInfo.getExecution().getWorkflowId()));
-                summary.put(StringUtils.fromString("runId"),
+                    summary.put(StringUtils.fromString("runId"),
                         StringUtils.fromString(wfInfo.getExecution().getRunId()));
-                summary.put(StringUtils.fromString("workflowType"),
+                    summary.put(StringUtils.fromString("workflowType"),
                         StringUtils.fromString(wfInfo.getType().getName()));
-                summary.put(StringUtils.fromString("status"),
+                    summary.put(StringUtils.fromString("status"),
                         StringUtils.fromString(convertStatus(wfInfo.getStatus())));
 
-                com.google.protobuf.Timestamp st = wfInfo.getStartTime();
-                summary.put(StringUtils.fromString("startTime"),
+                    com.google.protobuf.Timestamp st = wfInfo.getStartTime();
+                    summary.put(StringUtils.fromString("startTime"),
                         StringUtils.fromString(
-                                Instant.ofEpochSecond(st.getSeconds(), st.getNanos()).toString()));
+                            Instant.ofEpochSecond(st.getSeconds(), st.getNanos()).toString()));
 
-                com.google.protobuf.Timestamp ct = wfInfo.getCloseTime();
-                if (ct.getSeconds() > 0 || ct.getNanos() > 0) {
+                    com.google.protobuf.Timestamp ct = wfInfo.getCloseTime();
+                    if (ct.getSeconds() > 0 || ct.getNanos() > 0) {
                     summary.put(StringUtils.fromString("closeTime"),
-                            StringUtils.fromString(
-                                    Instant.ofEpochSecond(ct.getSeconds(), ct.getNanos()).toString()));
-                } else {
+                        StringUtils.fromString(
+                            Instant.ofEpochSecond(ct.getSeconds(), ct.getNanos()).toString()));
+                    } else {
                     summary.put(StringUtils.fromString("closeTime"), null);
+                    }
+                    summary.put(StringUtils.fromString("input"), null);
+                    items.append(summary);
+                    matchedCount++;
+                    if (matchedCount >= pageSize) {
+                    break;
+                    }
                 }
-                summary.put(StringUtils.fromString("input"), null);
-                items.append(summary);
-            }
 
-            com.google.protobuf.ByteString nextToken = response.getNextPageToken();
+                nextToken = response.getNextPageToken();
+                if (nextToken.isEmpty()) {
+                    break;
+                }
+                }
+
             boolean hasMore = !nextToken.isEmpty();
             String nextTokenStr = hasMore
                     ? java.util.Base64.getEncoder().encodeToString(nextToken.toByteArray())

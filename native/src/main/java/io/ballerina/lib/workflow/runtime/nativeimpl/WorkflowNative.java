@@ -762,7 +762,7 @@ public final class WorkflowNative {
      * by {@code taskWorkflowId}, completing the task with the supplied result.
      *
      * @param taskWorkflowId the Temporal workflow ID of the human task child workflow
-     * @param result         the value to return to the waiting {@code callHumanTask} call
+     * @param result         the value to return to the waiting {@code awaitHumanTask} call
      * @return {@code null} on success, or a Ballerina error
      */
     public static Object completeHumanTask(BString taskWorkflowId, Object result,

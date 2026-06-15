@@ -22,8 +22,16 @@ import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.creators.TypeCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
 import io.ballerina.runtime.api.types.ArrayType;
+import io.ballerina.runtime.api.types.Field;
+import io.ballerina.runtime.api.types.IntersectionType;
+import io.ballerina.runtime.api.types.MapType;
+import io.ballerina.runtime.api.types.Parameter;
 import io.ballerina.runtime.api.types.PredefinedTypes;
+import io.ballerina.runtime.api.types.RecordType;
+import io.ballerina.runtime.api.types.ReferenceType;
 import io.ballerina.runtime.api.types.Type;
+import io.ballerina.runtime.api.types.TypeTags;
+import io.ballerina.runtime.api.types.UnionType;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.utils.ValueUtils;
 import io.ballerina.runtime.api.utils.XmlUtils;
@@ -37,6 +45,7 @@ import io.ballerina.runtime.api.values.BXml;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -277,5 +286,291 @@ public final class TypesUtil {
             return ErrorCreator.createError(
                     StringUtils.fromString("Type conversion failed: " + e.getMessage()));
         }
+    }
+
+    /**
+     * Builds a JSON Schema string for the provided Ballerina type.
+     *
+     * @param type Ballerina runtime type
+     * @return JSON schema string
+     */
+    public static String toJsonSchema(Type type) {
+        Object schema = toJsonSchemaObject(type, 0);
+        return toJsonString(schema);
+    }
+
+    /**
+     * Builds a JSON Schema object for a list of function parameters.
+     *
+     * @param parameters function parameters
+     * @param startIndex first parameter index to include
+     * @param endExclusive exclusive upper bound
+     * @return JSON schema string for an object with parameter-named fields
+     */
+    public static String toJsonSchemaForParameters(Parameter[] parameters, int startIndex, int endExclusive) {
+        Map<String, Object> root = new LinkedHashMap<>();
+        root.put("type", "object");
+
+        Map<String, Object> properties = new LinkedHashMap<>();
+        List<Object> required = new ArrayList<>();
+
+        if (parameters != null) {
+            int start = Math.max(0, startIndex);
+            int end = Math.min(parameters.length, Math.max(start, endExclusive));
+            for (int i = start; i < end; i++) {
+                Parameter p = parameters[i];
+                String name = p.name != null && !p.name.isBlank() ? p.name : "arg" + i;
+                properties.put(name, toJsonSchemaObject(p.type, 0));
+                if (!isNilableType(p.type, 0)) {
+                    required.add(name);
+                }
+            }
+        }
+
+        root.put("properties", properties);
+        if (!required.isEmpty()) {
+            root.put("required", required);
+        }
+        return toJsonString(root);
+    }
+
+    private static Object toJsonSchemaObject(Type rawType, int depth) {
+        if (rawType == null || depth > 12) {
+            Map<String, Object> fallback = new LinkedHashMap<>();
+            fallback.put("type", "object");
+            return fallback;
+        }
+
+        Type type = dereferenceType(rawType, depth);
+        int tag = type.getTag();
+
+        if (tag == TypeTags.INT_TAG || tag == TypeTags.BYTE_TAG) {
+            return mapOf("type", "integer");
+        }
+        if (tag == TypeTags.FLOAT_TAG || tag == TypeTags.DECIMAL_TAG) {
+            return mapOf("type", "number");
+        }
+        if (tag == TypeTags.BOOLEAN_TAG) {
+            return mapOf("type", "boolean");
+        }
+        if (tag == TypeTags.STRING_TAG || tag == TypeTags.CHAR_STRING_TAG) {
+            return mapOf("type", "string");
+        }
+        if (tag == TypeTags.NULL_TAG) {
+            return mapOf("type", "null");
+        }
+
+        if (tag == TypeTags.ARRAY_TAG && type instanceof ArrayType arrayType) {
+            Map<String, Object> schema = new LinkedHashMap<>();
+            schema.put("type", "array");
+            schema.put("items", toJsonSchemaObject(arrayType.getElementType(), depth + 1));
+            return schema;
+        }
+
+        if (tag == TypeTags.MAP_TAG && type instanceof MapType mapType) {
+            Map<String, Object> schema = new LinkedHashMap<>();
+            schema.put("type", "object");
+            schema.put("additionalProperties", toJsonSchemaObject(mapType.getConstrainedType(), depth + 1));
+            return schema;
+        }
+
+        if (tag == TypeTags.RECORD_TYPE_TAG && type instanceof RecordType recordType) {
+            Map<String, Object> schema = new LinkedHashMap<>();
+            schema.put("type", "object");
+
+            Map<String, Object> properties = new LinkedHashMap<>();
+            List<Object> required = new ArrayList<>();
+            for (Map.Entry<String, Field> entry : recordType.getFields().entrySet()) {
+                String fieldName = entry.getKey();
+                Field field = entry.getValue();
+                properties.put(fieldName, toJsonSchemaObject(field.getFieldType(), depth + 1));
+                if (!isNilableType(field.getFieldType(), depth + 1)) {
+                    required.add(fieldName);
+                }
+            }
+
+            schema.put("properties", properties);
+            if (!required.isEmpty()) {
+                schema.put("required", required);
+            }
+            if (!recordType.isSealed()) {
+                Type restType = recordType.getRestFieldType();
+                schema.put("additionalProperties",
+                        restType != null ? toJsonSchemaObject(restType, depth + 1) : Boolean.TRUE);
+            }
+            return schema;
+        }
+
+        if (tag == TypeTags.UNION_TAG && type instanceof UnionType unionType) {
+            List<Type> members = unionType.getMemberTypes();
+            List<Type> nonNullMembers = new ArrayList<>();
+            boolean hasNull = false;
+            for (Type member : members) {
+                Type m = dereferenceType(member, depth + 1);
+                if (m.getTag() == TypeTags.NULL_TAG) {
+                    hasNull = true;
+                } else {
+                    nonNullMembers.add(m);
+                }
+            }
+
+            if (nonNullMembers.isEmpty()) {
+                return mapOf("type", "null");
+            }
+
+            if (nonNullMembers.size() == 1) {
+                Object base = toJsonSchemaObject(nonNullMembers.get(0), depth + 1);
+                if (hasNull && base instanceof Map<?, ?> baseMapRaw) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> baseMap = (Map<String, Object>) baseMapRaw;
+                    Object typeVal = baseMap.get("type");
+                    if (typeVal instanceof String typeStr) {
+                        List<Object> unionTypes = new ArrayList<>();
+                        unionTypes.add(typeStr);
+                        unionTypes.add("null");
+                        baseMap.put("type", unionTypes);
+                    } else if (typeVal instanceof List<?> typeList) {
+                        List<Object> unionTypes = new ArrayList<>(typeList);
+                        if (!unionTypes.contains("null")) {
+                            unionTypes.add("null");
+                        }
+                        baseMap.put("type", unionTypes);
+                    }
+                }
+                return base;
+            }
+
+            Map<String, Object> anyOf = new LinkedHashMap<>();
+            List<Object> schemas = new ArrayList<>();
+            for (Type member : nonNullMembers) {
+                schemas.add(toJsonSchemaObject(member, depth + 1));
+            }
+            if (hasNull) {
+                schemas.add(mapOf("type", "null"));
+            }
+            anyOf.put("anyOf", schemas);
+            return anyOf;
+        }
+
+        // For json/anydata and all other unsupported tags, return a generic object schema.
+        return mapOf("type", "object");
+    }
+
+    private static Type dereferenceType(Type type, int depth) {
+        if (type == null || depth > 12) {
+            return type;
+        }
+
+        if (type instanceof ReferenceType refType) {
+            Type referred = refType.getReferredType();
+            if (referred != type) {
+                return dereferenceType(referred, depth + 1);
+            }
+        }
+
+        if (type instanceof IntersectionType intersectionType) {
+            for (Type constituent : intersectionType.getConstituentTypes()) {
+                if (constituent.getTag() != TypeTags.READONLY_TAG) {
+                    return dereferenceType(constituent, depth + 1);
+                }
+            }
+        }
+
+        return type;
+    }
+
+    private static boolean isNilableType(Type rawType, int depth) {
+        if (rawType == null || depth > 12) {
+            return false;
+        }
+
+        Type type = dereferenceType(rawType, depth + 1);
+        if (type == null) {
+            return false;
+        }
+
+        if (type.getTag() == TypeTags.NULL_TAG) {
+            return true;
+        }
+
+        if (type instanceof UnionType unionType) {
+            for (Type member : unionType.getMemberTypes()) {
+                if (isNilableType(member, depth + 1)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static Map<String, Object> mapOf(String k, Object v) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put(k, v);
+        return map;
+    }
+
+    private static String toJsonString(Object value) {
+        if (value == null) {
+            return "null";
+        }
+        if (value instanceof String s) {
+            return "\"" + escapeJson(s) + "\"";
+        }
+        if (value instanceof Number || value instanceof Boolean) {
+            return value.toString();
+        }
+        if (value instanceof Map<?, ?> map) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("{");
+            boolean first = true;
+            for (Map.Entry<?, ?> e : map.entrySet()) {
+                if (!first) {
+                    sb.append(",");
+                }
+                first = false;
+                sb.append("\"").append(escapeJson(String.valueOf(e.getKey()))).append("\":");
+                sb.append(toJsonString(e.getValue()));
+            }
+            sb.append("}");
+            return sb.toString();
+        }
+        if (value instanceof List<?> list) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("[");
+            for (int i = 0; i < list.size(); i++) {
+                if (i > 0) {
+                    sb.append(",");
+                }
+                sb.append(toJsonString(list.get(i)));
+            }
+            sb.append("]");
+            return sb.toString();
+        }
+        return "\"" + escapeJson(value.toString()) + "\"";
+    }
+
+    private static String escapeJson(String s) {
+        StringBuilder out = new StringBuilder(s.length() + 8);
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"' -> out.append("\\\"");
+                case '\\' -> out.append("\\\\");
+                case '\b' -> out.append("\\b");
+                case '\f' -> out.append("\\f");
+                case '\n' -> out.append("\\n");
+                case '\r' -> out.append("\\r");
+                case '\t' -> out.append("\\t");
+                default -> {
+                    if (c < 0x20) {
+                        out.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        out.append(c);
+                    }
+                }
+            }
+        }
+        return out.toString();
     }
 }

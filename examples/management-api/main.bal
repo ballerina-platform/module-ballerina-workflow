@@ -18,7 +18,7 @@
 //
 // Demonstrates the Ballerina Workflow Management HTTP Service alongside a
 // realistic workflow that uses:
-//   - callHumanTask  — pauses execution for a human approval decision
+//   - awaitHumanTask — pauses execution for a human approval decision
 //   - ManualRetry    — pauses execution when an activity fails so an operator
 //                      can retry (optionally with corrected input)
 //
@@ -30,7 +30,7 @@
 //
 // Two HTTP services start together:
 //   Application API   — http://localhost:8080/api/   (start + query requests)
-//   Management API    — http://localhost:7234/workflow/ (tasks, retry, dashboards)
+//   Management API    — http://localhost:7235/workflow/ (tasks, retry, dashboards)
 //
 // Driving the workflow end-to-end:
 //
@@ -41,18 +41,18 @@
 //             "alice@co.com","notifyEmail":"bad@example.com"}'
 //
 //   # 2. List pending approvals
-//   curl -s 'http://localhost:7234/workflow/human-tasks?status=PENDING'
+//   curl -s 'http://localhost:7235/workflow/human-tasks?status=PENDING'
 //
 //   # 3. Approve the request (replace TASK_ID with the taskId from step 2)
-//   curl -s -X POST http://localhost:7234/workflow/human-tasks/TASK_ID/complete \
+//   curl -s -X POST http://localhost:7235/workflow/human-tasks/TASK_ID/complete \
 //        -H 'Content-Type: application/json' \
 //        -d '{"result":{"approved":true,"reason":"Approved for Q2 budget"}}'
 //
 //   # 4. List pending retry tasks (email failed)
-//   curl -s 'http://localhost:7234/workflow/retry-tasks?status=PENDING'
+//   curl -s 'http://localhost:7235/workflow/retry-tasks?status=PENDING'
 //
 //   # 5. Retry with corrected email (replace RETRY_ID)
-//   curl -s -X POST http://localhost:7234/workflow/retry-tasks/RETRY_ID/retry-with-input \
+//   curl -s -X POST http://localhost:7235/workflow/retry-tasks/RETRY_ID/retry-with-input \
 //        -H 'Content-Type: application/json' \
 //        -d '{"input":{"requestId":"REQ-001","toEmail":"procurement@co.com",
 //             "item":"laptop","amount":1500}}'
@@ -69,11 +69,11 @@ import ballerina/workflow.management;
 
 # Input for a procurement request workflow.
 #
-# + requestId      - Unique identifier for the request
-# + item           - Equipment item being requested
-# + amount         - Total purchase amount in USD
+# + requestId - Unique identifier for the request
+# + item - Equipment item being requested
+# + amount - Total purchase amount in USD
 # + requesterEmail - Email address of the staff member making the request
-# + notifyEmail    - Procurement team email for the purchase order notification
+# + notifyEmail - Procurement team email for the purchase order notification
 type ProcurementRequest record {|
     string requestId;
     string item;
@@ -85,8 +85,8 @@ type ProcurementRequest record {|
 # Final result returned by the procurement workflow.
 #
 # + requestId - The request identifier
-# + status    - COMPLETED | REJECTED
-# + message   - Human-readable outcome description
+# + status - COMPLETED | REJECTED
+# + message - Human-readable outcome description
 type ProcurementResult record {|
     string requestId;
     string status;
@@ -96,7 +96,7 @@ type ProcurementResult record {|
 # Decision submitted by a manager to approve or reject a procurement request.
 #
 # + approved - `true` to approve, `false` to reject
-# + reason   - Optional justification for the decision
+# + reason - Optional justification for the decision
 type ApprovalDecision record {|
     boolean approved;
     string? reason;
@@ -110,9 +110,9 @@ const decimal APPROVAL_THRESHOLD = 500.00d;
 # Validates the procurement request fields.
 #
 # + requestId - Unique request identifier
-# + item      - Item being requested
-# + amount    - Requested amount
-# + return    - `"valid"` on success, or an error if validation fails
+# + item - Item being requested
+# + amount - Requested amount
+# + return - `"valid"` on success, or an error if validation fails
 @workflow:Activity
 function validateRequest(string requestId, string item, decimal amount) returns string|error {
     io:println(string `[Activity] Validating request ${requestId}: ${item} ($${amount})`);
@@ -129,10 +129,10 @@ function validateRequest(string requestId, string item, decimal amount) returns 
 # `ManualRetry` path and then recover with corrected input.
 #
 # + requestId - The procurement request identifier
-# + toEmail   - Recipient address for the purchase-order notification
-# + item      - Equipment item description
-# + amount    - Purchase amount
-# + return    - Email reference ID on success, or an error on delivery failure
+# + toEmail - Recipient address for the purchase-order notification
+# + item - Equipment item description
+# + amount - Purchase amount
+# + return - Email reference ID on success, or an error on delivery failure
 @workflow:Activity
 function sendProcurementEmail(string requestId, string toEmail, string item, decimal amount)
         returns string|error {
@@ -149,16 +149,16 @@ function sendProcurementEmail(string requestId, string toEmail, string item, dec
 # Processes an IT equipment procurement request end-to-end.
 #
 # Steps:
-#   1. Validates the request fields.
-#   2. High-value requests (> $500) create an "approveRequest" human task
-#      and durably pause until a manager submits a decision via the
-#      Management API (`POST /workflow/human-tasks/{taskId}/complete`).
-#   3. Sends a procurement email using `ManualRetry` so that delivery failures
-#      surface as retry tasks in the Management API
-#      (`GET /workflow/retry-tasks`) instead of crashing the workflow.
-#      An operator can retry with the original or corrected arguments.
+# 1. Validates the request fields.
+# 2. High-value requests (> $500) create an "approveRequest" human task
+# and durably pause until a manager submits a decision via the
+# Management API (`POST /workflow/human-tasks/{taskId}/complete`).
+# 3. Sends a procurement email using `ManualRetry` so that delivery failures
+# surface as retry tasks in the Management API
+# (`GET /workflow/retry-tasks`) instead of crashing the workflow.
+# An operator can retry with the original or corrected arguments.
 #
-# + ctx   - Workflow execution context
+# + ctx - Workflow execution context
 # + input - Procurement request details
 # + return - Final procurement result or an error
 @workflow:Workflow
@@ -168,33 +168,30 @@ function processProcurementRequest(workflow:Context ctx, ProcurementRequest inpu
     // Step 1 — Validate
     string _ = check ctx->callActivity(validateRequest, {
         "requestId": input.requestId,
-        "item":      input.item,
-        "amount":    input.amount
+        "item": input.item,
+        "amount": input.amount
     });
 
     // Step 2 — Manager approval for high-value requests
     if input.amount > APPROVAL_THRESHOLD {
         io:println(string `[Workflow] Requesting approval for ${input.requestId} ($${input.amount})`);
 
-        ApprovalDecision decision = check ctx->callHumanTask({
-            taskName:  "approveRequest",
-            title:     string `Approve purchase of '${input.item}' ($${input.amount})`,
-            userRoles: ["MANAGER"],
-            payload: {
-                requestId:  input.requestId,
-                item:       input.item,
-                amount:     input.amount.toString(),
-                requester:  input.requesterEmail
-            }
-        });
+        ApprovalDecision decision = check ctx->awaitHumanTask("approveRequest", "MANAGER",
+                payload = {
+                    requestId: input.requestId,
+                    item: input.item,
+                    amount: input.amount.toString(),
+                    requester: input.requesterEmail
+                },
+                title = string `Approve purchase of '${input.item}' ($${input.amount}) ${input.requestId}`);
 
         io:println(string `[Workflow] Approval decision: approved=${decision.approved}`);
 
         if !decision.approved {
             return {
                 requestId: input.requestId,
-                status:    "REJECTED",
-                message:   string `Rejected by manager: ${decision.reason ?: "no reason provided"}`
+                status: "REJECTED",
+                message: string `Rejected by manager: ${decision.reason ?: "no reason provided"}`
             };
         }
     } else {
@@ -204,32 +201,29 @@ function processProcurementRequest(workflow:Context ctx, ProcurementRequest inpu
     // Step 3 — Send procurement notification (ManualRetry for delivery failures)
     string _ = check ctx->callActivity(sendProcurementEmail, {
         "requestId": input.requestId,
-        "toEmail":   input.notifyEmail,
-        "item":      input.item,
-        "amount":    input.amount
-    }, retryPolicy = <workflow:ManualRetry>{
-        taskName:  "retryProcurementEmail",
-        userRoles: ["OPS"]
-    });
+        "toEmail": input.notifyEmail,
+        "item": input.item,
+        "amount": input.amount
+    }, retryPolicy = workflow:ManualRetry);
 
     io:println(string `[Workflow] Procurement completed for ${input.requestId}`);
     return {
         requestId: input.requestId,
-        status:    "COMPLETED",
-        message:   string `Procurement request fulfilled: ${input.item} ($${input.amount})`
+        status: "COMPLETED",
+        message: string `Procurement request fulfilled: ${input.item} ($${input.amount})`
     };
 }
 
 // ── Application HTTP Service (port 8080) ──────────────────────────────────────
 // Exposes only workflow start and result retrieval.
 // All human-task and retry-task management goes through the Management API
-// at http://localhost:7234/workflow/
+// at http://localhost:7235/workflow/
 
 service /api on new http:Listener(8080) {
 
     # Starts a new procurement request workflow and returns its ID.
     #
-    # + input  - Procurement request details
+    # + input - Procurement request details
     # + return - `{workflowId}` on success, or an error
     resource function post requests(@http:Payload ProcurementRequest input)
             returns record {|string workflowId;|}|error {
@@ -242,7 +236,7 @@ service /api on new http:Listener(8080) {
     # Blocks until the workflow completes or times out (60 s).
     #
     # + workflowId - ID returned by `POST /api/requests`
-    # + return     - `{status, result}` as JSON, or an error
+    # + return - `{status, result}` as JSON, or an error
     resource function get requests/[string workflowId]() returns json|error {
         anydata rawResult = check workflow:getWorkflowResult(workflowId, 60);
         management:WorkflowExecutionInfo execInfo = check management:getWorkflowInfo(workflowId);

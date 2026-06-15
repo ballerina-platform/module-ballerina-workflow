@@ -83,10 +83,10 @@ public isolated function registerConnection(string name, object {} connection)
 # whose type equals `taskName` to the built-in human task handler.
 #
 # This is an **internal** function intended to be called by the compiler plugin at
-# module initialization time for every `callHumanTask` call site found in user code,
+# module initialization time for every `awaitHumanTask` call site found in user code,
 # similar to how `registerWorkflow` is generated for `@Workflow` functions.
 #
-# + taskName - The task name passed to `callHumanTask`; used directly as the
+# + taskName - The task name passed to `awaitHumanTask`; used directly as the
 #              Temporal child workflow type
 # + return - `true` on success (idempotent for the same name), or an error
 public isolated function registerHumanTask(string taskName) returns boolean|error = @java:Method {

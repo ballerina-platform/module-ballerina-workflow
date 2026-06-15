@@ -100,6 +100,13 @@ function testListWorkflowDefinitions() returns error? {
 
     foreach management:WorkflowDefinition def in defs {
         test:assertFalse(def.workflowType == "", "workflowType must not be empty");
+        test:assertTrue(def.inputSchema is string,
+                "inputSchema must be populated for workflow: " + def.workflowType);
+        if def.inputSchema is string {
+            string schema = <string>def.inputSchema;
+            test:assertTrue(schema.indexOf("\"type\"") != () || schema.indexOf("\"anyOf\"") != (),
+                    "inputSchema should look like JSON Schema for workflow: " + def.workflowType);
+        }
     }
 }
 

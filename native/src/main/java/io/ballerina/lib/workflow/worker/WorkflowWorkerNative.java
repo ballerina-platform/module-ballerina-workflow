@@ -130,11 +130,18 @@ public final class WorkflowWorkerNative {
     public static final String HUMANTASK_TIMEOUT_FAILURE_TYPE = "HUMANTASK_TIMEOUT";
 
     /**
-     * Temporal workflow type used for all built-in manual retry task child workflows.
-     * A single fixed type keeps the implementation simple; individual retry tasks are
-     * distinguished by their workflow ID ({@code retrytask-{parentId}-{taskName}-{uuid}}).
+     * Prefix applied to all user-defined workflow types registered with Temporal.
+     * Allows {@code WorkflowType STARTS_WITH 'workflow-'} queries to exclude internal
+     * child workflow types (humantask-*, retrytask-*) without needing the NOT operator.
      */
-    public static final String RETRYTASK_WORKFLOW_TYPE = "__workflow_retry_task__";
+    public static final String WORKFLOW_TYPE_PREFIX = "workflow-";
+
+    /**
+     * Temporal workflow type used for all built-in manual retry task child workflows.
+     * Prefixed with {@code retrytask-} so internal workflows are clearly separated from
+     * user-defined ones and can be identified via a simple STARTS_WITH check.
+     */
+    public static final String RETRYTASK_WORKFLOW_TYPE = "retrytask";
 
     /**
      * Set of taskNames registered as human task workflow types.
@@ -611,7 +618,7 @@ public final class WorkflowWorkerNative {
         }
 
         try {
-            String workflowType = workflowName.getValue();
+            String workflowType = WORKFLOW_TYPE_PREFIX + workflowName.getValue();
             LOGGER.debug("Registering workflow: {}", workflowType);
 
             // Atomically register — putIfAbsent returns the existing value (non-null) if

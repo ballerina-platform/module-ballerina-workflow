@@ -262,8 +262,7 @@ public final class WorkflowContextNative {
         String qualifiedTaskName = fullActivityName;
 
         String parentWorkflowId = Workflow.getInfo().getWorkflowId();
-        String retryTaskId = "retrytask-" + parentWorkflowId + "-"
-                + qualifiedTaskName + "-" + Workflow.randomUUID();
+        String retryTaskId = "retrytask-" + Workflow.randomUUID();
 
         // Ensure the built-in retry task workflow type is registered
         WorkflowWorkerNative.ensureRetryTaskRegistered();
@@ -582,23 +581,26 @@ public final class WorkflowContextNative {
             }
 
             // --- Build child workflow identity ---------------------------------------
-            // Qualify taskName as "workflowType.taskName" to ensure uniqueness across
-            // different workflow definitions that may reuse the same short task name.
             String parentWorkflowId = Workflow.getInfo().getWorkflowId();
-            String workflowDefinitionName = Workflow.getInfo().getWorkflowType();
+            // Strip the "workflow-" prefix from the current type to get the user-facing name.
+            String rawWorkflowType = Workflow.getInfo().getWorkflowType();
+            String workflowDefinitionName = rawWorkflowType.startsWith(
+                    WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX)
+                    ? rawWorkflowType.substring(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length())
+                    : rawWorkflowType;
+            // Display name stored in memo (user-facing, e.g. "procurementApproval.approveRequest")
             String qualifiedTaskName = workflowDefinitionName + "." + taskName;
+            // Temporal WorkflowType: prefixed so internal tasks are separate from user workflows
+            String humanTaskTypeName = "humantask-" + qualifiedTaskName;
 
-            // --- Ensure qualifiedTaskName is registered as a human task type --------
+            // --- Ensure the human task workflow type is registered ------------------
             // Lazy registration covers ad-hoc / test usage without compiler-plugin support.
-            // The contains check makes this a no-op on replay when already registered
-            // from module init (compiler-plugin path) or a prior workflow task.
-            if (!WorkflowWorkerNative.getHumanTaskRegistry().contains(qualifiedTaskName)) {
-                WorkflowWorkerNative.registerHumanTask(StringUtils.fromString(qualifiedTaskName));
+            if (!WorkflowWorkerNative.getHumanTaskRegistry().contains(humanTaskTypeName)) {
+                WorkflowWorkerNative.registerHumanTask(StringUtils.fromString(humanTaskTypeName));
             }
 
-            // Workflow.randomUUID() is deterministic across Temporal replays
-            String taskWorkflowId = "humantask-" + parentWorkflowId + "-" + qualifiedTaskName
-                    + "-" + Workflow.randomUUID();
+            // Compact instance ID: "humantask-" + UUID7 (deterministic across replays)
+            String taskWorkflowId = "humantask-" + Workflow.randomUUID();
 
             // --- Memo (immutable, readable without full history) --------------------
             Map<String, Object> memo = new HashMap<>();
@@ -634,10 +636,8 @@ public final class WorkflowContextNative {
                     .setMemo(memo)
                     .build();
 
-            // The child workflow type IS the qualifiedTaskName — each task is its own type,
-            // scoped to the parent workflow to avoid collisions across workflow definitions.
             ChildWorkflowStub childStub = Workflow.newUntypedChildWorkflowStub(
-                    qualifiedTaskName, childOptions);
+                    humanTaskTypeName, childOptions);
 
             Object rawResult = childStub.execute(Object.class, inputs);
 

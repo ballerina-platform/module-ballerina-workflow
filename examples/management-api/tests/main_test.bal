@@ -54,6 +54,22 @@ type RetryTaskPage record {
     boolean hasMore;
 };
 
+type WorkflowInstanceSummaryRes record {
+    string workflowId;
+    string runId;
+    string workflowType;
+    string status;
+    string startTime;
+    string? closeTime;
+    json? input;
+};
+
+type WorkflowInstancePage record {
+    WorkflowInstanceSummaryRes[] items;
+    string? nextPageToken;
+    boolean hasMore;
+};
+
 // ── Poll helpers ───────────────────────────────────────────────────────────────
 
 // Polls the Management API until at least one pending human task appears for
@@ -271,4 +287,25 @@ function testListWorkflowDefinitions() returns error? {
 
     record {|record{}[] definitions;|} resp = check mgmt->get("/definitions", headers = MGMT_HEADERS);
     test:assertTrue(resp.definitions.length() > 0, "At least one workflow must be registered");
+}
+
+// ── Test 5: listWorkflowInstances excludes humantask/retrytask child workflows ─
+// Verifies that GET /workflows only returns user workflows (WorkflowType STARTS_WITH
+// 'workflow-'), never internal humantask- or retrytask- child workflow instances.
+@test:Config {
+    dependsOn: [testLowValueAutoApproved]
+}
+function testListWorkflowInstancesExcludesChildWorkflows() returns error? {
+    http:Client mgmt = check new ("http://localhost:7235/workflow");
+
+    WorkflowInstancePage page = check mgmt->get("/workflows", headers = MGMT_HEADERS);
+    test:assertTrue(page.items.length() > 0,
+            "GET /workflows should return at least one workflow instance");
+
+    foreach WorkflowInstanceSummaryRes item in page.items {
+        test:assertFalse(item.workflowId.startsWith("humantask-"),
+                string `Returned workflow ID '${item.workflowId}' must not be a humantask child`);
+        test:assertFalse(item.workflowId.startsWith("retrytask-"),
+                string `Returned workflow ID '${item.workflowId}' must not be a retrytask child`);
+    }
 }

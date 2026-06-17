@@ -43,9 +43,9 @@ import java.util.Map;
  *     record { future eventX, future eventY } events) returns R|error { }
  * </pre>
  * <p>
- * The events parameter (third parameter) is a record where each field is of type future.
- * Each field represents an event/signal that the workflow can wait for. This extractor
- * analyzes the function type to extract these event definitions.
+ * The events parameter (third parameter) is a record where each field is of type future. Each field represents an
+ * event/signal that the workflow can wait for. This extractor analyzes the function type to extract these event
+ * definitions.
  * <p>
  * The extracted events are used at runtime to:
  * <ul>
@@ -68,8 +68,8 @@ public final class EventExtractor {
     /**
      * Extracts event information from a process function pointer.
      * <p>
-     * Analyzes the function signature to find the events record parameter
-     * and extracts information about each future field.
+     * Analyzes the function signature to find the events record parameter and extracts information about each future
+     * field.
      *
      * @param processFunction the process function pointer
      * @param processName     the name of the process (for error messages)
@@ -105,8 +105,7 @@ public final class EventExtractor {
     /**
      * Finds the events record type from the function parameters.
      * <p>
-     * The events parameter is identified as a record type where at least one
-     * field is of type future&lt;T&gt;.
+     * The events parameter is identified as a record type where at least one field is of type future&lt;T&gt;.
      *
      * @param parameters the parameters of the function
      * @return the events record type, or null if not found
@@ -114,14 +113,14 @@ public final class EventExtractor {
     private static RecordType findEventsRecordType(Parameter[] parameters) {
         for (Parameter param : parameters) {
             Type paramType = param.type;
-            
+
             // Dereference type references to get the actual type
             Type actualType = dereferenceType(paramType);
-            
+
             // Check if it's a record type
             if (actualType.getTag() == TypeTags.RECORD_TYPE_TAG) {
                 RecordType recordType = (RecordType) actualType;
-                
+
                 // Check if this record contains future fields (events record signature)
                 if (containsFutureFields(recordType)) {
                     return recordType;
@@ -130,10 +129,9 @@ public final class EventExtractor {
         }
         return null;
     }
-    
+
     /**
-     * Dereferences a type if it's a ReferenceType.
-     * This handles named types like "type MyRecord record {...}".
+     * Dereferences a type if it's a ReferenceType. This handles named types like "type MyRecord record {...}".
      *
      * @param type the type to dereference
      * @return the referred type if it's a ReferenceType, otherwise the original type
@@ -142,21 +140,22 @@ public final class EventExtractor {
         // Keep track of max depth to prevent infinite loops with self-referencing types
         int maxDepth = 10;
         Type current = type;
-        
+
         while (current instanceof ReferenceType refType && maxDepth > 0) {
             Type referredType = refType.getReferredType();
-            
+
             // If the referred type is the same object, stop to prevent infinite loop
             if (referredType == current) {
                 break;
             }
-            
+
             current = referredType;
             maxDepth--;
         }
-        
+
         return current;
     }
+
     /**
      * Checks if a record type contains at least one future field.
      *
@@ -199,7 +198,7 @@ public final class EventExtractor {
             String fieldName = entry.getKey();
             Field field = entry.getValue();
             Type fieldType = field.getFieldType();
-            
+
             // Dereference in case it's a type reference
             Type actualFieldType = dereferenceType(fieldType);
 
@@ -211,15 +210,14 @@ public final class EventExtractor {
                 events.add(eventInfo);
             }
         }
-        
+
         return events;
     }
 
     /**
      * Extracts event names only (without full type information).
      * <p>
-     * This is useful when only the signal names are needed for
-     * registering Temporal signal handlers.
+     * This is useful when only the signal names are needed for registering Temporal signal handlers.
      *
      * @param processFunction the process function pointer
      * @return list of event field names, empty if no events found
@@ -300,8 +298,8 @@ public final class EventExtractor {
     /**
      * Gets the events record type from a process function signature.
      * <p>
-     * The events record type is identified as a record containing future fields.
-     * This is used to create TemporalFutureValue instances for each event.
+     * The events record type is identified as a record containing future fields. This is used to create
+     * TemporalFutureValue instances for each event.
      *
      * @param processFunction the process function pointer
      * @return the events RecordType, or null if no events parameter found
@@ -349,7 +347,7 @@ public final class EventExtractor {
      * Gets the signal record type for a specific signal name from a process function.
      *
      * @param processFunction the process function pointer
-     * @param signalName the name of the signal field in the events record
+     * @param signalName      the name of the signal field in the events record
      * @return the signal RecordType, or null if not found or not a record
      */
     public static RecordType getSignalRecordType(BFunctionPointer processFunction, String signalName) {
@@ -419,8 +417,8 @@ public final class EventExtractor {
         if (inputIndex < parameters.length) {
             Type potentialInput = parameters[inputIndex].type;
             // Make sure it's not the events record
-            if (potentialInput.getTag() != TypeTags.RECORD_TYPE_TAG || 
-                !containsFutureFields((RecordType) potentialInput)) {
+            if (potentialInput.getTag() != TypeTags.RECORD_TYPE_TAG || !containsFutureFields(
+                    (RecordType) potentialInput)) {
                 return potentialInput;
             }
         }
@@ -471,15 +469,14 @@ public final class EventExtractor {
     /**
      * Infers the signal name from event data by matching its structure against the events record type.
      * <p>
-     * This method attempts to find a matching signal by comparing the set of keys in the event data
-     * with the expected structure of each signal type in the events record.
+     * This method attempts to find a matching signal by comparing the set of keys in the event data with the expected
+     * structure of each signal type in the events record.
      * <p>
-     * If multiple signals match the event data structure (ambiguous), returns null.
-     * If no signals match, returns null.
+     * If multiple signals match the event data structure (ambiguous), returns null. If no signals match, returns null.
      * If exactly one signal matches, returns the signal name.
      *
      * @param processFunction the process function pointer with events definition
-     * @param eventDataKeys the set of keys in the event data
+     * @param eventDataKeys   the set of keys in the event data
      * @return the matching signal name, or null if ambiguous or no match
      */
     public static String inferSignalName(BFunctionPointer processFunction, java.util.Set<String> eventDataKeys) {
@@ -503,14 +500,14 @@ public final class EventExtractor {
             String signalName = entry.getKey();
             Field field = entry.getValue();
             Type fieldType = field.getFieldType();
-            
+
             // Dereference the type to get the actual type
             Type actualFieldType = dereferenceType(fieldType);
-            
+
             if (actualFieldType.getTag() != TypeTags.FUTURE_TAG) {
                 continue;
             }
-            
+
             // Get the constraint type from the future
             Type constraintType = getConstraintType(actualFieldType);
             if (constraintType == null) {
@@ -518,7 +515,7 @@ public final class EventExtractor {
                 matchingSignals.add(signalName);
                 continue;
             }
-            
+
             // Check if the event data keys match the constraint type
             if (matchesStructure(constraintType, eventDataKeys)) {
                 matchingSignals.add(signalName);
@@ -534,17 +531,17 @@ public final class EventExtractor {
     }
 
     /**
-     * Gets a list of all signal names that match the given event data structure.
-     * Used for generating detailed error messages when ambiguous.
+     * Gets a list of all signal names that match the given event data structure. Used for generating detailed error
+     * messages when ambiguous.
      *
      * @param processFunction the process function pointer with events definition
-     * @param eventDataKeys the set of keys in the event data
+     * @param eventDataKeys   the set of keys in the event data
      * @return list of matching signal names (may be empty or have multiple entries)
      */
-    public static List<String> getMatchingSignals(BFunctionPointer processFunction, 
-            java.util.Set<String> eventDataKeys) {
+    public static List<String> getMatchingSignals(BFunctionPointer processFunction,
+                                                  java.util.Set<String> eventDataKeys) {
         List<String> matchingSignals = new ArrayList<>();
-        
+
         if (processFunction == null || eventDataKeys == null || eventDataKeys.isEmpty()) {
             return matchingSignals;
         }
@@ -563,13 +560,13 @@ public final class EventExtractor {
             String signalName = entry.getKey();
             Field field = entry.getValue();
             Type fieldType = field.getFieldType();
-            
+
             Type actualFieldType = dereferenceType(fieldType);
-            
+
             if (actualFieldType.getTag() != TypeTags.FUTURE_TAG) {
                 continue;
             }
-            
+
             Type constraintType = getConstraintType(actualFieldType);
             if (constraintType == null || matchesStructure(constraintType, eventDataKeys)) {
                 matchingSignals.add(signalName);
@@ -589,14 +586,14 @@ public final class EventExtractor {
         if (futureType == null || futureType.getTag() != TypeTags.FUTURE_TAG) {
             return null;
         }
-        
+
         // FutureType in io.ballerina.runtime.api.types doesn't directly expose constraint
         // We need to use the type name or reflection to get it
         // For now, check if it's a ParameterizedType
         if (futureType instanceof io.ballerina.runtime.internal.types.BFutureType bFutureType) {
             return bFutureType.getConstrainedType();
         }
-        
+
         return null;
     }
 
@@ -604,31 +601,31 @@ public final class EventExtractor {
      * Checks if event data keys match the expected structure of a constraint type.
      *
      * @param constraintType the expected type structure
-     * @param eventDataKeys the keys present in the event data
+     * @param eventDataKeys  the keys present in the event data
      * @return true if the structure matches
      */
     private static boolean matchesStructure(Type constraintType, java.util.Set<String> eventDataKeys) {
         Type actualType = dereferenceType(constraintType);
-        
+
         // For record types, compare field names
         if (actualType.getTag() == TypeTags.RECORD_TYPE_TAG) {
             RecordType recordType = (RecordType) actualType;
             Map<String, Field> fields = recordType.getFields();
-            
+
             if (fields == null || fields.isEmpty()) {
                 // Empty record matches empty event data
                 return eventDataKeys.isEmpty();
             }
-            
+
             // Get required fields (non-optional fields without defaults)
             java.util.Set<String> allFieldNames = new java.util.HashSet<>();
-            
+
             for (Map.Entry<String, Field> entry : fields.entrySet()) {
                 allFieldNames.add(entry.getKey());
                 // Consider all fields as potentially required for matching
                 // (simpler approach - matching is based on key overlap)
             }
-            
+
             // Match if all event data keys are present in the record's fields
             // and all required fields are present in event data
             for (String key : eventDataKeys) {
@@ -637,15 +634,15 @@ public final class EventExtractor {
                     return false;
                 }
             }
-            
+
             return true;
         }
-        
+
         // For map types, accept any keys
         if (actualType.getTag() == TypeTags.MAP_TAG) {
             return true;
         }
-        
+
         // For other types (primitives, etc.), event data should have a single value
         return eventDataKeys.size() <= 1 || (eventDataKeys.size() == 2 && eventDataKeys.contains("id"));
     }

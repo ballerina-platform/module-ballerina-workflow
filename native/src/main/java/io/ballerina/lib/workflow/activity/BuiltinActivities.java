@@ -24,15 +24,13 @@ import io.ballerina.runtime.api.values.BString;
 import io.ballerina.runtime.api.values.BTypedesc;
 
 /**
- * Native bridges for dependently-typed builtin activity functions in the
- * {@code ballerina/workflow.activity} submodule.
+ * Native bridges for dependently-typed builtin activity functions in the {@code ballerina/workflow.activity}
+ * submodule.
  * <p>
- * Dependently-typed Ballerina functions (those using {@code typedesc<...> t = <>}
- * with return type {@code t|error}) require an {@code external} body. These
- * methods simply forward the call — including the inferred typedesc — to an
- * internal Ballerina dispatcher function in the same module. The dispatcher
- * does the real work (HTTP method match-case, data binding via the underlying
- * client) and benefits from the typedesc inference.
+ * Dependently-typed Ballerina functions (those using {@code typedesc<...> t = <>} with return type {@code t|error})
+ * require an {@code external} body. These methods simply forward the call — including the inferred typedesc — to an
+ * internal Ballerina dispatcher function in the same module. The dispatcher does the real work (HTTP method match-case,
+ * data binding via the underlying client) and benefits from the typedesc inference.
  *
  * @since 0.4.0
  */
@@ -43,16 +41,13 @@ public final class BuiltinActivities {
     }
 
     /**
-     * External entry point for {@code activity:callRestAPI}.
-     * Delegates to the {@code callRestAPIDispatch} Ballerina function defined
-     * in the same module, forwarding all parameters including the inferred
-     * {@code typedesc} so the underlying {@code http:Client} performs payload
-     * data binding into the caller's expected type.
+     * External entry point for {@code activity:callRestAPI}. Delegates to the {@code callRestAPIDispatch} Ballerina
+     * function defined in the same module, forwarding all parameters including the inferred {@code typedesc} so the
+     * underlying {@code http:Client} performs payload data binding into the caller's expected type.
      */
-    public static Object callRestAPI(Environment env, BObject connection, BString method,
-                                     BString path, Object message, Object headers,
-                                     BTypedesc t) {
-        return env.getRuntime().callFunction(env.getCurrentModule(), "callRestAPIDispatch",
-                null, connection, method, path, message, headers, t);
+    public static Object callRestAPI(Environment env, BObject connection, BString method, BString path, Object message,
+                                     Object headers, BTypedesc t) {
+        return env.getRuntime().callFunction(env.getCurrentModule(), "callRestAPIDispatch", null, connection, method,
+                                             path, message, headers, t);
     }
 }

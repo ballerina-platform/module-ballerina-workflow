@@ -133,10 +133,12 @@ public final class ManagementNative {
             String wfId = workflowId.getValue();
             String wfRunId = runId.getValue();
 
-            DescribeWorkflowExecutionRequest request =
-                    DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
-                            client.getOptions().getNamespace()).setExecution(
-                            WorkflowExecution.newBuilder().setWorkflowId(wfId).setRunId(wfRunId).build()).build();
+            DescribeWorkflowExecutionRequest request = DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
+                    client.getOptions().getNamespace()).setExecution(WorkflowExecution
+                                                                             .newBuilder()
+                                                                             .setWorkflowId(wfId)
+                                                                             .setRunId(wfRunId)
+                                                                             .build()).build();
 
             DescribeWorkflowExecutionResponse response =
                     client
@@ -439,18 +441,12 @@ public final class ManagementNative {
                 return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
             }
             String id = taskId.getValue();
-            DescribeWorkflowExecutionRequest req =
-                    DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
-                            client.getOptions().getNamespace()).setExecution(
-                            WorkflowExecution.newBuilder().setWorkflowId(id).build()).build();
-            DescribeWorkflowExecutionResponse resp =
-                    client
-                            .getWorkflowServiceStubs()
-                            .blockingStub()
-                            .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                            .describeWorkflowExecution(req);
-            Map<String, Payload> memoFields =
-                    resp.getWorkflowExecutionInfo().getMemo().getFieldsMap();
+            DescribeWorkflowExecutionRequest req = DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
+                    client.getOptions().getNamespace()).setExecution(
+                    WorkflowExecution.newBuilder().setWorkflowId(id).build()).build();
+            DescribeWorkflowExecutionResponse resp = client.getWorkflowServiceStubs().blockingStub().withDeadlineAfter(
+                    GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS).describeWorkflowExecution(req);
+            Map<String, Payload> memoFields = resp.getWorkflowExecutionInfo().getMemo().getFieldsMap();
             DataConverter dc = client.getOptions().getDataConverter();
             String workflowKind = decodeMemoString(dc, memoFields, "workflowKind", null);
             if (!"HUMAN_TASK".equals(workflowKind)) {
@@ -481,10 +477,9 @@ public final class ManagementNative {
 
             String taskIdStr = taskId.getValue();
 
-            DescribeWorkflowExecutionRequest request =
-                    DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
-                            client.getOptions().getNamespace()).setExecution(
-                            WorkflowExecution.newBuilder().setWorkflowId(taskIdStr).build()).build();
+            DescribeWorkflowExecutionRequest request = DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
+                    client.getOptions().getNamespace()).setExecution(
+                    WorkflowExecution.newBuilder().setWorkflowId(taskIdStr).build()).build();
 
             DescribeWorkflowExecutionResponse response =
                     client
@@ -553,8 +548,7 @@ public final class ManagementNative {
             }
             record.put(StringUtils.fromString("userRoles"), roles);
 
-            Object bPayload = payloadRaw != null ? TypesUtil.convertJavaToBallerinaType(
-                    payloadRaw) : null;
+            Object bPayload = payloadRaw != null ? TypesUtil.convertJavaToBallerinaType(payloadRaw) : null;
             record.put(StringUtils.fromString("payload"), bPayload);
             record.put(StringUtils.fromString("createdAt"), StringUtils.fromString(createdAt));
             record.put(StringUtils.fromString("formSchema"),
@@ -569,9 +563,8 @@ public final class ManagementNative {
                        completedBy != null ? StringUtils.fromString(completedBy) : null);
             record.put(StringUtils.fromString("completedAt"),
                        completedAt != null ? StringUtils.fromString(completedAt) : null);
-            record.put(StringUtils.fromString("result"), resultRaw != null ?
-                                                         TypesUtil.convertJavaToBallerinaType(
-                                                                 resultRaw) : null);
+            record.put(StringUtils.fromString("result"),
+                       resultRaw != null ? TypesUtil.convertJavaToBallerinaType(resultRaw) : null);
 
             return record;
 
@@ -704,8 +697,7 @@ public final class ManagementNative {
      * record. Reads {@code taskName} and {@code parentWorkflowId} from the execution's Temporal memo.
      */
     @SuppressWarnings("unchecked")
-    private static BMap<BString, Object> toHumanTaskSummaryRecord(WorkflowClient client,
-                                                                  WorkflowExecutionInfo wfInfo) {
+    private static BMap<BString, Object> toHumanTaskSummaryRecord(WorkflowClient client, WorkflowExecutionInfo wfInfo) {
 
         String wfId = wfInfo.getExecution().getWorkflowId();
         Map<String, Payload> memoFields = wfInfo.getMemo().getFieldsMap();
@@ -760,8 +752,7 @@ public final class ManagementNative {
      * Decodes a string-valued field from a Temporal memo map. Returns {@code defaultValue} if the field is absent or
      * decoding fails.
      */
-    private static String decodeMemoString(DataConverter dc,
-                                           Map<String, Payload> fields, String key,
+    private static String decodeMemoString(DataConverter dc, Map<String, Payload> fields, String key,
                                            String defaultValue) {
         try {
             Payload payload = fields.get(key);
@@ -860,15 +851,14 @@ public final class ManagementNative {
 
             Object inputVal = decision.get(StringUtils.fromString("input"));
             if (inputVal != null) {
-                javaDecision.put("input",
-                                 TypesUtil.convertBallerinaToJavaType(inputVal));
+                javaDecision.put("input", TypesUtil.convertBallerinaToJavaType(inputVal));
             }
             // Embed audit fields so the history scan in getRetryTaskInfo can retrieve them
             javaDecision.put("decidedBy", userId instanceof BString bs ? bs.getValue() : "unknown");
             javaDecision.put("decidedAt", Instant.now().toString());
 
-            boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(
-                    taskWorkflowId.getValue(), "taskDecision", javaDecision);
+            boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(taskWorkflowId.getValue(),
+                                                                                   "taskDecision", javaDecision);
 
             if (!delivered) {
                 return ErrorCreator.createError(StringUtils.fromString(
@@ -891,19 +881,12 @@ public final class ManagementNative {
     private static Object validateRetryTaskAndRoles(WorkflowClient client, String taskWorkflowId,
                                                     BArray callerRolesArray) {
         try {
-            DescribeWorkflowExecutionRequest req =
-                    DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
-                            client.getOptions().getNamespace()).setExecution(WorkflowExecution
-                                                                                     .newBuilder()
-                                                                                     .setWorkflowId(taskWorkflowId)
-                                                                                     .build()).build();
+            DescribeWorkflowExecutionRequest req = DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
+                    client.getOptions().getNamespace()).setExecution(
+                    WorkflowExecution.newBuilder().setWorkflowId(taskWorkflowId).build()).build();
 
-            DescribeWorkflowExecutionResponse resp =
-                    client
-                            .getWorkflowServiceStubs()
-                            .blockingStub()
-                            .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                            .describeWorkflowExecution(req);
+            DescribeWorkflowExecutionResponse resp = client.getWorkflowServiceStubs().blockingStub().withDeadlineAfter(
+                    GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS).describeWorkflowExecution(req);
 
             WorkflowExecutionInfo execInfo = resp.getWorkflowExecutionInfo();
 
@@ -988,10 +971,7 @@ public final class ManagementNative {
                 GetWorkflowExecutionHistoryRequest req = GetWorkflowExecutionHistoryRequest
                         .newBuilder()
                         .setNamespace(client.getOptions().getNamespace())
-                        .setExecution(WorkflowExecution
-                                              .newBuilder()
-                                              .setWorkflowId(parentId)
-                                              .build())
+                        .setExecution(WorkflowExecution.newBuilder().setWorkflowId(parentId).build())
                         .setNextPageToken(nextPageToken)
                         .build();
 
@@ -1002,8 +982,7 @@ public final class ManagementNative {
                         .getWorkflowExecutionHistory(req);
 
                 for (HistoryEvent event : resp.getHistory().getEventsList()) {
-                    if (event.getEventType() ==
-                            EventType.EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED) {
+                    if (event.getEventType() == EventType.EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED) {
                         var attrs = event.getStartChildWorkflowExecutionInitiatedEventAttributes();
                         String childId = attrs.getWorkflowId();
                         if (childId.startsWith("retrytask-")) {
@@ -1131,15 +1110,9 @@ public final class ManagementNative {
 
             String taskIdStr = taskId.getValue();
 
-            DescribeWorkflowExecutionRequest request =
-                    DescribeWorkflowExecutionRequest
-                            .newBuilder()
-                            .setNamespace(client.getOptions().getNamespace())
-                            .setExecution(WorkflowExecution
-                                                  .newBuilder()
-                                                  .setWorkflowId(taskIdStr)
-                                                  .build())
-                            .build();
+            DescribeWorkflowExecutionRequest request = DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
+                    client.getOptions().getNamespace()).setExecution(
+                    WorkflowExecution.newBuilder().setWorkflowId(taskIdStr).build()).build();
 
             DescribeWorkflowExecutionResponse response =
                     client
@@ -1205,9 +1178,7 @@ public final class ManagementNative {
             record.put(StringUtils.fromString("userRoles"), roles);
             record.put(StringUtils.fromString("errorMessage"), StringUtils.fromString(errorMessage));
 
-            Object bArgs =
-                    activityArgsRaw != null ? TypesUtil.convertJavaToBallerinaType(
-                            activityArgsRaw) : null;
+            Object bArgs = activityArgsRaw != null ? TypesUtil.convertJavaToBallerinaType(activityArgsRaw) : null;
             record.put(StringUtils.fromString("activityArgs"), bArgs);
             record.put(StringUtils.fromString("createdAt"), StringUtils.fromString(createdAt));
 
@@ -1235,20 +1206,13 @@ public final class ManagementNative {
     private static BMap<BString, Object> buildRetryTaskSummaryFromId(WorkflowClient client, String taskId,
                                                                      String fallbackTaskName) {
         try {
-            DescribeWorkflowExecutionResponse resp =
-                    client
-                            .getWorkflowServiceStubs()
-                            .blockingStub()
-                            .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                            .describeWorkflowExecution(
-                                    DescribeWorkflowExecutionRequest
-                                            .newBuilder()
-                                            .setNamespace(client.getOptions().getNamespace())
-                                            .setExecution(WorkflowExecution
-                                                                  .newBuilder()
-                                                                  .setWorkflowId(taskId)
-                                                                  .build())
-                                            .build());
+            DescribeWorkflowExecutionResponse resp = client.getWorkflowServiceStubs().blockingStub().withDeadlineAfter(
+                    GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS).describeWorkflowExecution(
+                    DescribeWorkflowExecutionRequest
+                            .newBuilder()
+                            .setNamespace(client.getOptions().getNamespace())
+                            .setExecution(WorkflowExecution.newBuilder().setWorkflowId(taskId).build())
+                            .build());
             return toRetryTaskSummaryRecord(client, resp.getWorkflowExecutionInfo());
         } catch (Exception e) {
             // Fallback: minimal record with the info we already have
@@ -1271,8 +1235,7 @@ public final class ManagementNative {
      * memo.
      */
     @SuppressWarnings("unchecked")
-    private static BMap<BString, Object> toRetryTaskSummaryRecord(WorkflowClient client,
-                                                                  WorkflowExecutionInfo wfInfo) {
+    private static BMap<BString, Object> toRetryTaskSummaryRecord(WorkflowClient client, WorkflowExecutionInfo wfInfo) {
 
         String wfId = wfInfo.getExecution().getWorkflowId();
         Map<String, Payload> memoFields = wfInfo.getMemo().getFieldsMap();
@@ -1325,8 +1288,7 @@ public final class ManagementNative {
             String wfId = workflowId.getValue();
             String rid = runId.getValue().isEmpty() ? null : runId.getValue();
             String reasonStr = reason instanceof BString bs ? bs.getValue() : "Terminated via management API";
-            WorkflowStub stub = rid != null ? client.newUntypedWorkflowStub(wfId, Optional.of(rid),
-                                                                            Optional.empty()) :
+            WorkflowStub stub = rid != null ? client.newUntypedWorkflowStub(wfId, Optional.of(rid), Optional.empty()) :
                                 client.newUntypedWorkflowStub(wfId);
             stub.terminate(reasonStr);
             return null;
@@ -1350,8 +1312,7 @@ public final class ManagementNative {
             }
             String wfId = workflowId.getValue();
             String rid = runId.getValue().isEmpty() ? null : runId.getValue();
-            WorkflowStub stub = rid != null ? client.newUntypedWorkflowStub(wfId, Optional.of(rid),
-                                                                            Optional.empty()) :
+            WorkflowStub stub = rid != null ? client.newUntypedWorkflowStub(wfId, Optional.of(rid), Optional.empty()) :
                                 client.newUntypedWorkflowStub(wfId);
             stub.cancel();
             return null;
@@ -1387,11 +1348,11 @@ public final class ManagementNative {
                 return ErrorCreator.createError(StringUtils.fromString("Task queue not configured"));
             }
             String type = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + workflowType.getValue();
-            String wfId = workflowIdParam instanceof BString bs ? bs.getValue() :
-                          CorrelationExtractor.generateWorkflowId();
+            String wfId =
+                    workflowIdParam instanceof BString bs ? bs.getValue() : CorrelationExtractor.generateWorkflowId();
 
-            WorkflowOptions.Builder optBuilder =
-                    WorkflowOptions.newBuilder().setWorkflowId(wfId).setTaskQueue(taskQueue);
+            WorkflowOptions.Builder optBuilder = WorkflowOptions.newBuilder().setWorkflowId(wfId).setTaskQueue(
+                    taskQueue);
             if (timeoutSeconds instanceof Long secs) {
                 optBuilder.setWorkflowExecutionTimeout(Duration.ofSeconds(secs));
             }
@@ -1402,8 +1363,7 @@ public final class ManagementNative {
             }
 
             WorkflowStub stub = client.newUntypedWorkflowStub(type, optBuilder.build());
-            Object javaInput = input != null ? TypesUtil.convertBallerinaToJavaType(
-                    input) : null;
+            Object javaInput = input != null ? TypesUtil.convertBallerinaToJavaType(input) : null;
             WorkflowExecution execution = stub.start(javaInput);
 
             BMap<BString, Object> handle = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
@@ -1557,8 +1517,7 @@ public final class ManagementNative {
             }
 
             boolean hasMore = !nextToken.isEmpty();
-            String nextTokenStr = hasMore ? Base64.getEncoder().encodeToString(nextToken.toByteArray()) :
-                                  null;
+            String nextTokenStr = hasMore ? Base64.getEncoder().encodeToString(nextToken.toByteArray()) : null;
 
             BMap<BString, Object> page = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                         "WorkflowInstancePage");
@@ -1601,8 +1560,7 @@ public final class ManagementNative {
     @SuppressWarnings("unchecked")
     static Object readSignalPayloadField(WorkflowClient client, String workflowId, String signalName, String fieldKey) {
         try {
-            WorkflowExecution execution =
-                    WorkflowExecution.newBuilder().setWorkflowId(workflowId).build();
+            WorkflowExecution execution = WorkflowExecution.newBuilder().setWorkflowId(workflowId).build();
             String namespace = client.getOptions().getNamespace();
             DataConverter dc = client.getOptions().getDataConverter();
             ByteString pageToken = ByteString.EMPTY;
@@ -1619,8 +1577,7 @@ public final class ManagementNative {
                                 .getWorkflowExecutionHistory(req);
 
                 for (HistoryEvent event : resp.getHistory().getEventsList()) {
-                    if (event.getEventType() !=
-                            EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED) {
+                    if (event.getEventType() != EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED) {
                         continue;
                     }
                     WorkflowExecutionSignaledEventAttributes attrs =
@@ -1678,8 +1635,7 @@ public final class ManagementNative {
                                                                                       "HistoryEvent").getType();
             BArray result = ValueCreator.createArrayValue(TypeCreator.createArrayType(historyEventType));
 
-            JsonFormat.Printer printer =
-                    JsonFormat.printer().omittingInsignificantWhitespace();
+            JsonFormat.Printer printer = JsonFormat.printer().omittingInsignificantWhitespace();
             ObjectMapper mapper = new ObjectMapper();
 
             for (HistoryEvent event : events) {
@@ -1709,8 +1665,7 @@ public final class ManagementNative {
                 } catch (Exception e) {
                     LOGGER.debug("Failed to serialize history event {}: {}", event.getEventId(), e.getMessage());
                 }
-                record.put(StringUtils.fromString("attributes"),
-                           TypesUtil.convertJavaToBallerinaType(attrMap));
+                record.put(StringUtils.fromString("attributes"), TypesUtil.convertJavaToBallerinaType(attrMap));
                 result.append(record);
             }
             return result;
@@ -1744,8 +1699,7 @@ public final class ManagementNative {
             List<HistoryEvent> events = fetchFullHistory(client, wfId, rid);
 
             // eventId → mutable node data; insertion order preserved
-            LinkedHashMap<Long, LinkedHashMap<String, Object>> nodeByEventId =
-                    new LinkedHashMap<>();
+            LinkedHashMap<Long, LinkedHashMap<String, Object>> nodeByEventId = new LinkedHashMap<>();
             List<Long> nodeOrder = new ArrayList<>();
 
             for (HistoryEvent event : events) {
@@ -2028,8 +1982,7 @@ public final class ManagementNative {
         List<HistoryEvent> events = new ArrayList<>();
         ByteString pageToken = ByteString.EMPTY;
 
-        WorkflowExecution.Builder execBuilder =
-                WorkflowExecution.newBuilder().setWorkflowId(workflowId);
+        WorkflowExecution.Builder execBuilder = WorkflowExecution.newBuilder().setWorkflowId(workflowId);
         if (runId != null) {
             execBuilder.setRunId(runId);
         }
@@ -2071,7 +2024,7 @@ public final class ManagementNative {
      * Creates a fresh mutable node data map with the fields common to all node types.
      */
     private static LinkedHashMap<String, Object> newNode(long scheduledEventId, String name, String type,
-                                                                   String startTime) {
+                                                         String startTime) {
         LinkedHashMap<String, Object> node = new LinkedHashMap<>();
         node.put("id", String.valueOf(scheduledEventId));
         node.put("name", name);
@@ -2128,8 +2081,7 @@ public final class ManagementNative {
      * Decodes the first payload element from a {@code Payloads} envelope. Returns {@code null} on any decoding
      * failure.
      */
-    private static Object decodeFirstPayload(Payloads payloads,
-                                             DataConverter dc) {
+    private static Object decodeFirstPayload(Payloads payloads, DataConverter dc) {
         if (payloads == null || payloads.getPayloadsCount() == 0) {
             return null;
         }
@@ -2161,8 +2113,7 @@ public final class ManagementNative {
         node.put(StringUtils.fromString("endTime"), endTime != null ? StringUtils.fromString(endTime) : null);
 
         Object input = data.get("input");
-        node.put(StringUtils.fromString("input"),
-                 input != null ? TypesUtil.convertJavaToBallerinaType(input) : null);
+        node.put(StringUtils.fromString("input"), input != null ? TypesUtil.convertJavaToBallerinaType(input) : null);
         Object output = data.get("output");
         node.put(StringUtils.fromString("output"),
                  output != null ? TypesUtil.convertJavaToBallerinaType(output) : null);

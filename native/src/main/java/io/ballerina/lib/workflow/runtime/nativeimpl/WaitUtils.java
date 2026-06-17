@@ -40,12 +40,10 @@ import org.slf4j.Logger;
 /**
  * Native implementation for workflow data-wait utility functions.
  * <p>
- * Provides {@code awaitFutures} — a Temporal-safe, replay-aware way to wait for
- * N out of M data futures to complete. Uses {@link Workflow#await(java.util.function.Supplier)}
- * to cooperatively yield the workflow thread, avoiding the deadlocks that occur with
- * Ballerina's built-in {@code wait { ... }} syntax on Temporal signal futures.
- * During event-history replay the condition is already satisfied, so the function
- * completes immediately without any blocking.
+ * Provides {@code awaitFutures} — a Temporal-safe, replay-aware way to wait for N out of M data futures to complete.
+ * Uses {@link Workflow#await(java.util.function.Supplier)} to cooperatively yield the workflow thread, avoiding the
+ * deadlocks that occur with Ballerina's built-in {@code wait { ... }} syntax on Temporal signal futures. During
+ * event-history replay the condition is already satisfied, so the function completes immediately without any blocking.
  *
  * @since 0.3.0
  */
@@ -64,15 +62,12 @@ public final class WaitUtils {
     /**
      * Waits for at least {@code minCount} of the provided data futures to complete.
      * <p>
-     * Uses {@code Workflow.await()} so it cooperates with Temporal's deterministic
-     * scheduler and is a no-op during event-history replay (the condition is
-     * already met). Returns the completed values converted to the type described
-     * by {@code typedesc} — either a tuple {@code [T1, T2, ...]} or a plain
-     * {@code anydata[]} array.
+     * Uses {@code Workflow.await()} so it cooperates with Temporal's deterministic scheduler and is a no-op during
+     * event-history replay (the condition is already met). Returns the completed values converted to the type described
+     * by {@code typedesc} — either a tuple {@code [T1, T2, ...]} or a plain {@code anydata[]} array.
      * <p>
-     * When {@code timeout} is non-null, uses the timed overload of
-     * {@code Workflow.await(duration, condition)}: if the required number of futures
-     * have not completed within the given duration an error is returned.
+     * When {@code timeout} is non-null, uses the timed overload of {@code Workflow.await(duration, condition)}: if the
+     * required number of futures have not completed within the given duration an error is returned.
      *
      * @param self     the Context BObject (unused — needed for remote method routing)
      * @param futures  a Ballerina array of {@code future<anydata>} values
@@ -82,8 +77,7 @@ public final class WaitUtils {
      * @return a typed tuple or array of completed values, or an error
      */
     @SuppressWarnings("unchecked")
-    public static Object awaitFutures(BObject self, BArray futures, long minCount,
-                                      Object timeout, BTypedesc typedesc) {
+    public static Object awaitFutures(BObject self, BArray futures, long minCount, Object timeout, BTypedesc typedesc) {
         int originalTotal = futures.size();
 
         // Store original futures for positional result alignment.
@@ -108,8 +102,8 @@ public final class WaitUtils {
         // Validate minCount as long before casting to int to avoid truncation overflow.
         if ((minCount < 1 && uniqueCount > 0) || minCount > uniqueCount) {
             return ErrorCreator.createError(StringUtils.fromString(
-                    "Invalid minCount=" + minCount + " for " + uniqueCount
-                            + " futures: minCount must be between 1 and " + uniqueCount));
+                    "Invalid minCount=" + minCount + " for " + uniqueCount +
+                            " futures: minCount must be between 1 and " + uniqueCount));
         }
         int required = (int) minCount;
 
@@ -127,9 +121,8 @@ public final class WaitUtils {
         boolean conditionMet;
         if (timeout instanceof BMap<?, ?> timeoutMap) {
             long timeoutMillis = durationToMillis((BMap<BString, Object>) timeoutMap);
-            conditionMet = Workflow.await(
-                    java.time.Duration.ofMillis(timeoutMillis),
-                    () -> countDone(lambdaFutures) >= lambdaRequired);
+            conditionMet = Workflow.await(java.time.Duration.ofMillis(timeoutMillis),
+                                          () -> countDone(lambdaFutures) >= lambdaRequired);
         } else {
             Workflow.await(() -> countDone(lambdaFutures) >= lambdaRequired);
             conditionMet = true;
@@ -137,13 +130,12 @@ public final class WaitUtils {
 
         if (!conditionMet) {
             return ErrorCreator.createError(StringUtils.fromString(
-                    "Timeout waiting for futures: only " + countDone(uniqueFutures)
-                            + " of " + required + " completed within the specified duration"));
+                    "Timeout waiting for futures: only " + countDone(uniqueFutures) + " of " + required +
+                            " completed within the specified duration"));
         }
 
         if (!replaying) {
-            LOGGER.debug("[WaitUtils] awaitFutures: {}/{} futures completed",
-                    countDone(uniqueFutures), originalTotal);
+            LOGGER.debug("[WaitUtils] awaitFutures: {}/{} futures completed", countDone(uniqueFutures), originalTotal);
         }
 
         // Collect completed values as a positional sparse array aligned to input positions.
@@ -160,8 +152,8 @@ public final class WaitUtils {
                     results[i] = fv.completableFuture.join();
                     completed[i] = true;
                 } catch (Exception e) {
-                    return ErrorCreator.createError(StringUtils.fromString(
-                            "Error retrieving completed future value: " + e.getMessage()));
+                    return ErrorCreator.createError(
+                            StringUtils.fromString("Error retrieving completed future value: " + e.getMessage()));
                 }
             }
             // else: results[i] remains null, completed[i] remains false
@@ -184,8 +176,7 @@ public final class WaitUtils {
         } else if (secObj instanceof Double secDouble) {
             secondsMillis = (long) (secDouble * 1000.0);
         } else if (secObj instanceof io.ballerina.runtime.api.values.BDecimal secDec) {
-            secondsMillis = secDec.decimalValue().multiply(
-                    java.math.BigDecimal.valueOf(1000)).longValue();
+            secondsMillis = secDec.decimalValue().multiply(java.math.BigDecimal.valueOf(1000)).longValue();
         }
         return (hours * 3600_000L) + (minutes * 60_000L) + secondsMillis;
     }
@@ -201,8 +192,8 @@ public final class WaitUtils {
     /**
      * Converts the raw result array to the target type described by {@code targetType}.
      * <p>
-     * The {@code completed} array distinguishes incomplete positions from completed futures
-     * that carry a null (Ballerina nil) payload.
+     * The {@code completed} array distinguishes incomplete positions from completed futures that carry a null
+     * (Ballerina nil) payload.
      * <p>
      * <ul>
      *   <li>If {@code targetType} is a {@link TupleType}, each element is converted to
@@ -225,9 +216,7 @@ public final class WaitUtils {
                     continue;
                 }
                 Object raw = TypesUtil.convertJavaToBallerinaType(results[i]);
-                Object converted = memberType != null
-                        ? TypesUtil.cloneWithType(raw, memberType)
-                        : raw;
+                Object converted = memberType != null ? TypesUtil.cloneWithType(raw, memberType) : raw;
                 if (converted instanceof BError err) {
                     return err;
                 }
@@ -236,8 +225,7 @@ public final class WaitUtils {
             return tupleValue;
         }
 
-        if (targetType instanceof ArrayType arrayType
-                && arrayType.getElementType() != PredefinedTypes.TYPE_ANYDATA) {
+        if (targetType instanceof ArrayType arrayType && arrayType.getElementType() != PredefinedTypes.TYPE_ANYDATA) {
             Type elemType = arrayType.getElementType();
             Object[] converted = new Object[results.length];
             for (int i = 0; i < results.length; i++) {
@@ -257,7 +245,7 @@ public final class WaitUtils {
             ballerinaResults[i] = TypesUtil.convertJavaToBallerinaType(results[i]);
         }
         return ValueCreator.createArrayValue(ballerinaResults,
-                TypeCreator.createArrayType(PredefinedTypes.TYPE_ANYDATA));
+                                             TypeCreator.createArrayType(PredefinedTypes.TYPE_ANYDATA));
     }
 
     private static int countDone(FutureValue[] futures) {

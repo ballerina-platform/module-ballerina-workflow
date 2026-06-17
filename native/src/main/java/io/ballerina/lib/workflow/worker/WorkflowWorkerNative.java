@@ -23,6 +23,7 @@ import io.ballerina.lib.workflow.context.SignalAwaitWrapper;
 import io.ballerina.lib.workflow.context.WorkflowContextNative;
 import io.ballerina.lib.workflow.registry.EventInfo;
 import io.ballerina.lib.workflow.runtime.WorkflowRuntime;
+import io.ballerina.lib.workflow.utils.BallerinaFailureConverter;
 import io.ballerina.lib.workflow.utils.EventExtractor;
 import io.ballerina.lib.workflow.utils.EventFutureCreator;
 import io.ballerina.lib.workflow.utils.TypesUtil;
@@ -46,8 +47,14 @@ import io.ballerina.runtime.api.values.BObject;
 import io.ballerina.runtime.api.values.BString;
 import io.ballerina.runtime.internal.values.FPValue;
 import io.temporal.activity.DynamicActivity;
+import io.temporal.api.common.v1.WorkflowExecution;
+import io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest;
+import io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionResponse;
 import io.temporal.client.WorkflowClient;
+import io.temporal.client.WorkflowFailedException;
 import io.temporal.client.WorkflowStub;
+import io.temporal.common.converter.DataConverter;
+import io.temporal.common.converter.DefaultDataConverter;
 import io.temporal.common.converter.EncodedValues;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import io.temporal.serviceclient.WorkflowServiceStubsOptions;
@@ -72,25 +79,46 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 
 /**
- * Native implementation for workflow worker operations.
- * Implements a singleton worker pattern - only one Temporal SDK instance per JVM.
+ * Native implementation for workflow worker operations. Implements a singleton worker pattern - only one Temporal SDK
+ * instance per JVM.
  *
  * @since 0.1.0
  */
 public final class WorkflowWorkerNative {
 
+    /**
+     * ApplicationFailure type tag used to propagate a human task timeout through the child workflow boundary.
+     */
+    public static final String HUMANTASK_TIMEOUT_FAILURE_TYPE = "HUMANTASK_TIMEOUT";
+    /**
+     * Prefix applied to all user-defined workflow types registered with Temporal. Allows
+     * {@code WorkflowType STARTS_WITH 'workflow-'} queries to exclude internal child workflow types (humantask-*,
+     * retrytask-*) without needing the NOT operator.
+     */
+    public static final String WORKFLOW_TYPE_PREFIX = "workflow-";
+    /**
+     * Temporal workflow type used for all built-in manual retry task child workflows. Prefixed with {@code retrytask-}
+     * so internal workflows are clearly separated from user-defined ones and can be identified via a simple STARTS_WITH
+     * check.
+     */
+    public static final String RETRYTASK_WORKFLOW_TYPE = "retrytask";
+    /**
+     * Marker prefix used to ferry module-level client object references through Temporal's serialization plane. A value
+     * like {@code "connection:org/pkg.mod:db"} means "resolve to the registered client identified by that
+     * module-qualified connection key".
+     */
+    public static final String CONNECTION_MARKER_PREFIX = "connection:";
     private static final Logger LOGGER = LoggerFactory.getLogger(WorkflowWorkerNative.class);
-
     // When true, all Temporal SDK log suppression is skipped — useful for debugging
     // Temporal connectivity / worker behaviour.  Enable with the JVM system property:
     //   -Dballerina.workflow.temporal.logs=true
     private static final boolean TEMPORAL_LOGS_ENABLED =
             Boolean.getBoolean("ballerina.workflow.temporal.logs");
-
     // Strong reference to the Temporal JUL logger — held as a static final field so
     // GC cannot reset the log level (prevents SpotBugs LG_LOST_LOGGER_DUE_TO_WEAK_REFERENCE).
     // Level is set in the static initializer below so suppression is active before any
@@ -102,6 +130,53 @@ public final class WorkflowWorkerNative {
     // Must be declared BEFORE the static initializer block so it is non-null when
     // suppressTemporalLogs() first runs at class-load time.
     private static final AtomicBoolean configListenerRegistered = new AtomicBoolean(false);
+    // Static registry to store service objects accessible during workflow execution
+    private static final Map<String, BObject> SERVICE_REGISTRY = new ConcurrentHashMap<>();
+    // Static registry to store activity implementations (activity name to BFunctionPointer)
+    private static final Map<String, BFunctionPointer> ACTIVITY_REGISTRY = new ConcurrentHashMap<>();
+    // Static registry to store process functions (workflow type to BFunctionPointer)
+    private static final Map<String, BFunctionPointer> PROCESS_REGISTRY = new ConcurrentHashMap<>();
+    // Static registry to store event names per process (process name to list of event names)
+    private static final Map<String, List<String>> EVENT_REGISTRY = new ConcurrentHashMap<>();
+    /**
+     * Set of taskNames registered as human task workflow types. Each entry equals a Temporal workflow type that should
+     * be handled by the built-in human task execution path inside {@link BallerinaWorkflowAdapter}. Populated by
+     * {@link #registerHumanTask(BString)} at module init time.
+     */
+    private static final Set<String> HUMANTASK_REGISTRY = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Tracks whether the built-in retry task workflow type has been registered. Populated lazily on the first
+     * {@code ManualRetry} activity call.
+     */
+    private static final Set<String> RETRYTASK_REGISTRY = ConcurrentHashMap.newKeySet();
+    // Module-qualified connection ids registered by the compiler-plugin-emitted
+    // `wfInternal:registerConnection("name", name)` calls during module init.
+    // The registration routine prefixes the variable name with the caller module
+    // identity so names remain globally unique across modules in the same JVM.
+    private static final Map<String, BObject> CONNECTION_REGISTRY = new ConcurrentHashMap<>();
+    // Flags for singleton state
+    private static final AtomicBoolean initialized = new AtomicBoolean(false);
+    private static final AtomicBoolean started = new AtomicBoolean(false);
+    // Deadline for blocking gRPC introspection calls (e.g., describeWorkflowExecution).
+    // Increase if the Temporal server is remote and latency is higher than 5 seconds.
+    private static final int GET_INFO_DEADLINE_SECONDS = 5;
+    // Singleton worker components
+    private static volatile WorkflowServiceStubs serviceStubs;
+    private static volatile WorkflowClient workflowClient;
+    private static volatile WorkerFactory workerFactory;
+    private static volatile Worker singletonWorker;
+    private static volatile String taskQueue;
+    private static volatile String serverUrl;
+    private static volatile String serverNamespace;
+    private static volatile TestWorkflowEnvironment testEnvironment;
+    private static volatile boolean inMemoryMode = false;
+    // Global default activity retry policy (set from WorkerConfig.defaultActivityRetryPolicy)
+    private static volatile io.temporal.common.RetryOptions defaultActivityRetryOptions;
+    // Store workflow module for creating Context objects
+    private static Module workflowModule;
+    // Store Runtime instance for creating Strands
+    private static Runtime ballerinaRuntime;
 
     static {
         // Install Temporal log suppression at class-load time, before any Temporal
@@ -114,99 +189,13 @@ public final class WorkflowWorkerNative {
         suppressTemporalLogs();
     }
 
-    // Static registry to store service objects accessible during workflow execution
-    private static final Map<String, BObject> SERVICE_REGISTRY = new ConcurrentHashMap<>();
-
-    // Static registry to store activity implementations (activity name to BFunctionPointer)
-    private static final Map<String, BFunctionPointer> ACTIVITY_REGISTRY = new ConcurrentHashMap<>();
-
-    // Static registry to store process functions (workflow type to BFunctionPointer)
-    private static final Map<String, BFunctionPointer> PROCESS_REGISTRY = new ConcurrentHashMap<>();
-
-    // Static registry to store event names per process (process name to list of event names)
-    private static final Map<String, List<String>> EVENT_REGISTRY = new ConcurrentHashMap<>();
-
-    /** ApplicationFailure type tag used to propagate a human task timeout through the child workflow boundary. */
-    public static final String HUMANTASK_TIMEOUT_FAILURE_TYPE = "HUMANTASK_TIMEOUT";
-
-    /**
-     * Prefix applied to all user-defined workflow types registered with Temporal.
-     * Allows {@code WorkflowType STARTS_WITH 'workflow-'} queries to exclude internal
-     * child workflow types (humantask-*, retrytask-*) without needing the NOT operator.
-     */
-    public static final String WORKFLOW_TYPE_PREFIX = "workflow-";
-
-    /**
-     * Temporal workflow type used for all built-in manual retry task child workflows.
-     * Prefixed with {@code retrytask-} so internal workflows are clearly separated from
-     * user-defined ones and can be identified via a simple STARTS_WITH check.
-     */
-    public static final String RETRYTASK_WORKFLOW_TYPE = "retrytask";
-
-    /**
-     * Set of taskNames registered as human task workflow types.
-     * Each entry equals a Temporal workflow type that should be handled by the
-     * built-in human task execution path inside {@link BallerinaWorkflowAdapter}.
-     * Populated by {@link #registerHumanTask(BString)} at module init time.
-     */
-    private static final Set<String> HUMANTASK_REGISTRY = ConcurrentHashMap.newKeySet();
-
-    /**
-     * Tracks whether the built-in retry task workflow type has been registered.
-     * Populated lazily on the first {@code ManualRetry} activity call.
-     */
-    private static final Set<String> RETRYTASK_REGISTRY = ConcurrentHashMap.newKeySet();
-
-    /**
-     * Marker prefix used to ferry module-level client object references through
-        * Temporal's serialization plane. A value like
-        * {@code "connection:org/pkg.mod:db"} means "resolve to the registered
-        * client identified by that module-qualified connection key".
-     */
-    public static final String CONNECTION_MARKER_PREFIX = "connection:";
-
-    // Module-qualified connection ids registered by the compiler-plugin-emitted
-    // `wfInternal:registerConnection("name", name)` calls during module init.
-    // The registration routine prefixes the variable name with the caller module
-    // identity so names remain globally unique across modules in the same JVM.
-    private static final Map<String, BObject> CONNECTION_REGISTRY = new ConcurrentHashMap<>();
-
-    // Singleton worker components
-    private static volatile WorkflowServiceStubs serviceStubs;
-    private static volatile WorkflowClient workflowClient;
-    private static volatile WorkerFactory workerFactory;
-    private static volatile Worker singletonWorker;
-    private static volatile String taskQueue;
-    private static volatile String serverUrl;
-    private static volatile String serverNamespace;
-    private static volatile TestWorkflowEnvironment testEnvironment;
-
-    // Flags for singleton state
-    private static final AtomicBoolean initialized = new AtomicBoolean(false);
-    private static final AtomicBoolean started = new AtomicBoolean(false);
-
-    // Deadline for blocking gRPC introspection calls (e.g., describeWorkflowExecution).
-    // Increase if the Temporal server is remote and latency is higher than 5 seconds.
-    private static final int GET_INFO_DEADLINE_SECONDS = 5;
-    private static volatile boolean inMemoryMode = false;
-
-    // Global default activity retry policy (set from WorkerConfig.defaultActivityRetryPolicy)
-    private static volatile io.temporal.common.RetryOptions defaultActivityRetryOptions;
-
-    // Store workflow module for creating Context objects
-    private static Module workflowModule;
-
-    // Store Runtime instance for creating Strands
-    private static Runtime ballerinaRuntime;
-
     private WorkflowWorkerNative() {
         // Utility class, prevent instantiation
     }
 
     /**
-     * Suppresses Temporal SDK INFO/FINE logs by default and converts WARNING-level records
-     * into structured Ballerina log output, so that Ballerina programs are not flooded with
-     * raw JUL-formatted messages from the Temporal SDK.
+     * Suppresses Temporal SDK INFO/FINE logs by default and converts WARNING-level records into structured Ballerina
+     * log output, so that Ballerina programs are not flooded with raw JUL-formatted messages from the Temporal SDK.
      *
      * <p>Two categories of Temporal WARNING records are handled:
      * <ul>
@@ -263,86 +252,8 @@ public final class WorkflowWorkerNative {
     }
 
     /**
-     * JUL Handler installed on the {@code io.temporal} logger.
-     *
-     * <p>Suppresses known-expected WARNING patterns that occur during normal workflow
-     * execution (e.g. human task timeouts, task reporting after cancellation) and forwards
-     * all other WARNING-level records to Ballerina's SLF4J layer at WARN level, producing
-     * output in Ballerina log format rather than raw JUL format.
-     *
-     * <p>Uses a dedicated SLF4J logger ({@code ballerina.workflow.temporal}) to avoid
-     * routing back through the {@code io.temporal} JUL hierarchy, which would cause
-     * infinite recursion via the slf4j-jdk14 bridge.
-     */
-    private static final class TemporalLogHandler extends java.util.logging.Handler {
-
-        // Dedicated SLF4J logger — its JUL name (ballerina.workflow.temporal) is NOT under
-        // io.temporal, so forwarded records do not re-enter this handler.
-        private static final Logger FORWARD_LOGGER =
-                LoggerFactory.getLogger("ballerina.workflow.temporal");
-
-        TemporalLogHandler() {
-            setLevel(Level.WARNING);
-        }
-
-        @Override
-        public void publish(java.util.logging.LogRecord record) {
-            if (record == null || !isLoggable(record)) {
-                return;
-            }
-
-            String raw = record.getMessage();
-            if (raw == null) {
-                raw = "";
-            }
-
-            // Format JUL parameterized messages (e.g. "foo {0}" with parameters).
-            String message = raw;
-            Object[] params = record.getParameters();
-            if (params != null && params.length > 0) {
-                try {
-                    message = MessageFormat.format(raw, params);
-                } catch (IllegalArgumentException ignored) {
-                    // If the format string is invalid, fall back to the raw message string.
-                }
-            }
-
-            Throwable thrown = record.getThrown();
-
-            // Suppress transient gRPC error logged when Temporal tries to report a workflow
-            // task result after the server has already moved on (e.g. human task cancelled).
-            if (message.contains("Failure while reporting workflow progress")) {
-                return;
-            }
-
-            // Suppress expected ApplicationFailure logged when a human-task child workflow
-            // deliberately times out. The parent workflow handles this via normal error flow.
-            if (message.contains("Workflow execution failure")
-                    && thrown != null
-                    && thrown.getMessage() != null
-                    && thrown.getMessage().contains("HUMANTASK_TIMEOUT")) {
-                return;
-            }
-
-            // Forward all other WARNING records to Ballerina's log layer.
-            if (thrown != null) {
-                FORWARD_LOGGER.warn(message, thrown);
-            } else {
-                FORWARD_LOGGER.warn(message);
-            }
-        }
-
-        @Override
-        public void flush() {}
-
-        @Override
-        public void close() {}
-    }
-
-    /**
-     * Module initialization - called by Ballerina runtime.
-     * Captures the Runtime from Environment for later use.
-     * The Module reference is obtained from ModuleUtils (set during initModule()).
+     * Module initialization - called by Ballerina runtime. Captures the Runtime from Environment for later use. The
+     * Module reference is obtained from ModuleUtils (set during initModule()).
      *
      * @param env the Ballerina runtime environment
      */
@@ -351,25 +262,26 @@ public final class WorkflowWorkerNative {
         if (workflowModule == null) {
             throw new IllegalStateException(
                     "ModuleUtils.getModule() returned null in WorkflowWorkerNative.init; " +
-                    "ensure the Ballerina module has been initialized before the runtime starts.");
+                            "ensure the Ballerina module has been initialized before the runtime starts.");
         }
         ballerinaRuntime = env.getRuntime();
     }
 
     /**
-     * Initialize the singleton workflow worker.
-     * This is called during Ballerina module initialization with configuration from configurable variables.
+     * Initialize the singleton workflow worker. This is called during Ballerina module initialization with
+     * configuration from configurable variables.
      *
-     * @param url Workflow server URL
-     * @param namespace Workflow namespace
-     * @param workerTaskQueue Task queue for the worker
-     * @param maxConcurrentWorkflows Maximum concurrent workflow executions
+     * @param url                     Workflow server URL
+     * @param namespace               Workflow namespace
+     * @param workerTaskQueue         Task queue for the worker
+     * @param maxConcurrentWorkflows  Maximum concurrent workflow executions
      * @param maxConcurrentActivities Maximum concurrent activity executions
-     * @param apiKey API key for authentication (empty string if not used)
-     * @param mtlsCert Path to mTLS client certificate file (empty string if not used)
-     * @param mtlsKey Path to mTLS client private key file (empty string if not used)
-     * @param caCert Path to CA certificate for server trust (empty string to use JVM default trust store)
-     * @param defaultRetryPolicy Default activity retry policy from WorkerConfig
+     * @param apiKey                  API key for authentication (empty string if not used)
+     * @param mtlsCert                Path to mTLS client certificate file (empty string if not used)
+     * @param mtlsKey                 Path to mTLS client private key file (empty string if not used)
+     * @param caCert                  Path to CA certificate for server trust (empty string to use JVM default trust
+     *                                store)
+     * @param defaultRetryPolicy      Default activity retry policy from WorkerConfig
      * @return null on success, error on failure
      */
     @SuppressWarnings("unchecked")
@@ -403,11 +315,11 @@ public final class WorkflowWorkerNative {
             String caCertPath = caCert.getValue();
 
             LOGGER.debug("Initializing singleton workflow worker - URL: {}, Namespace: {}, TaskQueue: {}",
-                    serverUrl, ns, taskQueue);
+                         serverUrl, ns, taskQueue);
 
             // Create service stubs (connection to workflow server)
             WorkflowServiceStubsOptions.Builder stubsBuilder = WorkflowServiceStubsOptions.newBuilder()
-                    .setTarget(serverUrl);
+                                                                                          .setTarget(serverUrl);
 
             boolean hasMtls = !mtlsCertPath.isEmpty() && !mtlsKeyPath.isEmpty();
             boolean hasCaCert = !caCertPath.isEmpty();
@@ -457,17 +369,16 @@ public final class WorkflowWorkerNative {
 
             // Create a DataConverter with a custom FailureConverter that replaces
             // "JavaSDK" source with "BallerinaSDK" in failure protos
-            io.temporal.common.converter.DataConverter dataConverter =
-                    io.temporal.common.converter.DefaultDataConverter.newDefaultInstance()
-                            .withFailureConverter(
-                                    new io.ballerina.lib.workflow.utils.BallerinaFailureConverter());
+            DataConverter dataConverter =
+                    DefaultDataConverter.newDefaultInstance()
+                            .withFailureConverter(new BallerinaFailureConverter());
 
             // Create workflow client
             io.temporal.client.WorkflowClientOptions clientOptions =
                     io.temporal.client.WorkflowClientOptions.newBuilder()
-                            .setNamespace(ns)
-                            .setDataConverter(dataConverter)
-                            .build();
+                                                            .setNamespace(ns)
+                                                            .setDataConverter(dataConverter)
+                                                            .build();
             workflowClient = WorkflowClient.newInstance(serviceStubs, clientOptions);
 
             // Create worker factory
@@ -475,16 +386,18 @@ public final class WorkflowWorkerNative {
 
             // Create worker with options
             WorkerOptions workerOptions = WorkerOptions.newBuilder()
-                    .setMaxConcurrentWorkflowTaskExecutionSize((int) maxConcurrentWorkflows)
-                    .setMaxConcurrentActivityExecutionSize((int) maxConcurrentActivities)
-                    .build();
+                                                       .setMaxConcurrentWorkflowTaskExecutionSize(
+                                                               (int) maxConcurrentWorkflows)
+                                                       .setMaxConcurrentActivityExecutionSize(
+                                                               (int) maxConcurrentActivities)
+                                                       .build();
 
             singletonWorker = workerFactory.newWorker(taskQueue, workerOptions);
 
             // Parse and store global default activity retry policy
             defaultActivityRetryOptions = parseRetryPolicy(defaultRetryPolicy);
-            LOGGER.debug("Default activity retry policy: maxAttempts={}", 
-                    defaultActivityRetryOptions.getMaximumAttempts());
+            LOGGER.debug("Default activity retry policy: maxAttempts={}",
+                         defaultActivityRetryOptions.getMaximumAttempts());
 
             // Register dynamic workflow and activity adapters eagerly.
             // This must happen before workerFactory.start() is called.
@@ -506,9 +419,8 @@ public final class WorkflowWorkerNative {
     }
 
     /**
-     * Initialize an in-memory workflow worker using Temporal's TestWorkflowEnvironment.
-     * This mode does not require an external server. Workflows are not persisted
-     * and will be lost on restart.
+     * Initialize an in-memory workflow worker using Temporal's TestWorkflowEnvironment. This mode does not require an
+     * external server. Workflows are not persisted and will be lost on restart.
      *
      * @return null on success, error on failure
      */
@@ -530,19 +442,19 @@ public final class WorkflowWorkerNative {
 
             // Create a DataConverter with a custom FailureConverter that replaces
             // "JavaSDK" source with "BallerinaSDK" in failure protos
-            io.temporal.common.converter.DataConverter dataConverter =
-                    io.temporal.common.converter.DefaultDataConverter.newDefaultInstance()
-                            .withFailureConverter(
-                                    new io.ballerina.lib.workflow.utils.BallerinaFailureConverter());
+            DataConverter dataConverter =
+                    DefaultDataConverter.newDefaultInstance()
+                            .withFailureConverter(new BallerinaFailureConverter());
 
             // Create the in-memory test environment with custom data converter
             io.temporal.testing.TestEnvironmentOptions testOptions =
                     io.temporal.testing.TestEnvironmentOptions.newBuilder()
-                            .setWorkflowClientOptions(
-                                    io.temporal.client.WorkflowClientOptions.newBuilder()
-                                            .setDataConverter(dataConverter)
-                                            .build())
-                            .build();
+                                                              .setWorkflowClientOptions(
+                                                                      io.temporal.client.WorkflowClientOptions
+                                                                              .newBuilder()
+                                                                              .setDataConverter(dataConverter)
+                                                                              .build())
+                                                              .build();
             testEnvironment = TestWorkflowEnvironment.newInstance(testOptions);
 
             // Extract components from the test environment
@@ -552,17 +464,18 @@ public final class WorkflowWorkerNative {
 
             // Create worker with default options
             WorkerOptions workerOptions = WorkerOptions.newBuilder()
-                    .setMaxConcurrentWorkflowTaskExecutionSize(100)
-                    .setMaxConcurrentActivityExecutionSize(100)
-                    .build();
+                                                       .setMaxConcurrentWorkflowTaskExecutionSize(100)
+                                                       .setMaxConcurrentActivityExecutionSize(100)
+                                                       .build();
             singletonWorker = testEnvironment.newWorker(taskQueue, workerOptions);
 
             // Set default activity retry options for in-memory mode (matches Ballerina defaults)
             defaultActivityRetryOptions = io.temporal.common.RetryOptions.newBuilder()
-                    .setInitialInterval(java.time.Duration.ofSeconds(1))
-                    .setBackoffCoefficient(2.0)
-                    .setMaximumAttempts(1)
-                    .build();
+                                                                         .setInitialInterval(
+                                                                                 java.time.Duration.ofSeconds(1))
+                                                                         .setBackoffCoefficient(2.0)
+                                                                         .setMaximumAttempts(1)
+                                                                         .build();
 
             // Register dynamic workflow and activity adapters
             singletonWorker.registerWorkflowImplementationTypes(BallerinaWorkflowAdapter.class);
@@ -581,13 +494,12 @@ public final class WorkflowWorkerNative {
     }
 
     /**
-     * Register a workflow with the singleton program.
-     * Called from Ballerina code for each workflow.
+     * Register a workflow with the singleton program. Called from Ballerina code for each workflow.
      *
-     * @param env Environment for capturing runtime
+     * @param env              Environment for capturing runtime
      * @param workflowFunction The Ballerina workflow function pointer
-     * @param workflowName The name of the workflow (workflow type)
-     * @param activities Optional map of activity functions
+     * @param workflowName     The name of the workflow (workflow type)
+     * @param activities       Optional map of activity functions
      * @return true on success, error on failure
      */
     public static Object registerWorkflow(
@@ -662,11 +574,8 @@ public final class WorkflowWorkerNative {
     }
 
     /**
-     * Creates a wrapper BObject for a process function.
-     * This allows the process function to be treated like a service object.
-    /**
-     * Start the singleton worker.
-     * This begins polling for workflow and activity tasks.
+     * Creates a wrapper BObject for a process function. This allows the process function to be treated like a service
+     * object. /** Start the singleton worker. This begins polling for workflow and activity tasks.
      *
      * @return null on success, error on failure
      */
@@ -703,10 +612,11 @@ public final class WorkflowWorkerNative {
             if (e instanceof io.grpc.StatusRuntimeException) {
                 io.grpc.Status status = ((io.grpc.StatusRuntimeException) e).getStatus();
                 LOGGER.error("Failed to start worker [{}]: gRPC {} - {} ({})",
-                        context, status.getCode(), status.getDescription(), e.getMessage(), e);
+                             context, status.getCode(), status.getDescription(), e.getMessage(), e);
                 if (status.getCode() == io.grpc.Status.Code.UNAVAILABLE) {
                     LOGGER.error("Hint: UNAVAILABLE usually means the Temporal server at '{}' is not running "
-                            + "or is unreachable. Verify the server is up and the URL/port are correct.", serverUrl);
+                                         + "or is unreachable. Verify the server is up and the URL/port are correct.",
+                                 serverUrl);
                 }
             } else {
                 LOGGER.error("Failed to start worker [{}]: {}", context, e.getMessage(), e);
@@ -757,11 +667,10 @@ public final class WorkflowWorkerNative {
     }
 
     /**
-     * Forcefully stops the singleton workflow worker by interrupting in-flight tasks.
-     * Uses {@code WorkerFactory.shutdownNow()} instead of the graceful {@code shutdown()},
-     * then awaits termination to ensure all JVM threads exit before returning.
-     * In-memory mode falls back to {@link #stopSingletonWorker()} (TestWorkflowEnvironment
-     * does not distinguish between graceful and immediate shutdown).
+     * Forcefully stops the singleton workflow worker by interrupting in-flight tasks. Uses
+     * {@code WorkerFactory.shutdownNow()} instead of the graceful {@code shutdown()}, then awaits termination to ensure
+     * all JVM threads exit before returning. In-memory mode falls back to {@link #stopSingletonWorker()}
+     * (TestWorkflowEnvironment does not distinguish between graceful and immediate shutdown).
      *
      * @return null on success, error on failure
      */
@@ -840,8 +749,8 @@ public final class WorkflowWorkerNative {
      * Registers {@code taskName} as a human task workflow type.
      *
      * <p>After registration, any Temporal child workflow started with
-     * {@code workflowType == taskName} is routed to the built-in human task
-     * execution path inside {@link BallerinaWorkflowAdapter}.
+     * {@code workflowType == taskName} is routed to the built-in human task execution path inside
+     * {@link BallerinaWorkflowAdapter}.
      *
      * <p>Registration is idempotent: re-registering the same name is a no-op
      * and returns {@code true}.
@@ -856,26 +765,23 @@ public final class WorkflowWorkerNative {
     }
 
     /**
-     * Returns an unmodifiable view of the registered human task names.
-     * Exposed for testing and introspection.
+     * Returns an unmodifiable view of the registered human task names. Exposed for testing and introspection.
      */
     public static Set<String> getHumanTaskRegistry() {
         return Collections.unmodifiableSet(HUMANTASK_REGISTRY);
     }
 
     /**
-     * Ensures the built-in retry task workflow type is registered exactly once.
-     * Called lazily from {@link io.ballerina.lib.workflow.context.WorkflowContextNative}
-     * when a {@code ManualRetry} activity is first encountered during a workflow execution.
-     * Idempotent — safe to call on every retry task creation.
+     * Ensures the built-in retry task workflow type is registered exactly once. Called lazily from
+     * {@link io.ballerina.lib.workflow.context.WorkflowContextNative} when a {@code ManualRetry} activity is first
+     * encountered during a workflow execution. Idempotent — safe to call on every retry task creation.
      */
     public static void ensureRetryTaskRegistered() {
         RETRYTASK_REGISTRY.add(RETRYTASK_WORKFLOW_TYPE);
     }
 
     /**
-     * Returns an unmodifiable view of the retry task workflow types registry.
-     * Exposed for testing and introspection.
+     * Returns an unmodifiable view of the retry task workflow types registry. Exposed for testing and introspection.
      */
     public static Set<String> getRetryTaskRegistry() {
         return Collections.unmodifiableSet(RETRYTASK_REGISTRY);
@@ -988,25 +894,21 @@ public final class WorkflowWorkerNative {
     }
 
     /**
-     * Returns {@code true} when the given activity parameter's declared type is
-     * an object type (e.g. a {@code client object}). Used to disambiguate
-     * {@code "connection:<name>"} marker strings from genuine string arguments
-     * that happen to begin with the same prefix: only object-typed parameters
-     * trigger registry lookup.
+     * Returns {@code true} when the given activity parameter's declared type is an object type (e.g. a
+     * {@code client object}). Used to disambiguate {@code "connection:<name>"} marker strings from genuine string
+     * arguments that happen to begin with the same prefix: only object-typed parameters trigger registry lookup.
      *
      * <p>Type references (named types, intersections introduced by client
-     * declarations, etc.) are dereferenced with bounded depth before checking
-     * the tag.
+     * declarations, etc.) are dereferenced with bounded depth before checking the tag.
      */
     static boolean isObjectParam(Parameter param) {
         return isObjectType(param.type, 0);
     }
 
     /**
-     * Returns {@code true} if the type, after dereferencing references and
-     * descending into union members (bounded depth to defeat pathological
-     * cycles), contains an object/service type. Used to detect client-object
-     * parameters including unions like {@code soap11:Client|soap12:Client}.
+     * Returns {@code true} if the type, after dereferencing references and descending into union members (bounded depth
+     * to defeat pathological cycles), contains an object/service type. Used to detect client-object parameters
+     * including unions like {@code soap11:Client|soap12:Client}.
      */
     private static boolean isObjectType(io.ballerina.runtime.api.types.Type t, int depth) {
         if (t == null || depth > 16) {
@@ -1076,18 +978,16 @@ public final class WorkflowWorkerNative {
     }
 
     /**
-     * Registers a module-level {@code final} {@code client object} variable so it can
-     * be referenced from inside activities via the {@code "connection:<name>"} wire
-     * marker. Called from generated module-init code emitted by the workflow compiler
-     * plugin (see {@code wfInternal:registerConnection}).
+     * Registers a module-level {@code final} {@code client object} variable so it can be referenced from inside
+     * activities via the {@code "connection:<name>"} wire marker. Called from generated module-init code emitted by the
+     * workflow compiler plugin (see {@code wfInternal:registerConnection}).
      *
      * <p>Idempotent for an exact (name, object) pair; returns a Ballerina error if a
      * <em>different</em> object is already registered under the same name (which would
-     * indicate an internal compiler-plugin bug, since module-level identifiers are
-     * unique by language rule).
+     * indicate an internal compiler-plugin bug, since module-level identifiers are unique by language rule).
      *
-     * @param env the caller environment, used to qualify the module-level name
-     * @param name the Ballerina variable name (qualified with caller module for storage)
+     * @param env        the caller environment, used to qualify the module-level name
+     * @param name       the Ballerina variable name (qualified with caller module for storage)
      * @param connection the client object reference
      * @return {@code true} on success, or a {@code BError} on a duplicate-name collision
      */
@@ -1102,10 +1002,9 @@ public final class WorkflowWorkerNative {
     }
 
     /**
-     * Returns the registered name of the given client by identity, or {@code null} if
-     * the client has not been registered. Performs a linear identity scan of the
-     * connection map; this is fine because the number of module-level clients is small
-     * and the lookup runs at most once per activity argument.
+     * Returns the registered name of the given client by identity, or {@code null} if the client has not been
+     * registered. Performs a linear identity scan of the connection map; this is fine because the number of
+     * module-level clients is small and the lookup runs at most once per activity argument.
      */
     public static String getConnectionName(BObject connection) {
         for (Map.Entry<String, BObject> e : CONNECTION_REGISTRY.entrySet()) {
@@ -1141,9 +1040,8 @@ public final class WorkflowWorkerNative {
     }
 
     /**
-     * Create a new instance of a service object based on a template service object.
-     * This creates a per-workflow-instance copy to avoid state sharing.
-     * Used for backward compatibility with service-based workflows.
+     * Create a new instance of a service object based on a template service object. This creates a
+     * per-workflow-instance copy to avoid state sharing. Used for backward compatibility with service-based workflows.
      *
      * @param templateService The template service object to clone
      * @return A new instance of the same service type
@@ -1172,32 +1070,173 @@ public final class WorkflowWorkerNative {
     }
 
     /**
-     * Dynamic workflow implementation that routes to Ballerina service.
-     * This is used as a template for creating workflow implementations.
+     * Converts a Ballerina {@link BError} (with optional cause chain) into an
+     * {@link io.temporal.failure.ApplicationFailure} chain suitable for the Temporal Failure proto.
+     * <p>
+     * Each BError produces an {@code ApplicationFailure} with:
+     * <ul>
+     *   <li>{@code message} – the BError message</li>
+     *   <li>{@code type} – the supplied {@code typeName}</li>
+     *   <li>{@code details} – the BError detail record (omitted when empty)</li>
+     *   <li>{@code cause} – iteratively converted from
+     *       {@link BError#getCause()}</li>
+     * </ul>
+     * Stack traces are suppressed so the Temporal UI stays Ballerina-centric.
+     * <p>
+     * Uses an iterative approach to avoid stack overflow on deeply nested
+     * BError cause chains.
+     *
+     * @param err      the Ballerina error to convert
+     * @param typeName the {@code type} string for the ApplicationFailure
+     */
+    @SuppressWarnings("unchecked")
+    static io.temporal.failure.ApplicationFailure berrorToApplicationFailure(BError err,
+                                                                             String typeName) {
+        // Hard limit to prevent unbounded traversal of cause chains.
+        final int maxDepth = 64;
+
+        // 1. Walk the BError cause chain and collect each node's data.
+        List<BError> chain = new ArrayList<>();
+        BError current = err;
+        while (current != null && chain.size() < maxDepth) {
+            chain.add(current);
+            Throwable cause = current.getCause();
+            current = (cause instanceof BError) ? (BError) cause : null;
+        }
+
+        // 2. Build ApplicationFailure instances bottom-up (innermost cause first).
+        io.temporal.failure.ApplicationFailure inner = null;
+        for (int i = chain.size() - 1; i >= 0; i--) {
+            BError node = chain.get(i);
+
+            // Convert detail record – only include when non-empty so the Temporal
+            // UI does not show a hollow {"payloads":[{}]} entry.
+            BMap<?, ?> detailMap = (BMap<?, ?>) node.getDetails();
+            boolean hasDetails = detailMap != null && !detailMap.isEmpty();
+            Object details = hasDetails ? TypesUtil.convertBallerinaToJavaType(detailMap) : null;
+
+            io.temporal.failure.ApplicationFailure failure;
+            if (inner != null) {
+                failure = hasDetails
+                          ? io.temporal.failure.ApplicationFailure.newFailureWithCause(
+                        node.getMessage(), typeName, inner, details)
+                          : io.temporal.failure.ApplicationFailure.newFailureWithCause(
+                        node.getMessage(), typeName, inner);
+            } else {
+                failure = hasDetails
+                          ? io.temporal.failure.ApplicationFailure.newFailure(
+                        node.getMessage(), typeName, details)
+                          : io.temporal.failure.ApplicationFailure.newFailure(
+                        node.getMessage(), typeName);
+            }
+            failure.setStackTrace(new StackTraceElement[0]);
+            inner = failure;
+        }
+
+        return inner;
+    }
+
+    /**
+     * Convenience overload that uses an empty type string.
+     */
+    static io.temporal.failure.ApplicationFailure berrorToApplicationFailure(BError err) {
+        return berrorToApplicationFailure(err, "");
+    }
+
+    /**
+     * JUL Handler installed on the {@code io.temporal} logger.
+     *
+     * <p>Suppresses known-expected WARNING patterns that occur during normal workflow
+     * execution (e.g. human task timeouts, task reporting after cancellation) and forwards all other WARNING-level
+     * records to Ballerina's SLF4J layer at WARN level, producing output in Ballerina log format rather than raw JUL
+     * format.
+     *
+     * <p>Uses a dedicated SLF4J logger ({@code ballerina.workflow.temporal}) to avoid
+     * routing back through the {@code io.temporal} JUL hierarchy, which would cause infinite recursion via the
+     * slf4j-jdk14 bridge.
+     */
+    private static final class TemporalLogHandler extends java.util.logging.Handler {
+
+        // Dedicated SLF4J logger — its JUL name (ballerina.workflow.temporal) is NOT under
+        // io.temporal, so forwarded records do not re-enter this handler.
+        private static final Logger FORWARD_LOGGER =
+                LoggerFactory.getLogger("ballerina.workflow.temporal");
+
+        TemporalLogHandler() {
+            setLevel(Level.WARNING);
+        }
+
+        @Override
+        public void publish(java.util.logging.LogRecord record) {
+            if (record == null || !isLoggable(record)) {
+                return;
+            }
+
+            String raw = record.getMessage();
+            if (raw == null) {
+                raw = "";
+            }
+
+            // Format JUL parameterized messages (e.g. "foo {0}" with parameters).
+            String message = raw;
+            Object[] params = record.getParameters();
+            if (params != null && params.length > 0) {
+                try {
+                    message = MessageFormat.format(raw, params);
+                } catch (IllegalArgumentException ignored) {
+                    // If the format string is invalid, fall back to the raw message string.
+                }
+            }
+
+            Throwable thrown = record.getThrown();
+
+            // Suppress transient gRPC error logged when Temporal tries to report a workflow
+            // task result after the server has already moved on (e.g. human task cancelled).
+            if (message.contains("Failure while reporting workflow progress")) {
+                return;
+            }
+
+            // Suppress expected ApplicationFailure logged when a human-task child workflow
+            // deliberately times out. The parent workflow handles this via normal error flow.
+            if (message.contains("Workflow execution failure")
+                    && thrown != null
+                    && thrown.getMessage() != null
+                    && thrown.getMessage().contains("HUMANTASK_TIMEOUT")) {
+                return;
+            }
+
+            // Forward all other WARNING records to Ballerina's log layer.
+            if (thrown != null) {
+                FORWARD_LOGGER.warn(message, thrown);
+            } else {
+                FORWARD_LOGGER.warn(message);
+            }
+        }
+
+        @Override
+        public void flush() {
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    /**
+     * Dynamic workflow implementation that routes to Ballerina service. This is used as a template for creating
+     * workflow implementations.
      */
     public static class BallerinaWorkflowAdapter implements DynamicWorkflow {
 
+        // Workflow logger for deterministic logging
+        private static final Logger LOGGER = Workflow.getLogger(BallerinaWorkflowAdapter.class);
+        // Per-workflow signal wrapper for managing signal futures
+        // This handles signal recording and replay scenarios
+        private final SignalAwaitWrapper signalWrapper = new SignalAwaitWrapper();
         // Per-workflow-instance service object (created fresh for each workflow execution including replays)
         // This ensures isolation between workflow instances and proper state management
         private BObject serviceObject;
         private String workflowType;
-
-        // Per-workflow signal wrapper for managing signal futures
-        // This handles signal recording and replay scenarios
-        private final SignalAwaitWrapper signalWrapper = new SignalAwaitWrapper();
-
-        // Workflow logger for deterministic logging
-        private static final Logger LOGGER = Workflow.getLogger(BallerinaWorkflowAdapter.class);
-
-        /**
-         * Gets the signal wrapper for this workflow instance.
-         * Used to get signal futures that can be passed to workflow functions.
-         *
-         * @return the SignalAwaitWrapper for this workflow
-         */
-        public SignalAwaitWrapper getSignalWrapper() {
-            return signalWrapper;
-        }
 
         /**
          * No-arg constructor required by Temporal for dynamic workflows.
@@ -1219,7 +1258,7 @@ public final class WorkflowWorkerNative {
                             }
                         } catch (Exception e) {
                             LOGGER.warn("[JWorkflowAdapter] Could not extract signal data as Map: {}",
-                                    e.getMessage());
+                                        e.getMessage());
                         }
 
                         // Try to invoke remote method handler for this signal
@@ -1240,12 +1279,12 @@ public final class WorkflowWorkerNative {
                                         signalName,
                                         new StrandMetadata(true, Collections.emptyMap()),
                                         methodArgs
-                                );
+                                                                          );
 
                                 // Check if method returned an error - log but don't fail
                                 if (signalResult instanceof BError err) {
                                     LOGGER.warn("[JWorkflowAdapter] Signal handler method '{}' returned error: {}",
-                                            signalName, err.getMessage());
+                                                signalName, err.getMessage());
                                     // Still use the error as the signal result
                                 }
 
@@ -1255,7 +1294,7 @@ public final class WorkflowWorkerNative {
                             } catch (Exception e) {
                                 // Method might not exist - that's okay, just log at debug level
                                 LOGGER.debug("[JWorkflowAdapter] No remote method '{}' found or invocation failed: {}",
-                                        signalName, e.getMessage());
+                                             signalName, e.getMessage());
                                 // Fall back to default behavior - record signal data only
                             }
                         }
@@ -1266,7 +1305,7 @@ public final class WorkflowWorkerNative {
                         signalWrapper.recordSignal(signalName, resultToRecord);
                         LOGGER.debug("[JWorkflowAdapter] Signal {} recorded in wrapper", signalName);
                     }
-            );
+                                     );
             LOGGER.debug("[JWorkflowAdapter] Dynamic signal handler registered");
 
             // Register a dynamic query handler that routes to service methods
@@ -1287,7 +1326,7 @@ public final class WorkflowWorkerNative {
                             Object[] queryArgs = new Object[0];
 
                             LOGGER.debug("[JWorkflowAdapter] Invoking query method '{}' on existing service instance",
-                                    queryName);
+                                         queryName);
 
                             // Invoke the query method on the EXISTING service object
                             Object result = ballerinaRuntime.callMethod(
@@ -1295,7 +1334,7 @@ public final class WorkflowWorkerNative {
                                     queryName,
                                     new StrandMetadata(true, Collections.emptyMap()),
                                     queryArgs
-                            );
+                                                                       );
 
                             // Check if query returned an error - this should fail the query
                             if (result instanceof BError err) {
@@ -1308,18 +1347,29 @@ public final class WorkflowWorkerNative {
                             Object javaResult = convertBallerinaToJavaType(result);
 
                             LOGGER.debug("[JWorkflowAdapter] Query {} completed successfully, result type: {}",
-                                    queryName, (javaResult != null ? javaResult.getClass().getSimpleName() : "null"));
+                                         queryName,
+                                         (javaResult != null ? javaResult.getClass().getSimpleName() : "null"));
 
                             return javaResult;
 
                         } catch (Exception e) {
                             LOGGER.error("[JWorkflowAdapter] Query {} failed with exception: {}",
-                                    queryName, e.getMessage());
+                                         queryName, e.getMessage());
                             throw new RuntimeException("Query execution failed: " + e.getMessage(), e);
                         }
                     }
-            );
+                                     );
             LOGGER.debug("[JWorkflowAdapter] Dynamic query handler registered");
+        }
+
+        /**
+         * Gets the signal wrapper for this workflow instance. Used to get signal futures that can be passed to workflow
+         * functions.
+         *
+         * @return the SignalAwaitWrapper for this workflow
+         */
+        public SignalAwaitWrapper getSignalWrapper() {
+            return signalWrapper;
         }
 
         @Override
@@ -1353,14 +1403,15 @@ public final class WorkflowWorkerNative {
                     }
 
                     String errorMsg = String.format("Workflow '%s' is not registered. " +
-                            "Please call registerWorkflow() for this workflow.", workflowType);
+                                                            "Please call registerWorkflow() for this workflow.",
+                                                    workflowType);
                     LOGGER.error("[JWorkflowAdapter] {}", errorMsg);
 
                     io.temporal.failure.ApplicationFailure failure =
                             io.temporal.failure.ApplicationFailure.newFailure(
                                     errorMsg,
                                     "error"
-                            );
+                                                                             );
                     failure.setNonRetryable(true);
                     failure.setStackTrace(new StackTraceElement[0]);
                     throw failure;
@@ -1400,21 +1451,21 @@ public final class WorkflowWorkerNative {
 
                 // Check if the process function expects an events record parameter
                 RecordType eventsRecordType = processFunction != null ?
-                        EventExtractor.getEventsRecordType(processFunction) : null;
+                                              EventExtractor.getEventsRecordType(processFunction) : null;
                 boolean hasEvents = eventsRecordType != null;
 
                 // Build arguments array with Context and Events as needed
                 List<Object> argsList = new ArrayList<>();
-                
+
                 // Add Context as first argument if needed
                 if (hasContext) {
                     BObject contextObj = createWorkflowContext();
                     argsList.add(contextObj);
                 }
-                
+
                 // Add workflow input arguments (from createInstance call)
                 Collections.addAll(argsList, workflowArgs);
-                
+
                 // Add events record as last argument if needed
                 if (hasEvents) {
                     // Create events record with TemporalFutureValue for each signal
@@ -1426,18 +1477,18 @@ public final class WorkflowWorkerNative {
                     BMap<BString, Object> eventsRecord = EventFutureCreator.createEventsRecord(
                             eventsRecordType, signalWrapper, scheduler);
                     argsList.add(eventsRecord);
-                    
+
                     if (!isReplaying) {
                         LOGGER.debug("[JWorkflowAdapter] Injected events record with {} signals for workflow {}",
-                                eventsRecordType.getFields().size(), workflowType);
+                                     eventsRecordType.getFields().size(), workflowType);
                     }
                 }
-                
+
                 Object[] ballerinaArgs = argsList.toArray();
 
                 if (!isReplaying) {
                     LOGGER.debug("[JWorkflowAdapter] Invoking workflow {} with {} args (hasContext={}, hasEvents={})",
-                            workflowType, ballerinaArgs.length, hasContext, hasEvents);
+                                 workflowType, ballerinaArgs.length, hasContext, hasEvents);
                 }
 
                 Object result;
@@ -1457,19 +1508,19 @@ public final class WorkflowWorkerNative {
                             "execute",
                             new StrandMetadata(true, Collections.emptyMap()),
                             ballerinaArgs
-                    );
+                                                        );
                 }
 
                 if (!isReplaying) {
                     LOGGER.debug("[JWorkflowAdapter] Workflow {} completed with result type: {}",
-                            workflowType, (result != null ? result.getClass().getSimpleName() : "null"));
+                                 workflowType, (result != null ? result.getClass().getSimpleName() : "null"));
                 }
 
                 // Check if workflow returned an error - this should fail the workflow execution
                 if (result instanceof BError err) {
                     if (!isReplaying) {
                         LOGGER.error("[JWorkflowAdapter] Workflow {} returned error: {}", workflowType,
-                                err.getMessage());
+                                     err.getMessage());
                     }
 
                     // Convert the full BError chain into an ApplicationFailure chain
@@ -1505,22 +1556,22 @@ public final class WorkflowWorkerNative {
                     // This is expected during service shutdown - workflow thread is being destroyed
                     // Just log at debug level and re-throw to let Temporal handle cleanup
                     LOGGER.debug("[JWorkflowAdapter] Workflow {} thread destroyed during shutdown (expected)",
-                            workflowType);
+                                 workflowType);
                     throw e;
                 }
 
                 // Wrap unexpected exceptions in ApplicationFailure to avoid workflow task retry loop
                 LOGGER.error("[JWorkflowAdapter] Workflow {} encountered an unexpected error",
-                        workflowType, e);
+                             workflowType, e);
 
                 String errorMsg = String.format("Workflow '%s' encountered an unexpected error: %s",
-                        workflowType, e.getMessage());
+                                                workflowType, e.getMessage());
 
                 io.temporal.failure.ApplicationFailure failure =
                         io.temporal.failure.ApplicationFailure.newFailure(
                                 errorMsg,
                                 "error"
-                        );
+                                                                         );
                 failure.setNonRetryable(true);
                 failure.setStackTrace(new StackTraceElement[0]);
 
@@ -1607,7 +1658,7 @@ public final class WorkflowWorkerNative {
                         io.temporal.failure.ApplicationFailure.newFailure(
                                 errorMsg,
                                 "error"
-                        );
+                                                                         );
                 failure.setNonRetryable(true);
                 failure.setStackTrace(new StackTraceElement[0]);
                 throw failure;
@@ -1619,7 +1670,7 @@ public final class WorkflowWorkerNative {
             Object contextInfo = WorkflowContextNative.createContext(
                     temporalInfo.getWorkflowId(),
                     temporalInfo.getWorkflowType()
-            );
+                                                                    );
 
             // Wrap in HandleValue for Ballerina
             Object nativeContextHandle = ValueCreator.createHandleValue(contextInfo);
@@ -1638,10 +1689,10 @@ public final class WorkflowWorkerNative {
          * Executes the built-in human task child workflow.
          *
          * <p>Waits for a {@code "taskCompletion"} signal or a durable timer (if a timeout is
-         * configured).  On signal, returns the {@code result} payload from the signal data.
-         * On timeout, throws a non-retryable {@link io.temporal.failure.ApplicationFailure} with type
-         * {@link WorkflowWorkerNative#HUMANTASK_TIMEOUT_FAILURE_TYPE} whose message encodes four
-         * pipe-separated fields unpacked by {@code WorkflowContextNative.awaitHumanTask}:
+         * configured).  On signal, returns the {@code result} payload from the signal data. On timeout, throws a
+         * non-retryable {@link io.temporal.failure.ApplicationFailure} with type
+         * {@link WorkflowWorkerNative#HUMANTASK_TIMEOUT_FAILURE_TYPE} whose message encodes four pipe-separated fields
+         * unpacked by {@code WorkflowContextNative.awaitHumanTask}:
          * {@code taskName|taskWorkflowId|timedOutAfter|timedOutAt}.
          *
          * @param args Temporal-encoded input; index 0 is the input map set by awaitHumanTask
@@ -1749,106 +1800,27 @@ public final class WorkflowWorkerNative {
     }
 
     /**
-     * Converts a Ballerina {@link BError} (with optional cause chain) into an
-     * {@link io.temporal.failure.ApplicationFailure} chain suitable for the
-     * Temporal Failure proto.
+     * Dynamic activity implementation that routes activity calls to registered Ballerina functions. Uses Temporal's
+     * DynamicActivity interface for true dynamic routing without predefined method signatures.
      * <p>
-     * Each BError produces an {@code ApplicationFailure} with:
-     * <ul>
-     *   <li>{@code message} – the BError message</li>
-     *   <li>{@code type} – the supplied {@code typeName}</li>
-     *   <li>{@code details} – the BError detail record (omitted when empty)</li>
-     *   <li>{@code cause} – iteratively converted from
-     *       {@link BError#getCause()}</li>
-     * </ul>
-     * Stack traces are suppressed so the Temporal UI stays Ballerina-centric.
-     * <p>
-     * Uses an iterative approach to avoid stack overflow on deeply nested
-     * BError cause chains.
-     *
-     * @param err      the Ballerina error to convert
-     * @param typeName the {@code type} string for the ApplicationFailure
-     */
-    @SuppressWarnings("unchecked")
-    static io.temporal.failure.ApplicationFailure berrorToApplicationFailure(BError err,
-                                                                            String typeName) {
-        // Hard limit to prevent unbounded traversal of cause chains.
-        final int maxDepth = 64;
-
-        // 1. Walk the BError cause chain and collect each node's data.
-        List<BError> chain = new ArrayList<>();
-        BError current = err;
-        while (current != null && chain.size() < maxDepth) {
-            chain.add(current);
-            Throwable cause = current.getCause();
-            current = (cause instanceof BError) ? (BError) cause : null;
-        }
-
-        // 2. Build ApplicationFailure instances bottom-up (innermost cause first).
-        io.temporal.failure.ApplicationFailure inner = null;
-        for (int i = chain.size() - 1; i >= 0; i--) {
-            BError node = chain.get(i);
-
-            // Convert detail record – only include when non-empty so the Temporal
-            // UI does not show a hollow {"payloads":[{}]} entry.
-            BMap<?, ?> detailMap = (BMap<?, ?>) node.getDetails();
-            boolean hasDetails = detailMap != null && !detailMap.isEmpty();
-            Object details = hasDetails ? TypesUtil.convertBallerinaToJavaType(detailMap) : null;
-
-            io.temporal.failure.ApplicationFailure failure;
-            if (inner != null) {
-                failure = hasDetails
-                        ? io.temporal.failure.ApplicationFailure.newFailureWithCause(
-                                node.getMessage(), typeName, inner, details)
-                        : io.temporal.failure.ApplicationFailure.newFailureWithCause(
-                                node.getMessage(), typeName, inner);
-            } else {
-                failure = hasDetails
-                        ? io.temporal.failure.ApplicationFailure.newFailure(
-                                node.getMessage(), typeName, details)
-                        : io.temporal.failure.ApplicationFailure.newFailure(
-                                node.getMessage(), typeName);
-            }
-            failure.setStackTrace(new StackTraceElement[0]);
-            inner = failure;
-        }
-
-        return inner;
-    }
-
-    /**
-     * Convenience overload that uses an empty type string.
-     */
-    static io.temporal.failure.ApplicationFailure berrorToApplicationFailure(BError err) {
-        return berrorToApplicationFailure(err, "");
-    }
-
-    /**
-     * Dynamic activity implementation that routes activity calls to registered Ballerina functions.
-     * Uses Temporal's DynamicActivity interface for true dynamic routing without predefined method
-     * signatures.
-     * <p>
-     * Supports a call configuration map appended as the last argument by {@code callActivity}.
-     * The config map contains a {@code __callConfig__} marker and a {@code retryOnError} flag.
-     * A BError result from the activity function is <b>always</b> converted to an
-     * {@link io.temporal.failure.ApplicationFailure} and thrown so that Temporal marks the
-     * activity as {@code ActivityFailure} in the UI and history.  When {@code retryOnError}
-     * is {@code false} the failure is also marked non-retryable (combined with
-     * {@code maxAttempts=1} set on the {@link io.temporal.activity.ActivityOptions}).
-     * When {@code retryOnError} is {@code true} the failure is retryable and Temporal will
-     * apply the configured retry policy.
-     * When {@code false} (default), the error is serialized and returned as a normal completion value.
+     * Supports a call configuration map appended as the last argument by {@code callActivity}. The config map contains
+     * a {@code __callConfig__} marker and a {@code retryOnError} flag. A BError result from the activity function is
+     * <b>always</b> converted to an {@link io.temporal.failure.ApplicationFailure} and thrown so that Temporal marks
+     * the activity as {@code ActivityFailure} in the UI and history.  When {@code retryOnError} is {@code false} the
+     * failure is also marked non-retryable (combined with {@code maxAttempts=1} set on the
+     * {@link io.temporal.activity.ActivityOptions}). When {@code retryOnError} is {@code true} the failure is retryable
+     * and Temporal will apply the configured retry policy. When {@code false} (default), the error is serialized and
+     * returned as a normal completion value.
      */
     public static class BallerinaActivityAdapter implements DynamicActivity {
-
-        private static final String CALL_CONFIG_MARKER = "__callConfig__";
-        private static final String RETRY_ON_ERROR_KEY = "retryOnError";
 
         // Built-in implicit activity names
         public static final String BUILTIN_RUN = "workflow:run";
         public static final String BUILTIN_SEND_DATA = "workflow:sendData";
         public static final String BUILTIN_GET_RESULT = "workflow:getResult";
         public static final String BUILTIN_GET_INFO = "workflow:getInfo";
+        private static final String CALL_CONFIG_MARKER = "__callConfig__";
+        private static final String RETRY_ON_ERROR_KEY = "retryOnError";
 
         @Override
         @SuppressWarnings("unchecked")
@@ -1889,8 +1861,8 @@ public final class WorkflowWorkerNative {
             if (namedArgs == null) {
                 throw new RuntimeException(
                         "Malformed activity invocation for '" + activityName +
-                        "': the named-argument map (args[0]) is null. " +
-                        "Ensure callActivity passes a valid map<anydata> as the first argument.");
+                                "': the named-argument map (args[0]) is null. " +
+                                "Ensure callActivity passes a valid map<anydata> as the first argument.");
             }
 
             // Extract call configuration from the second argument
@@ -1941,8 +1913,8 @@ public final class WorkflowWorkerNative {
                 }
             }
             int lastIndexToBuild = (typedescParam != null)
-                    ? dataParams.size() - 1
-                    : lastProvidedIndex;
+                                   ? dataParams.size() - 1
+                                   : lastProvidedIndex;
 
             // Build positional Ballerina args up to the last provided param
             List<Object> orderedArgs = new ArrayList<>();
@@ -2065,8 +2037,8 @@ public final class WorkflowWorkerNative {
         /**
          * Built-in implicit activity: gets a workflow execution result.
          * <p>
-         * Args layout: workflowId (String), timeoutSeconds (int).
-         * Returns a Map with workflowId, status, result, errorMessage.
+         * Args layout: workflowId (String), timeoutSeconds (int). Returns a Map with workflowId, status, result,
+         * errorMessage.
          */
         @SuppressWarnings("unchecked")
         private Object executeBuiltInGetResult(EncodedValues args) {
@@ -2081,17 +2053,13 @@ public final class WorkflowWorkerNative {
             // Fetch workflowType via DescribeWorkflowExecution (best-effort; non-fatal).
             String workflowType = "";
             try {
-                io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest describeRequest =
-                        io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest.newBuilder()
-                                .setNamespace(client.getOptions().getNamespace())
-                                .setExecution(io.temporal.api.common.v1.WorkflowExecution.newBuilder()
-                                        .setWorkflowId(workflowId)
-                                        .build())
-                                .build();
-                io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionResponse describeResponse =
-                        client.getWorkflowServiceStubs().blockingStub()
-                                .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                                .describeWorkflowExecution(describeRequest);
+                DescribeWorkflowExecutionRequest describeRequest = DescribeWorkflowExecutionRequest.newBuilder()
+                        .setNamespace(client.getOptions().getNamespace())
+                        .setExecution(WorkflowExecution.newBuilder().setWorkflowId(workflowId).build())
+                        .build();
+                DescribeWorkflowExecutionResponse describeResponse = client.getWorkflowServiceStubs().blockingStub()
+                        .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                        .describeWorkflowExecution(describeRequest);
                 workflowType = describeResponse.getWorkflowExecutionInfo().getType().getName();
             } catch (Exception e) {
                 LOGGER.debug("Failed to retrieve workflowType via DescribeWorkflowExecution: {}", e.getMessage());
@@ -2104,13 +2072,12 @@ public final class WorkflowWorkerNative {
             String errorMessage = null;
 
             try {
-                result = stub.getResult(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS,
-                        Object.class);
+                result = stub.getResult(timeoutSeconds, TimeUnit.SECONDS, Object.class);
                 status = "COMPLETED";
-            } catch (io.temporal.client.WorkflowFailedException e) {
+            } catch (WorkflowFailedException e) {
                 status = "FAILED";
                 errorMessage = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
-            } catch (java.util.concurrent.TimeoutException e) {
+            } catch (TimeoutException e) {
                 status = "FAILED";
                 errorMessage = "Workflow wait timed out: " + e.getMessage();
             } catch (Exception e) {
@@ -2118,7 +2085,7 @@ public final class WorkflowWorkerNative {
                 errorMessage = e.getMessage();
             }
 
-            java.util.Map<String, Object> info = new java.util.HashMap<>();
+            Map<String, Object> info = new HashMap<>();
             info.put("workflowId", workflowId);
             info.put("workflowType", workflowType);
             info.put("status", status);
@@ -2130,33 +2097,30 @@ public final class WorkflowWorkerNative {
         private Object executeBuiltInGetInfo(EncodedValues args) {
             String workflowId = args.get(0, String.class);
 
-            io.temporal.client.WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
                 throw new RuntimeException("Workflow client not initialized");
             }
 
-            io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest request =
-                    io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest.newBuilder()
-                            .setNamespace(client.getOptions().getNamespace())
-                            .setExecution(io.temporal.api.common.v1.WorkflowExecution.newBuilder()
-                                    .setWorkflowId(workflowId)
-                                    .build())
-                            .build();
+            DescribeWorkflowExecutionRequest request = DescribeWorkflowExecutionRequest.newBuilder()
+                    .setNamespace(client.getOptions().getNamespace())
+                    .setExecution(WorkflowExecution.newBuilder().setWorkflowId(workflowId).build())
+                    .build();
 
-            io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionResponse response;
+            DescribeWorkflowExecutionResponse response;
             try {
                 response = client.getWorkflowServiceStubs().blockingStub()
-                        .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                        .describeWorkflowExecution(request);
+                                 .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                                 .describeWorkflowExecution(request);
             } catch (io.grpc.StatusRuntimeException e) {
                 throw new RuntimeException(
                         "gRPC error describing workflow '" + workflowId +
-                        "' in namespace '" + client.getOptions().getNamespace() +
-                        "': [" + e.getStatus().getCode() + "] " + e.getStatus().getDescription(), e);
+                                "' in namespace '" + client.getOptions().getNamespace() +
+                                "': [" + e.getStatus().getCode() + "] " + e.getStatus().getDescription(), e);
             } catch (Exception e) {
                 throw new RuntimeException(
                         "Failed to describe workflow '" + workflowId +
-                        "' in namespace '" + client.getOptions().getNamespace() + "'", e);
+                                "' in namespace '" + client.getOptions().getNamespace() + "'", e);
             }
 
             io.temporal.api.workflow.v1.WorkflowExecutionInfo execInfo =
@@ -2174,7 +2138,7 @@ public final class WorkflowWorkerNative {
                 default -> "UNKNOWN";
             };
 
-            java.util.Map<String, Object> info = new java.util.HashMap<>();
+            Map<String, Object> info = new HashMap<>();
             info.put("workflowId", workflowId);
             info.put("workflowType", workflowType);
             info.put("status", statusStr);

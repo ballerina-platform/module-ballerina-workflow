@@ -105,17 +105,12 @@ public final class WorkflowNative {
      * @return configured ActivityOptions
      */
     private static io.temporal.activity.ActivityOptions buildImplicitActivityOptions(Duration timeout) {
-        io.temporal.common.RetryOptions retryOptions =
-                WorkflowWorkerNative.getDefaultActivityRetryOptions();
+        io.temporal.common.RetryOptions retryOptions = WorkflowWorkerNative.getDefaultActivityRetryOptions();
         if (retryOptions == null) {
-            retryOptions = io.temporal.common.RetryOptions.newBuilder()
-                                                          .setMaximumAttempts(1)
-                                                          .build();
+            retryOptions = io.temporal.common.RetryOptions.newBuilder().setMaximumAttempts(1).build();
         }
-        return io.temporal.activity.ActivityOptions.newBuilder()
-                                                   .setStartToCloseTimeout(timeout)
-                                                   .setRetryOptions(retryOptions)
-                                                   .build();
+        return io.temporal.activity.ActivityOptions.newBuilder().setStartToCloseTimeout(timeout).setRetryOptions(
+                retryOptions).build();
     }
 
     /**
@@ -160,20 +155,17 @@ public final class WorkflowNative {
      * @return the workflow ID as a string, or an error
      */
     @SuppressWarnings("unchecked")
-    public static Object run(Environment env, BFunctionPointer processFunction,
-                             Object input) {
+    public static Object run(Environment env, BFunctionPointer processFunction, Object input) {
         // Extract the process name and apply the user-workflow prefix so it matches
         // the key stored in PROCESS_REGISTRY by registerWorkflow().
-        String processName = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX
-                + processFunction.getType().getName();
+        String processName = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + processFunction.getType().getName();
 
         // Convert input to Java type (handle nil case)
         // In Ballerina Java interop, nil () is passed as null, so a simple null check suffices.
         Object javaInput = null;
         if (input != null) {
             if (input instanceof BMap) {
-                @SuppressWarnings("unchecked")
-                BMap<BString, Object> bMapInput = (BMap<BString, Object>) input;
+                @SuppressWarnings("unchecked") BMap<BString, Object> bMapInput = (BMap<BString, Object>) input;
                 javaInput = TypesUtil.convertBallerinaToJavaType(bMapInput);
             }
             // Other anydata subtypes (int, string, boolean, etc.) are not currently
@@ -195,12 +187,11 @@ public final class WorkflowNative {
 
             WorkflowRuntime.getInstance().getExecutor().execute(() -> {
                 try {
-                    String workflowId = WorkflowRuntime.getInstance()
-                                                       .createInstance(processName, finalInput);
+                    String workflowId = WorkflowRuntime.getInstance().createInstance(processName, finalInput);
                     balFuture.complete(StringUtils.fromString(workflowId));
                 } catch (Exception e) {
-                    balFuture.complete(ErrorCreator.createError(
-                            StringUtils.fromString(ERR_START_PROCESS + e.getMessage())));
+                    balFuture.complete(
+                            ErrorCreator.createError(StringUtils.fromString(ERR_START_PROCESS + e.getMessage())));
                 }
             });
 
@@ -218,13 +209,10 @@ public final class WorkflowNative {
      */
     private static Object runAsImplicitActivity(String processName, Object javaInput) {
         try {
-            io.temporal.workflow.ActivityStub stub =
-                    Workflow.newUntypedActivityStub(
-                            buildImplicitActivityOptions(DEFAULT_IMPLICIT_ACTIVITY_TIMEOUT));
-            String workflowId = stub.execute(
-                    WorkflowWorkerNative.BallerinaActivityAdapter.BUILTIN_RUN,
-                    String.class,
-                    processName, javaInput);
+            io.temporal.workflow.ActivityStub stub = Workflow.newUntypedActivityStub(
+                    buildImplicitActivityOptions(DEFAULT_IMPLICIT_ACTIVITY_TIMEOUT));
+            String workflowId = stub.execute(WorkflowWorkerNative.BallerinaActivityAdapter.BUILTIN_RUN, String.class,
+                                             processName, javaInput);
             return StringUtils.fromString(workflowId);
         } catch (Exception e) {
             return handleImplicitActivityError(e, ERR_START_PROCESS);
@@ -250,13 +238,12 @@ public final class WorkflowNative {
      * @param data             the data to send
      * @return null on success, or an error
      */
-    public static Object sendData(Environment env, BFunctionPointer workflowFunction,
-                                  BString workflowId, BString dataName, Object data) {
+    public static Object sendData(Environment env, BFunctionPointer workflowFunction, BString workflowId,
+                                  BString dataName, Object data) {
         // Convert data to Java type
         Object javaData;
         if (data instanceof BMap) {
-            @SuppressWarnings("unchecked")
-            BMap<BString, Object> bMapData = (BMap<BString, Object>) data;
+            @SuppressWarnings("unchecked") BMap<BString, Object> bMapData = (BMap<BString, Object>) data;
             javaData = TypesUtil.convertBallerinaToJavaType(bMapData);
         } else {
             javaData = data;
@@ -276,12 +263,11 @@ public final class WorkflowNative {
 
             WorkflowRuntime.getInstance().getExecutor().execute(() -> {
                 try {
-                    WorkflowRuntime.getInstance().sendSignalToWorkflow(
-                            workflowIdStr, dataNameStr, javaData);
+                    WorkflowRuntime.getInstance().sendSignalToWorkflow(workflowIdStr, dataNameStr, javaData);
                     balFuture.complete(null);
                 } catch (Exception e) {
-                    balFuture.complete(ErrorCreator.createError(
-                            StringUtils.fromString(ERR_SEND_DATA + e.getMessage())));
+                    balFuture.complete(
+                            ErrorCreator.createError(StringUtils.fromString(ERR_SEND_DATA + e.getMessage())));
                 }
             });
 
@@ -292,16 +278,12 @@ public final class WorkflowNative {
     /**
      * Routes a {@code workflow:sendData} call through a built-in implicit activity.
      */
-    private static Object sendDataAsImplicitActivity(String workflowId, String dataName,
-                                                     Object javaData) {
+    private static Object sendDataAsImplicitActivity(String workflowId, String dataName, Object javaData) {
         try {
-            io.temporal.workflow.ActivityStub stub =
-                    Workflow.newUntypedActivityStub(
-                            buildImplicitActivityOptions(DEFAULT_IMPLICIT_ACTIVITY_TIMEOUT));
-            stub.execute(
-                    WorkflowWorkerNative.BallerinaActivityAdapter.BUILTIN_SEND_DATA,
-                    Void.class,
-                    workflowId, dataName, javaData);
+            io.temporal.workflow.ActivityStub stub = Workflow.newUntypedActivityStub(
+                    buildImplicitActivityOptions(DEFAULT_IMPLICIT_ACTIVITY_TIMEOUT));
+            stub.execute(WorkflowWorkerNative.BallerinaActivityAdapter.BUILTIN_SEND_DATA, Void.class, workflowId,
+                         dataName, javaData);
             return null;
         } catch (Exception e) {
             return handleImplicitActivityError(e, ERR_SEND_DATA);
@@ -339,8 +321,8 @@ public final class WorkflowNative {
             Map<String, List<String>> eventRegistry = WorkflowWorkerNative.getEventRegistry();
 
             // Get the ProcessRegistration record type from the workflow module
-            RecordType processRegType = (RecordType) ValueCreator.createRecordValue(
-                    ModuleUtils.getModule(), "ProcessRegistration").getType();
+            RecordType processRegType = (RecordType) ValueCreator.createRecordValue(ModuleUtils.getModule(),
+                                                                                    "ProcessRegistration").getType();
 
             // Create a typed map for map<ProcessRegistration>
             MapType mapType = TypeCreator.createMapType(processRegType);
@@ -350,13 +332,13 @@ public final class WorkflowNative {
                 String processName = entry.getKey(); // internal prefixed name, e.g. "workflow-test-process"
 
                 // Strip the "workflow-" prefix for user-facing display name
-                String displayName = processName.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX)
-                                     ? processName.substring(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length())
-                                     : processName;
+                String displayName = processName.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX) ?
+                                     processName.substring(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length()) :
+                                     processName;
 
                 // Create a ProcessRegistration record
-                BMap<BString, Object> processRecord = ValueCreator.createRecordValue(
-                        ModuleUtils.getModule(), "ProcessRegistration");
+                BMap<BString, Object> processRecord = ValueCreator.createRecordValue(ModuleUtils.getModule(),
+                                                                                     "ProcessRegistration");
                 processRecord.put(StringUtils.fromString("name"), StringUtils.fromString(displayName));
 
                 // Find activities for this process (activities are registered as "processName.activityName")
@@ -369,17 +351,14 @@ public final class WorkflowNative {
                     }
                 }
 
-                BString[] activityArray = processActivities.stream()
-                                                           .map(StringUtils::fromString)
-                                                           .toArray(BString[]::new);
+                BString[] activityArray = processActivities.stream().map(StringUtils::fromString).toArray(
+                        BString[]::new);
                 BArray activitiesBalArray = ValueCreator.createArrayValue(activityArray);
                 processRecord.put(StringUtils.fromString("activities"), activitiesBalArray);
 
                 // Get events for this process from the event registry
                 List<String> processEvents = eventRegistry.getOrDefault(processName, new ArrayList<>());
-                BString[] eventArray = processEvents.stream()
-                                                    .map(StringUtils::fromString)
-                                                    .toArray(BString[]::new);
+                BString[] eventArray = processEvents.stream().map(StringUtils::fromString).toArray(BString[]::new);
                 BArray eventsBalArray = ValueCreator.createArrayValue(eventArray);
                 processRecord.put(StringUtils.fromString("events"), eventsBalArray);
 
@@ -389,8 +368,7 @@ public final class WorkflowNative {
             return resultMap;
 
         } catch (Exception e) {
-            return ErrorCreator.createError(
-                    StringUtils.fromString(ERR_GET_REGISTERED + e.getMessage()));
+            return ErrorCreator.createError(StringUtils.fromString(ERR_GET_REGISTERED + e.getMessage()));
         }
     }
 
@@ -414,8 +392,7 @@ public final class WorkflowNative {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
-                return ErrorCreator.createError(
-                        StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
             }
 
             String wfId = workflowId.getValue();
@@ -433,8 +410,7 @@ public final class WorkflowNative {
             }
 
         } catch (Exception e) {
-            return ErrorCreator.createError(
-                    StringUtils.fromString(ERR_GET_RESULT + e.getMessage()));
+            return ErrorCreator.createError(StringUtils.fromString(ERR_GET_RESULT + e.getMessage()));
         }
     }
 
@@ -446,20 +422,17 @@ public final class WorkflowNative {
     private static Object getWorkflowResultAsImplicitActivity(String workflowId, int timeoutSeconds) {
         try {
             Duration activityTimeout = Duration.ofSeconds(timeoutSeconds + 30);
-            io.temporal.workflow.ActivityStub stub =
-                    Workflow.newUntypedActivityStub(buildImplicitActivityOptions(activityTimeout));
-            Map<String, Object> info = stub.execute(
-                    WorkflowWorkerNative.BallerinaActivityAdapter.BUILTIN_GET_RESULT,
-                    Map.class,
-                    workflowId, timeoutSeconds);
+            io.temporal.workflow.ActivityStub stub = Workflow.newUntypedActivityStub(
+                    buildImplicitActivityOptions(activityTimeout));
+            Map<String, Object> info = stub.execute(WorkflowWorkerNative.BallerinaActivityAdapter.BUILTIN_GET_RESULT,
+                                                    Map.class, workflowId, timeoutSeconds);
 
             String status = (String) info.get("status");
             Object result = info.get("result");
             String errorMessage = (String) info.get("errorMessage");
 
             if ("FAILED".equals(status) || "CANCELED".equals(status) || "TIMED_OUT".equals(status)) {
-                return ErrorCreator.createError(
-                        StringUtils.fromString(ERR_GET_RESULT + errorMessage));
+                return ErrorCreator.createError(StringUtils.fromString(ERR_GET_RESULT + errorMessage));
             }
 
             return result != null ? TypesUtil.convertJavaToBallerinaType(result) : null;
@@ -490,23 +463,22 @@ public final class WorkflowNative {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
-                return ErrorCreator.createError(
-                        StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
             }
 
             String wfId = workflowId.getValue();
 
             // Describe the workflow execution to get its status
-            DescribeWorkflowExecutionRequest request = DescribeWorkflowExecutionRequest.newBuilder()
-                    .setNamespace(client.getOptions().getNamespace())
-                    .setExecution(WorkflowExecution.newBuilder().setWorkflowId(wfId).build())
-                    .build();
+            DescribeWorkflowExecutionRequest request = DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
+                    client.getOptions().getNamespace()).setExecution(
+                    WorkflowExecution.newBuilder().setWorkflowId(wfId).build()).build();
 
-            DescribeWorkflowExecutionResponse response = client.getWorkflowServiceStubs()
-                                                               .blockingStub()
-                                                               .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS,
-                                                                                  TimeUnit.SECONDS)
-                                                               .describeWorkflowExecution(request);
+            DescribeWorkflowExecutionResponse response =
+                    client
+                            .getWorkflowServiceStubs()
+                            .blockingStub()
+                            .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                            .describeWorkflowExecution(request);
 
             WorkflowExecutionInfo execInfo = response.getWorkflowExecutionInfo();
             String workflowType = execInfo.getType().getName();
@@ -515,8 +487,7 @@ public final class WorkflowNative {
             return buildWorkflowExecutionInfo(wfId, workflowType, status, null, null, client);
 
         } catch (Exception e) {
-            return ErrorCreator.createError(
-                    StringUtils.fromString(ERR_GET_INFO + e.getMessage()));
+            return ErrorCreator.createError(StringUtils.fromString(ERR_GET_INFO + e.getMessage()));
         }
     }
 
@@ -528,12 +499,10 @@ public final class WorkflowNative {
     @SuppressWarnings("unchecked")
     private static Object getWorkflowInfoAsImplicitActivity(String workflowId) {
         try {
-            io.temporal.workflow.ActivityStub stub =
-                    Workflow.newUntypedActivityStub(buildImplicitActivityOptions(DEFAULT_IMPLICIT_ACTIVITY_TIMEOUT));
-            Map<String, Object> info = stub.execute(
-                    WorkflowWorkerNative.BallerinaActivityAdapter.BUILTIN_GET_INFO,
-                    Map.class,
-                    workflowId);
+            io.temporal.workflow.ActivityStub stub = Workflow.newUntypedActivityStub(
+                    buildImplicitActivityOptions(DEFAULT_IMPLICIT_ACTIVITY_TIMEOUT));
+            Map<String, Object> info = stub.execute(WorkflowWorkerNative.BallerinaActivityAdapter.BUILTIN_GET_INFO,
+                                                    Map.class, workflowId);
 
             String workflowType = (String) info.getOrDefault("workflowType", "");
             String status = (String) info.getOrDefault("status", "UNKNOWN");
@@ -565,21 +534,16 @@ public final class WorkflowNative {
      * is provided and the status is terminal (COMPLETED or FAILED), activity invocations are fetched from the
      * workflow's event history.
      */
-    public static BMap<BString, Object> buildWorkflowExecutionInfo(
-            String workflowId,
-            String workflowType,
-            String status,
-            Object result,
-            String errorMessage,
-            WorkflowClient client) {
+    public static BMap<BString, Object> buildWorkflowExecutionInfo(String workflowId, String workflowType,
+                                                                   String status, Object result, String errorMessage,
+                                                                   WorkflowClient client) {
 
-        BMap<BString, Object> record = ValueCreator.createRecordValue(
-                ModuleUtils.getManagementModule(), "WorkflowExecutionInfo");
+        BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
+                                                                      "WorkflowExecutionInfo");
 
         record.put(StringUtils.fromString("workflowId"), StringUtils.fromString(workflowId));
-        String displayType = workflowType.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX)
-                             ? workflowType.substring(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length())
-                             : workflowType;
+        String displayType = workflowType.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX) ?
+                             workflowType.substring(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length()) : workflowType;
         record.put(StringUtils.fromString("workflowType"), StringUtils.fromString(displayType));
         record.put(StringUtils.fromString("status"), StringUtils.fromString(status));
 
@@ -611,10 +575,9 @@ public final class WorkflowNative {
      * ActivityInvocation type.
      */
     public static BArray createEmptyActivityInvocationsArray() {
-        RecordType invocationType = (RecordType) ValueCreator.createRecordValue(
-                ModuleUtils.getManagementModule(), "ActivityInvocation").getType();
-        return ValueCreator.createArrayValue(
-                TypeCreator.createArrayType(invocationType));
+        RecordType invocationType = (RecordType) ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
+                                                                                "ActivityInvocation").getType();
+        return ValueCreator.createArrayValue(TypeCreator.createArrayType(invocationType));
     }
 
     /**
@@ -633,10 +596,9 @@ public final class WorkflowNative {
      * @return a Ballerina array of {@code ActivityInvocation} records
      */
     private static BArray fetchActivityInvocations(WorkflowClient client, String workflowId) {
-        RecordType invocationType = (RecordType) ValueCreator.createRecordValue(
-                ModuleUtils.getManagementModule(), "ActivityInvocation").getType();
-        BArray invocations = ValueCreator.createArrayValue(
-                TypeCreator.createArrayType(invocationType));
+        RecordType invocationType = (RecordType) ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
+                                                                                "ActivityInvocation").getType();
+        BArray invocations = ValueCreator.createArrayValue(TypeCreator.createArrayType(invocationType));
 
         try {
             // Map: scheduledEventId → activity name (from SCHEDULED events)
@@ -647,68 +609,59 @@ public final class WorkflowNative {
             com.google.protobuf.ByteString nextPageToken = com.google.protobuf.ByteString.EMPTY;
 
             do {
-                GetWorkflowExecutionHistoryRequest.Builder reqBuilder =
-                        GetWorkflowExecutionHistoryRequest.newBuilder()
-                                                          .setNamespace(client.getOptions().getNamespace())
-                                                          .setExecution(io.temporal.api.common.v1.WorkflowExecution
-                                                                                .newBuilder()
-                                                                                .setWorkflowId(workflowId)
-                                                                                .build());
+                GetWorkflowExecutionHistoryRequest.Builder reqBuilder = GetWorkflowExecutionHistoryRequest
+                        .newBuilder()
+                        .setNamespace(client.getOptions().getNamespace())
+                        .setExecution(io.temporal.api.common.v1.WorkflowExecution
+                                              .newBuilder()
+                                              .setWorkflowId(workflowId)
+                                              .build());
                 if (!nextPageToken.isEmpty()) {
                     reqBuilder.setNextPageToken(nextPageToken);
                 }
 
-                GetWorkflowExecutionHistoryResponse response = client.getWorkflowServiceStubs()
-                                                                     .blockingStub()
-                                                                     .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS,
-                                                                                        TimeUnit.SECONDS)
-                                                                     .getWorkflowExecutionHistory(reqBuilder.build());
+                GetWorkflowExecutionHistoryResponse response =
+                        client
+                                .getWorkflowServiceStubs()
+                                .blockingStub()
+                                .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                                .getWorkflowExecutionHistory(reqBuilder.build());
 
                 for (HistoryEvent event : response.getHistory().getEventsList()) {
                     EventType eventType = event.getEventType();
 
                     if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED) {
-                        String activityName = event.getActivityTaskScheduledEventAttributes()
-                                                   .getActivityType().getName();
+                        String activityName =
+                                event.getActivityTaskScheduledEventAttributes().getActivityType().getName();
                         scheduledActivities.put(event.getEventId(), activityName);
                     } else if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_STARTED) {
-                        long scheduledId = event.getActivityTaskStartedEventAttributes()
-                                                .getScheduledEventId();
+                        long scheduledId = event.getActivityTaskStartedEventAttributes().getScheduledEventId();
                         int attempt = event.getActivityTaskStartedEventAttributes().getAttempt();
                         scheduledAttempts.put(scheduledId, attempt);
                     } else if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_COMPLETED) {
-                        long scheduledId = event.getActivityTaskCompletedEventAttributes()
-                                                .getScheduledEventId();
+                        long scheduledId = event.getActivityTaskCompletedEventAttributes().getScheduledEventId();
                         String name = scheduledActivities.getOrDefault(scheduledId, "unknown");
                         int attempt = scheduledAttempts.getOrDefault(scheduledId, 1);
-                        invocations.append(createActivityInvocation(
-                                name, "COMPLETED", null, attempt));
+                        invocations.append(createActivityInvocation(name, "COMPLETED", null, attempt));
                     } else if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_FAILED) {
-                        long scheduledId = event.getActivityTaskFailedEventAttributes()
-                                                .getScheduledEventId();
+                        long scheduledId = event.getActivityTaskFailedEventAttributes().getScheduledEventId();
                         String name = scheduledActivities.getOrDefault(scheduledId, "unknown");
                         int attempt = scheduledAttempts.getOrDefault(scheduledId, 1);
                         String failMsg = "";
                         if (event.getActivityTaskFailedEventAttributes().hasFailure()) {
-                            failMsg = event.getActivityTaskFailedEventAttributes()
-                                           .getFailure().getMessage();
+                            failMsg = event.getActivityTaskFailedEventAttributes().getFailure().getMessage();
                         }
-                        invocations.append(createActivityInvocation(
-                                name, "FAILED", failMsg, attempt));
+                        invocations.append(createActivityInvocation(name, "FAILED", failMsg, attempt));
                     } else if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT) {
-                        long scheduledId = event.getActivityTaskTimedOutEventAttributes()
-                                                .getScheduledEventId();
+                        long scheduledId = event.getActivityTaskTimedOutEventAttributes().getScheduledEventId();
                         String name = scheduledActivities.getOrDefault(scheduledId, "unknown");
                         int attempt = scheduledAttempts.getOrDefault(scheduledId, 1);
-                        invocations.append(createActivityInvocation(
-                                name, "TIMED_OUT", "Activity timed out", attempt));
+                        invocations.append(createActivityInvocation(name, "TIMED_OUT", "Activity timed out", attempt));
                     } else if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_CANCELED) {
-                        long scheduledId = event.getActivityTaskCanceledEventAttributes()
-                                                .getScheduledEventId();
+                        long scheduledId = event.getActivityTaskCanceledEventAttributes().getScheduledEventId();
                         String name = scheduledActivities.getOrDefault(scheduledId, "unknown");
                         int attempt = scheduledAttempts.getOrDefault(scheduledId, 1);
-                        invocations.append(createActivityInvocation(
-                                name, "CANCELED", null, attempt));
+                        invocations.append(createActivityInvocation(name, "CANCELED", null, attempt));
                     }
                 }
 
@@ -716,8 +669,7 @@ public final class WorkflowNative {
             } while (!nextPageToken.isEmpty());
 
         } catch (Exception e) {
-            LOGGER.debug("Failed to fetch activity history for workflow '{}': {}",
-                         workflowId, e.getMessage());
+            LOGGER.debug("Failed to fetch activity history for workflow '{}': {}", workflowId, e.getMessage());
         }
 
         return invocations;
@@ -726,10 +678,10 @@ public final class WorkflowNative {
     /**
      * Creates a single {@code ActivityInvocation} Ballerina record using management module types.
      */
-    private static BMap<BString, Object> createActivityInvocation(
-            String activityName, String status, String errorMessage, int attempt) {
-        BMap<BString, Object> record = ValueCreator.createRecordValue(
-                ModuleUtils.getManagementModule(), "ActivityInvocation");
+    private static BMap<BString, Object> createActivityInvocation(String activityName, String status,
+                                                                  String errorMessage, int attempt) {
+        BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
+                                                                      "ActivityInvocation");
         record.put(StringUtils.fromString("activityName"), StringUtils.fromString(activityName));
         record.put(StringUtils.fromString("input"), ValueCreator.createArrayValue(new BString[0]));
         record.put(StringUtils.fromString("output"), null);
@@ -769,20 +721,17 @@ public final class WorkflowNative {
      * @param result         the value to return to the waiting {@code awaitHumanTask} call
      * @return {@code null} on success, or a Ballerina error
      */
-    public static Object completeHumanTask(BString taskWorkflowId, Object result,
-                                           Object callerRoles, Object userId) {
+    public static Object completeHumanTask(BString taskWorkflowId, Object result, Object callerRoles, Object userId) {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
-                return ErrorCreator.createError(
-                        StringUtils.fromString("Workflow client not initialized"));
+                return ErrorCreator.createError(StringUtils.fromString("Workflow client not initialized"));
             }
 
             // Always verify the target is a HUMAN_TASK workflow; also enforce role
             // intersection when callerRoles is provided.
             BArray callerRolesArray = (callerRoles instanceof BArray ba) ? ba : null;
-            Object validationError = validateHumanTaskAndRoles(
-                    client, taskWorkflowId.getValue(), callerRolesArray);
+            Object validationError = validateHumanTaskAndRoles(client, taskWorkflowId.getValue(), callerRolesArray);
             if (validationError != null) {
                 return validationError;
             }
@@ -794,17 +743,16 @@ public final class WorkflowNative {
             payload.put("completedBy", userId instanceof BString bs ? bs.getValue() : "unknown");
             payload.put("completedAt", java.time.Instant.now().toString());
 
-            boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(
-                    taskWorkflowId.getValue(), "taskCompletion", payload);
+            boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(taskWorkflowId.getValue(),
+                                                                                   "taskCompletion", payload);
             if (!delivered) {
                 return ErrorCreator.createError(StringUtils.fromString(
-                        "Failed to complete human task: task '" + taskWorkflowId.getValue()
-                                + "' completed or was no longer running when signal was delivered"));
+                        "Failed to complete human task: task '" + taskWorkflowId.getValue() +
+                                "' completed or was no longer running when signal was delivered"));
             }
             return null;
         } catch (Exception e) {
-            return ErrorCreator.createError(
-                    StringUtils.fromString("Failed to complete human task: " + e.getMessage()));
+            return ErrorCreator.createError(StringUtils.fromString("Failed to complete human task: " + e.getMessage()));
         }
     }
 
@@ -826,16 +774,12 @@ public final class WorkflowNative {
     private static Object validateHumanTaskAndRoles(WorkflowClient client, String taskWorkflowId,
                                                     BArray callerRolesArray) {
         try {
-            DescribeWorkflowExecutionRequest req = DescribeWorkflowExecutionRequest.newBuilder()
-                    .setNamespace(client.getOptions().getNamespace())
-                    .setExecution(WorkflowExecution.newBuilder().setWorkflowId(taskWorkflowId).build())
-                    .build();
+            DescribeWorkflowExecutionRequest req = DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
+                    client.getOptions().getNamespace()).setExecution(
+                    WorkflowExecution.newBuilder().setWorkflowId(taskWorkflowId).build()).build();
 
-            DescribeWorkflowExecutionResponse resp = client.getWorkflowServiceStubs()
-                                                           .blockingStub()
-                                                           .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS,
-                                                                              TimeUnit.SECONDS)
-                                                           .describeWorkflowExecution(req);
+            DescribeWorkflowExecutionResponse resp = client.getWorkflowServiceStubs().blockingStub().withDeadlineAfter(
+                    GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS).describeWorkflowExecution(req);
 
             WorkflowExecutionInfo execInfo = resp.getWorkflowExecutionInfo();
 
@@ -843,12 +787,11 @@ public final class WorkflowNative {
             WorkflowExecutionStatus execStatus = execInfo.getStatus();
             if (execStatus != WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING) {
                 return ErrorCreator.createError(StringUtils.fromString(
-                        "Human task '" + taskWorkflowId + "' is not running (status="
-                                + convertStatus(execStatus) + ")"));
+                        "Human task '" + taskWorkflowId + "' is not running (status=" + convertStatus(execStatus) +
+                                ")"));
             }
 
-            Map<String, io.temporal.api.common.v1.Payload> memoFields =
-                    execInfo.getMemo().getFieldsMap();
+            Map<String, io.temporal.api.common.v1.Payload> memoFields = execInfo.getMemo().getFieldsMap();
             io.temporal.common.converter.DataConverter dc = client.getOptions().getDataConverter();
 
             // 1. workflowKind check — always enforced
@@ -859,14 +802,12 @@ public final class WorkflowNative {
                     workflowKind = dc.fromPayload(kindPl, String.class, String.class);
                 }
             } catch (Exception e) {
-                LOGGER.debug("Could not decode workflowKind from memo for '{}': {}",
-                             taskWorkflowId, e.getMessage());
+                LOGGER.debug("Could not decode workflowKind from memo for '{}': {}", taskWorkflowId, e.getMessage());
             }
             if (!"HUMAN_TASK".equals(workflowKind)) {
                 return ErrorCreator.createError(StringUtils.fromString(
-                        "Invalid task: '" + taskWorkflowId
-                                + "' is not a human task workflow (workflowKind="
-                                + workflowKind + ")"));
+                        "Invalid task: '" + taskWorkflowId + "' is not a human task workflow (workflowKind=" +
+                                workflowKind + ")"));
             }
 
             // 2. Role intersection — only when callerRoles was supplied
@@ -898,11 +839,11 @@ public final class WorkflowNative {
             }
 
             return ErrorCreator.createError(StringUtils.fromString(
-                    "Unauthorized: caller does not have a required role to complete task '"
-                            + taskWorkflowId + "'. Required one of: " + allowedRoles));
+                    "Unauthorized: caller does not have a required role to complete task '" + taskWorkflowId +
+                            "'. Required one of: " + allowedRoles));
         } catch (Exception e) {
-            return ErrorCreator.createError(StringUtils.fromString(
-                    "Failed to validate task '" + taskWorkflowId + "': " + e.getMessage()));
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to validate task '" + taskWorkflowId + "': " + e.getMessage()));
         }
     }
 }

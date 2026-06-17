@@ -85,9 +85,8 @@ public final class TypesUtil {
 
         // Already a Ballerina type - return as-is to avoid double-conversion.
         // BMap implements java.util.Map, so we must guard against re-processing it.
-        if (javaValue instanceof BString || javaValue instanceof BArray
-                || javaValue instanceof BMap || javaValue instanceof BError
-                || javaValue instanceof BDecimal) {
+        if (javaValue instanceof BString || javaValue instanceof BArray || javaValue instanceof BMap ||
+                javaValue instanceof BError || javaValue instanceof BDecimal) {
             return javaValue;
         }
 
@@ -99,9 +98,8 @@ public final class TypesUtil {
                 return ErrorCreator.createError(StringUtils.fromString(message));
             }
             // XML round-trip marker: reconstruct a BXml from its string form.
-            if (map.size() == 2
-                    && Boolean.TRUE.equals(map.get(XML_WRAPPER_MARKER))
-                    && map.get(XML_MARKER) instanceof String xmlStr) {
+            if (map.size() == 2 && Boolean.TRUE.equals(map.get(XML_WRAPPER_MARKER)) && map.get(
+                    XML_MARKER) instanceof String xmlStr) {
                 try {
                     return XmlUtils.parse(xmlStr);
                 } catch (RuntimeException ignored) {
@@ -206,8 +204,7 @@ public final class TypesUtil {
         BMap<BString, Object> bMap = ValueCreator.createMapValue(
                 TypeCreator.createMapType(PredefinedTypes.TYPE_ANYDATA));
         for (Map.Entry<String, Object> entry : map.entrySet()) {
-            bMap.put(StringUtils.fromString(entry.getKey()),
-                    convertJavaToBallerinaType(entry.getValue()));
+            bMap.put(StringUtils.fromString(entry.getKey()), convertJavaToBallerinaType(entry.getValue()));
         }
         return bMap;
     }
@@ -258,10 +255,10 @@ public final class TypesUtil {
     /**
      * Clones a Ballerina value with a target type.
      * <p>
-     * This is used for dependent typing support - converting the activity result
-     * to the expected type specified by the typedesc parameter.
+     * This is used for dependent typing support - converting the activity result to the expected type specified by the
+     * typedesc parameter.
      *
-     * @param value the value to clone/convert
+     * @param value      the value to clone/convert
      * @param targetType the target type to convert to
      * @return the value converted to the target type, or an error if conversion fails
      */
@@ -269,12 +266,12 @@ public final class TypesUtil {
         if (value == null) {
             return null;
         }
-        
+
         // If value is already an error, return it as-is
         if (value instanceof BError) {
             return value;
         }
-        
+
         try {
             // Use ValueUtils.convert to convert the value to the target type
             // This is the proper way to do cloneWithType in native code
@@ -283,8 +280,7 @@ public final class TypesUtil {
             // If conversion fails, return the error
             return e;
         } catch (Exception e) {
-            return ErrorCreator.createError(
-                    StringUtils.fromString("Type conversion failed: " + e.getMessage()));
+            return ErrorCreator.createError(StringUtils.fromString("Type conversion failed: " + e.getMessage()));
         }
     }
 
@@ -302,8 +298,8 @@ public final class TypesUtil {
     /**
      * Builds a JSON Schema object for a list of function parameters.
      *
-     * @param parameters function parameters
-     * @param startIndex first parameter index to include
+     * @param parameters   function parameters
+     * @param startIndex   first parameter index to include
      * @param endExclusive exclusive upper bound
      * @return JSON schema string for an object with parameter-named fields
      */
@@ -396,7 +392,7 @@ public final class TypesUtil {
             if (!recordType.isSealed()) {
                 Type restType = recordType.getRestFieldType();
                 schema.put("additionalProperties",
-                        restType != null ? toJsonSchemaObject(restType, depth + 1) : Boolean.TRUE);
+                           restType != null ? toJsonSchemaObject(restType, depth + 1) : Boolean.TRUE);
             }
             return schema;
         }
@@ -421,8 +417,7 @@ public final class TypesUtil {
             if (nonNullMembers.size() == 1) {
                 Object base = toJsonSchemaObject(nonNullMembers.get(0), depth + 1);
                 if (hasNull && base instanceof Map<?, ?> baseMapRaw) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> baseMap = (Map<String, Object>) baseMapRaw;
+                    @SuppressWarnings("unchecked") Map<String, Object> baseMap = (Map<String, Object>) baseMapRaw;
                     Object typeVal = baseMap.get("type");
                     if (typeVal instanceof String typeStr) {
                         List<Object> unionTypes = new ArrayList<>();

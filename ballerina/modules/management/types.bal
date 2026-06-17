@@ -339,7 +339,7 @@ public type GraphEdge record {|
 # + maxPageSize - Maximum allowed page size for list operations
 # + defaultPageSize - Default page size when the caller does not specify one
 public type ManagementServiceConfig record {|
-    int port = 9090;
+    int port = 8234;
     string basePath = "/workflow-api";
     CorsConfig? cors = ();
     int maxPageSize = 100;

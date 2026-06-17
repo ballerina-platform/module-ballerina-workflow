@@ -2,8 +2,8 @@
 [ballerina.workflow]
 mode = "LOCAL"
 
-# Management API — exposed at http://localhost:7235/workflow/
+# Management API — exposed at http://localhost:8234/workflow/
 [ballerina.workflow.management]
 enableManagementApi = true
-port              = 7235
+port              = 8234
 enableBasicAuth   = false

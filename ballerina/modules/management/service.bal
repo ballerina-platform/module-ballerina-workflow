@@ -41,8 +41,8 @@ import ballerina/time;
 configurable boolean enableManagementApi = false;
 
 # TCP port the management service listens on.
-# Default is 7235 (Temporal's default port 7233 + 2).
-public configurable int port = 7235;
+# Default is 8234.
+public configurable int port = 8234;
 
 # Maximum number of items returned per page in list operations.
 configurable int maxPageSize = 100;

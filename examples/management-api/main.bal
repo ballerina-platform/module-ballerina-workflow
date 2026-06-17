@@ -30,7 +30,7 @@
 //
 // Two HTTP services start together:
 //   Application API   — http://localhost:8080/api/   (start + query requests)
-//   Management API    — http://localhost:7235/workflow/ (tasks, retry, dashboards)
+//   Management API    — http://localhost:8234/workflow/ (tasks, retry, dashboards)
 //
 // Driving the workflow end-to-end:
 //
@@ -41,18 +41,18 @@
 //             "alice@co.com","notifyEmail":"bad@example.com"}'
 //
 //   # 2. List pending approvals
-//   curl -s 'http://localhost:7235/workflow/human-tasks?status=PENDING'
+//   curl -s 'http://localhost:8234/workflow/human-tasks?status=PENDING'
 //
 //   # 3. Approve the request (replace TASK_ID with the taskId from step 2)
-//   curl -s -X POST http://localhost:7235/workflow/human-tasks/TASK_ID/complete \
+//   curl -s -X POST http://localhost:8234/workflow/human-tasks/TASK_ID/complete \
 //        -H 'Content-Type: application/json' \
 //        -d '{"result":{"approved":true,"reason":"Approved for Q2 budget"}}'
 //
 //   # 4. List pending retry tasks (email failed)
-//   curl -s 'http://localhost:7235/workflow/retry-tasks?status=PENDING'
+//   curl -s 'http://localhost:8234/workflow/retry-tasks?status=PENDING'
 //
 //   # 5. Retry with corrected email (replace RETRY_ID)
-//   curl -s -X POST http://localhost:7235/workflow/retry-tasks/RETRY_ID/retry-with-input \
+//   curl -s -X POST http://localhost:8234/workflow/retry-tasks/RETRY_ID/retry-with-input \
 //        -H 'Content-Type: application/json' \
 //        -d '{"input":{"requestId":"REQ-001","toEmail":"procurement@co.com",
 //             "item":"laptop","amount":1500}}'
@@ -217,7 +217,7 @@ function processProcurementRequest(workflow:Context ctx, ProcurementRequest inpu
 // ── Application HTTP Service (port 8080) ──────────────────────────────────────
 // Exposes only workflow start and result retrieval.
 // All human-task and retry-task management goes through the Management API
-// at http://localhost:7235/workflow/
+// at http://localhost:8234/workflow/
 
 service /api on new http:Listener(8080) {
 

@@ -139,7 +139,7 @@ type WorkflowResponse record {
 @test:Config {}
 function testLowValueAutoApproved() returns error? {
     http:Client app  = check new ("http://localhost:8080/api");
-    http:Client mgmt = check new ("http://localhost:7235/workflow");
+    http:Client mgmt = check new ("http://localhost:8234/workflow");
 
     record {|string workflowId;|} started = check app->post("/requests", {
         requestId:      "REQ-LOW-001",
@@ -177,7 +177,7 @@ function testLowValueAutoApproved() returns error? {
 @test:Config {}
 function testHighValueApprovedWithEmailRetry() returns error? {
     http:Client app  = check new ("http://localhost:8080/api");
-    http:Client mgmt = check new ("http://localhost:7235/workflow");
+    http:Client mgmt = check new ("http://localhost:8234/workflow");
 
     // ── Start the workflow ────────────────────────────────────────────────────
     record {|string workflowId;|} started = check app->post("/requests", {
@@ -242,7 +242,7 @@ function testHighValueApprovedWithEmailRetry() returns error? {
 @test:Config {}
 function testHighValueRejected() returns error? {
     http:Client app  = check new ("http://localhost:8080/api");
-    http:Client mgmt = check new ("http://localhost:7235/workflow");
+    http:Client mgmt = check new ("http://localhost:8234/workflow");
 
     record {|string workflowId;|} started = check app->post("/requests", {
         requestId:      "REQ-HIGH-002",
@@ -283,7 +283,7 @@ function testHighValueRejected() returns error? {
 // Verifies that the Management API is running and the workflow type is registered.
 @test:Config {}
 function testListWorkflowDefinitions() returns error? {
-    http:Client mgmt = check new ("http://localhost:7235/workflow");
+    http:Client mgmt = check new ("http://localhost:8234/workflow");
 
     record {|record{}[] definitions;|} resp = check mgmt->get("/definitions", headers = MGMT_HEADERS);
     test:assertTrue(resp.definitions.length() > 0, "At least one workflow must be registered");
@@ -296,7 +296,7 @@ function testListWorkflowDefinitions() returns error? {
     dependsOn: [testLowValueAutoApproved]
 }
 function testListWorkflowInstancesExcludesChildWorkflows() returns error? {
-    http:Client mgmt = check new ("http://localhost:7235/workflow");
+    http:Client mgmt = check new ("http://localhost:8234/workflow");
 
     WorkflowInstancePage page = check mgmt->get("/workflows", headers = MGMT_HEADERS);
     test:assertTrue(page.items.length() > 0,

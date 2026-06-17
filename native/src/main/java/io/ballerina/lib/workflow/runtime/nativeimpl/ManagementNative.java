@@ -1470,10 +1470,11 @@ public final class ManagementNative {
                 return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
             }
 
-            // Build Temporal visibility query — exclude built-in child workflow types
+            // Build Temporal visibility query. Built-in child workflow types (humantask-/retrytask-)
+            // are excluded client-side in the scan loop below rather than via the query: the
+            // visibility backend used by the dev server and the in-memory test server rejects
+            // `NOT ... STARTS_WITH` with "operation is not supported: 'not' expression".
             List<String> clauses = new ArrayList<>();
-            clauses.add("NOT WorkflowId STARTS_WITH 'humantask-'");
-            clauses.add("NOT WorkflowId STARTS_WITH 'retrytask-'");
 
             if (status instanceof BString bs) {
                 String ts = toWorkflowTemporalStatus(bs.getValue());
@@ -1534,6 +1535,10 @@ public final class ManagementNative {
 
                 for (io.temporal.api.workflow.v1.WorkflowExecutionInfo wfInfo
                     : response.getExecutionsList()) {
+                    String scannedWfId = wfInfo.getExecution().getWorkflowId();
+                    if (scannedWfId.startsWith("humantask-") || scannedWfId.startsWith("retrytask-")) {
+                        continue;
+                    }
                     if (hasStartedByFilter) {
                     String startedByMemo = decodeMemoString(
                         client.getOptions().getDataConverter(),

@@ -441,7 +441,7 @@ public isolated function getExecutionGraph(string workflowId, string runId)
 // HTTP SERVICE
 // ================================================================================
 // The management HTTP service is started automatically via the module-level
-// listener in service.bal (port 7234 by default). Configure it in Config.toml:
+// listener in service.bal (port 7235 by default). Configure it in Config.toml:
 //
 //   management_service_port = 9090
 //   enableTls = false

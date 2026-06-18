@@ -22,6 +22,8 @@ import ballerina/time;
 public client class Context {
     private handle nativeContext;
 
+    # Creates a workflow execution context wrapping the native context handle.
+    # This constructor is called by the workflow runtime; do not instantiate `Context` directly.
     # + nativeContext - Native context handle from the workflow engine
     public isolated function init(handle nativeContext) {
         self.nativeContext = nativeContext;
@@ -130,31 +132,40 @@ public client class Context {
     } external;
 
     # Creates a human task and blocks until a human completes it or the optional timeout elapses.
-    # Internally, the task is modelled as a durable Temporal child workflow whose type is `config.taskName`,
+    # Internally, the task is modelled as a durable Temporal child workflow whose type is `taskName`,
     # so the task survives worker restarts.  Register the task name at module init time via
     # `wfInternal:registerHumanTask(taskName)` (the compiler plugin generates this call automatically).
     #
     # ```ballerina
-    # ApprovalDecision d = check ctx->callHumanTask({
-    #     taskName: "approveExpense",
-    #     title:    "Approve order",
-    #     userRoles: ["FINANCE_APPROVER"],
-    #     payload:  {"amount": 1200, "currency": "USD"},
-    #     timeout:  { hours: 24 }
-    # }) on fail workflow:HumanTaskTimeoutError e {
+    # ApprovalDecision d = check ctx->awaitHumanTask("approveExpense", "FINANCE_APPROVER",
+    #     payload = {"amount": 1200, "currency": "USD"},
+    #     title = "Approve order",
+    #     timeout = {hours: 24}
+    # ) on fail workflow:HumanTaskTimeoutError e {
     #     check ctx->callActivity(notifyEscalation, args = {"taskName": e.detail().taskName});
     #     return e;
     # };
     # ```
     #
+    # + taskName - Identifies the task type; used as the Temporal workflow type and child workflow ID
+    # + userRoles - One or more roles permitted to complete this task
+    # + payload - Read-only JSON object rendered as key-value pairs next to the form
+    # + title - Short summary shown in the inbox. Defaults to `taskName` when omitted
+    # + description - Additional context shown alongside the form. Optional
+    # + timeout - Maximum time to wait. Omit (or pass `()`) to wait indefinitely
     # + T - Expected result type; drives form schema generation and runtime validation
-    # + config - Task configuration: name, roles, payload, and optional timeout
     # + return - The typed value submitted by the human, or a `HumanTaskTimeoutError`
-    remote isolated function callHumanTask(HumanTaskConfig config,
+    remote isolated function awaitHumanTask(
+            string taskName,
+            string|string[] userRoles,
+            map<json> payload = {},
+            string? title = (),
+            string? description = (),
+            time:Duration? timeout = (),
             typedesc<anydata> T = <>)
             returns T|HumanTaskTimeoutError = @java:Method {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
-        name: "callHumanTask"
+        name: "awaitHumanTask"
     } external;
 }
 

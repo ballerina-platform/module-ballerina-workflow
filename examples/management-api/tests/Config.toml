@@ -1,0 +1,10 @@
+# Workflow engine — connects to the Temporal dev server started by Gradle.
+# Management API tests require visibility APIs which are not available in IN_MEMORY mode.
+[ballerina.workflow]
+mode = "LOCAL"
+
+# Management API — exposed at http://localhost:8234/workflow/
+[ballerina.workflow.management]
+enableManagementApi = true
+port              = 8234
+enableBasicAuth   = false

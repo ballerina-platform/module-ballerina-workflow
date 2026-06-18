@@ -75,9 +75,10 @@ public isolated function getWorkflowResult(string workflowId, int timeoutSeconds
 # + taskWorkflowId - Temporal workflow ID of the human task child workflow
 # + result - The value to return to the workflow (must be compatible with the declared `T`)
 # + callerRoles - Roles held by the caller; validated against the task's configured `userRoles`
+# + userId - The user ID of the person completing the task (used for auditing)
 # + return - An error if the task cannot be found, is already completed, or the caller is unauthorized
 public isolated function completeHumanTask(string taskWorkflowId, anydata result,
-        [string, string...]? callerRoles = ()) returns error? = @java:Method {
+        [string, string...]? callerRoles = (), string? userId = ()) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
     name: "completeHumanTask"
 } external;

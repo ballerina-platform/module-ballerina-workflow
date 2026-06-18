@@ -33,9 +33,8 @@ import java.util.concurrent.Executors;
 /**
  * Workflow Runtime for managing workflow processes and activities.
  * <p>
- * This class serves as the central runtime for the workflow module,
- * coordinating the execution of workflow processes and activities.
- * It delegates to the singleton WorkflowWorkerNative for Temporal integration.
+ * This class serves as the central runtime for the workflow module, coordinating the execution of workflow processes
+ * and activities. It delegates to the singleton WorkflowWorkerNative for Temporal integration.
  *
  * @since 0.1.0
  */
@@ -79,8 +78,8 @@ public final class WorkflowRuntime {
     /**
      * Initializes the workflow runtime.
      * <p>
-     * The actual Temporal initialization is done through WorkflowWorkerNative.initSingletonWorker().
-     * This method just marks the runtime as initialized.
+     * The actual Temporal initialization is done through WorkflowWorkerNative.initSingletonWorker(). This method just
+     * marks the runtime as initialized.
      */
     public synchronized void initialize() {
         if (initialized) {
@@ -108,7 +107,7 @@ public final class WorkflowRuntime {
      * The workflow ID is generated using UUID v7 for uniqueness and sortability.
      *
      * @param processName the name of the process to start
-     * @param input the input data for the process
+     * @param input       the input data for the process
      * @return the workflow ID
      * @throws RuntimeException if the process is not registered
      */
@@ -134,7 +133,8 @@ public final class WorkflowRuntime {
 
         try {
             // Build workflow options
-            WorkflowOptions options = WorkflowOptions.newBuilder()
+            WorkflowOptions options = WorkflowOptions
+                    .newBuilder()
                     .setWorkflowId(workflowId)
                     .setTaskQueue(taskQueue)
                     .build();
@@ -155,13 +155,12 @@ public final class WorkflowRuntime {
     }
 
     /**
-     * Executes an activity within the current workflow context.
-     * Note: Activity execution is handled by the Temporal SDK through WorkflowWorkerNative.
-     * This method is kept for compatibility but actual activity execution goes through
+     * Executes an activity within the current workflow context. Note: Activity execution is handled by the Temporal SDK
+     * through WorkflowWorkerNative. This method is kept for compatibility but actual activity execution goes through
      * the dynamic activity adapter in WorkflowWorkerNative.
      *
      * @param activityName the name of the activity to execute
-     * @param args the arguments to pass to the activity
+     * @param args         the arguments to pass to the activity
      * @return the result of the activity
      * @throws RuntimeException if the activity is not registered
      */
@@ -182,8 +181,7 @@ public final class WorkflowRuntime {
     /**
      * Sends a signal directly to a workflow by its workflow ID.
      * <p>
-     * This method is used when the caller knows the exact workflow ID.
-     * No correlation key lookup is needed.
+     * This method is used when the caller knows the exact workflow ID. No correlation key lookup is needed.
      *
      * @param workflowId the workflow ID to send the signal to
      * @param signalName the name of the signal to send
@@ -216,15 +214,13 @@ public final class WorkflowRuntime {
                 workflowStub.signal(signalName);
             }
 
-            LOGGER.debug("Sent signal directly to workflow: id={}, signalName={}",
-                    workflowId, signalName);
+            LOGGER.debug("Sent signal directly to workflow: id={}, signalName={}", workflowId, signalName);
             return true;
 
         } catch (WorkflowNotFoundException e) {
             // The workflow completed or was terminated before this signal was delivered.
             // Returns false so the caller can decide whether to surface this as an error.
-            LOGGER.debug("Signal '{}' dropped: workflow {} is no longer running",
-                    signalName, workflowId);
+            LOGGER.debug("Signal '{}' dropped: workflow {} is no longer running", signalName, workflowId);
             return false;
         } catch (Exception e) {
             LOGGER.error("Failed to send signal to workflow {}: {}", workflowId, e.getMessage(), e);

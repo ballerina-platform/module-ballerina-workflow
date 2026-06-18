@@ -26,9 +26,8 @@ import io.ballerina.runtime.api.values.BTypedesc;
 /**
  * Native implementations for test-only external functions.
  * <p>
- * These functions back dependently-typed {@code @Activity} external functions
- * used in unit tests. Dependently-typed functions require an {@code external}
- * body in Ballerina, so a Java implementation is necessary.
+ * These functions back dependently-typed {@code @Activity} external functions used in unit tests. Dependently-typed
+ * functions require an {@code external} body in Ballerina, so a Java implementation is necessary.
  *
  * @since 0.2.1
  */
@@ -39,11 +38,11 @@ public final class TestNatives {
     }
 
     /**
-     * Dependently-typed activity implementation for tests.
-     * Converts the input string to the target type specified by the typedesc.
+     * Dependently-typed activity implementation for tests. Converts the input string to the target type specified by
+     * the typedesc.
      *
-     * @param data       the input string data
-     * @param typedesc   the target type descriptor (from dependent typing)
+     * @param data     the input string data
+     * @param typedesc the target type descriptor (from dependent typing)
      * @return the data converted to the target type, or an error
      */
     public static Object convertData(BString data, BTypedesc typedesc) {

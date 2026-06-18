@@ -30,7 +30,8 @@ def examplePackageNames = [
     'wait-for-all'       : 'wait_for_all',
     'forward-recovery'   : 'forward_recovery',
     'order-processing'   : 'order_processing',
-    'order-with-payment' : 'order_with_payment'
+    'order-with-payment' : 'order_with_payment',
+    'management-api'     : 'management_api'
 ]
 
 def ballerinaDistributionVersion = project.rootProject.findProperty("ballerinaLangVersion") ?: "2201.13.2"
@@ -48,6 +49,11 @@ observabilityIncluded = true
 """
 }
 
+// Coverage parameters used when running bal test for each example.
+// Filters to the workflow module's own packages so that example code does not
+// dilute the module coverage numbers.
+def testCoverageParam = "--code-coverage --coverage-format=xml --includes=io.ballerina.lib.workflow.*:ballerina.workflow*"
+
 // Examples whose main() exits on its own (non-HTTP, non-listener).
 // These are run with `bal run` as a smoke test to verify that the
 // compiler-plugin-generated __registerWorkflowsAndStart() function
@@ -60,11 +66,15 @@ task buildExamples {
     description = 'Builds and tests all example projects using the locally built workflow module'
     group = 'build'
     dependsOn(':workflow-ballerina:build')
+    // When the shared Temporal server is also scheduled (e.g. via mergeCoverageReports →
+    // workflow-integration-tests:test), ensure LOCAL-mode examples run after it is ready.
+    mustRunAfter(':startSharedTestServer')
 
     doLast {
         def examplesDir = project.projectDir
         def ballerinaDist = "${project.rootDir}/target/ballerina-runtime"
         def distributionBinPath = "${ballerinaDist}/bin"
+        def coverageDestDir = new File("${project.rootDir}/build/coverage")
 
         // Clear the workflow BIR cache so the compiler picks up the freshly built bala
         def workflowBirCache = new File("${ballerinaDist}/repo/cache/ballerina/workflow")
@@ -98,7 +108,8 @@ task buildExamples {
             if (targetDir.exists()) targetDir.deleteDir()
 
             // Respect Gradle -x test: build examples without running bal tests.
-            def balCommand = testsExcluded ? 'build' : 'test'
+            // When tests run, enable coverage so reports can be uploaded to codecov.
+            def balCommand = testsExcluded ? 'build' : "test ${testCoverageParam}"
             exec {
                 workingDir exampleDir
                 environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
@@ -106,6 +117,19 @@ task buildExamples {
                     commandLine 'cmd', '/c', "${distributionBinPath}/bal.bat ${balCommand}"
                 } else {
                     commandLine 'sh', '-c', "${distributionBinPath}/bal ${balCommand}"
+                }
+            }
+
+            // Collect coverage report into the shared coverage directory so that
+            // mergeCoverageReports can upload it alongside other reports.
+            if (!testsExcluded) {
+                def coverageReport = new File(exampleDir,
+                        "target/report/${packageName}/coverage-report.xml")
+                if (coverageReport.exists()) {
+                    coverageDestDir.mkdirs()
+                    new File(coverageDestDir, "${exampleDir.name}-coverage-report.xml").text =
+                            coverageReport.text
+                    logger.lifecycle("  Coverage collected: ${exampleDir.name}-coverage-report.xml")
                 }
             }
         }

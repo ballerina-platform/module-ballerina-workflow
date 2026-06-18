@@ -69,17 +69,32 @@ jobs:
           # twice (it already ran in the previous step).
           ./gradlew startTlsTestProxy :workflow-integration-tests:ballerinaAuthVariantTest -PtlsOnlyVariants
 
+      - name: Collect Coverage Reports
+        id: coverage
+        run: |
+          mkdir -p build/coverage
+          # Module tests (Ballerina unit tests)
+          cp ballerina/target/report/workflow/coverage-report.xml \
+             build/coverage/module-coverage-report.xml 2>/dev/null || true
+          # Integration tests
+          cp integration-tests/target/report/workflow_tests/coverage-report.xml \
+             build/coverage/integration-coverage-report.xml 2>/dev/null || true
+          # Compiler plugin tests (JaCoCo)
+          cp compiler-plugin-tests/build/reports/jacoco/test/jacocoTestReport.xml \
+             build/coverage/compiler-plugin-coverage-report.xml 2>/dev/null || true
+          # Example and auth variant coverage reports are already written to build/coverage/
+          # by buildExamples and ballerinaAuthVariantTest respectively.
+          echo "Coverage files collected:"
+          ls -1 build/coverage/ || true
+          FILES=$(find build/coverage -name '*-coverage-report.xml' | sort | tr '\n' ',')
+          echo "files=${FILES%,}" >> "$GITHUB_OUTPUT"
+
       - name: Generate CodeCov Report
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: ballerina-platform/${{ github.event.repository.name }}
-          files: |
-            ballerina/target/report/workflow/coverage-report.xml
-            integration-tests/target/report/workflow_tests/coverage-report.xml
-            build/coverage/self-hosted-no-auth-coverage-report.xml
-            build/coverage/cloud-api-key-coverage-report.xml
-            build/coverage/self-hosted-mtls-coverage-report.xml
+          files: ${{ steps.coverage.outputs.files }}
           fail_ci_if_error: false
 
   windows-build:

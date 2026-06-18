@@ -35,12 +35,12 @@ import java.util.UUID;
  */
 public final class CorrelationExtractor {
 
+    // SecureRandom for UUID v7 generation
+    private static final SecureRandom RANDOM = new SecureRandom();
+
     private CorrelationExtractor() {
         // Utility class, prevent instantiation
     }
-
-    // SecureRandom for UUID v7 generation
-    private static final SecureRandom RANDOM = new SecureRandom();
 
     /**
      * Generates a workflow ID using UUID v7 (time-ordered UUID).
@@ -79,13 +79,9 @@ public final class CorrelationExtractor {
 
         // Build least significant bits: 2-bit variant (10) + 62-bit random
         long lsb = ((randomBytes[2] & 0x3FL) | 0x80L) << 56 // variant bits
-                | ((randomBytes[3] & 0xFFL) << 48)
-                | ((randomBytes[4] & 0xFFL) << 40)
-                | ((randomBytes[5] & 0xFFL) << 32)
-                | ((randomBytes[6] & 0xFFL) << 24)
-                | ((randomBytes[7] & 0xFFL) << 16)
-                | ((randomBytes[8] & 0xFFL) << 8)
-                | (randomBytes[9] & 0xFFL);
+                | ((randomBytes[3] & 0xFFL) << 48) | ((randomBytes[4] & 0xFFL) << 40) |
+                ((randomBytes[5] & 0xFFL) << 32) | ((randomBytes[6] & 0xFFL) << 24) | ((randomBytes[7] & 0xFFL) << 16) |
+                ((randomBytes[8] & 0xFFL) << 8) | (randomBytes[9] & 0xFFL);
 
         return new UUID(msb, lsb).toString();
     }

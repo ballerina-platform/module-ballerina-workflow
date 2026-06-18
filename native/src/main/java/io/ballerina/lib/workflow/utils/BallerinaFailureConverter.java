@@ -24,13 +24,12 @@ import io.temporal.common.converter.FailureConverter;
 import io.temporal.failure.DefaultFailureConverter;
 
 /**
- * Custom {@link FailureConverter} that replaces the default "JavaSDK" source
- * with "BallerinaSDK" and strips Java stack traces from all failures
- * (including nested causes) so the Temporal UI reflects the Ballerina runtime
- * instead of exposing Java SDK internals.
+ * Custom {@link FailureConverter} that replaces the default "JavaSDK" source with "BallerinaSDK" and strips Java stack
+ * traces from all failures (including nested causes) so the Temporal UI reflects the Ballerina runtime instead of
+ * exposing Java SDK internals.
  * <p>
- * Delegates all conversion logic to the {@link DefaultFailureConverter} and
- * post-processes the resulting {@link Failure} proto.
+ * Delegates all conversion logic to the {@link DefaultFailureConverter} and post-processes the resulting
+ * {@link Failure} proto.
  *
  * @since 0.1.0
  */
@@ -51,14 +50,11 @@ public final class BallerinaFailureConverter implements FailureConverter {
     }
 
     /**
-     * Recursively sanitises a {@link Failure} proto tree: clears the
-     * {@code source} and clears the {@code stackTrace}
+     * Recursively sanitises a {@link Failure} proto tree: clears the {@code source} and clears the {@code stackTrace}
      * field on every node so that Java internals are never exposed.
      */
     private Failure sanitizeFailure(Failure failure) {
-        Failure.Builder builder = failure.toBuilder()
-                .clearSource()
-                .setStackTrace("");
+        Failure.Builder builder = failure.toBuilder().clearSource().setStackTrace("");
         if (failure.hasCause()) {
             builder.setCause(sanitizeFailure(failure.getCause()));
         }

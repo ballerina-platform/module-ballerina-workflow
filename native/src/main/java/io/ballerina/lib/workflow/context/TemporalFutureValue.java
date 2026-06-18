@@ -78,19 +78,24 @@ public class TemporalFutureValue extends FutureValue {
 
     private static final Logger LOGGER = Workflow.getLogger(TemporalFutureValue.class);
 
-    /** The Temporal promise that receives signal data. */
+    /**
+     * The Temporal promise that receives signal data.
+     */
     private final CompletablePromise<SignalAwaitWrapper.SignalData> promise;
 
-    /** The signal name this future is waiting for. */
+    /**
+     * The signal name this future is waiting for.
+     */
     private final String signalName;
 
-    /** The expected Ballerina type for the signal data. */
+    /**
+     * The expected Ballerina type for the signal data.
+     */
     private final Type constraintType;
 
     /**
-     * Sibling group — all event futures belonging to the same workflow execution.
-     * Set after construction via {@link #setSiblingGroup(List)}.
-     * Used by {@link #getAndSetWaited()} to wait for <em>any</em> sibling signal.
+     * Sibling group — all event futures belonging to the same workflow execution. Set after construction via
+     * {@link #setSiblingGroup(List)}. Used by {@link #getAndSetWaited()} to wait for <em>any</em> sibling signal.
      */
     private List<TemporalFutureValue> siblingGroup;
 
@@ -105,8 +110,8 @@ public class TemporalFutureValue extends FutureValue {
      * @param constraintType the Ballerina type that the signal data should be converted to
      * @param scheduler      the Ballerina scheduler (from runtime)
      */
-    public TemporalFutureValue(CompletablePromise<SignalAwaitWrapper.SignalData> promise,
-                               String signalName, Type constraintType, Scheduler scheduler) {
+    public TemporalFutureValue(CompletablePromise<SignalAwaitWrapper.SignalData> promise, String signalName,
+                               Type constraintType, Scheduler scheduler) {
         super(createStrand(scheduler, signalName), constraintType);
         this.promise = promise;
         this.signalName = signalName;
@@ -118,9 +123,18 @@ public class TemporalFutureValue extends FutureValue {
         replaceCompletableFuture();
     }
 
+    private static Strand createStrand(Scheduler scheduler, String signalName) {
+        if (scheduler == null) {
+            scheduler = new Scheduler(null);
+        }
+        return new Strand(scheduler, "signal-" + signalName, null, true, Collections.emptyMap(), null);
+    }
+
+    // ---- Internal helpers ----
+
     /**
-     * Sets the sibling group for this future. Called by {@code EventFutureCreator}
-     * after all event futures for a workflow execution have been created.
+     * Sets the sibling group for this future. Called by {@code EventFutureCreator} after all event futures for a
+     * workflow execution have been created.
      *
      * @param group all event futures (including this one) for the workflow
      */
@@ -128,20 +142,9 @@ public class TemporalFutureValue extends FutureValue {
         this.siblingGroup = group;
     }
 
-    // ---- Internal helpers ----
-
-    private static Strand createStrand(Scheduler scheduler, String signalName) {
-        if (scheduler == null) {
-            scheduler = new Scheduler(null);
-        }
-        return new Strand(scheduler, "signal-" + signalName, null, true,
-                Collections.emptyMap(), null);
-    }
-
     /**
-     * Replaces the inherited {@code completableFuture} field with a
-     * {@link TemporalCompletableFuture} that uses {@code Workflow.await()} in its
-     * {@code get()} methods, providing a safety net against thread-blocking.
+     * Replaces the inherited {@code completableFuture} field with a {@link TemporalCompletableFuture} that uses
+     * {@code Workflow.await()} in its {@code get()} methods, providing a safety net against thread-blocking.
      */
     private void replaceCompletableFuture() {
         try {
@@ -159,8 +162,8 @@ public class TemporalFutureValue extends FutureValue {
             // If reflection fails, fall back to the default CompletableFuture.
             // Single wait and sequential waits will still work; only alternate wait
             // may hang if signals arrive out of order.
-            LOGGER.warn("[TemporalFutureValue] Could not replace completableFuture for '{}': {}",
-                    signalName, e.getMessage());
+            LOGGER.warn("[TemporalFutureValue] Could not replace completableFuture for '{}': {}", signalName,
+                        e.getMessage());
         }
     }
 
@@ -175,8 +178,7 @@ public class TemporalFutureValue extends FutureValue {
                 LOGGER.debug("[TemporalFutureValue] CompletableFuture completed for signal '{}'", signalName);
                 return result;
             } catch (Exception e) {
-                LOGGER.error("[TemporalFutureValue] Error processing signal '{}': {}",
-                        signalName, e.getMessage(), e);
+                LOGGER.error("[TemporalFutureValue] Error processing signal '{}': {}", signalName, e.getMessage(), e);
                 this.completableFuture.completeExceptionally(e);
                 throw e;
             }
@@ -208,15 +210,14 @@ public class TemporalFutureValue extends FutureValue {
      * Called by Ballerina's AsyncUtils before accessing {@code completableFuture}.
      *
      * <p>For <b>single wait</b> and <b>sequential waits</b>, this cooperatively blocks
-     * until <em>any</em> sibling signal arrives (which for a single-field events record
-     * means this signal). The subsequent {@code completableFuture.get()} returns
-     * immediately because the CF is already complete.
+     * until <em>any</em> sibling signal arrives (which for a single-field events record means this signal). The
+     * subsequent {@code completableFuture.get()} returns immediately because the CF is already complete.
      *
      * <p>For <b>alternate wait</b> ({@code wait f1|f2}), AsyncUtils calls this method
      * on each future in a loop before calling {@code anyOf().get()}. By waiting for
      * <em>any</em> sibling, the first call blocks until some signal arrives, pre-completing
-     * at least one CF. Subsequent calls return immediately. When AsyncUtils then calls
-     * {@code anyOf().get()}, it also returns immediately.
+     * at least one CF. Subsequent calls return immediately. When AsyncUtils then calls {@code anyOf().get()}, it also
+     * returns immediately.
      *
      * @return always {@code false} (allow waiting)
      */
@@ -227,9 +228,8 @@ public class TemporalFutureValue extends FutureValue {
     }
 
     /**
-     * Cooperatively blocks until <em>any</em> sibling's completableFuture is done.
-     * Uses {@code Workflow.await()} so that Temporal can deliver signals while this
-     * coroutine is suspended.
+     * Cooperatively blocks until <em>any</em> sibling's completableFuture is done. Uses {@code Workflow.await()} so
+     * that Temporal can deliver signals while this coroutine is suspended.
      */
     private void ensureAnySiblingReady() {
         if (anySiblingDone()) {
@@ -241,8 +241,8 @@ public class TemporalFutureValue extends FutureValue {
     }
 
     /**
-     * Cooperatively blocks until <em>this</em> future's completableFuture is done.
-     * Only called from {@link #get()} as a safety net.
+     * Cooperatively blocks until <em>this</em> future's completableFuture is done. Only called from {@link #get()} as a
+     * safety net.
      */
     private void ensureThisReady() {
         if (!this.completableFuture.isDone()) {
@@ -279,11 +279,10 @@ public class TemporalFutureValue extends FutureValue {
     // ---- Temporal-safe CompletableFuture ----
 
     /**
-     * A CompletableFuture subclass whose {@code get()} methods use
-     * {@code Workflow.await()} as a fallback to avoid blocking the Temporal
-     * workflow thread. This provides a safety net: if something bypasses
-     * {@link #getAndSetWaited()} and calls {@code get()} directly, we
-     * cooperatively yield instead of causing a deadlock.
+     * A CompletableFuture subclass whose {@code get()} methods use {@code Workflow.await()} as a fallback to avoid
+     * blocking the Temporal workflow thread. This provides a safety net: if something bypasses
+     * {@link #getAndSetWaited()} and calls {@code get()} directly, we cooperatively yield instead of causing a
+     * deadlock.
      */
     static final class TemporalCompletableFuture extends CompletableFuture<Object> {
 

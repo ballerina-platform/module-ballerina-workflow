@@ -41,10 +41,9 @@ import java.util.Map;
 /**
  * Utility class for creating TemporalFutureValue objects for workflow events.
  * <p>
- * This class creates TemporalFutureValue instances that extend Ballerina's FutureValue
- * and can be used with the standard {@code wait} action. Each TemporalFutureValue wraps a 
- * Temporal CompletablePromise for cooperative blocking that is compatible with Temporal's 
- * deterministic replay.
+ * This class creates TemporalFutureValue instances that extend Ballerina's FutureValue and can be used with the
+ * standard {@code wait} action. Each TemporalFutureValue wraps a Temporal CompletablePromise for cooperative blocking
+ * that is compatible with Temporal's deterministic replay.
  *
  * @since 0.1.0
  */
@@ -59,20 +58,17 @@ public final class EventFutureCreator {
     /**
      * Creates a record containing TemporalFutureValue objects for each event field.
      * <p>
-     * The returned record can be passed as the events parameter to a workflow function.
-     * Each future can be awaited using Ballerina's standard {@code wait} action.
-     * All created futures are registered as siblings of each other so that
-     * alternate wait ({@code wait f1|f2}) works correctly.
+     * The returned record can be passed as the events parameter to a workflow function. Each future can be awaited
+     * using Ballerina's standard {@code wait} action. All created futures are registered as siblings of each other so
+     * that alternate wait ({@code wait f1|f2}) works correctly.
      *
      * @param eventsRecordType the record type describing the events (with future fields)
-     * @param signalWrapper the SignalAwaitWrapper for creating and managing promises
-     * @param scheduler the Ballerina scheduler for creating strands (can be null)
+     * @param signalWrapper    the SignalAwaitWrapper for creating and managing promises
+     * @param scheduler        the Ballerina scheduler for creating strands (can be null)
      * @return a BMap representing the events record with future fields
      */
-    public static BMap<BString, Object> createEventsRecord(
-            RecordType eventsRecordType,
-            SignalAwaitWrapper signalWrapper,
-            Scheduler scheduler) {
+    public static BMap<BString, Object> createEventsRecord(RecordType eventsRecordType,
+                                                           SignalAwaitWrapper signalWrapper, Scheduler scheduler) {
 
         // Create a mutable map to hold the event futures
         Map<String, Field> fields = eventsRecordType.getFields();
@@ -89,8 +85,8 @@ public final class EventFutureCreator {
             Type constraintType = extractConstraintType(fieldType);
 
             // Create a TemporalFutureValue for this signal
-            TemporalFutureValue futureValue = createTemporalFutureValue(
-                    fieldName, signalWrapper, constraintType, scheduler);
+            TemporalFutureValue futureValue = createTemporalFutureValue(fieldName, signalWrapper, constraintType,
+                                                                        scheduler);
 
             allFutures.add(futureValue);
 
@@ -98,7 +94,7 @@ public final class EventFutureCreator {
             eventsRecord.put(StringUtils.fromString(fieldName), futureValue);
 
             LOGGER.debug("[EventFutureCreator] Created TemporalFutureValue for event: {} (constraint type: {})",
-                    fieldName, constraintType != null ? constraintType.getName() : "anydata");
+                         fieldName, constraintType != null ? constraintType.getName() : "anydata");
         }
 
         // Register all futures as siblings so that alternate wait (wait f1|f2)
@@ -133,20 +129,17 @@ public final class EventFutureCreator {
     /**
      * Creates a TemporalFutureValue for the given signal name.
      * <p>
-     * The TemporalFutureValue extends FutureValue and wraps a Temporal CompletablePromise 
-     * that will be completed when the corresponding signal is received.
+     * The TemporalFutureValue extends FutureValue and wraps a Temporal CompletablePromise that will be completed when
+     * the corresponding signal is received.
      *
-     * @param signalName the name of the signal/event
-     * @param signalWrapper the SignalAwaitWrapper containing the promise
+     * @param signalName     the name of the signal/event
+     * @param signalWrapper  the SignalAwaitWrapper containing the promise
      * @param constraintType the expected Ballerina type for the signal data
-     * @param scheduler the Ballerina scheduler for creating strands (can be null)
+     * @param scheduler      the Ballerina scheduler for creating strands (can be null)
      * @return a TemporalFutureValue
      */
-    private static TemporalFutureValue createTemporalFutureValue(
-            String signalName,
-            SignalAwaitWrapper signalWrapper,
-            Type constraintType,
-            Scheduler scheduler) {
+    private static TemporalFutureValue createTemporalFutureValue(String signalName, SignalAwaitWrapper signalWrapper,
+                                                                 Type constraintType, Scheduler scheduler) {
 
         // Get or create the promise for this signal
         CompletablePromise<SignalAwaitWrapper.SignalData> promise = signalWrapper.getSignalFuture(signalName);

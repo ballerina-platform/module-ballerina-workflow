@@ -241,6 +241,9 @@ dependencies = [
 	{org = "ballerina", name = "lang.value"},
 	{org = "ballerina", name = "observe"}
 ]
+modules = [
+	{org = "ballerina", packageName = "log", moduleName = "log"}
+]
 
 [[package]]
 org = "ballerina"
@@ -363,12 +366,13 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "workflow"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
 	{org = "ballerina", name = "email"},
 	{org = "ballerina", name = "http"},
 	{org = "ballerina", name = "jballerina.java"},
 	{org = "ballerina", name = "lang.runtime"},
+	{org = "ballerina", name = "log"},
 	{org = "ballerina", name = "mime"},
 	{org = "ballerina", name = "soap"},
 	{org = "ballerina", name = "test"},

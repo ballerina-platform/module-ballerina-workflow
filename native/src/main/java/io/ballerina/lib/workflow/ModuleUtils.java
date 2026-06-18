@@ -36,16 +36,6 @@ public final class ModuleUtils {
     }
 
     /**
-     * Sets the workflow module.
-     * This is called from module initialization.
-     *
-     * @param env the Ballerina runtime environment
-     */
-    public static void setModule(Environment env) {
-        workflowModule = env.getCurrentModule();
-    }
-
-    /**
      * Gets the workflow module.
      *
      * @return the workflow module
@@ -55,14 +45,12 @@ public final class ModuleUtils {
     }
 
     /**
-     * Sets the workflow.management submodule reference.
-     * Called from {@code management.bal} init so that native code can create
-     * {@code WorkflowInstanceSummary} records belonging to that submodule.
+     * Sets the workflow module. This is called from module initialization.
      *
-     * @param env the Ballerina runtime environment (current module = management)
+     * @param env the Ballerina runtime environment
      */
-    public static void setManagementModule(Environment env) {
-        managementModule = env.getCurrentModule();
+    public static void setModule(Environment env) {
+        workflowModule = env.getCurrentModule();
     }
 
     /**
@@ -76,5 +64,15 @@ public final class ModuleUtils {
             throw new IllegalStateException("workflow.management module not initialized");
         }
         return managementModule;
+    }
+
+    /**
+     * Sets the workflow.management submodule reference. Called from {@code management.bal} init so that native code can
+     * create {@code WorkflowInstanceSummary} records belonging to that submodule.
+     *
+     * @param env the Ballerina runtime environment (current module = management)
+     */
+    public static void setManagementModule(Environment env) {
+        managementModule = env.getCurrentModule();
     }
 }

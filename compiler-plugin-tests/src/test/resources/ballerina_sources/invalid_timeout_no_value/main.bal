@@ -21,14 +21,12 @@ type ApprovalDecision record {|
     string? reason;
 |};
 
-// Invalid: timeout field is provided as a plain integer 30.
-// The HumanTaskConfig.timeout field expects time:Duration? (a record type),
+// Invalid: timeout is a plain integer 30.
+// The timeout parameter expects time:Duration? (a record type),
 // not a plain int. This should trigger a Ballerina type error.
 @workflow:Workflow
 function invalidTimeoutNoValueWorkflow(workflow:Context ctx, string input) returns ApprovalDecision|error {
-    ApprovalDecision decision = check ctx->callHumanTask({
-        taskName: "reviewItem",
-        timeout: 30  // ERROR: int is not compatible with time:Duration?
-    });
+    ApprovalDecision decision = check ctx->awaitHumanTask("reviewItem", ["admin"],
+            timeout = 30);  // ERROR: int is not compatible with time:Duration?
     return decision;
 }

@@ -252,7 +252,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
 
         // Collect qualified human task names ("workflowFunctionName.taskName") across every
         // workflow in this module. Qualification ensures uniqueness across workflows that
-        // reuse the same short task name and matches the runtime qualification in callHumanTask.
+        // reuse the same short task name and matches the runtime qualification in awaitHumanTask.
         // A sorted set is used for deterministic code generation across compiler runs.
         Set<String> qualifiedHumanTaskNames = new TreeSet<>();
         for (ProcessFunctionInfo processInfo : allProcessInfos) {
@@ -262,7 +262,9 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         }
         for (String qualifiedName : qualifiedHumanTaskNames) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerHumanTask(\"").append(qualifiedName).append("\");")
+                    .append(":registerHumanTask(\"")
+                    .append(escapeBallerinaStringLiteral(qualifiedName))
+                    .append("\");")
                     .append(System.lineSeparator());
         }
 
@@ -508,5 +510,14 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         // Note: FunctionCallExpressionNode transformation removed.
         // Direct activity calls are now disallowed and validated by WorkflowValidatorTask.
         // Users must use ctx->callActivity(activityFunc, args...) pattern.
+    }
+
+    private static String escapeBallerinaStringLiteral(String value) {
+        return value
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
 }

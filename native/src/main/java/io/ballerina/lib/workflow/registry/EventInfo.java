@@ -65,11 +65,8 @@ public record EventInfo(String fieldName, Type valueType, String processName) {
 
     @Override
     public String toString() {
-        return "EventInfo{" +
-                "fieldName='" + fieldName + '\'' +
-                ", valueType=" + (valueType != null ? valueType.getName() : "unknown") +
-                ", processName='" + processName + '\'' +
-                '}';
+        return "EventInfo{" + "fieldName='" + fieldName + '\'' + ", valueType=" +
+                (valueType != null ? valueType.getName() : "unknown") + ", processName='" + processName + '\'' + '}';
     }
 
     @Override

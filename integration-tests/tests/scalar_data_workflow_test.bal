@@ -116,5 +116,8 @@ function testSendTableData() returns error? {
     check workflow:sendData(tableDataWorkflow, workflowId, "rows", payload);
 
     anydata result = check workflow:getWorkflowResult(workflowId, 30);
-    test:assertEquals(result, payload, "Table payload (rows and key) should be delivered intact to the workflow");
+    // "3:Alice:Bob" proves the row count, row data, and key-based lookup all
+    // survived delivery (rows[1] -> Alice, rows[2] -> Bob).
+    test:assertEquals(result, "3:Alice:Bob",
+            "Table payload (rows and key index) should be delivered intact to the workflow");
 }

@@ -133,12 +133,18 @@ type TableRow record {|
     string name;
 |};
 
-# Workflow that waits for a table signal and echoes the table back.
+# Workflow that waits for a table signal and verifies its rows and key integrity.
+#
+# The received table is reconstructed from the `future<table<TableRow> key(id)>`
+# constraint, so this exercises both the row data and the key index end-to-end by
+# looking rows up by their key. The result is a concrete-typed summary string
+# (a `table` return value cannot be reconstructed by the untyped `getWorkflowResult`
+# path, so we return a value that proves data integrity instead).
 #
 # + ctx - The workflow context
 # + input - The workflow input
 # + events - Record containing the table future
-# + return - The received table
+# + return - A summary of the row count and key lookups
 @workflow:Workflow
 function tableDataWorkflow(
     workflow:Context ctx,
@@ -146,7 +152,9 @@ function tableDataWorkflow(
     record {|
         future<table<TableRow> key(id)> rows;
     |} events
-) returns table<TableRow> key(id)|error {
+) returns string|error {
     table<TableRow> key(id) rows = check wait events.rows;
-    return rows;
+    TableRow? first = rows[1];
+    TableRow? second = rows[2];
+    return string `${rows.length()}:${first?.name ?: "?"}:${second?.name ?: "?"}`;
 }

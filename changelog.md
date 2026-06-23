@@ -6,7 +6,86 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-- [Fix#8737](https://github.com/ballerina-platform/ballerina-library/issues/8737) - `ctx->await()`: Fix compile-time type validation and partial-wait runtime semantics  
+## [0.5.0] - 2026-06-18
+
+### Added
+
+- **Management API** — new `ballerina/workflow.management` submodule and HTTP management
+  service for operating running workflows. Supports listing workflows, retrieving a specific
+  workflow run, fetching run information and execution history, suspending and resuming runs,
+  cancelling and terminating workflows, listing pending human tasks and pending retry tasks,
+  and generating the input schema for a workflow.
+- Human-task user tracking (assigned/candidate roles) and human-task validation in the
+  management API.
+- CORS configuration options for the management API service, and a configurable management
+  API port.
+- A management API example and accompanying dashboard.
+- **Human tasks** — `ctx->awaitHumanTask(...)` for human-in-the-loop steps, with a
+  `HumanRetry` option for retrying pending human tasks, plus compiler-plugin validation and
+  test coverage for human-task usage.
+
+### Changed
+
+- Renamed the human-task API to its final form `awaitHumanTask` (previously introduced as
+  `callHumanTask`, then `createHumanTask`).
+- Improved Temporal log suppression to reduce log flooding and clarify startup logging
+  (server URL and namespace tracking).
+- Removed the unused `stopWorkflowRuntimeNow` and `getRegisteredWorkflows` functions.
+
+### Fixed
+
+- Fixed a "Failed to list workflows" issue in the management API.
+- Fixed escaping of backslashes in workflow IDs and signal payload field handling in the
+  native management layer.
+
+- [Diff](https://github.com/ballerina-platform/module-ballerina-workflow/compare/release-0.4.0...release-0.5.0)
+
+## [0.4.0] - 2026-05-21
+
+### Added
+
+- Built-in activities `callSoapAPI` and `sendEmail`, with integration tests.
+- Connection-variable analysis in the compiler plugin and additional compiler-plugin test
+  cases.
+- A collection of end-to-end integration use cases and use-case documentation, including
+  clinical message replay and EHR downtime recovery notification scenarios.
+
+### Changed
+
+- Enhanced workflow configuration handling and identifier normalization.
+- `sendData()`/signal sending now fails gracefully by returning `false` instead of throwing
+  when the target signal cannot be delivered.
+- Added `Dependencies.toml` files for the `ballerina` and `integration-tests` packages.
+
+### Fixed
+
+- Fixed `ctx->await()` type validation incorrectly reporting an error for optional future
+  types.
+
+- [Diff](https://github.com/ballerina-platform/module-ballerina-workflow/compare/release-0.3.4...release-0.4.0)
+
+## [0.3.4] - 2026-04-27
+
+### Fixed
+
+- [Fix#8743](https://github.com/ballerina-platform/ballerina-library/issues/8743) -
+  `ctx->await()`: improved partial-await validation and diagnostics, including better error
+  location reporting for tuple types.
+- Improved integer-literal extraction to support constant symbols and decimal, hexadecimal,
+  and binary formats.
+
+- [Diff](https://github.com/ballerina-platform/module-ballerina-workflow/compare/release-0.3.3...release-0.3.4)
+
+## [0.3.3] - 2026-04-08
+
+### Fixed
+
+- [Fix#8737](https://github.com/ballerina-platform/ballerina-library/issues/8737) -
+  `ctx->await()`: Fix compile-time type validation and partial-wait runtime semantics for
+  scalar types.
+- Documentation updates and additional examples.
+
+- [Diff](https://github.com/ballerina-platform/module-ballerina-workflow/compare/release-0.3.2...release-0.3.3)
 
 ## [0.3.2] - 2026-03-26
 

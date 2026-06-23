@@ -108,25 +108,32 @@ public client class Context {
         return getWorkflowTypeNative(self.nativeContext);
     }
 
-    # Waits for at least `minCount` data futures to complete. Results are positional tuples
+    # Waits for at least `minCount` data futures to complete. Results are a positional tuple
     # aligned to input order. Use nullable types (`T?`) for partial waits.
     #
+    # The result can be captured in several ways:
+    #
     # ```ballerina
-    # // Wait for all
-    # [Approval, Payment] result = check ctx->await([events.approval, events.payment]);
-    # // Wait for any (1 of 2)
+    # // Wait for all (tuple binding pattern)
+    # [Approval, Payment] [approval, payment] = check ctx->await([events.approval, events.payment]);
+    # // Capture the whole result, including a possible timeout, without `check`
+    # [Approval, Payment]|error result = ctx->await([events.approval, events.payment]);
+    # if result is error { /* handle timeout */ }
+    # // Handle each position independently (a slot is a value or an error)
+    # [Approval|error, Payment|error] [a, p] = check ctx->await([events.approval, events.payment]);
+    # // Wait for any (1 of 2) — use nilable members for partial waits
     # [Approval?, Payment?] result = check ctx->await([events.approval, events.payment], minCount = 1);
     # ```
     #
     # + futures - Data futures from the workflow's events record
     # + minCount - Minimum completions required (default: all)
-    # + timeout - Maximum wait duration; returns error on timeout
-    # + T - Expected return type (inferred from context)
-    # + return - Positional tuple of values (or nil for incomplete), or an error
+    # + timeout - Maximum wait duration; returns an error on timeout
+    # + T - Expected return type, inferred from how the result is assigned
+    # + return - Positional tuple of values (`nil` for an incomplete position), or an error
     remote isolated function await(future<anydata>[] futures,
             int:Unsigned32 minCount = <int:Unsigned32>futures.length(),
             time:Duration? timeout = (),
-            typedesc<anydata> T = <>) returns T|error = @java:Method {
+            typedesc<anydata|error|(anydata|error)[]> T = <>) returns T = @java:Method {
         'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WaitUtils",
         name: "awaitFutures"
     } external;

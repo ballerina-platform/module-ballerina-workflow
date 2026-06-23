@@ -292,6 +292,29 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "valid")
+    public void testValidAwaitUnionAndBinding() {
+        // ctx->await uses `typedesc<anydata|error|(anydata|error)[]> T = <>` returning `T`, so the result
+        // can be captured as `[..]|error` without a forced `check`, destructured via a tuple-binding
+        // pattern, and use per-position error members (`[A|error, B|error]`).
+        String packagePath = "valid_await_union_and_binding";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for ctx->await union-LHS, tuple-binding and per-position-error patterns. "
+                        + "Errors: " + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidAwaitPerPositionErrorMismatch() {
+        // The widened typedesc constraint admits per-position error tuples, so the compiler plugin must
+        // still validate that each position matches its future's inner type (WORKFLOW_117).
+        String packagePath = "invalid_await_per_position_error_mismatch";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for swapped per-position error tuple");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_117);
+    }
+
+    @Test(groups = "valid")
     public void testValidAwaitWithTimeout() {
         String packagePath = "valid_await_with_timeout";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);

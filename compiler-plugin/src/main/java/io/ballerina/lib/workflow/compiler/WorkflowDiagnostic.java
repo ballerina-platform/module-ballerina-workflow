@@ -141,6 +141,10 @@ public enum WorkflowDiagnostic {
     WORKFLOW_128("WORKFLOW_128",
             "Invalid human task name '%s'. Task names must not contain '.' or '|'. "
                     + "The runtime qualifies the name as '<workflowFunction>.<taskName>'",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_129("WORKFLOW_129",
+            "@Workflow function's events record field '%s' has type 'future<%s>', but '%s' is not a "
+                    + "subtype of 'anydata'",
             DiagnosticSeverity.ERROR);
 
     private final String code;

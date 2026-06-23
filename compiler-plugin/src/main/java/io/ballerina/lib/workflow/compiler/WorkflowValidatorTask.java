@@ -204,12 +204,14 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                     reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_106);
                     return;
                 }
+                validateEventFutureTypes(paramType, functionNode, context, semanticModel);
                 hasEvents = true;
                 paramIndex++;
             } else {
                 // No input yet - this could be input or events
                 if (isValidEventsType(paramType)) {
                     // This is an events parameter (can come without input)
+                    validateEventFutureTypes(paramType, functionNode, context, semanticModel);
                     hasEvents = true;
                     paramIndex++;
                 } else if (WorkflowPluginUtils.isSubtypeOfAnydata(paramType, semanticModel)) {
@@ -866,6 +868,44 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         }
 
         return true;
+    }
+
+    /**
+     * Validates that every {@code future<T>} field in the events record carries a constraint type {@code T} that is a
+     * subtype of {@code anydata}. Only anydata values can be serialized and delivered to a running workflow via
+     * {@code sendData}; non-anydata types such as {@code stream}, {@code object}, {@code error}, or {@code function}
+     * would fail to round-trip through the workflow's persistence layer.
+     * <p>
+     * Assumes {@code typeSymbol} has already passed {@link #isValidEventsType(TypeSymbol)} (a record whose fields are
+     * all futures); each non-anydata constraint is reported as {@code WORKFLOW_129}.
+     */
+    private void validateEventFutureTypes(TypeSymbol typeSymbol, FunctionDefinitionNode functionNode,
+                                          SyntaxNodeAnalysisContext context, SemanticModel semanticModel) {
+        TypeSymbol resolved = WorkflowPluginUtils.resolveTypeReference(typeSymbol);
+        if (!(resolved instanceof RecordTypeSymbol recordType)) {
+            return;
+        }
+        for (java.util.Map.Entry<String, io.ballerina.compiler.api.symbols.RecordFieldSymbol> entry :
+                recordType.fieldDescriptors().entrySet()) {
+            TypeSymbol fieldType = WorkflowPluginUtils.resolveTypeReference(entry.getValue().typeDescriptor());
+            if (fieldType.typeKind() != TypeDescKind.FUTURE) {
+                continue;
+            }
+            Optional<TypeSymbol> innerTypeOpt = ((FutureTypeSymbol) fieldType).typeParameter();
+            if (innerTypeOpt.isEmpty()) {
+                continue;
+            }
+            TypeSymbol innerType = innerTypeOpt.get();
+            if (!WorkflowPluginUtils.isSubtypeOfAnydata(innerType, semanticModel)) {
+                String innerName = innerType.signature();
+                DiagnosticInfo info = new DiagnosticInfo(
+                        WorkflowDiagnostic.WORKFLOW_129.getCode(),
+                        WorkflowDiagnostic.WORKFLOW_129.getMessage(entry.getKey(), innerName, innerName),
+                        WorkflowDiagnostic.WORKFLOW_129.getSeverity());
+                context.reportDiagnostic(DiagnosticFactory.createDiagnostic(
+                        info, functionNode.functionName().location()));
+            }
+        }
     }
 
     private void reportDiagnostic(SyntaxNodeAnalysisContext context, FunctionDefinitionNode functionNode,

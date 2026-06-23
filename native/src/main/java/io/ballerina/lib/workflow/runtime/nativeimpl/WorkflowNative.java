@@ -240,14 +240,11 @@ public final class WorkflowNative {
      */
     public static Object sendData(Environment env, BFunctionPointer workflowFunction, BString workflowId,
                                   BString dataName, Object data) {
-        // Convert data to Java type
-        Object javaData;
-        if (data instanceof BMap) {
-            @SuppressWarnings("unchecked") BMap<BString, Object> bMapData = (BMap<BString, Object>) data;
-            javaData = TypesUtil.convertBallerinaToJavaType(bMapData);
-        } else {
-            javaData = data;
-        }
+        // Convert the data to its Java representation so Temporal's JSON payload converter can persist it.
+        // This must handle every anydata value - not just records/maps - because primitives (boolean, int,
+        // string), json, xml, arrays and tables are all valid signal payloads. convertBallerinaToJavaType
+        // unwraps BString -> String, wraps xml in a round-trip marker, etc., and returns BMap/primitives as-is.
+        Object javaData = TypesUtil.convertBallerinaToJavaType(data);
 
         String workflowIdStr = workflowId.getValue();
         String dataNameStr = dataName.getValue();

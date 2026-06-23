@@ -183,6 +183,25 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "invalid")
+    public void testInvalidEventNonAnydataType() {
+        String packagePath = "invalid_event_non_anydata_type";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation error for future<T> field with non-anydata constraint type");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_129);
+    }
+
+    @Test(groups = "valid")
+    public void testValidEventAnydataTypes() {
+        String packagePath = "valid_event_anydata_types";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for events record with anydata future<T> fields "
+                        + "(boolean, int, string, json, xml, table). Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
     public void testInvalidCallActivityNoAnnotation() {
         String packagePath = "invalid_call_activity_no_annotation";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);

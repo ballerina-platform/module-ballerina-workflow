@@ -40,6 +40,7 @@ import io.ballerina.runtime.api.values.BDecimal;
 import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
+import io.ballerina.runtime.api.values.BTable;
 import io.ballerina.runtime.api.values.BXml;
 
 import java.math.BigDecimal;
@@ -154,6 +155,17 @@ public final class TypesUtil {
 
         if (ballerinaValue instanceof BArray) {
             return convertBArrayToList((BArray) ballerinaValue);
+        }
+
+        // A `table` cannot be JSON-serialised directly by Temporal's payload converter, but it is anydata and
+        // its rows are records. Serialise it as a JSON array of rows; the inverse conversion rebuilds the table
+        // via cloneWithType against the event future's table constraint type.
+        if (ballerinaValue instanceof BTable<?, ?> table) {
+            List<Object> rows = new ArrayList<>();
+            for (Object row : table.values()) {
+                rows.add(convertBallerinaToJavaType(row));
+            }
+            return rows;
         }
 
         if (ballerinaValue instanceof BDecimal) {

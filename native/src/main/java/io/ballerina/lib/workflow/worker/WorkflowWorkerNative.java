@@ -1247,18 +1247,16 @@ public final class WorkflowWorkerNative {
                     (io.temporal.workflow.DynamicSignalHandler) (signalName, encodedArgs) -> {
                         LOGGER.debug("[JWorkflowAdapter] Signal received: {}", signalName);
 
-                        // Extract signal data from encodedArgs
-                        Map<String, Object> signalData = new HashMap<>();
+                        // Extract the signal payload from encodedArgs. The payload can be any anydata-compatible
+                        // value - not only a record/map, but also a primitive (boolean, int, string), json, an
+                        // xml round-trip wrapper, or an array. Deserialize it as a generic Object so Temporal's
+                        // JSON converter reconstructs the natural Java type; forcing Map.class here silently
+                        // dropped non-map payloads and produced an empty map (causing later conversion errors).
+                        Object signalData = null;
                         try {
-                            // Try to get the first argument as a Map
-                            @SuppressWarnings("unchecked")
-                            Map<String, String> argMap = encodedArgs.get(0, Map.class);
-                            if (argMap != null) {
-                                signalData.putAll(argMap);
-                            }
+                            signalData = encodedArgs.get(0, Object.class);
                         } catch (Exception e) {
-                            LOGGER.warn("[JWorkflowAdapter] Could not extract signal data as Map: {}",
-                                        e.getMessage());
+                            LOGGER.warn("[JWorkflowAdapter] Could not extract signal data: {}", e.getMessage());
                         }
 
                         // Try to invoke remote method handler for this signal

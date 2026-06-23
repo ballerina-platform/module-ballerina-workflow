@@ -49,4 +49,23 @@ public final class TestNatives {
         Type targetType = typedesc.getDescribingType();
         return TypesUtil.cloneWithType(data, targetType);
     }
+
+    /**
+     * Simulates the {@code sendData} round-trip for the given value without a live workflow server.
+     * <p>
+     * It mirrors the runtime path that broke for non-record payloads: the value is converted to its Java
+     * representation on the send side ({@link TypesUtil#convertBallerinaToJavaType}), converted back on the
+     * receive side ({@link TypesUtil#convertJavaToBallerinaType}), and finally coerced to the event future's
+     * constraint type ({@link TypesUtil#cloneWithType}). This lets unit tests assert that primitives, json and
+     * xml survive the round-trip - not only records.
+     *
+     * @param data     the value being sent (any anydata)
+     * @param typedesc the target type the receiving {@code future<T>} expects
+     * @return the value after the full send/receive/convert round-trip, or an error
+     */
+    public static Object roundTripSendData(Object data, BTypedesc typedesc) {
+        Object javaData = TypesUtil.convertBallerinaToJavaType(data);
+        Object ballerinaData = TypesUtil.convertJavaToBallerinaType(javaData);
+        return TypesUtil.cloneWithType(ballerinaData, typedesc.getDescribingType());
+    }
 }

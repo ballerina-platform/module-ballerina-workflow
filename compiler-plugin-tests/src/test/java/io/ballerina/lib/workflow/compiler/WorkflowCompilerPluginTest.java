@@ -309,9 +309,11 @@ public class WorkflowCompilerPluginTest {
         // still validate that each position matches its future's inner type (WORKFLOW_117).
         String packagePath = "invalid_await_per_position_error_mismatch";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
-        Assert.assertTrue(diagnosticResult.errorCount() > 0,
-                "Expected validation error for swapped per-position error tuple");
-        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_117);
+        // The fixture swaps both tuple members, so both positions must be validated.
+        List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_117");
+        Assert.assertEquals(diags.size(), 2, "Expected 2 WORKFLOW_117 errors (both positions swapped)");
+        assertMessageContains(diags.get(0), "position 0");
+        assertMessageContains(diags.get(1), "position 1");
     }
 
     @Test(groups = "valid")

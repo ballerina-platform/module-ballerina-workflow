@@ -222,17 +222,24 @@ public final class WaitUtils {
             BArray tupleValue = ValueCreator.createTupleValue(tupleType);
             for (int i = 0; i < results.length; i++) {
                 Type memberType = i < memberTypes.size() ? memberTypes.get(i) : tupleType.getRestType();
+                if (memberType == null) {
+                    // More futures completed than the fixed tuple's arity (and no rest type). The result
+                    // cannot fit the declared shape, so fail deterministically rather than write past arity.
+                    return ErrorCreator.createError(StringUtils.fromString(
+                            "await result has " + results.length + " value(s) but the expected tuple type has only "
+                                    + memberTypes.size() + " member(s)"));
+                }
                 if (!completed[i]) {
                     // Incomplete future position → nil ()
                     tupleValue.add(i, (Object) null);
                     continue;
                 }
                 Object raw = TypesUtil.convertJavaToBallerinaType(results[i]);
-                Object converted = memberType != null ? TypesUtil.cloneWithType(raw, memberType) : raw;
+                Object converted = TypesUtil.cloneWithType(raw, memberType);
                 if (converted instanceof BError err) {
                     // If this position's type accepts an error, surface it per-position;
                     // otherwise the failure is fatal for the whole wait.
-                    if (memberType != null && typeAcceptsError(memberType)) {
+                    if (typeAcceptsError(memberType)) {
                         tupleValue.add(i, err);
                         continue;
                     }

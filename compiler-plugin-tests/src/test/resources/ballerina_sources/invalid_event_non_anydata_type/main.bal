@@ -20,14 +20,16 @@ type Input record {|
     string id;
 |};
 
-// Invalid: the events record has a future<stream<int>> field. A stream is not a
-// subtype of anydata, so it cannot be persisted/sent to a workflow via sendData.
-// Should trigger WORKFLOW_129.
+// Invalid: the events record mixes a valid anydata future with a future<stream<int>>
+// field. A stream is not a subtype of anydata, so it cannot be persisted/sent to a
+// workflow via sendData. The valid field is accepted while the stream field should
+// trigger WORKFLOW_129.
 @workflow:Workflow
 function nonAnydataEventsWorkflow(
     workflow:Context ctx,
     Input input,
     record {|
+        future<boolean> approved;
         future<stream<int>> numbers;
     |} events
 ) returns string|error {

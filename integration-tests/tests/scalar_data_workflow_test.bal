@@ -116,5 +116,5 @@ function testSendTableData() returns error? {
     check workflow:sendData(tableDataWorkflow, workflowId, "rows", payload);
 
     anydata result = check workflow:getWorkflowResult(workflowId, 30);
-    test:assertEquals(result, 3, "Table payload (3 rows) should be delivered to the workflow");
+    test:assertEquals(result, payload, "Table payload (rows and key) should be delivered intact to the workflow");
 }

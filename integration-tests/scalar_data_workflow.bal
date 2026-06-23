@@ -133,12 +133,12 @@ type TableRow record {|
     string name;
 |};
 
-# Workflow that waits for a table signal and echoes its row count.
+# Workflow that waits for a table signal and echoes the table back.
 #
 # + ctx - The workflow context
 # + input - The workflow input
 # + events - Record containing the table future
-# + return - The number of rows received
+# + return - The received table
 @workflow:Workflow
 function tableDataWorkflow(
     workflow:Context ctx,
@@ -146,7 +146,7 @@ function tableDataWorkflow(
     record {|
         future<table<TableRow> key(id)> rows;
     |} events
-) returns int|error {
+) returns table<TableRow> key(id)|error {
     table<TableRow> key(id) rows = check wait events.rows;
-    return rows.length();
+    return rows;
 }

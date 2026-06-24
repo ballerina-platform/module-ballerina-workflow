@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- [#8840](https://github.com/ballerina-platform/ballerina-library/issues/8840) -
+  Widened the `ctx->await()` dependent type parameter to
+  `typedesc<anydata|error|(anydata|error)[]>` (returning `T`). The result can now be
+  destructured directly with a tuple-binding pattern
+  (`[Approval, Payment] [a, p] = check ctx->await(...)`), captured as `[T1, T2, ...]|error`
+  without a forced `check`, and use per-position error types (`[T1|error, T2|error]`). The
+  compiler plugin validates that each tuple position matches the corresponding future's type.
+
+### Fixed
+
+- [Fix#8820](https://github.com/ballerina-platform/ballerina-library/issues/8820) -
+  `workflow:sendData()` now supports all persistable `anydata` payloads — primitive types
+  (`boolean`, `int`, `float`, `decimal`, `string`), `json`, `xml`, and `table` — not only
+  records. Previously a non-record payload was delivered as an empty `map<anydata>`, causing a
+  `{ballerina}ConversionError`. Added the `WORKFLOW_129` compiler diagnostic to enforce that
+  each `future<T>` field in a workflow's events record has a `T` that is a subtype of `anydata`.
+
 ## [0.5.0] - 2026-06-18
 
 ### Added

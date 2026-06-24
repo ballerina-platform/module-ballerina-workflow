@@ -26,7 +26,10 @@ import io.ballerina.runtime.api.types.ArrayType;
 import io.ballerina.runtime.api.types.PredefinedTypes;
 import io.ballerina.runtime.api.types.TupleType;
 import io.ballerina.runtime.api.types.Type;
+import io.ballerina.runtime.api.types.TypeTags;
+import io.ballerina.runtime.api.types.UnionType;
 import io.ballerina.runtime.api.utils.StringUtils;
+import io.ballerina.runtime.api.utils.TypeUtils;
 import io.ballerina.runtime.api.values.BArray;
 import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BMap;
@@ -196,28 +199,50 @@ public final class WaitUtils {
      * (Ballerina nil) payload.
      * <p>
      * <ul>
-     *   <li>If {@code targetType} is a {@link TupleType}, each element is converted to
+     *   <li>If the effective type is a {@link TupleType}, each element is converted to
      *       its corresponding member type — enabling direct typed access without
-     *       {@code cloneWithType}.</li>
-     *   <li>If {@code targetType} is an {@link ArrayType} with a non-anydata element type,
+     *       {@code cloneWithType}. When a member type itself accepts {@code error}
+     *       (e.g. {@code [Approval|error, Payment|error]}), a per-position conversion
+     *       failure is surfaced in that slot instead of failing the whole wait.</li>
+     *   <li>If the effective type is an {@link ArrayType} with a non-anydata element type,
      *       each element is uniformly converted to the array element type.</li>
      *   <li>Otherwise the results are returned as a plain {@code anydata[]} array.</li>
      * </ul>
+     * <p>
+     * Because the dependent type parameter is {@code typedesc<anydata|error|(anydata|error)[]>} and the
+     * function returns {@code T} (not {@code T|error}), the inferred {@code targetType} may be a union
+     * such as {@code [Approval, Payment]|error} when the caller captures the result without {@code check}.
+     * {@link #resolveEffectiveType(Type)} strips the outer {@code error} so the underlying tuple/array
+     * shape is still built.
      */
     private static Object convertResults(Object[] results, boolean[] completed, Type targetType) {
-        if (targetType instanceof TupleType tupleType) {
+        Type effectiveType = resolveEffectiveType(targetType);
+        if (effectiveType instanceof TupleType tupleType) {
             java.util.List<Type> memberTypes = tupleType.getTupleTypes();
             BArray tupleValue = ValueCreator.createTupleValue(tupleType);
             for (int i = 0; i < results.length; i++) {
                 Type memberType = i < memberTypes.size() ? memberTypes.get(i) : tupleType.getRestType();
+                if (memberType == null) {
+                    // More futures completed than the fixed tuple's arity (and no rest type). The result
+                    // cannot fit the declared shape, so fail deterministically rather than write past arity.
+                    return ErrorCreator.createError(StringUtils.fromString(
+                            "await result has " + results.length + " value(s) but the expected tuple type has only "
+                                    + memberTypes.size() + " member(s)"));
+                }
                 if (!completed[i]) {
                     // Incomplete future position → nil ()
                     tupleValue.add(i, (Object) null);
                     continue;
                 }
                 Object raw = TypesUtil.convertJavaToBallerinaType(results[i]);
-                Object converted = memberType != null ? TypesUtil.cloneWithType(raw, memberType) : raw;
+                Object converted = TypesUtil.cloneWithType(raw, memberType);
                 if (converted instanceof BError err) {
+                    // If this position's type accepts an error, surface it per-position;
+                    // otherwise the failure is fatal for the whole wait.
+                    if (typeAcceptsError(memberType)) {
+                        tupleValue.add(i, err);
+                        continue;
+                    }
                     return err;
                 }
                 tupleValue.add(i, converted);
@@ -225,7 +250,8 @@ public final class WaitUtils {
             return tupleValue;
         }
 
-        if (targetType instanceof ArrayType arrayType && arrayType.getElementType() != PredefinedTypes.TYPE_ANYDATA) {
+        if (effectiveType instanceof ArrayType arrayType
+                && arrayType.getElementType() != PredefinedTypes.TYPE_ANYDATA) {
             Type elemType = arrayType.getElementType();
             Object[] converted = new Object[results.length];
             for (int i = 0; i < results.length; i++) {
@@ -246,6 +272,52 @@ public final class WaitUtils {
         }
         return ValueCreator.createArrayValue(ballerinaResults,
                                              TypeCreator.createArrayType(PredefinedTypes.TYPE_ANYDATA));
+    }
+
+    /**
+     * Resolves the effective data type the result should take, stripping a wrapping {@code |error} (and {@code nil})
+     * union introduced when the dependent type parameter ({@code typedesc<anydata|error>}) is inferred from a
+     * union LHS such as {@code [Approval, Payment]|error}. When exactly one non-error/non-nil member remains, that
+     * member is used (recursively); otherwise the type is returned unchanged so the caller falls back to
+     * {@code anydata[]}.
+     */
+    private static Type resolveEffectiveType(Type type) {
+        Type implied = TypeUtils.getImpliedType(type);
+        if (!(implied instanceof UnionType union)) {
+            return implied;
+        }
+        Type single = null;
+        for (Type member : union.getMemberTypes()) {
+            Type m = TypeUtils.getImpliedType(member);
+            if (m.getTag() == TypeTags.ERROR_TAG || m.getTag() == TypeTags.NULL_TAG) {
+                continue;
+            }
+            if (single != null) {
+                // Ambiguous (more than one data member) — leave as-is.
+                return implied;
+            }
+            single = m;
+        }
+        return single != null ? resolveEffectiveType(single) : implied;
+    }
+
+    /**
+     * Returns {@code true} when {@code type} (or, for a union, any member) is an {@code error} type — i.e. the result
+     * position may legally hold a per-position error value.
+     */
+    private static boolean typeAcceptsError(Type type) {
+        Type implied = TypeUtils.getImpliedType(type);
+        if (implied.getTag() == TypeTags.ERROR_TAG) {
+            return true;
+        }
+        if (implied instanceof UnionType union) {
+            for (Type member : union.getMemberTypes()) {
+                if (typeAcceptsError(member)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static int countDone(FutureValue[] futures) {

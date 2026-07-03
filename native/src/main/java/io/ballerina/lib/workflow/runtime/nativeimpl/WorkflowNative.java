@@ -726,9 +726,11 @@ public final class WorkflowNative {
             }
 
             // Always verify the target is a HUMAN_TASK workflow; also enforce role
-            // intersection when callerRoles is provided.
+            // intersection when callerRoles is provided, and validate the completion
+            // payload against the task's expected result type (ballerina-library#8866).
             BArray callerRolesArray = (callerRoles instanceof BArray ba) ? ba : null;
-            Object validationError = validateHumanTaskAndRoles(client, taskWorkflowId.getValue(), callerRolesArray);
+            Object validationError = validateHumanTaskAndRoles(client, taskWorkflowId.getValue(), callerRolesArray,
+                                                               result);
             if (validationError != null) {
                 return validationError;
             }
@@ -769,7 +771,7 @@ public final class WorkflowNative {
      * was added).  The {@code workflowKind} check is never skipped.
      */
     private static Object validateHumanTaskAndRoles(WorkflowClient client, String taskWorkflowId,
-                                                    BArray callerRolesArray) {
+                                                    BArray callerRolesArray, Object result) {
         try {
             DescribeWorkflowExecutionRequest req = DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
                     client.getOptions().getNamespace()).setExecution(
@@ -807,7 +809,15 @@ public final class WorkflowNative {
                                 workflowKind + ")"));
             }
 
-            // 2. Role intersection — only when callerRoles was supplied
+            // 2. Payload type check — reject completions whose result does not match the task's expected type.
+            // This runs before the signal is sent so an invalid payload never completes the task
+            // (ballerina-library#8866). Skipped when the expected type is unknown in this JVM.
+            Object payloadError = validateCompletionPayload(dc, memoFields, result);
+            if (payloadError != null) {
+                return payloadError;
+            }
+
+            // 3. Role intersection — only when callerRoles was supplied
             if (callerRolesArray == null) {
                 return null;
             }
@@ -842,5 +852,67 @@ public final class WorkflowNative {
             return ErrorCreator.createError(
                     StringUtils.fromString("Failed to validate task '" + taskWorkflowId + "': " + e.getMessage()));
         }
+    }
+
+    /**
+     * Validates a completion {@code result} against the human task's expected result type before the task is completed.
+     * <p>
+     * The expected type is looked up from the in-JVM registry populated by {@code awaitHumanTask}, keyed by the human
+     * task workflow type ({@code "humantask-" + qualifiedTaskName}). When the type is unknown in this JVM (e.g. after a
+     * worker restart, or when completion is served by a separate process) validation is skipped and the worker-side
+     * coercion remains the safety net. A mismatch returns a Ballerina error whose message is prefixed with
+     * {@code "Invalid payload"} so the management HTTP layer can map it to 422 (ballerina-library#8866).
+     *
+     * @return {@code null} when the payload is valid or cannot be validated; a Ballerina error on a type mismatch
+     */
+    private static Object validateCompletionPayload(io.temporal.common.converter.DataConverter dc,
+                                                    Map<String, io.temporal.api.common.v1.Payload> memoFields,
+                                                    Object result) {
+        String qualifiedTaskName;
+        try {
+            io.temporal.api.common.v1.Payload namePl = memoFields.get("taskName");
+            if (namePl == null) {
+                return null;
+            }
+            qualifiedTaskName = dc.fromPayload(namePl, String.class, String.class);
+        } catch (Exception e) {
+            return null; // taskName unavailable — skip type validation
+        }
+        if (qualifiedTaskName == null || qualifiedTaskName.isBlank()) {
+            return null;
+        }
+
+        // A rejection sent via failHumanTask carries a sentinel payload that intentionally does not conform to the
+        // task's result type; deliver it unchanged so the waiting workflow can observe the rejection.
+        if (isRejectionPayload(result)) {
+            return null;
+        }
+
+        io.ballerina.runtime.api.types.Type expectedType =
+                WorkflowWorkerNative.getHumanTaskResultType("humantask-" + qualifiedTaskName);
+        if (expectedType == null) {
+            return null; // expected type unknown in this JVM — cannot validate here
+        }
+
+        Object converted = TypesUtil.validateAndConvert(result, expectedType);
+        if (converted instanceof io.ballerina.runtime.api.values.BError err) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Invalid payload for human task '" + qualifiedTaskName + "': " + err.getMessage()));
+        }
+        return null;
+    }
+
+    /**
+     * Returns {@code true} when {@code result} is a human task rejection sentinel — a map carrying
+     * {@code __rejected: true} as sent by {@code failHumanTask}. Such payloads intentionally do not conform to the
+     * task's result type and must bypass completion payload validation.
+     */
+    @SuppressWarnings("unchecked")
+    private static boolean isRejectionPayload(Object result) {
+        if (result instanceof BMap) {
+            BMap<BString, Object> map = (BMap<BString, Object>) result;
+            return Boolean.TRUE.equals(map.get(StringUtils.fromString("__rejected")));
+        }
+        return false;
     }
 }

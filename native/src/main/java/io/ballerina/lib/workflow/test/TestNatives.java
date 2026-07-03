@@ -20,6 +20,7 @@ package io.ballerina.lib.workflow.test;
 
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.runtime.api.types.Type;
+import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BString;
 import io.ballerina.runtime.api.values.BTypedesc;
 
@@ -55,17 +56,50 @@ public final class TestNatives {
      * <p>
      * It mirrors the runtime path that broke for non-record payloads: the value is converted to its Java
      * representation on the send side ({@link TypesUtil#convertBallerinaToJavaType}), converted back on the
-     * receive side ({@link TypesUtil#convertJavaToBallerinaType}), and finally coerced to the event future's
-     * constraint type ({@link TypesUtil#cloneWithType}). This lets unit tests assert that primitives, json and
-     * xml survive the round-trip - not only records.
+     * receive side ({@link TypesUtil#convertJavaToBallerinaType}), and finally validated/coerced to the event
+     * future's constraint type ({@link TypesUtil#validateAndConvert}, matching {@code WaitUtils}). This lets unit
+     * tests assert that primitives, json and xml survive the round-trip (not only records), that a nil is accepted
+     * only when the target type is nilable, and that mismatched payloads surface an error.
      *
-     * @param data     the value being sent (any anydata)
+     * @param data     the value being sent (any anydata, including nil)
      * @param typedesc the target type the receiving {@code future<T>} expects
      * @return the value after the full send/receive/convert round-trip, or an error
      */
     public static Object roundTripSendData(Object data, BTypedesc typedesc) {
         Object javaData = TypesUtil.convertBallerinaToJavaType(data);
         Object ballerinaData = TypesUtil.convertJavaToBallerinaType(javaData);
-        return TypesUtil.cloneWithType(ballerinaData, typedesc.getDescribingType());
+        return TypesUtil.validateAndConvert(ballerinaData, typedesc.getDescribingType());
+    }
+
+    /**
+     * Builds the JSON Schema string for the type described by {@code typedesc}. Backs unit tests that exercise
+     * {@link TypesUtil#toJsonSchema(Type)} - the schema builder used to generate workflow input schemas.
+     *
+     * @param typedesc the type to describe
+     * @return the JSON Schema as a string
+     */
+    public static BString buildJsonSchema(BTypedesc typedesc) {
+        return StringUtils.fromString(TypesUtil.toJsonSchema(typedesc.getDescribingType()));
+    }
+
+    /**
+     * Simulates the human task completion payload path against the task's expected result type, without a live
+     * workflow server.
+     * <p>
+     * It mirrors the runtime: the completion value is serialised on the send side
+     * ({@link TypesUtil#convertBallerinaToJavaType}), deserialised on the receive side
+     * ({@link TypesUtil#convertJavaToBallerinaType}), and validated/coerced against the expected type
+     * ({@link TypesUtil#validateAndConvert}). This lets unit tests assert that empty (nil), basic, and complex
+     * payloads succeed for compatible types and that mismatched payloads return an error instead of completing the
+     * task (ballerina-library#8866).
+     *
+     * @param result   the completion value (any anydata, including nil)
+     * @param typedesc the task's expected result type {@code T}
+     * @return the value after validation/coercion, or an error when it does not match {@code T}
+     */
+    public static Object simulateHumanTaskCompletion(Object result, BTypedesc typedesc) {
+        Object javaResult = TypesUtil.convertBallerinaToJavaType(result);
+        Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(javaResult);
+        return TypesUtil.validateAndConvert(ballerinaResult, typedesc.getDescribingType());
     }
 }

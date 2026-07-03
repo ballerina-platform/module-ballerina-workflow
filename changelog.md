@@ -15,6 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   (`[Approval, Payment] [a, p] = check ctx->await(...)`), captured as `[T1, T2, ...]|error`
   without a forced `check`, and use per-position error types (`[T1|error, T2|error]`). The
   compiler plugin validates that each tuple position matches the corresponding future's type.
+- The human-task completion HTTP endpoint now returns `422 Unprocessable Entity` when the
+  submitted payload does not match the task's expected result type.
 
 ### Fixed
 
@@ -24,6 +26,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   records. Previously a non-record payload was delivered as an empty `map<anydata>`, causing a
   `{ballerina}ConversionError`. Added the `WORKFLOW_129` compiler diagnostic to enforce that
   each `future<T>` field in a workflow's events record has a `T` that is a subtype of `anydata`.
+- Fixed a `TypeCastError` crash when a human task was completed with an empty or
+  type-mismatched payload. `completeHumanTask` now validates the payload against the task's
+  expected result type before completing it, returning an error (and leaving the task pending)
+  instead of failing the workflow ([#8866](https://github.com/ballerina-platform/ballerina-library/issues/8866)).
+- Generated JSON schemas no longer list optional record fields (declared with `?`) as
+  `required`.
 
 ## [0.5.0] - 2026-06-18
 

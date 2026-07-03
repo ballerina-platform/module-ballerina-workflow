@@ -888,7 +888,8 @@ service http:InterceptableService /workflow on mgmtListener {
     # + userId - Optional caller identity from the `x-user-id` header.
     # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
     # + body - Request body containing the task `result`.
-    # + return - Completion info as JSON, or a not-found, forbidden, conflict, or internal server error.
+    # + return - Completion info as JSON, or a not-found, forbidden, conflict, unprocessable-entity (invalid
+    #            payload), or internal server error.
     resource isolated function post human\-tasks/[string taskId]/complete(
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
@@ -910,7 +911,8 @@ service http:InterceptableService /workflow on mgmtListener {
     # + userId - Optional caller identity from the `x-user-id` header.
     # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
     # + body - Request body containing the `reason` string and optional `details` object.
-    # + return - Completion info as JSON, or a bad request, not-found, forbidden, conflict, or internal server error.
+    # + return - Completion info as JSON, or a bad request, not-found, forbidden, conflict, unprocessable-entity
+    #            (invalid payload), or internal server error.
     resource isolated function post human\-tasks/[string taskId]/'fail(
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,

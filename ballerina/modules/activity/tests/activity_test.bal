@@ -51,7 +51,7 @@ final http:Client testHttpClient = check new ("http://localhost:9797/mock");
 
 service /soap on activityTestListener {
     // SOAP 1.1 endpoint — responds with a SOAP 1.1 envelope.
-    resource function post calc11(http:Request req) returns xml {
+    resource function post calc11() returns xml {
         return xml `<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
                         <soap:Body>
                             <quer:AddResponse xmlns:quer="http://tempuri.org/">
@@ -62,7 +62,7 @@ service /soap on activityTestListener {
     }
 
     // SOAP 1.2 endpoint — responds with a SOAP 1.2 envelope.
-    resource function post calc12(http:Request req) returns xml {
+    resource function post calc12() returns xml {
         return xml `<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope">
                         <soap:Body>
                             <quer:AddResponse xmlns:quer="http://tempuri.org/">

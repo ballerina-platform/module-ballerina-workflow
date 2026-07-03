@@ -216,7 +216,9 @@ public final class WaitUtils {
                     continue;
                 }
                 Object raw = TypesUtil.convertJavaToBallerinaType(results[i]);
-                Object converted = memberType != null ? TypesUtil.cloneWithType(raw, memberType) : raw;
+                // validateAndConvert rejects a nil payload against a non-nilable member type instead of letting a
+                // nil cross into a typed slot and panic with a TypeCastError (ballerina-library#8866).
+                Object converted = memberType != null ? TypesUtil.validateAndConvert(raw, memberType) : raw;
                 if (converted instanceof BError err) {
                     return err;
                 }
@@ -230,7 +232,7 @@ public final class WaitUtils {
             Object[] converted = new Object[results.length];
             for (int i = 0; i < results.length; i++) {
                 Object raw = TypesUtil.convertJavaToBallerinaType(results[i]);
-                Object conv = TypesUtil.cloneWithType(raw, elemType);
+                Object conv = TypesUtil.validateAndConvert(raw, elemType);
                 if (conv instanceof BError err) {
                     return err;
                 }

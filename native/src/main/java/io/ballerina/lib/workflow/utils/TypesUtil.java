@@ -297,6 +297,53 @@ public final class TypesUtil {
     }
 
     /**
+     * Validates and converts a completion/signal payload against the expected {@code targetType}.
+     * <p>
+     * Unlike {@link #cloneWithType(Object, Type)}, a {@code null} (Ballerina nil) value is rejected when the target
+     * type does not accept nil. This prevents a nil from crossing the Java&rarr;Ballerina boundary as a non-nilable
+     * {@code T}, which otherwise panics with a {@code TypeCastError} (see ballerina-library#8866). A successful call
+     * returns the value coerced to {@code targetType}; a failure returns a {@link BError} describing the mismatch.
+     *
+     * @param value      the payload value to validate (may be {@code null})
+     * @param targetType the expected type
+     * @return the coerced value, or a {@link BError} if the value is not assignable to {@code targetType}
+     */
+    public static Object validateAndConvert(Object value, Type targetType) {
+        if (value == null) {
+            if (targetType == null || acceptsNil(targetType, 0)) {
+                return null;
+            }
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "expected a non-nil value of type '" + targetType + "', but found ()"));
+        }
+        return cloneWithType(value, targetType);
+    }
+
+    /**
+     * Returns {@code true} if a Ballerina nil ({@code ()}) is a valid value of {@code rawType} — i.e. the type is
+     * {@code ()}, a nilable union, or one of the broad types {@code any}/{@code anydata}/{@code json} that include nil.
+     */
+    private static boolean acceptsNil(Type rawType, int depth) {
+        if (rawType == null || depth > 12) {
+            return true;
+        }
+        Type type = dereferenceType(rawType, depth + 1);
+        int tag = type.getTag();
+        if (tag == TypeTags.NULL_TAG || tag == TypeTags.ANY_TAG || tag == TypeTags.ANYDATA_TAG
+                || tag == TypeTags.JSON_TAG) {
+            return true;
+        }
+        if (type instanceof UnionType unionType) {
+            for (Type member : unionType.getMemberTypes()) {
+                if (acceptsNil(member, depth + 1)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * Builds a JSON Schema string for the provided Ballerina type.
      *
      * @param type Ballerina runtime type

@@ -540,6 +540,9 @@ public final class WorkflowContextNative {
             if (!WorkflowWorkerNative.getHumanTaskRegistry().contains(humanTaskTypeName)) {
                 WorkflowWorkerNative.registerHumanTask(StringUtils.fromString(humanTaskTypeName));
             }
+            // Remember the expected result type so completeHumanTask can validate the completion payload before
+            // the task is completed (ballerina-library#8866).
+            WorkflowWorkerNative.registerHumanTaskResultType(humanTaskTypeName, typedesc.getDescribingType());
 
             // Compact instance ID: "humantask-" + UUID7 (deterministic across replays)
             String taskWorkflowId = "humantask-" + Workflow.randomUUID();
@@ -585,10 +588,12 @@ public final class WorkflowContextNative {
             // Signal payload shape: { completedBy: {...}, result: <json> }
             Object formResult = extractResultField(rawResult);
 
-            // Coerce to the caller's typedesc T
+            // Coerce to the caller's typedesc T. Use validateAndConvert (not cloneWithType) so a nil result
+            // against a non-nilable T yields a proper error instead of a nil that panics with a TypeCastError
+            // at the Java→Ballerina boundary (ballerina-library#8866).
             Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(formResult);
             Type targetType = typedesc.getDescribingType();
-            return TypesUtil.cloneWithType(ballerinaResult, targetType);
+            return TypesUtil.validateAndConvert(ballerinaResult, targetType);
 
         } catch (ChildWorkflowFailure e) {
             Throwable cause = e.getCause();

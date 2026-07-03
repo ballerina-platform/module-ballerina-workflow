@@ -37,6 +37,7 @@ import io.ballerina.runtime.api.types.FunctionType;
 import io.ballerina.runtime.api.types.Parameter;
 import io.ballerina.runtime.api.types.PredefinedTypes;
 import io.ballerina.runtime.api.types.RecordType;
+import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.utils.ValueUtils;
@@ -144,6 +145,15 @@ public final class WorkflowWorkerNative {
      * {@link #registerHumanTask(BString)} at module init time.
      */
     private static final Set<String> HUMANTASK_REGISTRY = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Maps a human task workflow type (e.g. {@code humantask-order.approve}) to the expected result type {@code T} of
+     * its {@code awaitHumanTask} call site. Populated by {@code awaitHumanTask} when a task is created, and read by
+     * {@code completeHumanTask} to validate the completion payload before the task is completed (see #8866).
+     * Best-effort in-JVM cache: when absent (e.g. after a worker restart, or when completion is served by a separate
+     * process) payload type-validation is skipped and the worker-side coercion still guards against invalid values.
+     */
+    private static final Map<String, Type> HUMANTASK_RESULT_TYPES = new ConcurrentHashMap<>();
 
     /**
      * Tracks whether the built-in retry task workflow type has been registered. Populated lazily on the first
@@ -769,6 +779,29 @@ public final class WorkflowWorkerNative {
      */
     public static Set<String> getHumanTaskRegistry() {
         return Collections.unmodifiableSet(HUMANTASK_REGISTRY);
+    }
+
+    /**
+     * Records the expected result type of a human task workflow type so {@code completeHumanTask} can validate
+     * completion payloads. Called by {@code awaitHumanTask} when a task is created.
+     *
+     * @param humanTaskType the human task workflow type (e.g. {@code humantask-order.approve})
+     * @param resultType    the expected result type {@code T} of the {@code awaitHumanTask} call site
+     */
+    public static void registerHumanTaskResultType(String humanTaskType, Type resultType) {
+        if (humanTaskType != null && resultType != null) {
+            HUMANTASK_RESULT_TYPES.put(humanTaskType, resultType);
+        }
+    }
+
+    /**
+     * Returns the expected result type for a human task workflow type, or {@code null} if it is not known in this JVM.
+     *
+     * @param humanTaskType the human task workflow type (e.g. {@code humantask-order.approve})
+     * @return the expected result type, or {@code null}
+     */
+    public static Type getHumanTaskResultType(String humanTaskType) {
+        return humanTaskType == null ? null : HUMANTASK_RESULT_TYPES.get(humanTaskType);
     }
 
     /**

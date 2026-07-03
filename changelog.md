@@ -30,6 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   type-mismatched payload. `completeHumanTask` now validates the payload against the task's
   expected result type before completing it, returning an error (and leaving the task pending)
   instead of failing the workflow ([#8866](https://github.com/ballerina-platform/ballerina-library/issues/8866)).
+- Generated JSON schemas no longer list optional record fields (declared with `?`) as
+  `required`.
 
 ## [0.5.0] - 2026-06-18
 

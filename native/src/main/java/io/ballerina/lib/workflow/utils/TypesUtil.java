@@ -21,6 +21,7 @@ package io.ballerina.lib.workflow.utils;
 import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.creators.TypeCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
+import io.ballerina.runtime.api.flags.SymbolFlags;
 import io.ballerina.runtime.api.types.ArrayType;
 import io.ballerina.runtime.api.types.Field;
 import io.ballerina.runtime.api.types.IntersectionType;
@@ -445,7 +446,9 @@ public final class TypesUtil {
                 String fieldName = entry.getKey();
                 Field field = entry.getValue();
                 properties.put(fieldName, toJsonSchemaObject(field.getFieldType(), depth + 1));
-                if (!isNilableType(field.getFieldType(), depth + 1)) {
+                // A field is required only when it must be present (not declared optional with `?`) and cannot be nil.
+                boolean optional = SymbolFlags.isFlagOn(field.getFlags(), SymbolFlags.OPTIONAL);
+                if (!optional && !isNilableType(field.getFieldType(), depth + 1)) {
                     required.add(fieldName);
                 }
             }

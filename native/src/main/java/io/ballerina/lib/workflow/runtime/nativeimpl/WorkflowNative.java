@@ -882,6 +882,12 @@ public final class WorkflowNative {
             return null;
         }
 
+        // A rejection sent via failHumanTask carries a sentinel payload that intentionally does not conform to the
+        // task's result type; deliver it unchanged so the waiting workflow can observe the rejection.
+        if (isRejectionPayload(result)) {
+            return null;
+        }
+
         io.ballerina.runtime.api.types.Type expectedType =
                 WorkflowWorkerNative.getHumanTaskResultType("humantask-" + qualifiedTaskName);
         if (expectedType == null) {
@@ -894,5 +900,19 @@ public final class WorkflowNative {
                     "Invalid payload for human task '" + qualifiedTaskName + "': " + err.getMessage()));
         }
         return null;
+    }
+
+    /**
+     * Returns {@code true} when {@code result} is a human task rejection sentinel — a map carrying
+     * {@code __rejected: true} as sent by {@code failHumanTask}. Such payloads intentionally do not conform to the
+     * task's result type and must bypass completion payload validation.
+     */
+    @SuppressWarnings("unchecked")
+    private static boolean isRejectionPayload(Object result) {
+        if (result instanceof BMap) {
+            BMap<BString, Object> map = (BMap<BString, Object>) result;
+            return Boolean.TRUE.equals(map.get(StringUtils.fromString("__rejected")));
+        }
+        return false;
     }
 }

@@ -177,3 +177,32 @@ function testCompleteHumanTaskInvalidPayloadDoesNotComplete() returns error? {
         test:assertEquals(decision, expected, "Returned decision should match the valid payload");
     }
 }
+
+@test:Config {groups: ["unit"]}
+function testFailHumanTaskBypassesPayloadValidation() returns error? {
+    // failHumanTask sends a rejection sentinel ({__rejected: true, ...}) that intentionally does not
+    // conform to the task's result type. Payload validation must not block it (ballerina-library#8866).
+    _ = check wfInternal:registerWorkflow(htRecordWorkflow, "human-task-record-reject-test");
+
+    map<string> input = {id: "test-ht-reject-001", orderId: "ORD-HT-004"};
+    string|error runResult = run(htRecordWorkflow, input);
+    if runResult is error {
+        return;
+    }
+    string workflowId = runResult;
+    runtime:sleep(2);
+
+    string? taskId = firstPendingHumanTaskId(workflowId);
+    if taskId is () {
+        return;
+    }
+
+    error? failResult = management:failHumanTask(taskId, "Missing supporting documents",
+            details = {"missingDocs": ["receipt"]}, callerRoles = ["APPROVER"]);
+    test:assertTrue(failResult is (), "failHumanTask should succeed for a valid pending task");
+
+    // The rejection is delivered; the record-typed task cannot coerce the sentinel, so the workflow
+    // reaches a terminal (failed) state rather than staying pending.
+    anydata|error wfResult = getWorkflowResult(workflowId, 15);
+    test:assertTrue(wfResult is error, "Rejecting a record-typed task should terminate the workflow with an error");
+}

@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- The human-task completion HTTP endpoint now returns `422 Unprocessable Entity` when the
+  submitted payload does not match the task's expected result type.
+
+### Fixed
+
+- Fixed a `TypeCastError` crash when a human task was completed with an empty or
+  type-mismatched payload. `completeHumanTask` now validates the payload against the task's
+  expected result type before completing it, returning an error (and leaving the task pending)
+  instead of failing the workflow ([#8866](https://github.com/ballerina-platform/ballerina-library/issues/8866)).
+
 ## [0.5.0] - 2026-06-18
 
 ### Added

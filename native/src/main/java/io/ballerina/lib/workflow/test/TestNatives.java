@@ -20,6 +20,7 @@ package io.ballerina.lib.workflow.test;
 
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.runtime.api.types.Type;
+import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BString;
 import io.ballerina.runtime.api.values.BTypedesc;
 
@@ -67,5 +68,16 @@ public final class TestNatives {
         Object javaData = TypesUtil.convertBallerinaToJavaType(data);
         Object ballerinaData = TypesUtil.convertJavaToBallerinaType(javaData);
         return TypesUtil.cloneWithType(ballerinaData, typedesc.getDescribingType());
+    }
+
+    /**
+     * Builds the JSON Schema string for the type described by {@code typedesc}. Backs unit tests that exercise
+     * {@link TypesUtil#toJsonSchema(Type)} - the schema builder used to generate workflow input schemas.
+     *
+     * @param typedesc the type to describe
+     * @return the JSON Schema as a string
+     */
+    public static BString buildJsonSchema(BTypedesc typedesc) {
+        return StringUtils.fromString(TypesUtil.toJsonSchema(typedesc.getDescribingType()));
     }
 }

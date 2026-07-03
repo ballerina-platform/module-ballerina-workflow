@@ -15,6 +15,8 @@
 // under the License.
 
 import ballerina/http;
+import ballerina/soap.soap11;
+import ballerina/soap.soap12;
 import ballerina/test;
 
 // ============================================================================
@@ -42,6 +44,42 @@ service /mock on activityTestListener {
 }
 
 final http:Client testHttpClient = check new ("http://localhost:9797/mock");
+
+// ============================================================================
+// Mock SOAP service — used to verify callSoapAPI dispatch (soap11 / soap12)
+// ============================================================================
+
+service /soap on activityTestListener {
+    // SOAP 1.1 endpoint — responds with a SOAP 1.1 envelope.
+    resource function post calc11(http:Request req) returns xml {
+        return xml `<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+                        <soap:Body>
+                            <quer:AddResponse xmlns:quer="http://tempuri.org/">
+                                <quer:AddResult>5</quer:AddResult>
+                            </quer:AddResponse>
+                        </soap:Body>
+                    </soap:Envelope>`;
+    }
+
+    // SOAP 1.2 endpoint — responds with a SOAP 1.2 envelope.
+    resource function post calc12(http:Request req) returns xml {
+        return xml `<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope">
+                        <soap:Body>
+                            <quer:AddResponse xmlns:quer="http://tempuri.org/">
+                                <quer:AddResult>5</quer:AddResult>
+                            </quer:AddResponse>
+                        </soap:Body>
+                    </soap:Envelope>`;
+    }
+}
+
+final soap11:Client testSoap11Client = check new ("http://localhost:9797/soap/calc11");
+final soap12:Client testSoap12Client = check new ("http://localhost:9797/soap/calc12");
+
+final xml soapRequestBody = xml `<quer:Add xmlns:quer="http://tempuri.org/">
+                                    <quer:intA>2</quer:intA>
+                                    <quer:intB>3</quer:intB>
+                                </quer:Add>`;
 
 // ============================================================================
 // RestMethod Enum Tests
@@ -120,4 +158,34 @@ function testDispatchPatch() returns error? {
     map<json> m = check (<json>result).ensureType();
     test:assertEquals(m["method"], "PATCH");
     test:assertEquals(m["received"], body);
+}
+
+// ============================================================================
+// callSoapAPI Tests — verifies SOAP 1.1 / 1.2 dispatch and validation
+// ============================================================================
+
+@test:Config {groups: ["unit"]}
+function testCallSoapApiSoap11() returns error? {
+    // soap11:Client branch + invokeSoap11 success path
+    xml response = check callSoapAPI(testSoap11Client, soapRequestBody, "http://tempuri.org/Add");
+    test:assertTrue(response.toString().includes("5"),
+            "SOAP 1.1 response should carry the mocked AddResult");
+}
+
+@test:Config {groups: ["unit"]}
+function testCallSoapApiSoap11RequiresAction() {
+    // invokeSoap11 action-required guard — no network call is made
+    xml|error response = callSoapAPI(testSoap11Client, soapRequestBody);
+    test:assertTrue(response is error, "SOAP 1.1 without an action must return an error");
+    if response is error {
+        test:assertEquals(response.message(), "SOAP 1.1 requires the 'action' parameter.");
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testCallSoapApiSoap12() returns error? {
+    // soap12:Client branch + invokeSoap12 success path (action is optional for SOAP 1.2)
+    xml response = check callSoapAPI(testSoap12Client, soapRequestBody);
+    test:assertTrue(response.toString().includes("5"),
+            "SOAP 1.2 response should carry the mocked AddResult");
 }

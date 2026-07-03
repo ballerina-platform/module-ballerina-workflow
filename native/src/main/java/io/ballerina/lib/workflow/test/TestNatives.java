@@ -80,4 +80,25 @@ public final class TestNatives {
     public static BString buildJsonSchema(BTypedesc typedesc) {
         return StringUtils.fromString(TypesUtil.toJsonSchema(typedesc.getDescribingType()));
     }
+
+    /**
+     * Simulates the human task completion payload path against the task's expected result type, without a live
+     * workflow server.
+     * <p>
+     * It mirrors the runtime: the completion value is serialised on the send side
+     * ({@link TypesUtil#convertBallerinaToJavaType}), deserialised on the receive side
+     * ({@link TypesUtil#convertJavaToBallerinaType}), and validated/coerced against the expected type
+     * ({@link TypesUtil#validateAndConvert}). This lets unit tests assert that empty (nil), basic, and complex
+     * payloads succeed for compatible types and that mismatched payloads return an error instead of completing the
+     * task (ballerina-library#8866).
+     *
+     * @param result   the completion value (any anydata, including nil)
+     * @param typedesc the task's expected result type {@code T}
+     * @return the value after validation/coercion, or an error when it does not match {@code T}
+     */
+    public static Object simulateHumanTaskCompletion(Object result, BTypedesc typedesc) {
+        Object javaResult = TypesUtil.convertBallerinaToJavaType(result);
+        Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(javaResult);
+        return TypesUtil.validateAndConvert(ballerinaResult, typedesc.getDescribingType());
+    }
 }

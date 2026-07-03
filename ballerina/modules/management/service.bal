@@ -893,7 +893,7 @@ service http:InterceptableService /workflow on mgmtListener {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
             @http:Payload map<json> body)
-            returns json|http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
+            returns json|http:NotFound|http:Forbidden|http:Conflict|http:UnprocessableEntity|http:InternalServerError {
         [string, string...]? callerRoles = parseRolesHeader(userRoles);
         if callerRoles is () {
             return <http:Forbidden>{body: errorBody("Unauthorized: x-user-roles header is required")};
@@ -915,7 +915,8 @@ service http:InterceptableService /workflow on mgmtListener {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
             @http:Payload map<json> body)
-            returns json|http:BadRequest|http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
+            returns json|http:BadRequest|http:NotFound|http:Forbidden|http:Conflict|http:UnprocessableEntity
+                    |http:InternalServerError {
         if body["reason"] is () {
             return <http:BadRequest>{body: errorBody("reason is required")};
         }
@@ -1203,7 +1204,7 @@ isolated function decodeCursorToken(string token) returns [string, string] {
 }
 
 isolated function humanTaskErrorResponse(error err)
-        returns http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
+        returns http:NotFound|http:Forbidden|http:Conflict|http:UnprocessableEntity|http:InternalServerError {
     string msg = err.message();
     if msg.includes("not found") || msg.includes("NOT_FOUND") {
         return <http:NotFound>{body: errorBody(msg)};
@@ -1213,6 +1214,11 @@ isolated function humanTaskErrorResponse(error err)
     }
     if msg.includes("not running") || msg.includes("already completed") {
         return <http:Conflict>{body: errorBody(msg)};
+    }
+    // A well-formed request whose payload does not match the task's expected type is semantically
+    // invalid → 422 Unprocessable Entity (ballerina-library#8866).
+    if msg.includes("Invalid payload") {
+        return <http:UnprocessableEntity>{body: errorBody(msg)};
     }
     return <http:InternalServerError>{body: errorBody(msg)};
 }

@@ -345,35 +345,43 @@ function testBuildRetryDecisionResponseNoUserId() {
 
 // ── humanTaskErrorResponse ────────────────────────────────────────────────────
 
+// Full response union produced by humanTaskErrorResponse (includes 422 for invalid payloads).
+type HumanTaskErrorResp http:NotFound|http:Forbidden|http:Conflict|http:UnprocessableEntity|http:InternalServerError;
+
 @test:Config {groups: ["unit"]}
 function testHumanTaskErrorResponseNotFound() {
     error err = error("workflow not found in Temporal");
-    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
-            humanTaskErrorResponse(err);
+    HumanTaskErrorResp resp = humanTaskErrorResponse(err);
     test:assertTrue(resp is http:NotFound, "NOT_FOUND message should produce 404");
 }
 
 @test:Config {groups: ["unit"]}
 function testHumanTaskErrorResponseForbidden() {
     error err = error("Unauthorized: caller role not in userRoles");
-    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
-            humanTaskErrorResponse(err);
+    HumanTaskErrorResp resp = humanTaskErrorResponse(err);
     test:assertTrue(resp is http:Forbidden, "Unauthorized message should produce 403");
 }
 
 @test:Config {groups: ["unit"]}
 function testHumanTaskErrorResponseConflict() {
     error err = error("task is already completed");
-    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
-            humanTaskErrorResponse(err);
+    HumanTaskErrorResp resp = humanTaskErrorResponse(err);
     test:assertTrue(resp is http:Conflict, "already-completed message should produce 409");
+}
+
+@test:Config {groups: ["unit"]}
+function testHumanTaskErrorResponseUnprocessableEntity() {
+    // A payload that does not match the task's expected result type is semantically invalid → 422.
+    error err = error("Invalid payload for human task 'order.approve': " +
+            "'string' value 'oops' cannot be converted to 'ApprovalDecision'");
+    HumanTaskErrorResp resp = humanTaskErrorResponse(err);
+    test:assertTrue(resp is http:UnprocessableEntity, "Invalid-payload message should produce 422");
 }
 
 @test:Config {groups: ["unit"]}
 function testHumanTaskErrorResponseInternalError() {
     error err = error("unexpected Temporal gRPC error");
-    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
-            humanTaskErrorResponse(err);
+    HumanTaskErrorResp resp = humanTaskErrorResponse(err);
     test:assertTrue(resp is http:InternalServerError, "Unknown error should produce 500");
 }
 

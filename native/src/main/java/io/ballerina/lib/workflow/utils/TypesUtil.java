@@ -322,10 +322,16 @@ public final class TypesUtil {
     /**
      * Returns {@code true} if a Ballerina nil ({@code ()}) is a valid value of {@code rawType} — i.e. the type is
      * {@code ()}, a nilable union, or one of the broad types {@code any}/{@code anydata}/{@code json} that include nil.
+     * <p>
+     * This is intentionally distinct from {@link #isNilableType(Type, int)}: that helper reports only explicit nilable
+     * unions (used to decide JSON-Schema {@code required} membership and so treats {@code any}/{@code anydata}/
+     * {@code json} as non-nilable), whereas this checks whether a nil <em>value</em> is assignable. Both share the same
+     * conservative depth guard: an unknown or too-deeply-nested type is treated as <em>not</em> accepting nil, so
+     * {@link #validateAndConvert} rejects the nil rather than letting it panic at the boundary (see #8866).
      */
     private static boolean acceptsNil(Type rawType, int depth) {
         if (rawType == null || depth > 12) {
-            return true;
+            return false;
         }
         Type type = dereferenceType(rawType, depth + 1);
         int tag = type.getTag();

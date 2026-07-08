@@ -38,7 +38,7 @@ import ballerina/time;
 # returns `503 Service Unavailable` for every request. Workflow execution runs
 # independently of this flag.
 # Set to `true` in Config.toml to activate the API.
-configurable boolean enableManagementApi = false;
+public configurable boolean enableManagementApi = false;
 
 # TCP port the management service listens on.
 # Default is 8234.

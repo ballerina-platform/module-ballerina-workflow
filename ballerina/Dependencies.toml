@@ -366,7 +366,7 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "workflow"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
 	{org = "ballerina", name = "email"},
 	{org = "ballerina", name = "http"},

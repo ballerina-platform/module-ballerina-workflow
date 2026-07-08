@@ -17,6 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   compiler plugin validates that each tuple position matches the corresponding future's type.
 - The human-task completion HTTP endpoint now returns `422 Unprocessable Entity` when the
   submitted payload does not match the task's expected result type.
+- Made the `enableManagementApi` configurable public so the management API can be toggled from
+  application configuration.
 
 ### Fixed
 

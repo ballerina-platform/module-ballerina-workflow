@@ -24,9 +24,10 @@ import ballerina/jballerina.java;
 # ```
 #
 # + processFunction - The workflow function (must have `@Workflow`)
-# + input - Optional input data for the workflow
+# + input - Optional input data for the workflow. Must match the workflow
+#           function's declared input parameter type (any `anydata` subtype)
 # + return - The workflow ID, or an error
-public isolated function run(function processFunction, map<anydata>? input = ()) returns string|error = @java:Method {
+public isolated function run(function processFunction, anydata input = ()) returns string|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
     name: "run"
 } external;

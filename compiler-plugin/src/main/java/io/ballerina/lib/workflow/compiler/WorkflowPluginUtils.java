@@ -22,8 +22,10 @@ import io.ballerina.compiler.api.symbols.AnnotationSymbol;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.ModuleSymbol;
 import io.ballerina.compiler.api.symbols.ObjectTypeSymbol;
+import io.ballerina.compiler.api.symbols.ParameterSymbol;
 import io.ballerina.compiler.api.symbols.Qualifiable;
 import io.ballerina.compiler.api.symbols.Qualifier;
+import io.ballerina.compiler.api.symbols.RecordTypeSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.api.symbols.TypeDescKind;
@@ -306,5 +308,85 @@ public final class WorkflowPluginUtils {
      */
     public static boolean hasQualifier(Qualifiable symbol, Qualifier qualifier) {
         return symbol.qualifiers().contains(qualifier);
+    }
+
+    /**
+     * Resolves an expression to a function symbol carrying the @Workflow annotation.
+     *
+     * @param expression    the expression referencing the workflow function
+     * @param semanticModel the semantic model
+     * @return the function symbol, or empty when the expression does not resolve to a
+     *         function with the @Workflow annotation
+     */
+    public static Optional<FunctionSymbol> getWorkflowFunctionSymbol(ExpressionNode expression,
+                                                                     SemanticModel semanticModel) {
+        Optional<Symbol> symbolOpt = semanticModel.symbol(expression);
+        if (symbolOpt.isEmpty() || symbolOpt.get().kind() != SymbolKind.FUNCTION) {
+            return Optional.empty();
+        }
+        FunctionSymbol functionSymbol = (FunctionSymbol) symbolOpt.get();
+        if (!hasWorkflowAnnotation(functionSymbol, WorkflowConstants.PROCESS_ANNOTATION)) {
+            return Optional.empty();
+        }
+        return Optional.of(functionSymbol);
+    }
+
+    /**
+     * Returns {@code true} when the type is a record whose every field is a
+     * {@code future<T>} — i.e., a workflow events record.
+     */
+    public static boolean isEventsRecordType(TypeSymbol typeSymbol) {
+        TypeSymbol resolved = resolveTypeReference(typeSymbol);
+        if (resolved.typeKind() != TypeDescKind.RECORD
+                || !(resolved instanceof RecordTypeSymbol recordType)) {
+            return false;
+        }
+        if (recordType.fieldDescriptors().isEmpty()) {
+            return false;
+        }
+        return recordType.fieldDescriptors().values().stream()
+                .allMatch(f -> resolveTypeReference(f.typeDescriptor()).typeKind() == TypeDescKind.FUTURE);
+    }
+
+    /**
+     * Finds the events record parameter of a workflow function — the record parameter
+     * whose every field is a {@code future<T>}.
+     *
+     * @param functionSymbol the workflow function symbol
+     * @return the events record type, or empty when the function has no events parameter
+     */
+    public static Optional<RecordTypeSymbol> getEventsRecordType(FunctionSymbol functionSymbol) {
+        Optional<List<ParameterSymbol>> paramsOpt = functionSymbol.typeDescriptor().params();
+        if (paramsOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        for (ParameterSymbol param : paramsOpt.get()) {
+            if (isEventsRecordType(param.typeDescriptor())) {
+                return Optional.of((RecordTypeSymbol) resolveTypeReference(param.typeDescriptor()));
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Finds the declared input parameter of a workflow function: the first parameter
+     * that is neither a {@code workflow:Context} nor an events record.
+     *
+     * @param functionSymbol the workflow function symbol
+     * @return the input parameter, or empty when the function takes no input
+     */
+    public static Optional<ParameterSymbol> getInputParameter(FunctionSymbol functionSymbol) {
+        Optional<List<ParameterSymbol>> paramsOpt = functionSymbol.typeDescriptor().params();
+        if (paramsOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        for (ParameterSymbol param : paramsOpt.get()) {
+            TypeSymbol paramType = param.typeDescriptor();
+            if (isContextType(paramType) || isEventsRecordType(paramType)) {
+                continue;
+            }
+            return Optional.of(param);
+        }
+        return Optional.empty();
     }
 }

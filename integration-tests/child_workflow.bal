@@ -88,7 +88,7 @@ function formatChildResultActivity(string childResult) returns string|error {
 # + input - The child workflow input
 # + return - The processed result or error
 @workflow:Workflow
-function childWorkflow(ChildInput input) returns string|error {
+function childWorkflow(workflow:Context ctx, ChildInput input) returns string|error {
     return "child-processed:" + input.value;
 }
 
@@ -124,7 +124,7 @@ function parentWorkflow(workflow:Context ctx, ParentInput input) returns string|
 # + events - The signal futures (notification)
 # + return - The received data or error
 @workflow:Workflow
-function receiverWorkflow(ReceiverInput input, ReceiverEvents events) returns string|error {
+function receiverWorkflow(workflow:Context ctx, ReceiverInput input, ReceiverEvents events) returns string|error {
     // Wait for notification signal
     map<anydata> notification = check wait events.notification;
     string message = <string>(notification["message"]);

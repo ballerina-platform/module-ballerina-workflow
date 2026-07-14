@@ -59,7 +59,7 @@ function orderWorkflowWithContext(workflow:Context ctx, OrderInput input) return
 
 // Valid: Workflow function with only input parameter (Context is optional)
 @workflow:Workflow
-function orderWorkflowWithoutContext(OrderInput input) returns OrderResult|error {
+function orderWorkflowWithoutContext(workflow:Context ctx, OrderInput input) returns OrderResult|error {
     return {
         status: "COMPLETED",
         workflowId: "unknown"

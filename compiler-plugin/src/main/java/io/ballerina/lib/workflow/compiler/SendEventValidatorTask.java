@@ -19,87 +19,188 @@
 package io.ballerina.lib.workflow.compiler;
 
 import io.ballerina.compiler.api.SemanticModel;
+import io.ballerina.compiler.api.symbols.ConstantSymbol;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
-import io.ballerina.compiler.api.symbols.ModuleSymbol;
+import io.ballerina.compiler.api.symbols.FutureTypeSymbol;
+import io.ballerina.compiler.api.symbols.RecordFieldSymbol;
+import io.ballerina.compiler.api.symbols.RecordTypeSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
+import io.ballerina.compiler.api.symbols.TypeDescKind;
+import io.ballerina.compiler.api.symbols.TypeSymbol;
+import io.ballerina.compiler.syntax.tree.BasicLiteralNode;
+import io.ballerina.compiler.syntax.tree.ExpressionNode;
+import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
 import io.ballerina.compiler.syntax.tree.FunctionCallExpressionNode;
-import io.ballerina.compiler.syntax.tree.NameReferenceNode;
-import io.ballerina.compiler.syntax.tree.QualifiedNameReferenceNode;
-import io.ballerina.compiler.syntax.tree.SimpleNameReferenceNode;
+import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
+import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.projects.plugins.AnalysisTask;
 import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
+import io.ballerina.tools.diagnostics.DiagnosticFactory;
+import io.ballerina.tools.diagnostics.DiagnosticInfo;
+import io.ballerina.tools.diagnostics.Location;
 
+import java.util.Map;
 import java.util.Optional;
+import java.util.TreeSet;
 
 /**
- * Validation task for sendData function calls.
+ * Validation task for {@code workflow:sendData} function calls.
  * <p>
- * With the simplified sendData API where all parameters are required
- * (workflow function, workflowId, dataName, data), most compile-time
- * validations are handled by the Ballerina type system.
- * This task is retained for potential future validations.
+ * Validates:
+ * <ul>
+ *   <li>The first argument is a function with the @Workflow annotation</li>
+ *   <li>The target workflow function declares an events record parameter</li>
+ *   <li>The {@code dataName} argument (when a literal or constant) matches a field
+ *       of the workflow function's events record</li>
+ *   <li>The {@code data} argument type matches the matched event future's inner type</li>
+ * </ul>
  *
  * @since 0.1.0
  */
 public class SendEventValidatorTask implements AnalysisTask<SyntaxNodeAnalysisContext> {
+
+    private static final String WORKFLOW_PARAM_NAME = "workflow";
+    private static final String DATA_NAME_PARAM_NAME = "dataName";
+    private static final String DATA_PARAM_NAME = "data";
 
     @Override
     public void perform(SyntaxNodeAnalysisContext context) {
         if (!(context.node() instanceof FunctionCallExpressionNode callNode)) {
             return;
         }
+        SemanticModel semanticModel = context.semanticModel();
 
-        // Check if this is a sendData call
-        if (!isSendDataCall(callNode, context.semanticModel())) {
+        if (!WorkflowFunctionCallUtils.isWorkflowModuleFunctionCall(callNode, semanticModel,
+                WorkflowConstants.SEND_DATA_FUNCTION)) {
             return;
         }
 
-        // All sendData parameters are now required. The Ballerina type system
-        // enforces that all arguments are provided with correct types.
-        // No additional compile-time validation is needed.
+        SeparatedNodeList<FunctionArgumentNode> arguments = callNode.arguments();
+        ExpressionNode workflowFuncExpr = WorkflowFunctionCallUtils.getArgumentExpression(
+                arguments, 0, WORKFLOW_PARAM_NAME);
+        if (workflowFuncExpr == null) {
+            return;
+        }
+
+        Optional<FunctionSymbol> workflowFuncOpt =
+                WorkflowPluginUtils.getWorkflowFunctionSymbol(workflowFuncExpr, semanticModel);
+        if (workflowFuncOpt.isEmpty()) {
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_130, workflowFuncExpr.location(),
+                    WorkflowConstants.SEND_DATA_FUNCTION);
+            return;
+        }
+        FunctionSymbol workflowFunc = workflowFuncOpt.get();
+        String workflowName = workflowFunc.getName().orElse("");
+
+        // The target workflow must declare an events record to receive data.
+        Optional<RecordTypeSymbol> eventsRecordOpt = WorkflowPluginUtils.getEventsRecordType(workflowFunc);
+        if (eventsRecordOpt.isEmpty()) {
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_133, callNode.location(),
+                    workflowName);
+            return;
+        }
+        RecordTypeSymbol eventsRecord = eventsRecordOpt.get();
+
+        // Validate the event name when it is statically resolvable
+        // (string literal or constant reference).
+        ExpressionNode dataNameExpr = WorkflowFunctionCallUtils.getArgumentExpression(
+                arguments, 2, DATA_NAME_PARAM_NAME);
+        if (dataNameExpr == null) {
+            return;
+        }
+        String eventName = resolveStringValue(dataNameExpr, semanticModel);
+        if (eventName == null) {
+            // Dynamic event names cannot be validated at compile time.
+            return;
+        }
+
+        Map<String, RecordFieldSymbol> eventFields = eventsRecord.fieldDescriptors();
+        RecordFieldSymbol eventField = eventFields.get(eventName);
+        if (eventField == null) {
+            String availableNames = String.join(", ", new TreeSet<>(eventFields.keySet()));
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_134, dataNameExpr.location(),
+                    eventName, workflowName, availableNames);
+            return;
+        }
+
+        // Validate the data argument type against the event future's inner type.
+        validateDataType(context, arguments, eventName, workflowName, eventField, semanticModel);
     }
-    
+
     /**
-     * Checks if the function call is a call to workflow:sendData.
+     * Validates that the {@code data} argument's static type is a subtype of the
+     * matched event future's inner type. Constructor expressions are skipped because
+     * their static type is derived from the contextually expected type ({@code anydata}),
+     * which would produce false positives.
      */
-    private boolean isSendDataCall(FunctionCallExpressionNode callNode, SemanticModel semanticModel) {
-        NameReferenceNode funcName = callNode.functionName();
-        
-        // Check for qualified name (workflow:sendData)
-        if (funcName instanceof QualifiedNameReferenceNode qualifiedName) {
-            String moduleName = qualifiedName.modulePrefix().text();
-            String functionName = qualifiedName.identifier().text();
-            
-            if (WorkflowConstants.PACKAGE_NAME.equals(moduleName) && 
-                    WorkflowConstants.SEND_DATA_FUNCTION.equals(functionName)) {
-                return true;
+    private void validateDataType(SyntaxNodeAnalysisContext context,
+                                  SeparatedNodeList<FunctionArgumentNode> arguments,
+                                  String eventName, String workflowName,
+                                  RecordFieldSymbol eventField, SemanticModel semanticModel) {
+        ExpressionNode dataExpr = WorkflowFunctionCallUtils.getArgumentExpression(
+                arguments, 3, DATA_PARAM_NAME);
+        if (dataExpr == null) {
+            return;
+        }
+        if (dataExpr.kind() == SyntaxKind.MAPPING_CONSTRUCTOR
+                || dataExpr.kind() == SyntaxKind.LIST_CONSTRUCTOR
+                || dataExpr.kind() == SyntaxKind.TABLE_CONSTRUCTOR) {
+            return;
+        }
+
+        TypeSymbol fieldType = WorkflowPluginUtils.resolveTypeReference(eventField.typeDescriptor());
+        if (fieldType.typeKind() != TypeDescKind.FUTURE) {
+            return;
+        }
+        Optional<TypeSymbol> innerTypeOpt = ((FutureTypeSymbol) fieldType).typeParameter();
+        if (innerTypeOpt.isEmpty()) {
+            return;
+        }
+        TypeSymbol expectedType = innerTypeOpt.get();
+
+        Optional<TypeSymbol> dataTypeOpt = semanticModel.typeOf(dataExpr);
+        if (dataTypeOpt.isEmpty()) {
+            return;
+        }
+        TypeSymbol dataType = dataTypeOpt.get();
+        if (!dataType.subtypeOf(expectedType)) {
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_135, dataExpr.location(),
+                    eventName, workflowName, expectedType.signature(), dataType.signature());
+        }
+    }
+
+    /**
+     * Resolves an expression to a compile-time string value. Supports string literals
+     * and references to string constants; returns {@code null} otherwise.
+     */
+    private String resolveStringValue(ExpressionNode expression, SemanticModel semanticModel) {
+        if (expression.kind() == SyntaxKind.STRING_LITERAL
+                && expression instanceof BasicLiteralNode literal) {
+            String text = literal.literalToken().text();
+            if (text.length() >= 2 && text.startsWith("\"") && text.endsWith("\"")) {
+                return text.substring(1, text.length() - 1);
+            }
+            return null;
+        }
+        Optional<Symbol> symbolOpt = semanticModel.symbol(expression);
+        if (symbolOpt.isPresent() && symbolOpt.get().kind() == SymbolKind.CONSTANT
+                && symbolOpt.get() instanceof ConstantSymbol constantSymbol) {
+            Optional<String> valueOpt = constantSymbol.resolvedValue();
+            if (valueOpt.isPresent()) {
+                String value = valueOpt.get().trim();
+                if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
+                    return value.substring(1, value.length() - 1);
+                }
             }
         }
-        
-        // Check for simple name (sendData) - need to verify it's from workflow module
-        if (funcName instanceof SimpleNameReferenceNode simpleName) {
-            if (!WorkflowConstants.SEND_DATA_FUNCTION.equals(simpleName.name().text())) {
-                return false;
-            }
-            
-            // Verify it's from workflow module using semantic model
-            Optional<Symbol> symbolOpt = semanticModel.symbol(callNode);
-            if (symbolOpt.isEmpty() || symbolOpt.get().kind() != SymbolKind.FUNCTION) {
-                return false;
-            }
-            
-            FunctionSymbol funcSymbol = (FunctionSymbol) symbolOpt.get();
-            Optional<ModuleSymbol> moduleOpt = funcSymbol.getModule();
-            if (moduleOpt.isEmpty()) {
-                return false;
-            }
-            
-            ModuleSymbol module = moduleOpt.get();
-            Optional<String> moduleNameOpt = module.getName();
-            return moduleNameOpt.isPresent() && WorkflowConstants.PACKAGE_NAME.equals(moduleNameOpt.get());
-        }
-        
-        return false;
+        return null;
+    }
+
+    private void reportDiagnostic(SyntaxNodeAnalysisContext context, WorkflowDiagnostic diagnostic,
+                                  Location location, Object... args) {
+        DiagnosticInfo diagnosticInfo = new DiagnosticInfo(
+                diagnostic.getCode(), diagnostic.getMessage(args), diagnostic.getSeverity());
+        context.reportDiagnostic(DiagnosticFactory.createDiagnostic(diagnosticInfo, location));
     }
 }

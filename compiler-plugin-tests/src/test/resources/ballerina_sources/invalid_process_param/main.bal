@@ -36,7 +36,7 @@ type OrderResult record {|
 // Invalid: Workflow function with non-anydata input parameter
 // Should trigger WORKFLOW_101 error
 @workflow:Workflow
-function workflowWithInvalidInput(InvalidInput input) returns OrderResult|error {
+function workflowWithInvalidInput(workflow:Context ctx, InvalidInput input) returns OrderResult|error {
     return {
         status: "COMPLETED"
     };

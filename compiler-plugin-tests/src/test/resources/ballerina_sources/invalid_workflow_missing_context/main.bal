@@ -20,22 +20,22 @@ type OrderInput record {|
     string orderId;
 |};
 
-// This class is NOT a subtype of anydata - used for invalid return type
-class InvalidResult {
-    string status;
-
-    function init(string status) {
-        self.status = status;
-    }
-
-    function getStatus() returns string {
-        return self.status;
-    }
+// Invalid: no parameters at all - workflow:Context is mandatory - WORKFLOW_100
+@workflow:Workflow
+function workflowWithoutParams() returns string|error {
+    return "done";
 }
 
-// Invalid: Workflow function with non-anydata return type
-// Should trigger WORKFLOW_105 error
+// Invalid: first parameter is the input, not workflow:Context - WORKFLOW_100
 @workflow:Workflow
-function workflowWithInvalidReturn(workflow:Context ctx, OrderInput input) returns InvalidResult|error {
-    return new InvalidResult("DONE");
+function workflowWithInputOnly(OrderInput input) returns string|error {
+    return input.orderId;
+}
+
+// Invalid: events record without a leading workflow:Context - WORKFLOW_100
+@workflow:Workflow
+function workflowWithEventsOnly(record {|
+    future<boolean> approval;
+|} events) returns boolean|error {
+    return wait events.approval;
 }

@@ -6,7 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Compile-time validation for `workflow:run()` calls: the first argument must be a
+  function with the `@Workflow` annotation (`WORKFLOW_130`), the `input` argument type
+  must match the workflow function's declared input parameter type (`WORKFLOW_131`),
+  and passing an input to a workflow that declares no input parameter is an error
+  (`WORKFLOW_132`).
+- Compile-time validation for `workflow:sendData()` calls: the target workflow must
+  declare an events record (`WORKFLOW_133`), the `dataName` argument must match a field
+  of the workflow's events record when statically resolvable (`WORKFLOW_134`), and the
+  `data` argument type must match the event future's inner type (`WORKFLOW_135`).
+
 ### Changed
+
+- `workflow:run()` now accepts any `anydata` value as the workflow input (previously
+  `map<anydata>?`), matching the workflow function input contract. Primitive inputs
+  (`string`, `int`, `boolean`, ...), `json`, `xml`, arrays, and tables are now passed
+  through to the workflow instead of being silently dropped.
+- `workflow:Context` is now a mandatory first parameter for every `@Workflow` function
+  (`WORKFLOW_100`). Direct calls to `@Workflow` functions are rejected at compile time
+  (`WORKFLOW_136`); workflows must be started via `workflow:run()`. Together these prevent
+  workflow functions from being invoked as normal functions from other modules.
+- The management HTTP listener is now registered as a dynamic listener during module
+  initialization when `enableManagementApi = true`, so programs that use a `main`
+  function (instead of services) keep serving the management API after `main` returns.
+  The listener is deregistered on graceful shutdown.
 
 - [#8840](https://github.com/ballerina-platform/ballerina-library/issues/8840) -
   Widened the `ctx->await()` dependent type parameter to

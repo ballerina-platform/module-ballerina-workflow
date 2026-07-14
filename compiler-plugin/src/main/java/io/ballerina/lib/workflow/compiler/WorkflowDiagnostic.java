@@ -29,7 +29,7 @@ import io.ballerina.tools.diagnostics.DiagnosticSeverity;
 public enum WorkflowDiagnostic {
 
     WORKFLOW_100("WORKFLOW_100",
-            "@Workflow function's first parameter must be 'workflow:Context' if context is used",
+            "@Workflow function must declare 'workflow:Context' as its first parameter",
             DiagnosticSeverity.ERROR),
     WORKFLOW_101("WORKFLOW_101",
             "@Workflow function's input parameter must be a subtype of 'anydata'",
@@ -145,6 +145,33 @@ public enum WorkflowDiagnostic {
     WORKFLOW_129("WORKFLOW_129",
             "@Workflow function's events record field '%s' has type 'future<%s>', but '%s' is not a "
                     + "subtype of 'anydata'",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_130("WORKFLOW_130",
+            "The first argument of 'workflow:%s' must be a function with the @Workflow annotation",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_131("WORKFLOW_131",
+            "Input type mismatch in 'workflow:run': workflow function '%s' expects input of type "
+                    + "'%s', but found '%s'",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_132("WORKFLOW_132",
+            "Workflow function '%s' does not declare an input parameter, but an input argument "
+                    + "was provided to 'workflow:run'",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_133("WORKFLOW_133",
+            "Workflow function '%s' does not declare an events record parameter, so "
+                    + "'workflow:sendData' cannot deliver data to it",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_134("WORKFLOW_134",
+            "Unknown event name '%s' in 'workflow:sendData': workflow function '%s' has no such "
+                    + "field in its events record. Available event names: %s",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_135("WORKFLOW_135",
+            "Data type mismatch in 'workflow:sendData': event '%s' of workflow function '%s' "
+                    + "expects '%s', but found '%s'",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_136("WORKFLOW_136",
+            "Direct calls to @Workflow functions are not allowed. "
+                    + "Use 'workflow:run(workflowFunc, input)' to start a workflow",
             DiagnosticSeverity.ERROR);
 
     private final String code;

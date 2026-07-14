@@ -16,26 +16,16 @@
 
 import ballerina/workflow;
 
-type OrderInput record {|
-    string orderId;
-|};
-
-// This class is NOT a subtype of anydata - used for invalid return type
-class InvalidResult {
-    string status;
-
-    function init(string status) {
-        self.status = status;
-    }
-
-    function getStatus() returns string {
-        return self.status;
-    }
+@workflow:Workflow
+function approvalWorkflow(workflow:Context ctx, string input, record {|
+    future<boolean> approval;
+|} events) returns string|error {
+    boolean approved = check wait events.approval;
+    return approved ? "approved" : "rejected";
 }
 
-// Invalid: Workflow function with non-anydata return type
-// Should trigger WORKFLOW_105 error
-@workflow:Workflow
-function workflowWithInvalidReturn(workflow:Context ctx, OrderInput input) returns InvalidResult|error {
-    return new InvalidResult("DONE");
+public function notifyWorkflow(string workflowId) returns error? {
+    // Invalid: event 'approval' expects boolean data but an int is sent - WORKFLOW_135
+    int decision = 1;
+    check workflow:sendData(approvalWorkflow, workflowId, "approval", decision);
 }

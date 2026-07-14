@@ -16,26 +16,15 @@
 
 import ballerina/workflow;
 
-type OrderInput record {|
-    string orderId;
-|};
-
-// This class is NOT a subtype of anydata - used for invalid return type
-class InvalidResult {
-    string status;
-
-    function init(string status) {
-        self.status = status;
-    }
-
-    function getStatus() returns string {
-        return self.status;
-    }
+@workflow:Workflow
+function simpleWorkflow(workflow:Context ctx, string input) returns string|error {
+    return input;
 }
 
-// Invalid: Workflow function with non-anydata return type
-// Should trigger WORKFLOW_105 error
-@workflow:Workflow
-function workflowWithInvalidReturn(workflow:Context ctx, OrderInput input) returns InvalidResult|error {
-    return new InvalidResult("DONE");
+// Invalid: @Workflow functions must not be invoked directly - WORKFLOW_136
+function caller(workflow:Context ctx) returns error? {
+    string result = check simpleWorkflow(ctx, "direct");
+    if result == "" {
+        return error("empty result");
+    }
 }

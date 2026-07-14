@@ -151,7 +151,7 @@ public final class WorkflowNative {
      *
      * @param env             the Ballerina runtime environment
      * @param processFunction the process function to execute (must be annotated with @Workflow)
-     * @param input           the optional input data for the process (nil or map)
+     * @param input           the optional input data for the process (nil or any anydata value)
      * @return the workflow ID as a string, or an error
      */
     @SuppressWarnings("unchecked")
@@ -162,14 +162,12 @@ public final class WorkflowNative {
 
         // Convert input to Java type (handle nil case)
         // In Ballerina Java interop, nil () is passed as null, so a simple null check suffices.
+        // Every anydata subtype is a valid workflow input — primitives (boolean, int, string),
+        // json, xml, arrays, tables and records all round-trip through
+        // convertBallerinaToJavaType the same way sendData payloads do.
         Object javaInput = null;
         if (input != null) {
-            if (input instanceof BMap) {
-                @SuppressWarnings("unchecked") BMap<BString, Object> bMapInput = (BMap<BString, Object>) input;
-                javaInput = TypesUtil.convertBallerinaToJavaType(bMapInput);
-            }
-            // Other anydata subtypes (int, string, boolean, etc.) are not currently
-            // supported as workflow input — only record (BMap) types are expected.
+            javaInput = TypesUtil.convertBallerinaToJavaType(input);
         }
 
         // Check if we're inside a workflow execution context

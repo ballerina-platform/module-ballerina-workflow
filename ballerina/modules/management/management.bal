@@ -15,13 +15,34 @@
 // under the License.
 
 import ballerina/jballerina.java;
+import ballerina/lang.runtime;
 
 // Captures this submodule's reference so native code can create records in this module,
 // then validates the management API configuration so any misconfiguration causes a
 // descriptive panic at startup rather than a silent runtime failure.
+//
+// When the management API is enabled, the HTTP listener is additionally registered
+// as a dynamic listener with the runtime. This keeps the program alive after a
+// `main` function returns, so programs that use an entry point other than services
+// (e.g. `public function main()`) can still serve the management API. Without this,
+// the program would terminate as soon as `main` completes and the module-level
+// listener would be stopped. The listener is deregistered on graceful shutdown so
+// signal-driven termination (SIGINT/SIGTERM) is not blocked.
 function init() {
     initManagementModule();
     validateManagementApiConfig();
+    if enableManagementApi {
+        runtime:registerListener(mgmtListener);
+        runtime:onGracefulStop(deregisterManagementListener);
+    }
+}
+
+# Deregisters the management listener from the runtime so the program can exit
+# during graceful shutdown.
+#
+# + return - Never returns an error; declared to satisfy `runtime:onGracefulStop`
+function deregisterManagementListener() returns error? {
+    runtime:deregisterListener(mgmtListener);
 }
 
 isolated function initManagementModule() = @java:Method {

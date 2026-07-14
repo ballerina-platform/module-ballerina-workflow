@@ -15,6 +15,7 @@
 // under the License.
 
 import ballerina/http;
+import ballerina/lang.runtime;
 import ballerina/time;
 
 // All configurable variables are scoped to [ballerina.workflow.management] in Config.toml.
@@ -205,7 +206,45 @@ isolated function buildMgmtListenerConfig() returns http:ListenerConfiguration {
     return cfg;
 }
 
-listener http:Listener mgmtListener = check new (port, buildMgmtListenerConfig());
+// Deliberately a plain `final` variable, NOT a module-level `listener` declaration.
+// A `listener` declaration would put the listener under the runtime's module-listener
+// lifecycle in addition to the dynamic registration performed below, effectively
+// registering the service twice. This module owns the full lifecycle instead:
+// attach + start + (conditional) dynamic registration in startManagementService(),
+// deregistration + graceful stop in stopManagementService().
+final http:Listener mgmtListener = check new (port, buildMgmtListenerConfig());
+
+# Attaches the management service to the listener and starts it. Called from the module
+# `init()`. The listener always starts (reserving the port) so that a disabled management
+# API still answers every request with `503` via the gateway interceptor. Only when
+# `enableManagementApi = true` is the listener additionally registered as a dynamic
+# listener with the runtime — this keeps a `main`-function program alive after `main`
+# returns so the management API stays available.
+#
+# + return - An error if attaching or starting the listener fails
+function startManagementService() returns error? {
+    check mgmtListener.attach(mgmtService, "/workflow");
+    check mgmtListener.'start();
+    // Always stop the listener on shutdown. With a programmatically started listener the
+    // runtime no longer does this automatically (it only manages `listener` declarations);
+    // an un-stopped listener would hold the port past program end (e.g. across `bal test`
+    // module executions).
+    runtime:onGracefulStop(stopManagementService);
+    if enableManagementApi {
+        runtime:registerListener(mgmtListener);
+    }
+}
+
+# Deregisters the management listener from the runtime (when it was registered) and stops
+# it gracefully so that shutdown is not blocked and the port is released.
+#
+# + return - An error if stopping the listener fails
+function stopManagementService() returns error? {
+    if enableManagementApi {
+        runtime:deregisterListener(mgmtListener);
+    }
+    check mgmtListener.gracefulStop();
+}
 
 // ── Service-level auth configuration ─────────────────────────────────────────────
 // Ballerina HTTP evaluates @http:ServiceConfig (including the `auth` field) at
@@ -310,14 +349,16 @@ service class ManagementGatewayInterceptor {
     }
 }
 
-// Service declaration — base path `/workflow`.
+// Service value — attached to `mgmtListener` at base path `/workflow` by
+// startManagementService(), which the module `init()` invokes. Kept as a service
+// *value* (not a service declaration bound to a module listener) so this module fully
+// owns the listener lifecycle.
 // Implements `http:InterceptableService` to register the `ManagementGatewayInterceptor`.
 // `@http:ServiceConfig` handles CORS and the built-in auth types (BasicAuth, JWT, OAuth2).
-@http:ServiceConfig {
+final http:InterceptableService mgmtService = @http:ServiceConfig {
     cors: buildCorsConfig(),
     auth: buildAuthConfigs()
-}
-service http:InterceptableService /workflow on mgmtListener {
+} service object http:InterceptableService {
 
     # Returns the interceptor pipeline for this service.
     # + return - The `ManagementGatewayInterceptor` that enforces the API master switch and API key auth.
@@ -1079,7 +1120,7 @@ service http:InterceptableService /workflow on mgmtListener {
         if err is error { return retryTaskErrorResponse(err); }
         return buildRetryDecisionResponse("fail", userId).toJson();
     }
-}
+};
 
 # Builds a `CompletionInfo` record stamped with the current UTC time and the
 # caller's user ID (falls back to `"unknown"` when the header is absent).

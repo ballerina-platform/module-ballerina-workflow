@@ -15,34 +15,25 @@
 // under the License.
 
 import ballerina/jballerina.java;
-import ballerina/lang.runtime;
 
 // Captures this submodule's reference so native code can create records in this module,
-// then validates the management API configuration so any misconfiguration causes a
-// descriptive panic at startup rather than a silent runtime failure.
+// validates the management API configuration so any misconfiguration causes a
+// descriptive error at startup rather than a silent runtime failure, and then starts
+// the management HTTP service programmatically (see service.bal).
 //
-// When the management API is enabled, the HTTP listener is additionally registered
-// as a dynamic listener with the runtime. This keeps the program alive after a
-// `main` function returns, so programs that use an entry point other than services
-// (e.g. `public function main()`) can still serve the management API. Without this,
-// the program would terminate as soon as `main` completes and the module-level
-// listener would be stopped. The listener is deregistered on graceful shutdown so
-// signal-driven termination (SIGINT/SIGTERM) is not blocked.
-function init() {
+// The service is attached and started from here — not via a module-level `listener`
+// declaration — so this module fully owns the listener lifecycle. When the management
+// API is enabled, the listener is registered as a dynamic listener with the runtime,
+// which keeps the program alive after a `main` function returns so programs that use
+// an entry point other than services can still serve the management API. The listener
+// is deregistered and stopped on graceful shutdown so signal-driven termination
+// (SIGINT/SIGTERM) is not blocked.
+#
+# + return - An error if the management service cannot be started
+function init() returns error? {
     initManagementModule();
     validateManagementApiConfig();
-    if enableManagementApi {
-        runtime:registerListener(mgmtListener);
-        runtime:onGracefulStop(deregisterManagementListener);
-    }
-}
-
-# Deregisters the management listener from the runtime so the program can exit
-# during graceful shutdown.
-#
-# + return - Never returns an error; declared to satisfy `runtime:onGracefulStop`
-function deregisterManagementListener() returns error? {
-    runtime:deregisterListener(mgmtListener);
+    check startManagementService();
 }
 
 isolated function initManagementModule() = @java:Method {
@@ -461,8 +452,9 @@ public isolated function getExecutionGraph(string workflowId, string runId)
 // ================================================================================
 // HTTP SERVICE
 // ================================================================================
-// The management HTTP service is started automatically via the module-level
-// listener in service.bal (port 8234 by default). Configure it in Config.toml:
+// The management HTTP service is started programmatically from this module's
+// init() (see startManagementService() in service.bal; port 8234 by default).
+// Configure it in Config.toml:
 //
 //   management_service_port = 8234
 //   enableTls = false

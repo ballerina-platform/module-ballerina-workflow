@@ -626,8 +626,9 @@ public class WorkflowCompilerPluginTest {
         String packagePath = "invalid_run_input_type_mismatch";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_131");
-        Assert.assertEquals(diags.size(), 2,
-                "Expected 2 WORKFLOW_131 errors for mismatched workflow:run input types. Errors: "
+        Assert.assertEquals(diags.size(), 4,
+                "Expected 4 WORKFLOW_131 errors for mismatched workflow:run input types "
+                        + "(string/int/nil/mapping against incompatible declared types). Errors: "
                         + getDiagnosticMessages(diagnosticResult));
     }
 

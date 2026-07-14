@@ -39,6 +39,18 @@ function intInputWorkflow(workflow:Context ctx, int input) returns int|error {
     return input * 2;
 }
 
+// Workflow with a nilable input.
+@workflow:Workflow
+function nilableInputWorkflow(workflow:Context ctx, string? input) returns string|error {
+    return input ?: "no input";
+}
+
+// Workflow with no input.
+@workflow:Workflow
+function noInputWorkflow(workflow:Context ctx) returns string|error {
+    return "done";
+}
+
 public function startWorkflows() returns error? {
     // string literal input for a string-input workflow
     string wf1 = check workflow:run(stringInputWorkflow, "hello");
@@ -53,10 +65,16 @@ public function startWorkflows() returns error? {
     // named argument style
     string wf4 = check workflow:run(intInputWorkflow, input = 42);
 
-    // nil input is always allowed - means "no input"
+    // omitting the input is always allowed
     string wf5 = check workflow:run(stringInputWorkflow);
 
-    return checkStarted([wf1, wf2, wf3, wf4, wf5]);
+    // explicit nil input for a workflow with a nilable input type
+    string wf6 = check workflow:run(nilableInputWorkflow, ());
+
+    // explicit nil input for a workflow that declares no input
+    string wf7 = check workflow:run(noInputWorkflow, ());
+
+    return checkStarted([wf1, wf2, wf3, wf4, wf5, wf6, wf7]);
 }
 
 function checkStarted(string[] ids) returns error? {

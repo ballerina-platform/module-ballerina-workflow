@@ -833,41 +833,11 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
     }
 
     /**
-     * Validates the events parameter type - should be a record with future<anydata> fields.
-     * All fields in the record must be future types.
+     * Validates the events parameter type - should be a non-empty record whose every field is
+     * a future type. Delegates to {@link WorkflowPluginUtils#isEventsRecordType(TypeSymbol)}.
      */
     private boolean isValidEventsType(TypeSymbol typeSymbol) {
-        TypeSymbol resolvedType = WorkflowPluginUtils.resolveTypeReference(typeSymbol);
-        TypeDescKind kind = resolvedType.typeKind();
-
-        // Must be a record type
-        if (kind != TypeDescKind.RECORD) {
-            return false;
-        }
-
-        // Check that it's a RecordTypeSymbol and all fields are future types
-        if (resolvedType instanceof RecordTypeSymbol recordType) {
-
-            // Get all record fields and validate each is a future type
-            java.util.Map<String, io.ballerina.compiler.api.symbols.RecordFieldSymbol> fields = 
-                    recordType.fieldDescriptors();
-            
-            if (fields.isEmpty()) {
-                // Empty record is not a valid events record
-                return false;
-            }
-            
-            for (io.ballerina.compiler.api.symbols.RecordFieldSymbol field : fields.values()) {
-                TypeSymbol fieldType = WorkflowPluginUtils.resolveTypeReference(field.typeDescriptor());
-                
-                // Each field must be a future type
-                if (fieldType.typeKind() != TypeDescKind.FUTURE) {
-                    return false;
-                }
-            }
-        }
-
-        return true;
+        return WorkflowPluginUtils.isEventsRecordType(typeSymbol);
     }
 
     /**

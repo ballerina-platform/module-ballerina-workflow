@@ -37,6 +37,7 @@ import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.MetadataNode;
 import io.ballerina.compiler.syntax.tree.NodeList;
+import io.ballerina.compiler.syntax.tree.SyntaxKind;
 
 import java.util.List;
 import java.util.Optional;
@@ -388,5 +389,63 @@ public final class WorkflowPluginUtils {
             return Optional.of(param);
         }
         return Optional.empty();
+    }
+
+    /**
+     * Returns {@code true} when a constructor expression of the given syntax kind could produce
+     * a value of {@code declaredType}. This is a shape-level check only: a mapping constructor
+     * needs a mapping-compatible type (record/map/json/anydata), a list constructor a
+     * list-compatible type (array/tuple/json/anydata), and a table constructor a
+     * table-compatible type (table/anydata). Member-level validation is not attempted because
+     * constructor expressions are contextually typed against the library's {@code anydata}
+     * parameter, so their inferred static type cannot be compared with {@code subtypeOf}
+     * without false positives.
+     *
+     * @param declaredType    the declared target type
+     * @param constructorKind the constructor expression's syntax kind
+     * @return whether the declared type can accept a value of the constructor's shape
+     */
+    public static boolean canAcceptConstructorExpression(TypeSymbol declaredType, SyntaxKind constructorKind) {
+        TypeSymbol resolved = resolveTypeReference(declaredType);
+        TypeDescKind kind = resolved.typeKind();
+
+        // Broad types accept every constructor shape.
+        if (kind == TypeDescKind.ANYDATA || kind == TypeDescKind.ANY || kind == TypeDescKind.READONLY) {
+            return true;
+        }
+        // json accepts mappings and lists but not tables (table is not a subtype of json).
+        if (kind == TypeDescKind.JSON) {
+            return constructorKind != SyntaxKind.TABLE_CONSTRUCTOR;
+        }
+        if (kind == TypeDescKind.UNION) {
+            return ((io.ballerina.compiler.api.symbols.UnionTypeSymbol) resolved).memberTypeDescriptors().stream()
+                    .anyMatch(member -> canAcceptConstructorExpression(member, constructorKind));
+        }
+        if (kind == TypeDescKind.INTERSECTION) {
+            // e.g. readonly & OrderInput — every non-readonly member must accept the shape.
+            return ((io.ballerina.compiler.api.symbols.IntersectionTypeSymbol) resolved).memberTypeDescriptors()
+                    .stream()
+                    .allMatch(member -> resolveTypeReference(member).typeKind() == TypeDescKind.READONLY
+                            || canAcceptConstructorExpression(member, constructorKind));
+        }
+        return switch (constructorKind) {
+            case MAPPING_CONSTRUCTOR -> kind == TypeDescKind.RECORD || kind == TypeDescKind.MAP;
+            case LIST_CONSTRUCTOR -> kind == TypeDescKind.ARRAY || kind == TypeDescKind.TUPLE;
+            case TABLE_CONSTRUCTOR -> kind == TypeDescKind.TABLE;
+            default -> true;
+        };
+    }
+
+    /**
+     * Returns a human-readable description of a constructor expression kind for use in
+     * type-mismatch diagnostic messages.
+     */
+    public static String describeConstructorExpression(SyntaxKind constructorKind) {
+        return switch (constructorKind) {
+            case MAPPING_CONSTRUCTOR -> "a mapping value";
+            case LIST_CONSTRUCTOR -> "a list value";
+            case TABLE_CONSTRUCTOR -> "a table value";
+            default -> "an incompatible value";
+        };
     }
 }

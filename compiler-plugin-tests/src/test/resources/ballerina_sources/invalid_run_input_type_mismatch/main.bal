@@ -39,7 +39,13 @@ public function startWorkflows() returns error? {
     int count = 42;
     string wf2 = check workflow:run(stringInputWorkflow, count);
 
-    return checkStarted([wf1, wf2]);
+    // Invalid: explicit nil input for a workflow with a non-nilable input - WORKFLOW_131
+    string wf3 = check workflow:run(stringInputWorkflow, ());
+
+    // Invalid: mapping constructor for a workflow expecting a string - WORKFLOW_131
+    string wf4 = check workflow:run(stringInputWorkflow, {value: "text"});
+
+    return checkStarted([wf1, wf2, wf3, wf4]);
 }
 
 function checkStarted(string[] ids) returns error? {

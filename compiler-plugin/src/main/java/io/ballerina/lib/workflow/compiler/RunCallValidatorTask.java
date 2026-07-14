@@ -134,28 +134,38 @@ public class RunCallValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCont
             return;
         }
         TypeSymbol inputType = inputTypeOpt.get();
-        if (WorkflowPluginUtils.resolveTypeReference(inputType).typeKind() == TypeDescKind.NIL) {
-            // Explicit nil input is always allowed — it means "no input".
-            return;
-        }
+        boolean isNilInput = WorkflowPluginUtils.resolveTypeReference(inputType).typeKind() == TypeDescKind.NIL;
 
         Optional<ParameterSymbol> inputParamOpt = WorkflowPluginUtils.getInputParameter(workflowFunc);
         if (inputParamOpt.isEmpty()) {
-            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_132, inputExpr.location(),
-                    workflowName);
+            // Explicit nil means "no input" and is fine for a no-input workflow;
+            // any other value has nowhere to go.
+            if (!isNilInput) {
+                reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_132, inputExpr.location(),
+                        workflowName);
+            }
             return;
         }
+        TypeSymbol declaredInputType = inputParamOpt.get().typeDescriptor();
 
-        // Constructor expressions (mapping/list) are typed by their contextually expected
-        // type (`anydata` here), so a strict subtype check would produce false positives.
-        // Skip them; the runtime converts the value to the declared parameter type.
+        // Constructor expressions (mapping/list/table) are typed by their contextually
+        // expected type (`anydata` here), so their static type cannot be compared with
+        // subtypeOf without false positives. Validate the shape only: the declared input
+        // type must be able to accept a value of the constructor's kind. Member-level
+        // conversion is handled by the runtime.
         if (inputExpr.kind() == SyntaxKind.MAPPING_CONSTRUCTOR
                 || inputExpr.kind() == SyntaxKind.LIST_CONSTRUCTOR
                 || inputExpr.kind() == SyntaxKind.TABLE_CONSTRUCTOR) {
+            if (!WorkflowPluginUtils.canAcceptConstructorExpression(declaredInputType, inputExpr.kind())) {
+                reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_131, inputExpr.location(),
+                        workflowName, declaredInputType.signature(),
+                        WorkflowPluginUtils.describeConstructorExpression(inputExpr.kind()));
+            }
             return;
         }
 
-        TypeSymbol declaredInputType = inputParamOpt.get().typeDescriptor();
+        // Explicit nil is only valid when the declared input type is nilable; the
+        // subtype check below covers that (nil is a subtype of any nilable type).
         if (!inputType.subtypeOf(declaredInputType)) {
             reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_131, inputExpr.location(),
                     workflowName, declaredInputType.signature(), inputType.signature());

@@ -28,4 +28,7 @@ public function notifyWorkflow(string workflowId) returns error? {
     // Invalid: event 'approval' expects boolean data but an int is sent - WORKFLOW_135
     int decision = 1;
     check workflow:sendData(approvalWorkflow, workflowId, "approval", decision);
+
+    // Invalid: event 'approval' expects boolean data but a mapping value is sent - WORKFLOW_135
+    check workflow:sendData(approvalWorkflow, workflowId, "approval", {approved: true});
 }

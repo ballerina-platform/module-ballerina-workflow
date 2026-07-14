@@ -143,11 +143,6 @@ public class SendEventValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCo
         if (dataExpr == null) {
             return;
         }
-        if (dataExpr.kind() == SyntaxKind.MAPPING_CONSTRUCTOR
-                || dataExpr.kind() == SyntaxKind.LIST_CONSTRUCTOR
-                || dataExpr.kind() == SyntaxKind.TABLE_CONSTRUCTOR) {
-            return;
-        }
 
         TypeSymbol fieldType = WorkflowPluginUtils.resolveTypeReference(eventField.typeDescriptor());
         if (fieldType.typeKind() != TypeDescKind.FUTURE) {
@@ -158,6 +153,22 @@ public class SendEventValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCo
             return;
         }
         TypeSymbol expectedType = innerTypeOpt.get();
+
+        // Constructor expressions (mapping/list/table) are typed by their contextually
+        // expected type (`anydata` here), so their static type cannot be compared with
+        // subtypeOf without false positives. Validate the shape only: the event's inner
+        // type must be able to accept a value of the constructor's kind. Member-level
+        // conversion is handled by the runtime.
+        if (dataExpr.kind() == SyntaxKind.MAPPING_CONSTRUCTOR
+                || dataExpr.kind() == SyntaxKind.LIST_CONSTRUCTOR
+                || dataExpr.kind() == SyntaxKind.TABLE_CONSTRUCTOR) {
+            if (!WorkflowPluginUtils.canAcceptConstructorExpression(expectedType, dataExpr.kind())) {
+                reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_135, dataExpr.location(),
+                        eventName, workflowName, expectedType.signature(),
+                        WorkflowPluginUtils.describeConstructorExpression(dataExpr.kind()));
+            }
+            return;
+        }
 
         Optional<TypeSymbol> dataTypeOpt = semanticModel.typeOf(dataExpr);
         if (dataTypeOpt.isEmpty()) {

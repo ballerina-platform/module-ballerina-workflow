@@ -379,6 +379,9 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                                 // No args provided - validate activity has no required parameters
                                 validateNoArgsActivity(remoteCallNode, expression);
                             }
+                            // Validate the contextually expected type against the activity's
+                            // return type (ballerina-library#8835)
+                            validateReturnTypeCompatibility(remoteCallNode, expression);
                         }
                     }
                 }
@@ -427,6 +430,59 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                     String paramName = nameOpt.orElse("unnamed");
                     reportMissingRequiredParam(callNode, paramName);
                 }
+            }
+        }
+
+        /**
+         * Validates that the contextually expected type of a {@code ctx->callActivity(...)} call is
+         * compatible with the activity function's declared return type (ballerina-library#8835).
+         * <p>
+         * {@code callActivity} is dependent-typed ({@code returns T|error}); the compiler solves
+         * {@code T} from the surrounding context (LHS type, explicit typedesc argument, ...), so a
+         * call site can silently request a type the activity can never produce — the mismatch then
+         * only surfaces as a runtime conversion error. This check requires the activity's declared
+         * return type to be a subtype of the solved call type, reporting {@code WORKFLOW_137}
+         * otherwise. Skipped when either type cannot be resolved (other diagnostics cover that).
+         */
+        private void validateReturnTypeCompatibility(RemoteMethodCallActionNode callNode,
+                                                     ExpressionNode activityFuncExpr) {
+            Optional<Symbol> funcSymbolOpt = semanticModel.symbol(activityFuncExpr);
+            if (funcSymbolOpt.isEmpty() || funcSymbolOpt.get().kind() != SymbolKind.FUNCTION) {
+                return;
+            }
+            FunctionSymbol functionSymbol = (FunctionSymbol) funcSymbolOpt.get();
+            // Dependently-typed activities (with a typedesc parameter) resolve their return type
+            // per call site — their declared return references the typedesc parameter and cannot
+            // be compared statically here.
+            Optional<List<ParameterSymbol>> activityParams = functionSymbol.typeDescriptor().params();
+            if (activityParams.isPresent() && activityParams.get().stream()
+                    .anyMatch(p -> p.typeDescriptor().typeKind() == TypeDescKind.TYPEDESC)) {
+                return;
+            }
+            TypeSymbol activityReturn = functionSymbol.typeDescriptor().returnTypeDescriptor()
+                    .orElseGet(() -> semanticModel.types().NIL);
+            if (activityReturn.typeKind() == TypeDescKind.COMPILATION_ERROR) {
+                return;
+            }
+
+            Optional<TypeSymbol> expectedOpt = semanticModel.typeOf(callNode);
+            if (expectedOpt.isEmpty()) {
+                return;
+            }
+            TypeSymbol expected = expectedOpt.get();
+            if (expected.typeKind() == TypeDescKind.COMPILATION_ERROR) {
+                return;
+            }
+
+            if (!activityReturn.subtypeOf(expected)) {
+                String activityName = functionSymbol.getName().orElse("activity");
+                DiagnosticInfo diagnosticInfo = new DiagnosticInfo(
+                        WorkflowDiagnostic.WORKFLOW_137.getCode(),
+                        WorkflowDiagnostic.WORKFLOW_137.getMessage(activityName,
+                                activityReturn.signature(), expected.signature()),
+                        WorkflowDiagnostic.WORKFLOW_137.getSeverity());
+                context.reportDiagnostic(
+                        DiagnosticFactory.createDiagnostic(diagnosticInfo, callNode.location()));
             }
         }
 

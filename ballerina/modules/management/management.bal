@@ -89,8 +89,11 @@ public isolated function listWorkflowDefinitions() returns WorkflowDefinition[]|
 // ================================================================================
 
 # Requests a running workflow to suspend (pause) execution.
-# Sends a `__wf_suspend` signal; the workflow runtime handles blocking until
-# `resumeWorkflow` is called.
+# Sends a `__wf_suspend` signal; the workflow stops making progress at its next durable
+# operation (activity call, timer, human task, retry task, or child workflow) and
+# holds there until `resumeWorkflow` is called. While suspended, the workflow's reported
+# status is `SUSPENDED`. An operation already in flight when the signal arrives finishes
+# first — suspension takes effect at the next operation boundary.
 #
 # ```ballerina
 # check management:suspendWorkflow(workflowId);
@@ -457,7 +460,9 @@ public isolated function startWorkflowByType(string workflowType, json? input,
 # Lists workflow instances with optional filtering and pagination.
 # Excludes humantask- and reviewactivity- child workflows automatically.
 #
-# + status - Optional status filter: `RUNNING` | `COMPLETED` | `FAILED` | `CANCELED` | `TERMINATED`
+# + status - Optional status filter: `RUNNING` | `SUSPENDED` | `COMPLETED` | `FAILED` | `CANCELED` | `TERMINATED`.
+#            `RUNNING` excludes suspended workflows; `SUSPENDED` returns only workflows
+#            paused via the suspend management API.
 # + workflowType - Optional workflow type filter
 # + workflowId - Optional workflow ID prefix filter
 # + startedBy - Optional starter user ID filter (set via management API `x-user-id` when started)

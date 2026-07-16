@@ -35,7 +35,8 @@ public type WorkflowDefinition record {|
 # Information about a workflow execution (for testing/introspection).
 # + workflowId - The unique identifier for the workflow instance
 # + workflowType - The type (process name) of the workflow
-# + status - The execution status ("RUNNING", "COMPLETED", "FAILED", "CANCELED", "TERMINATED")
+# + status - The execution status ("RUNNING", "SUSPENDED", "COMPLETED", "FAILED", "CANCELED", "TERMINATED").
+#            "SUSPENDED" is a running workflow paused via the suspend management API.
 # + result - The workflow result if completed successfully
 # + errorMessage - Error message if the workflow failed
 # + activityInvocations - List of activities invoked by this workflow
@@ -456,7 +457,8 @@ public type CorsConfig record {|
 # + workflowId - Unique workflow instance ID
 # + runId - Temporal run ID for this execution
 # + workflowType - Registered workflow type name
-# + status - Execution status: RUNNING | COMPLETED | FAILED | CANCELED | TERMINATED | TIMED_OUT
+# + status - Execution status: RUNNING | SUSPENDED | COMPLETED | FAILED | CANCELED | TERMINATED | TIMED_OUT.
+#            SUSPENDED is a running workflow paused via the suspend management API.
 # + startTime - ISO-8601 timestamp when the workflow started
 # + closeTime - ISO-8601 timestamp when it ended, or `()` if still running
 # + input - Workflow input as JSON, or `()` if not available

@@ -41,6 +41,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   declare an events record (`WORKFLOW_133`), the `dataName` argument must match a field
   of the workflow's events record when statically resolvable (`WORKFLOW_134`), and the
   `data` argument type must match the event future's inner type (`WORKFLOW_135`).
+- [#8835](https://github.com/ballerina-platform/ballerina-library/issues/8835) -
+  Compile-time validation of the contextually expected type of `ctx->callActivity(...)`
+  calls against the activity function's declared return type (`WORKFLOW_137`). A call
+  site that requests a type the activity can never produce (e.g. `int? x = check
+  ctx->callActivity(checkPayment, {})` for an activity returning `PaymentRecord?`) is
+  now a compile error instead of a runtime conversion failure.
 
 ### Changed
 
@@ -91,6 +97,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   and return a not-found error for mismatches (and `getHumanTaskInfo` likewise rejects
   review activity IDs).
 
+- [#8903](https://github.com/ballerina-platform/ballerina-library/issues/8903) - The
+  suspend management API now actually suspends the workflow: the workflow stops making
+  progress at its next durable operation (activity call, timer, human task, retry task,
+  or child workflow) until resumed, and its status is reported as `SUSPENDED` by
+  `getWorkflowInfo` and `listWorkflowInstances` (the `RUNNING` filter excludes suspended
+  workflows; a `SUSPENDED` filter returns only them).
 - [Fix#8820](https://github.com/ballerina-platform/ballerina-library/issues/8820) -
   `workflow:sendData()` now supports all persistable `anydata` payloads — primitive types
   (`boolean`, `int`, `float`, `decimal`, `string`), `json`, `xml`, and `table` — not only

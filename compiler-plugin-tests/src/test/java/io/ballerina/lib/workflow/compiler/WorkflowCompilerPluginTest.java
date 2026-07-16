@@ -247,6 +247,26 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "invalid")
+    public void testInvalidCallActivityReturnType() {
+        String packagePath = "invalid_call_activity_return_type";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertEquals(diagnosticResult.errorCount(), 2,
+                "Expected one error per callActivity call whose contextually expected type is "
+                        + "incompatible with the activity return type. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_137);
+    }
+
+    @Test(groups = "valid")
+    public void testValidCallActivityReturnType() {
+        String packagePath = "valid_call_activity_return_type";
+        DiagnosticResult diagnosticResult = getDiagnosticResult(packagePath);
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for callActivity calls with compatible expected types. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
     public void testInvalidCallActivityRestParams() {
         String packagePath = "invalid_call_activity_rest_params";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);

@@ -17,6 +17,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   declare an events record (`WORKFLOW_133`), the `dataName` argument must match a field
   of the workflow's events record when statically resolvable (`WORKFLOW_134`), and the
   `data` argument type must match the event future's inner type (`WORKFLOW_135`).
+- [#8835](https://github.com/ballerina-platform/ballerina-library/issues/8835) -
+  Compile-time validation of the contextually expected type of `ctx->callActivity(...)`
+  calls against the activity function's declared return type (`WORKFLOW_137`). A call
+  site that requests a type the activity can never produce (e.g. `int? x = check
+  ctx->callActivity(checkPayment, {})` for an activity returning `PaymentRecord?`) is
+  now a compile error instead of a runtime conversion failure.
 
 ### Changed
 

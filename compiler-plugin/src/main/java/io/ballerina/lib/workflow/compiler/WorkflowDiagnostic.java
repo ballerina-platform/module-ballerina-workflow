@@ -172,6 +172,10 @@ public enum WorkflowDiagnostic {
     WORKFLOW_136("WORKFLOW_136",
             "Direct calls to @Workflow functions are not allowed. "
                     + "Use 'workflow:run(workflowFunc, input)' to start a workflow",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_137("WORKFLOW_137",
+            "The activity function '%s' returns '%s', which is incompatible with the "
+                    + "contextually expected type '%s' of this 'callActivity' call",
             DiagnosticSeverity.ERROR);
 
     private final String code;

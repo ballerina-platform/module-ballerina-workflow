@@ -150,6 +150,9 @@ public final class ManagementNative {
             WorkflowExecutionInfo execInfo = response.getWorkflowExecutionInfo();
             String workflowType = execInfo.getType().getName();
             String status = convertStatus(execInfo.getStatus());
+            if ("RUNNING".equals(status) && WorkflowWorkerNative.isSuspendedMemo(client, execInfo)) {
+                status = "SUSPENDED";
+            }
 
             return WorkflowNative.buildWorkflowExecutionInfo(wfId, workflowType, status, null, null, client);
         } catch (Exception e) {
@@ -773,7 +776,8 @@ public final class ManagementNative {
             return "Running";
         }
         return switch (status.toUpperCase(Locale.ROOT)) {
-            case "RUNNING" -> "Running";
+            // SUSPENDED workflows are Running in Temporal; the memo flag narrows them client-side.
+            case "RUNNING", "SUSPENDED" -> "Running";
             case "COMPLETED" -> "Completed";
             case "FAILED" -> "Failed";
             case "CANCELED" -> "Canceled";
@@ -1404,8 +1408,13 @@ public final class ManagementNative {
             // without needing the NOT operator (unsupported on standard visibility stores).
             List<String> clauses = new ArrayList<>();
 
-            if (status instanceof BString bs) {
-                String ts = toWorkflowTemporalStatus(bs.getValue());
+            // RUNNING and SUSPENDED share Temporal's Running execution status; the memo flag
+            // upserted by the suspend signal handler splits them client-side below.
+            String statusFilter = status instanceof BString bs ? bs.getValue().toUpperCase(Locale.ROOT) : null;
+            boolean suspendedOnly = "SUSPENDED".equals(statusFilter);
+            boolean runningOnly = "RUNNING".equals(statusFilter);
+            if (statusFilter != null) {
+                String ts = toWorkflowTemporalStatus(statusFilter);
                 if (ts != null) {
                     clauses.add(String.format("ExecutionStatus = \"%s\"", ts));
                 }
@@ -1477,6 +1486,18 @@ public final class ManagementNative {
                         }
                     }
 
+                    String displayStatus = convertStatus(wfInfo.getStatus());
+                    if ("RUNNING".equals(displayStatus)
+                            && WorkflowWorkerNative.isSuspendedMemo(client, wfInfo)) {
+                        displayStatus = "SUSPENDED";
+                    }
+                    if (suspendedOnly && !"SUSPENDED".equals(displayStatus)) {
+                        continue;
+                    }
+                    if (runningOnly && "SUSPENDED".equals(displayStatus)) {
+                        continue;
+                    }
+
                     BMap<BString, Object> summary = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                                    "WorkflowInstanceSummary");
                     summary.put(StringUtils.fromString("workflowId"),
@@ -1488,8 +1509,7 @@ public final class ManagementNative {
                                          rawType.substring(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length()) :
                                          rawType;
                     summary.put(StringUtils.fromString("workflowType"), StringUtils.fromString(displayType));
-                    summary.put(StringUtils.fromString("status"),
-                                StringUtils.fromString(convertStatus(wfInfo.getStatus())));
+                    summary.put(StringUtils.fromString("status"), StringUtils.fromString(displayStatus));
 
                     Timestamp st = wfInfo.getStartTime();
                     summary.put(StringUtils.fromString("startTime"), StringUtils.fromString(

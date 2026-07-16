@@ -97,6 +97,21 @@ public final class WorkflowWorkerNative {
      */
     public static final String HUMANTASK_TIMEOUT_FAILURE_TYPE = "HUMANTASK_TIMEOUT";
     /**
+     * Internal signal that requests a running workflow to suspend. Handled by the dynamic signal handler in
+     * {@link BallerinaWorkflowAdapter}: sets the per-execution suspended flag that {@link #awaitWhileSuspended()}
+     * blocks on, so the workflow stops making progress at the next durable operation (ballerina-library#8903).
+     */
+    public static final String SUSPEND_SIGNAL_NAME = "__wf_suspend";
+    /**
+     * Internal signal that clears the suspended flag set by {@link #SUSPEND_SIGNAL_NAME} and wakes the workflow.
+     */
+    public static final String RESUME_SIGNAL_NAME = "__wf_resume";
+    /**
+     * Memo key upserted by the suspend/resume signal handlers so the management API can report a {@code SUSPENDED}
+     * status without querying the workflow (visible via DescribeWorkflowExecution and visibility listings).
+     */
+    public static final String SUSPENDED_MEMO_KEY = "wfSuspended";
+    /**
      * Prefix applied to all user-defined workflow types registered with Temporal. Allows
      * {@code WorkflowType STARTS_WITH 'workflow-'} queries to exclude internal child workflow types (humantask-*,
      * retrytask-*) without needing the NOT operator.
@@ -145,6 +160,26 @@ public final class WorkflowWorkerNative {
      * {@link #registerHumanTask(BString)} at module init time.
      */
     private static final Set<String> HUMANTASK_REGISTRY = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Per-workflow-execution suspended flag, set by the {@code __wf_suspend}/{@code __wf_resume} signal handlers.
+     * {@link io.temporal.workflow.WorkflowLocal} scopes the value to the workflow execution (including replays,
+     * where the signals are re-applied deterministically from history).
+     */
+    private static final io.temporal.workflow.WorkflowLocal<Boolean> SUSPENDED =
+            io.temporal.workflow.WorkflowLocal.withCachedInitial(() -> Boolean.FALSE);
+
+    /**
+     * Blocks the calling workflow thread while the execution is suspended via the management API. Called at the
+     * start of every durable operation (activities, timers, human tasks, retry tasks, child workflows) so a
+     * suspended workflow stops making progress at the next operation boundary and resumes exactly where it left off.
+     * Must only be called from a workflow thread.
+     */
+    public static void awaitWhileSuspended() {
+        if (Boolean.TRUE.equals(SUSPENDED.get())) {
+            Workflow.await(() -> !Boolean.TRUE.equals(SUSPENDED.get()));
+        }
+    }
 
     /**
      * Maps a human task workflow type (e.g. {@code humantask-order.approve}) to the expected result type {@code T} of
@@ -1280,6 +1315,25 @@ public final class WorkflowWorkerNative {
                     (io.temporal.workflow.DynamicSignalHandler) (signalName, encodedArgs) -> {
                         LOGGER.debug("[JWorkflowAdapter] Signal received: {}", signalName);
 
+                        // Framework-owned lifecycle signals: suspend/resume (ballerina-library#8903).
+                        // These set the per-execution suspended flag that awaitWhileSuspended() gates
+                        // durable operations on, and mirror the state into the workflow memo so the
+                        // management API can report a SUSPENDED status without querying the workflow.
+                        // They are not routed to user signal handlers or recorded as user signals.
+                        if (SUSPEND_SIGNAL_NAME.equals(signalName) || RESUME_SIGNAL_NAME.equals(signalName)) {
+                            boolean suspend = SUSPEND_SIGNAL_NAME.equals(signalName);
+                            SUSPENDED.set(suspend);
+                            try {
+                                Workflow.upsertMemo(Map.of(SUSPENDED_MEMO_KEY, suspend));
+                            } catch (Exception e) {
+                                // Memo upsert is best-effort visibility metadata; suspension itself
+                                // is enforced by the flag even when the server rejects the upsert.
+                                LOGGER.warn("[JWorkflowAdapter] Could not upsert {} memo: {}",
+                                            SUSPENDED_MEMO_KEY, e.getMessage());
+                            }
+                            return;
+                        }
+
                         // Extract the signal payload from encodedArgs. The payload can be any anydata-compatible
                         // value - not only a record/map, but also a primitive (boolean, int, string), json, an
                         // xml round-trip wrapper, or an array. Deserialize it as a generic Object so Temporal's
@@ -2169,11 +2223,39 @@ public final class WorkflowWorkerNative {
                 default -> "UNKNOWN";
             };
 
+            if ("RUNNING".equals(statusStr) && isSuspendedMemo(client, execInfo)) {
+                statusStr = "SUSPENDED";
+            }
+
             Map<String, Object> info = new HashMap<>();
             info.put("workflowId", workflowId);
             info.put("workflowType", workflowType);
             info.put("status", statusStr);
             return info;
+        }
+    }
+
+    /**
+     * Returns {@code true} when the execution's memo carries the {@link #SUSPENDED_MEMO_KEY} flag upserted by the
+     * {@code __wf_suspend} signal handler — i.e. the workflow is running but paused via the management API.
+     *
+     * @param client   the Temporal client (for its data converter)
+     * @param execInfo the execution info returned by Describe/List visibility calls
+     * @return whether the workflow is currently marked suspended
+     */
+    public static boolean isSuspendedMemo(WorkflowClient client,
+                                          io.temporal.api.workflow.v1.WorkflowExecutionInfo execInfo) {
+        try {
+            io.temporal.api.common.v1.Payload payload =
+                    execInfo.getMemo().getFieldsMap().get(SUSPENDED_MEMO_KEY);
+            if (payload == null) {
+                return false;
+            }
+            Boolean suspended = client.getOptions().getDataConverter()
+                    .fromPayload(payload, Boolean.class, Boolean.class);
+            return Boolean.TRUE.equals(suspended);
+        } catch (Exception e) {
+            return false;
         }
     }
 }

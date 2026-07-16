@@ -96,6 +96,7 @@ public final class WorkflowContextNative {
     public static Object callActivity(BObject self, BFunctionPointer activityFunction, BMap<BString, Object> args,
                                       BTypedesc typedesc, Object retryPolicy) {
         try {
+            WorkflowWorkerNative.awaitWhileSuspended();
             String simpleActivityName = activityFunction.getType().getName();
             String workflowType = Workflow.getInfo().getWorkflowType();
             String fullActivityName = workflowType + "." + simpleActivityName;
@@ -187,6 +188,7 @@ public final class WorkflowContextNative {
 
         while (true) {
             try {
+                WorkflowWorkerNative.awaitWhileSuspended();
                 Object result = activityStub.execute(fullActivityName, Object.class,
                                                      new Object[]{currentArgs, callConfig});
                 Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(result);
@@ -236,6 +238,7 @@ public final class WorkflowContextNative {
     @SuppressWarnings("unchecked")
     private static Map<String, Object> callBuiltinRetryTask(String fullActivityName, Map<String, Object> activityArgs,
                                                             String errorMessage, String workflowType) {
+        WorkflowWorkerNative.awaitWhileSuspended();
 
         // Task name is derived from the activity name (already qualified with workflow type)
         String qualifiedTaskName = fullActivityName;
@@ -385,6 +388,7 @@ public final class WorkflowContextNative {
      */
     public static Object sleepMillis(Object contextHandle, long millis) {
         try {
+            WorkflowWorkerNative.awaitWhileSuspended();
             Workflow.sleep(Duration.ofMillis(millis));
             return null;
         } catch (io.temporal.worker.NonDeterministicException | io.temporal.failure.TemporalFailure e) {
@@ -484,6 +488,7 @@ public final class WorkflowContextNative {
                                         BMap<BString, Object> payloadObj, Object titleObj, Object descriptionObj,
                                         Object timeoutObj, BTypedesc typedesc) {
         try {
+            WorkflowWorkerNative.awaitWhileSuspended();
             // --- Extract individual params -------------------------------------------
             String taskName = taskNameBStr.getValue();
 

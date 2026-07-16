@@ -143,6 +143,35 @@ function testSuspendAndResumeWorkflow() returns error? {
     test:assertEquals(execInfo.status, "COMPLETED", "Workflow should complete after suspend/resume cycle");
 }
 
+// Regression for ballerina-library#8903: suspend must actually stop workflow progress
+// (reported as SUSPENDED) and resume must let it continue from where it stopped.
+@test:Config {
+    groups: ["integration"]
+}
+function testSuspendBlocksProgressUntilResume() returns error? {
+    string testId = uniqueId("suspend-gate");
+    SuspendTestInput input = {id: testId};
+    string workflowId = check workflow:run(suspendTestWorkflow, input);
+    _ = check waitForWorkflowState(workflowId, ["RUNNING"]);
+
+    // Suspend, then verify the reported status flips to SUSPENDED.
+    check management:suspendWorkflow(workflowId);
+    _ = check waitForWorkflowState(workflowId, ["SUSPENDED"]);
+
+    // Deliver the signal while suspended: the workflow wakes but must park at the
+    // activity-call boundary instead of executing the activity.
+    check workflow:sendData(suspendTestWorkflow, workflowId, "go", {id: testId});
+    runtime:sleep(3);
+    management:WorkflowExecutionInfo suspendedInfo = check management:getWorkflowInfo(workflowId);
+    test:assertEquals(suspendedInfo.status, "SUSPENDED",
+            "A suspended workflow must not progress past the next durable operation");
+
+    // Resume: the parked activity call runs and the workflow completes.
+    check management:resumeWorkflow(workflowId);
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+    test:assertEquals(result, "done-" + testId, "Workflow should finish the parked activity after resume");
+}
+
 @test:Config {
     groups: ["integration"]
 }

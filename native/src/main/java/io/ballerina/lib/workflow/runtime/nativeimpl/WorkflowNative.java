@@ -207,6 +207,7 @@ public final class WorkflowNative {
      */
     private static Object runAsImplicitActivity(String processName, Object javaInput) {
         try {
+            WorkflowWorkerNative.awaitWhileSuspended();
             io.temporal.workflow.ActivityStub stub = Workflow.newUntypedActivityStub(
                     buildImplicitActivityOptions(DEFAULT_IMPLICIT_ACTIVITY_TIMEOUT));
             String workflowId = stub.execute(WorkflowWorkerNative.BallerinaActivityAdapter.BUILTIN_RUN, String.class,
@@ -275,6 +276,7 @@ public final class WorkflowNative {
      */
     private static Object sendDataAsImplicitActivity(String workflowId, String dataName, Object javaData) {
         try {
+            WorkflowWorkerNative.awaitWhileSuspended();
             io.temporal.workflow.ActivityStub stub = Workflow.newUntypedActivityStub(
                     buildImplicitActivityOptions(DEFAULT_IMPLICIT_ACTIVITY_TIMEOUT));
             stub.execute(WorkflowWorkerNative.BallerinaActivityAdapter.BUILTIN_SEND_DATA, Void.class, workflowId,
@@ -416,6 +418,7 @@ public final class WorkflowNative {
     @SuppressWarnings("unchecked")
     private static Object getWorkflowResultAsImplicitActivity(String workflowId, int timeoutSeconds) {
         try {
+            WorkflowWorkerNative.awaitWhileSuspended();
             Duration activityTimeout = Duration.ofSeconds(timeoutSeconds + 30);
             io.temporal.workflow.ActivityStub stub = Workflow.newUntypedActivityStub(
                     buildImplicitActivityOptions(activityTimeout));
@@ -478,6 +481,9 @@ public final class WorkflowNative {
             WorkflowExecutionInfo execInfo = response.getWorkflowExecutionInfo();
             String workflowType = execInfo.getType().getName();
             String status = convertStatus(execInfo.getStatus());
+            if ("RUNNING".equals(status) && WorkflowWorkerNative.isSuspendedMemo(client, execInfo)) {
+                status = "SUSPENDED";
+            }
 
             return buildWorkflowExecutionInfo(wfId, workflowType, status, null, null, client);
 
@@ -494,6 +500,7 @@ public final class WorkflowNative {
     @SuppressWarnings("unchecked")
     private static Object getWorkflowInfoAsImplicitActivity(String workflowId) {
         try {
+            WorkflowWorkerNative.awaitWhileSuspended();
             io.temporal.workflow.ActivityStub stub = Workflow.newUntypedActivityStub(
                     buildImplicitActivityOptions(DEFAULT_IMPLICIT_ACTIVITY_TIMEOUT));
             Map<String, Object> info = stub.execute(WorkflowWorkerNative.BallerinaActivityAdapter.BUILTIN_GET_INFO,

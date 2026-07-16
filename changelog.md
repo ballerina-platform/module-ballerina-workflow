@@ -47,6 +47,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- [#8903](https://github.com/ballerina-platform/ballerina-library/issues/8903) - The
+  suspend management API now actually suspends the workflow: the workflow stops making
+  progress at its next durable operation (activity call, timer, human task, retry task,
+  or child workflow) until resumed, and its status is reported as `SUSPENDED` by
+  `getWorkflowInfo` and `listWorkflowInstances` (the `RUNNING` filter excludes suspended
+  workflows; a `SUSPENDED` filter returns only them).
 - [Fix#8820](https://github.com/ballerina-platform/ballerina-library/issues/8820) -
   `workflow:sendData()` now supports all persistable `anydata` payloads — primitive types
   (`boolean`, `int`, `float`, `decimal`, `string`), `json`, `xml`, and `table` — not only

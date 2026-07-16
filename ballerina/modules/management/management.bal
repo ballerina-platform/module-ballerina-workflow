@@ -172,7 +172,7 @@ public isolated function listPendingHumanTasks(string parentWorkflowId) returns 
 #     check management:listAllHumanTasks(startTimeFrom = "2026-06-01T00:00:00Z");
 # ```
 #
-# + status - Optional status filter: `PENDING` | `COMPLETED` | `TIMED_OUT` | `CANCELED` | `TERMINATED`
+# + status - Optional status filter: `PENDING` | `COMPLETED` | `FAILED` | `CANCELED` | `TERMINATED`
 # + startTimeFrom - Optional ISO-8601 lower bound on task start time (inclusive)
 # + startTimeTo - Optional ISO-8601 upper bound on task start time (inclusive)
 # + closeTimeFrom - Optional ISO-8601 lower bound on task close time (inclusive)
@@ -226,123 +226,189 @@ public isolated function completeHumanTask(string taskWorkflowId, anydata result
 #
 # + taskWorkflowId - Temporal workflow ID of the human task child workflow
 # + reason - Human-readable reason for the rejection
-# + details - Optional structured details about the failure (passed to the workflow)
+# + details - Optional structured details about the failure (recorded with the rejection)
 # + callerRoles - Roles held by the caller; validated against the task's `userRoles`
 # + userId - Optional user identifier stored in the audit trail (from `x-user-id` header)
 # + return - An error if the task cannot be found, is already completed, or the caller is unauthorized
 public isolated function failHumanTask(string taskWorkflowId, string reason,
         map<json>? details = (), [string, string...]? callerRoles = (),
-        string? userId = ()) returns error? {
-    map<json> payload = {approved: false, __rejected: true, reason: reason};
-    if details is map<json> {
-        payload["details"] = details;
-    }
-    return completeHumanTask(taskWorkflowId, payload, callerRoles, userId);
-}
-
-# Cancels a pending human task by terminating its child workflow.
-# Unlike `failHumanTask`, cancel does not send a result to the waiting workflow —
-# the child workflow is terminated immediately, which causes the parent workflow's
-# `awaitHumanTask` to return a `HumanTaskTimeoutError` or a terminal error.
-#
-# ```ballerina
-# check management:cancelHumanTask(taskId, cancelledBy = "admin@example.com");
-# ```
-#
-# + taskWorkflowId - Temporal workflow ID of the human task child workflow
-# + cancelledBy - Optional user ID recorded in the termination reason for audit purposes
-# + return - An error if the task cannot be found or terminated
-public isolated function cancelHumanTask(string taskWorkflowId, string? cancelledBy = ()) returns error? {
-    check assertIsHumanTaskNative(taskWorkflowId);
-    return terminateWorkflow(taskWorkflowId, "",
-            "Cancelled via management API" + (cancelledBy is string ? " by " + cancelledBy : ""));
-}
-
-isolated function assertIsHumanTaskNative(string taskId) returns error? = @java:Method {
-    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative",
-    name: "assertIsHumanTask"
+        string? userId = ()) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
+    name: "failHumanTask"
 } external;
 
-// ================================================================================
-// MANUAL RETRY TASKS
-// ================================================================================
+// Note: there is deliberately no cancel operation for human tasks. A task is CANCELED
+// only internally — when its parent workflow closes and the task is retired. Admins who
+// must force-stop a task can terminate it (TERMINATED) via terminateWorkflow.
 
-# Completes a pending manual retry task by sending the human's decision back to
-# the waiting workflow. The `taskWorkflowId` is the child workflow ID of the
-# retry task, available via `listPendingRetryTasks` or `listAllRetryTasks`.
+// ================================================================================
+// REVIEW ACTIVITIES
+// ================================================================================
+//
+// A review activity is a human reviewing an activity call. It is created either
+// before a gated activity runs (an approval gate, PRE_RUN — used by upcoming
+// gated-activity policies)
+// or after an activity fails under the ManualRetry policy (a rerun decision,
+// ON_FAILURE). Both surface the same decision: proceed / proceed-with-input /
+// reject.
+
+# Completes a pending review activity by sending the human's decision back to the
+# waiting workflow. The `taskWorkflowId` is the child workflow ID of the review
+# activity, available via `listPendingReviewActivities` or `listAllReviewActivities`.
 #
 # ```ballerina
-# // Retry with original arguments
-# check management:completeRetryTask(taskId, {action: "retry"});
+# // Proceed with the original arguments (run the gated call / rerun the failed one)
+# check management:completeReviewActivity(taskId, {action: "proceed"});
 #
-# // Retry with different input
-# check management:completeRetryTask(taskId, {action: "retry-with-input", input: {"orderId": "NEW-123"}});
+# // Proceed with edited arguments
+# check management:completeReviewActivity(taskId, {action: "proceed-with-input", input: {"orderId": "NEW-123"}});
 #
-# // Permanently fail the activity
-# check management:completeRetryTask(taskId, {action: "fail"});
+# // Reject: skip the call / fail the activity, with feedback for the agent
+# check management:completeReviewActivity(taskId, {action: "reject", feedback: "Amount too high"});
 # ```
 #
-# + taskWorkflowId - Temporal workflow ID of the retry task child workflow (`retrytask-...`)
-# + decision - The retry decision: retry, retry with new input, or fail
+# + taskWorkflowId - Temporal workflow ID of the review activity child workflow (`reviewactivity-...`)
+# + decision - The review decision: proceed, proceed with new input, or reject
 # + callerRoles - Roles held by the caller; validated against the task's configured `userRoles`
 # + userId - Optional user identifier stored in the audit trail (from `x-user-id` header)
 # + return - An error if the task cannot be found, is already completed, or the caller is unauthorized
-public isolated function completeRetryTask(string taskWorkflowId, RetryDecision decision,
+public isolated function completeReviewActivity(string taskWorkflowId, ReviewDecision decision,
         [string, string...]? callerRoles = (), string? userId = ()) returns error? = @java:Method {
-    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative",
+    name: "completeRetryTask"
 } external;
 
-# Returns pending manual retry task child workflows started by the given parent workflow,
+# Returns pending review activity child workflows started by the given parent workflow,
 # grouped by task name and sorted alphabetically. Scans the parent's event history for
-# child workflow start events whose ID starts with the `retrytask-{parentWorkflowId}-` prefix.
+# child workflow start events whose ID starts with the `reviewactivity-{parentWorkflowId}-` prefix.
 #
 # ```ballerina
-# management:RetryTaskSummary[] tasks = check management:listPendingRetryTasks(parentWorkflowId);
-# foreach management:RetryTaskSummary task in tasks {
-#     check management:completeRetryTask(task.taskId, {action: "retry"});
+# management:ReviewActivitySummary[] tasks = check management:listPendingReviewActivities(parentWorkflowId);
+# foreach management:ReviewActivitySummary task in tasks {
+#     check management:completeReviewActivity(task.taskId, {action: "proceed"});
 # }
 # ```
 #
 # + parentWorkflowId - The Temporal workflow ID of the parent workflow
-# + return - Array of pending retry task summaries, or an error
-public isolated function listPendingRetryTasks(string parentWorkflowId) returns RetryTaskSummary[]|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+# + return - Array of pending review activity summaries, or an error
+public isolated function listPendingReviewActivities(string parentWorkflowId)
+        returns ReviewActivitySummary[]|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative",
+    name: "listPendingRetryTasks"
 } external;
 
-# Lists all manual retry task instances across all parent workflows, with optional filters.
-# Queries Temporal's visibility API for executions whose workflow ID starts with `retrytask-`.
+# Lists all review activity instances across all parent workflows, with optional filters.
+# Queries Temporal's visibility API for executions whose workflow ID starts with `reviewactivity-`.
 #
 # ```ballerina
-# management:RetryTaskSummary[] pending = check management:listAllRetryTasks(status = "PENDING");
+# management:ReviewActivitySummary[] pending = check management:listAllReviewActivities(status = "PENDING");
 #
-# management:RetryTaskSummary[] recent =
-#     check management:listAllRetryTasks(startTimeFrom = "2026-06-01T00:00:00Z");
+# management:ReviewActivitySummary[] recent =
+#     check management:listAllReviewActivities(startTimeFrom = "2026-06-01T00:00:00Z");
 # ```
 #
-# + status - Optional status filter: `PENDING` | `COMPLETED` | `CANCELED` | `TERMINATED`
+# + status - Optional status filter: `PENDING` | `COMPLETED` | `FAILED` | `CANCELED` | `TERMINATED`
+# + startTimeFrom - Optional ISO-8601 lower bound on task start time (inclusive)
+# + startTimeTo - Optional ISO-8601 upper bound on task start time (inclusive)
+# + closeTimeFrom - Optional ISO-8601 lower bound on task close time (inclusive)
+# + closeTimeTo - Optional ISO-8601 upper bound on task close time (inclusive)
+# + return - Array of review activity summaries, or an error
+public isolated function listAllReviewActivities(string? status = (),
+        string? startTimeFrom = (), string? startTimeTo = (),
+        string? closeTimeFrom = (), string? closeTimeTo = ()) returns ReviewActivitySummary[]|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative",
+    name: "listAllRetryTasks"
+} external;
+
+# Returns detailed info for a single review activity, including the failure context,
+# the activity arguments that triggered the task, and the JSON Schema of the input
+# accepted by the `proceed-with-input` decision (`formSchema`).
+#
+# ```ballerina
+# management:ReviewActivityInfo info = check management:getReviewActivityInfo(taskId);
+# ```
+#
+# + taskId - The child workflow ID of the review activity (`reviewactivity-{parentId}-{taskName}-{uuid}`)
+# + return - Full review activity info including errorMessage, activityArgs, formSchema, and userRoles,
+#            or an error (including when the ID refers to a human task or any non-review workflow)
+public isolated function getReviewActivityInfo(string taskId) returns ReviewActivityInfo|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative",
+    name: "getRetryTaskInfo"
+} external;
+
+// ================================================================================
+// DEPRECATED RETRY TASK API
+// ================================================================================
+//
+// "Retry task" was renamed to "review activity" (see the ReviewDecision docs). These
+// wrappers keep the pre-0.7.0 API compiling and delegate to the review activity API.
+
+# Completes a pending retry task with the given decision.
+#
+# + taskWorkflowId - Temporal workflow ID of the retry task child workflow
+# + decision - The retry decision: retry, retry with new input, or fail
+# + callerRoles - Roles held by the caller; validated against the task's configured `userRoles`
+# + userId - Optional user identifier stored in the audit trail
+# + return - An error if the task cannot be found, is already completed, or the caller is unauthorized
+# # Deprecated
+# Use `completeReviewActivity` with actions `proceed` / `proceed-with-input` / `reject` instead.
+@deprecated
+public isolated function completeRetryTask(string taskWorkflowId, RetryDecision decision,
+        [string, string...]? callerRoles = (), string? userId = ()) returns error? {
+    ReviewDecision reviewDecision;
+    match decision.action {
+        "retry" => {
+            reviewDecision = {action: "proceed"};
+        }
+        "retry-with-input" => {
+            reviewDecision = {action: "proceed-with-input", input: decision.input};
+        }
+        _ => {
+            reviewDecision = {action: "reject"};
+        }
+    }
+    return completeReviewActivity(taskWorkflowId, reviewDecision, callerRoles, userId);
+}
+
+# Returns pending retry task child workflows started by the given parent workflow.
+#
+# + parentWorkflowId - The Temporal workflow ID of the parent workflow
+# + return - Array of pending retry task summaries, or an error
+# # Deprecated
+# Use `listPendingReviewActivities` instead.
+@deprecated
+public isolated function listPendingRetryTasks(string parentWorkflowId)
+        returns RetryTaskSummary[]|error {
+    return listPendingReviewActivities(parentWorkflowId);
+}
+
+# Lists all retry task instances across all parent workflows, with optional filters.
+#
+# + status - Optional status filter: `PENDING` | `COMPLETED` | `FAILED` | `CANCELED` | `TERMINATED`
 # + startTimeFrom - Optional ISO-8601 lower bound on task start time (inclusive)
 # + startTimeTo - Optional ISO-8601 upper bound on task start time (inclusive)
 # + closeTimeFrom - Optional ISO-8601 lower bound on task close time (inclusive)
 # + closeTimeTo - Optional ISO-8601 upper bound on task close time (inclusive)
 # + return - Array of retry task summaries, or an error
+# # Deprecated
+# Use `listAllReviewActivities` instead.
+@deprecated
 public isolated function listAllRetryTasks(string? status = (),
         string? startTimeFrom = (), string? startTimeTo = (),
-        string? closeTimeFrom = (), string? closeTimeTo = ()) returns RetryTaskSummary[]|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
-} external;
+        string? closeTimeFrom = (), string? closeTimeTo = ()) returns RetryTaskSummary[]|error {
+    return listAllReviewActivities(status, startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo);
+}
 
-# Returns detailed info for a single manual retry task, including the failure context
-# and activity arguments that triggered the task.
+# Returns detailed info for a single retry task.
 #
-# ```ballerina
-# management:RetryTaskInfo info = check management:getRetryTaskInfo(taskId);
-# ```
-#
-# + taskId - The child workflow ID of the retry task (`retrytask-{parentId}-{taskName}-{uuid}`)
-# + return - Full retry task info including errorMessage, activityArgs, and userRoles, or an error
-public isolated function getRetryTaskInfo(string taskId) returns RetryTaskInfo|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
-} external;
+# + taskId - The child workflow ID of the retry task
+# + return - Full retry task info, or an error
+# # Deprecated
+# Use `getReviewActivityInfo` instead.
+@deprecated
+public isolated function getRetryTaskInfo(string taskId) returns RetryTaskInfo|error {
+    return getReviewActivityInfo(taskId);
+}
 
 // ================================================================================
 // WORKFLOW LIFECYCLE — TERMINATE AND CANCEL
@@ -389,7 +455,7 @@ public isolated function startWorkflowByType(string workflowType, json? input,
 } external;
 
 # Lists workflow instances with optional filtering and pagination.
-# Excludes humantask- and retrytask- child workflows automatically.
+# Excludes humantask- and reviewactivity- child workflows automatically.
 #
 # + status - Optional status filter: `RUNNING` | `COMPLETED` | `FAILED` | `CANCELED` | `TERMINATED`
 # + workflowType - Optional workflow type filter

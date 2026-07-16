@@ -170,15 +170,17 @@ function testPaginateHumanTasksOldOffsetTokenRestartsFromBeginning() {
     test:assertEquals(page.items[0].taskId, "task-a");
 }
 
-// ── paginateRetryTasks ────────────────────────────────────────────────────────
+// ── paginateReviewActivities ────────────────────────────────────────────────────────
 
-function mkRetryTask(string taskId, string startTime) returns RetryTaskSummary =>
+function mkRetryTask(string taskId, string startTime) returns ReviewActivitySummary =>
     {taskId, taskName: "retryOrder", activityName: "processOrder",
-     parentWorkflowId: "parent", status: "PENDING", startTime, closeTime: ()};
+     parentWorkflowId: "parent", trigger: "ON_FAILURE",
+     title: "Review failed activity: processOrder", status: "PENDING", startTime, closeTime: (),
+     userRoles: []};
 
 @test:Config {groups: ["unit"]}
 function testPaginateRetryTasksEmpty() {
-    RetryTaskPage page = paginateRetryTasks([], 10, ());
+    ReviewActivityPage page = paginateReviewActivities([], 10, ());
     test:assertEquals(page.items.length(), 0);
     test:assertTrue(page.nextPageToken is ());
     test:assertFalse(page.hasMore);
@@ -186,18 +188,18 @@ function testPaginateRetryTasksEmpty() {
 
 @test:Config {groups: ["unit"]}
 function testPaginateRetryTasksFirstAndSecondPage() {
-    RetryTaskSummary[] items = [
+    ReviewActivitySummary[] items = [
         mkRetryTask("retry-b", "2026-06-01T11:00:00Z"),
         mkRetryTask("retry-c", "2026-06-01T12:00:00Z"),
         mkRetryTask("retry-a", "2026-06-01T10:00:00Z")
     ];
-    RetryTaskPage page1 = paginateRetryTasks(items, 2, ());
+    ReviewActivityPage page1 = paginateReviewActivities(items, 2, ());
     test:assertEquals(page1.items.length(), 2);
     test:assertTrue(page1.hasMore);
     test:assertEquals(page1.items[0].taskId, "retry-a");
     test:assertEquals(page1.items[1].taskId, "retry-b");
 
-    RetryTaskPage page2 = paginateRetryTasks(items, 2, page1.nextPageToken);
+    ReviewActivityPage page2 = paginateReviewActivities(items, 2, page1.nextPageToken);
     test:assertEquals(page2.items.length(), 1);
     test:assertFalse(page2.hasMore);
     test:assertEquals(page2.items[0].taskId, "retry-c");
@@ -205,11 +207,11 @@ function testPaginateRetryTasksFirstAndSecondPage() {
 
 @test:Config {groups: ["unit"]}
 function testPaginateRetryTasksTiebreakByTaskId() {
-    RetryTaskSummary[] items = [
+    ReviewActivitySummary[] items = [
         mkRetryTask("retry-z", "2026-06-02T10:00:00Z"),
         mkRetryTask("retry-a", "2026-06-02T10:00:00Z")
     ];
-    RetryTaskPage page = paginateRetryTasks(items, 10, ());
+    ReviewActivityPage page = paginateReviewActivities(items, 10, ());
     test:assertEquals(page.items[0].taskId, "retry-a");
     test:assertEquals(page.items[1].taskId, "retry-z");
 }
@@ -325,22 +327,22 @@ function testBuildCompletionResponseNoUserId() {
     test:assertEquals(info.completedBy, "unknown", "missing userId should fall back to 'unknown'");
 }
 
-// ── buildRetryDecisionResponse ────────────────────────────────────────────────
+// ── buildReviewDecisionResponse ────────────────────────────────────────────────
 
 @test:Config {groups: ["unit"]}
-function testBuildRetryDecisionResponseWithUserId() {
-    RetryDecisionInfo info = buildRetryDecisionResponse("retry", "bob@example.com");
+function testBuildReviewDecisionResponseWithUserId() {
+    ReviewDecisionInfo info = buildReviewDecisionResponse("proceed", "bob@example.com");
     test:assertTrue(info.success, "success must be true");
-    test:assertEquals(info.decision, "retry");
+    test:assertEquals(info.decision, "proceed");
     test:assertEquals(info.decidedBy, "bob@example.com");
     test:assertFalse(info.decidedAt == "", "decidedAt should be populated");
 }
 
 @test:Config {groups: ["unit"]}
-function testBuildRetryDecisionResponseNoUserId() {
-    RetryDecisionInfo info = buildRetryDecisionResponse("fail", ());
+function testBuildReviewDecisionResponseNoUserId() {
+    ReviewDecisionInfo info = buildReviewDecisionResponse("reject", ());
     test:assertEquals(info.decidedBy, "unknown", "missing userId should fall back to 'unknown'");
-    test:assertEquals(info.decision, "fail");
+    test:assertEquals(info.decision, "reject");
 }
 
 // ── humanTaskErrorResponse ────────────────────────────────────────────────────
@@ -385,13 +387,13 @@ function testHumanTaskErrorResponseInternalError() {
     test:assertTrue(resp is http:InternalServerError, "Unknown error should produce 500");
 }
 
-// ── retryTaskErrorResponse ────────────────────────────────────────────────────
+// ── reviewActivityErrorResponse ────────────────────────────────────────────────────
 
 @test:Config {groups: ["unit"]}
 function testRetryTaskErrorResponseNotFound() {
     error err = error("workflow NOT_FOUND");
     http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
-            retryTaskErrorResponse(err);
+            reviewActivityErrorResponse(err);
     test:assertTrue(resp is http:NotFound, "NOT_FOUND message should produce 404");
 }
 
@@ -399,7 +401,7 @@ function testRetryTaskErrorResponseNotFound() {
 function testRetryTaskErrorResponseForbidden() {
     error err = error("not authorized to complete this task");
     http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
-            retryTaskErrorResponse(err);
+            reviewActivityErrorResponse(err);
     test:assertTrue(resp is http:Forbidden, "not-authorized message should produce 403");
 }
 
@@ -407,7 +409,7 @@ function testRetryTaskErrorResponseForbidden() {
 function testRetryTaskErrorResponseConflict() {
     error err = error("task is not running");
     http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
-            retryTaskErrorResponse(err);
+            reviewActivityErrorResponse(err);
     test:assertTrue(resp is http:Conflict, "not-running message should produce 409");
 }
 
@@ -415,6 +417,6 @@ function testRetryTaskErrorResponseConflict() {
 function testRetryTaskErrorResponseInternalError() {
     error err = error("some unexpected failure");
     http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
-            retryTaskErrorResponse(err);
+            reviewActivityErrorResponse(err);
     test:assertTrue(resp is http:InternalServerError, "Unknown error should produce 500");
 }

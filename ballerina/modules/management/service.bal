@@ -152,6 +152,13 @@ configurable string apiKeyHeader = "x-api-key";
 # Required when `enableApiKey = true`.
 configurable string apiKeyValue = "";
 
+# Optional role required to view or decide review activities that declare no roles of
+# their own (failure reviews are created without role restrictions today). By default
+# (`()`), such review activities are visible to any caller; set a role name to restrict
+# them to callers holding that role in `x-user-roles`. Review activities that do declare
+# roles always require a matching caller role, regardless of this setting.
+configurable string? reviewActivityAccessRole = ();
+
 # Validates the management API configuration at module startup.
 # Called from `management.bal`'s `init()` after `initManagementModule()`.
 # When `enableManagementApi = true`, every enabled auth and TLS option is
@@ -975,43 +982,154 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
         return buildCompletionResponse(userId).toJson();
     }
 
-    # Cancels a human task (terminates the child workflow).
-    # + taskId - The human task workflow ID.
+    // Note: there is deliberately no cancel endpoint for human tasks. A task becomes
+    // CANCELED only internally, when its parent workflow closes; admins can terminate
+    // the task workflow (TERMINATED) via the workflow terminate endpoint instead.
+
+    // ── Review Activities — List & Detail ────────────────────────────────────
+
+    # Lists review activities with optional filters and pagination.
     # + userId - Optional caller identity from the `x-user-id` header.
     # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - `{success: true}` on success, or a not-found, conflict, or internal server error.
-    resource isolated function post human\-tasks/[string taskId]/cancel(
+    # + status - Filter by task status (e.g. `PENDING`, `COMPLETED`).
+    # + parentWorkflowId - Filter by parent workflow ID.
+    # + taskName - Filter by task name.
+    # + limit - Maximum number of results to return (capped at `maxPageSize`).
+    # + pageToken - Pagination cursor from a previous response.
+    # + startTimeFrom - Optional ISO-8601 lower bound on task start time.
+    # + startTimeTo - Optional ISO-8601 upper bound on task start time.
+    # + closeTimeFrom - Optional ISO-8601 lower bound on task close time.
+    # + closeTimeTo - Optional ISO-8601 upper bound on task close time.
+    # + return - Paginated review activities as JSON, or an internal server error.
+    resource isolated function get review\-activities(
+            @http:Header {name: "x-user-id"} string? userId,
+            @http:Header {name: "x-user-roles"} string? userRoles,
+            string? status = (),
+            string? parentWorkflowId = (),
+            string? taskName = (),
+            int 'limit = 20,
+            string? pageToken = (),
+            string? startTimeFrom = (),
+            string? startTimeTo = (),
+            string? closeTimeFrom = (),
+            string? closeTimeTo = ())
+            returns json|http:InternalServerError {
+        ReviewActivitySummary[]|error all = listAllReviewActivities(status,
+                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo);
+        if all is error {
+            return <http:InternalServerError>{
+                body: errorBody("Failed to list review activities: " + all.message())};
+        }
+        [string, string...]? callerRoles = parseRolesHeader(userRoles);
+        ReviewActivitySummary[] preFiltered = all
+            .filter(t => parentWorkflowId is () || t.parentWorkflowId == parentWorkflowId)
+            .filter(t => taskName is () || t.taskName == taskName);
+        // Role visibility in a foreach (avoids the lambda isolation constraint on
+        // computed local variables in this Ballerina version — see the human-task route).
+        ReviewActivitySummary[] filtered = [];
+        foreach ReviewActivitySummary t in preFiltered {
+            if canAccessReviewActivity(t.userRoles, callerRoles) {
+                filtered.push(t);
+            }
+        }
+        return paginateReviewActivities(filtered, clampLimit('limit, maxPageSize), pageToken).toJson();
+    }
+
+    # Returns detailed info for a single review activity.
+    # + taskId - The review activity workflow ID.
+    # + userId - Optional caller identity from the `x-user-id` header.
+    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
+    # + return - Review activity detail as JSON, a not-found error, or an internal server error.
+    resource isolated function get review\-activities/[string taskId](
+            @http:Header {name: "x-user-id"} string? userId,
+            @http:Header {name: "x-user-roles"} string? userRoles)
+            returns json|http:NotFound|http:Forbidden|http:InternalServerError {
+        ReviewActivityInfo|error info = getReviewActivityInfo(taskId);
+        if info is error {
+            string msg = info.message();
+            return msg.includes("not found") || msg.includes("NOT_FOUND")
+                ? <http:NotFound>{body: errorBody("Review activity not found: " + taskId)}
+                : <http:InternalServerError>{body: errorBody(msg)};
+        }
+        if !canAccessReviewActivity(info.userRoles, parseRolesHeader(userRoles)) {
+            return <http:Forbidden>{body: errorBody(
+                    "Unauthorized: caller is not allowed to access this review activity")};
+        }
+        return info.toJson();
+    }
+
+    // ── Review Activities — Decisions ──────────────────────────────────────────
+
+    # Proceeds: runs the gated activity, or reruns the failed one, with the original input.
+    # + taskId - The review activity workflow ID.
+    # + userId - Optional caller identity from the `x-user-id` header.
+    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
+    # + return - Review decision info as JSON, or a not-found, forbidden, conflict, or internal server error.
+    resource isolated function post review\-activities/[string taskId]/'proceed(
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
         [string, string...]? callerRoles = parseRolesHeader(userRoles);
-        HumanTaskInfo|error info = getHumanTaskInfo(taskId);
-        if info is error {
-            string msg = info.message();
-            return msg.includes("not found") || msg.includes("NOT_FOUND")
-                ? <http:NotFound>{body: errorBody("Human task not found: " + taskId)}
-                : <http:InternalServerError>{body: errorBody(msg)};
-        }
-        if !hasRoleIntersection(info.userRoles, callerRoles) {
-            return <http:Forbidden>{body: errorBody("Unauthorized: caller is not allowed to cancel this task")};
-        }
-        error? err = cancelHumanTask(taskId, cancelledBy = userId);
-        if err is error {
-            string msg = err.message();
-            if msg.includes("not found") || msg.includes("NOT_FOUND") {
-                return <http:NotFound>{body: errorBody(msg)};
-            }
-            if msg.includes("not running") {
-                return <http:Conflict>{body: errorBody(msg)};
-            }
-            return <http:InternalServerError>{body: errorBody(msg)};
-        }
-        return {success: true};
+        http:Forbidden? roleErr = reviewDecisionRoleError(callerRoles);
+        if roleErr is http:Forbidden { return roleErr; }
+        error? err = completeReviewActivity(taskId, {action: "proceed"}, callerRoles, userId);
+        if err is error { return reviewActivityErrorResponse(err); }
+        return buildReviewDecisionResponse("proceed", userId).toJson();
     }
 
-    // ── Retry Tasks — List & Detail ───────────────────────────────────────────
+    # Proceeds with modified input: runs the gated/failed activity with the replacement arguments.
+    # + taskId - The review activity workflow ID.
+    # + userId - Optional caller identity from the `x-user-id` header.
+    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
+    # + body - Request body containing the replacement `input` object.
+    # + return - Review decision info as JSON, or a bad request, not-found, forbidden, conflict, or internal server error.
+    resource isolated function post review\-activities/[string taskId]/proceed\-with\-input(
+            @http:Header {name: "x-user-id"} string? userId,
+            @http:Header {name: "x-user-roles"} string? userRoles,
+            @http:Payload map<json> body)
+            returns json|http:BadRequest|http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
+        if body["input"] !is map<json> {
+            return <http:BadRequest>{body: errorBody("input must be a JSON object")};
+        }
+        [string, string...]? callerRoles = parseRolesHeader(userRoles);
+        http:Forbidden? roleErr = reviewDecisionRoleError(callerRoles);
+        if roleErr is http:Forbidden { return roleErr; }
+        error? err = completeReviewActivity(taskId,
+                {action: "proceed-with-input", input: <map<anydata>>body["input"]},
+                callerRoles, userId);
+        if err is error { return reviewActivityErrorResponse(err); }
+        return buildReviewDecisionResponse("proceed-with-input", userId).toJson();
+    }
+
+    # Rejects: skips the gated activity, or permanently fails the failed one. Optional `feedback`
+    # in the body is relayed to the caller (e.g. surfaced in the failure message).
+    # + taskId - The review activity workflow ID.
+    # + userId - Optional caller identity from the `x-user-id` header.
+    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
+    # + body - Optional request body containing a `feedback` string.
+    # + return - Review decision info as JSON, or a not-found, forbidden, conflict, or internal server error.
+    resource isolated function post review\-activities/[string taskId]/'reject(
+            @http:Header {name: "x-user-id"} string? userId,
+            @http:Header {name: "x-user-roles"} string? userRoles,
+            @http:Payload map<json> body = {})
+            returns json|http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
+        [string, string...]? callerRoles = parseRolesHeader(userRoles);
+        http:Forbidden? roleErr = reviewDecisionRoleError(callerRoles);
+        if roleErr is http:Forbidden { return roleErr; }
+        string? feedback = body["feedback"] is string ? <string>body["feedback"] : ();
+        error? err = completeReviewActivity(taskId, {action: "reject", feedback: feedback},
+                callerRoles, userId);
+        if err is error { return reviewActivityErrorResponse(err); }
+        return buildReviewDecisionResponse("reject", userId).toJson();
+    }
+
+    // ── Retry Tasks (deprecated) ──────────────────────────────────────────────
+    // "Retry task" was renamed to "review activity"; these routes remain for
+    // pre-0.7.0 clients and delegate to the review activity implementation.
+    // Use /workflow/review-activities instead.
 
     # Lists manual retry tasks with optional filters and pagination.
+    # Deprecated: use `GET /workflow/review-activities` instead.
     # + userId - Optional caller identity from the `x-user-id` header.
     # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
     # + status - Filter by task status (e.g. `PENDING`, `COMPLETED`).
@@ -1037,18 +1155,28 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             string? closeTimeFrom = (),
             string? closeTimeTo = ())
             returns json|http:InternalServerError {
-        RetryTaskSummary[]|error all = listAllRetryTasks(status,
+        ReviewActivitySummary[]|error all = listAllReviewActivities(status,
                 startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo);
         if all is error {
             return <http:InternalServerError>{body: errorBody("Failed to list retry tasks: " + all.message())};
         }
-        RetryTaskSummary[] filtered = all
+        [string, string...]? callerRoles = parseRolesHeader(userRoles);
+        ReviewActivitySummary[] preFiltered = all
             .filter(t => parentWorkflowId is () || t.parentWorkflowId == parentWorkflowId)
             .filter(t => taskName is () || t.taskName == taskName);
-        return paginateRetryTasks(filtered, clampLimit('limit, maxPageSize), pageToken).toJson();
+        // Role visibility in a foreach (avoids the lambda isolation constraint on
+        // computed local variables in this Ballerina version — see the human-task route).
+        ReviewActivitySummary[] filtered = [];
+        foreach ReviewActivitySummary t in preFiltered {
+            if canAccessReviewActivity(t.userRoles, callerRoles) {
+                filtered.push(t);
+            }
+        }
+        return paginateReviewActivities(filtered, clampLimit('limit, maxPageSize), pageToken).toJson();
     }
 
     # Returns detailed info for a single retry task.
+    # Deprecated: use `GET /workflow/review-activities/{taskId}` instead.
     # + taskId - The retry task workflow ID.
     # + userId - Optional caller identity from the `x-user-id` header.
     # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
@@ -1056,40 +1184,46 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
     resource isolated function get retry\-tasks/[string taskId](
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:InternalServerError {
-        RetryTaskInfo|error info = getRetryTaskInfo(taskId);
+            returns json|http:NotFound|http:Forbidden|http:InternalServerError {
+        ReviewActivityInfo|error info = getReviewActivityInfo(taskId);
         if info is error {
             string msg = info.message();
             return msg.includes("not found") || msg.includes("NOT_FOUND")
                 ? <http:NotFound>{body: errorBody("Retry task not found: " + taskId)}
                 : <http:InternalServerError>{body: errorBody(msg)};
         }
+        if !canAccessReviewActivity(info.userRoles, parseRolesHeader(userRoles)) {
+            return <http:Forbidden>{body: errorBody(
+                    "Unauthorized: caller is not allowed to access this retry task")};
+        }
         return info.toJson();
     }
 
-    // ── Retry Tasks — Decisions ───────────────────────────────────────────────
-
     # Retries the failed activity with the original input.
+    # Deprecated: use `POST /workflow/review-activities/{taskId}/proceed` instead.
     # + taskId - The retry task workflow ID.
     # + userId - Optional caller identity from the `x-user-id` header.
     # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - Retry decision info as JSON, or a not-found, forbidden, conflict, or internal server error.
+    # + return - Decision info as JSON, or a not-found, forbidden, conflict, or internal server error.
     resource isolated function post retry\-tasks/[string taskId]/'retry(
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
         [string, string...]? callerRoles = parseRolesHeader(userRoles);
-        error? err = completeRetryTask(taskId, {action: "retry"}, callerRoles, userId);
-        if err is error { return retryTaskErrorResponse(err); }
-        return buildRetryDecisionResponse("retry", userId).toJson();
+        http:Forbidden? roleErr = reviewDecisionRoleError(callerRoles);
+        if roleErr is http:Forbidden { return roleErr; }
+        error? err = completeReviewActivity(taskId, {action: "proceed"}, callerRoles, userId);
+        if err is error { return reviewActivityErrorResponse(err); }
+        return buildReviewDecisionResponse("retry", userId).toJson();
     }
 
     # Retries the failed activity with modified input.
+    # Deprecated: use `POST /workflow/review-activities/{taskId}/proceed-with-input` instead.
     # + taskId - The retry task workflow ID.
     # + userId - Optional caller identity from the `x-user-id` header.
     # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
     # + body - Request body containing the replacement `input` object.
-    # + return - Retry decision info as JSON, or a bad request, not-found, forbidden, conflict, or internal server error.
+    # + return - Decision info as JSON, or a bad request, not-found, forbidden, conflict, or internal server error.
     resource isolated function post retry\-tasks/[string taskId]/retry\-with\-input(
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
@@ -1099,26 +1233,31 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             return <http:BadRequest>{body: errorBody("input must be a JSON object")};
         }
         [string, string...]? callerRoles = parseRolesHeader(userRoles);
-        error? err = completeRetryTask(taskId,
-                {action: "retry-with-input", input: <map<anydata>>body["input"]},
+        http:Forbidden? roleErr = reviewDecisionRoleError(callerRoles);
+        if roleErr is http:Forbidden { return roleErr; }
+        error? err = completeReviewActivity(taskId,
+                {action: "proceed-with-input", input: <map<anydata>>body["input"]},
                 callerRoles, userId);
-        if err is error { return retryTaskErrorResponse(err); }
-        return buildRetryDecisionResponse("retry-with-input", userId).toJson();
+        if err is error { return reviewActivityErrorResponse(err); }
+        return buildReviewDecisionResponse("retry-with-input", userId).toJson();
     }
 
-    # Permanently fails the activity (cancels further retries).
+    # Permanently fails the activity, surfacing the original error to the workflow.
+    # Deprecated: use `POST /workflow/review-activities/{taskId}/reject` instead.
     # + taskId - The retry task workflow ID.
     # + userId - Optional caller identity from the `x-user-id` header.
     # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - Retry decision info as JSON, or a not-found, forbidden, conflict, or internal server error.
+    # + return - Decision info as JSON, or a not-found, forbidden, conflict, or internal server error.
     resource isolated function post retry\-tasks/[string taskId]/'fail(
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
         [string, string...]? callerRoles = parseRolesHeader(userRoles);
-        error? err = completeRetryTask(taskId, {action: "fail"}, callerRoles, userId);
-        if err is error { return retryTaskErrorResponse(err); }
-        return buildRetryDecisionResponse("fail", userId).toJson();
+        http:Forbidden? roleErr = reviewDecisionRoleError(callerRoles);
+        if roleErr is http:Forbidden { return roleErr; }
+        error? err = completeReviewActivity(taskId, {action: "reject"}, callerRoles, userId);
+        if err is error { return reviewActivityErrorResponse(err); }
+        return buildReviewDecisionResponse("fail", userId).toJson();
     }
 };
 
@@ -1131,12 +1270,12 @@ isolated function buildCompletionResponse(string? userId) returns CompletionInfo
     return {success: true, completedBy: userId ?: "unknown", completedAt: time:utcToString(now)};
 }
 
-# Builds a `RetryDecisionInfo` record stamped with the current UTC time and the
+# Builds a `ReviewDecisionInfo` record stamped with the current UTC time and the
 # caller's user ID (falls back to `"unknown"` when the header is absent).
-# + decision - The retry decision taken: `"retry"`, `"retry-with-input"`, or `"fail"`.
+# + decision - The review decision taken: `"proceed"`, `"proceed-with-input"`, or `"reject"`.
 # + userId - Optional caller identity; used as the `decidedBy` field.
-# + return - A `RetryDecisionInfo` record with `success`, `decision`, `decidedBy`, and `decidedAt` fields.
-isolated function buildRetryDecisionResponse(string decision, string? userId) returns RetryDecisionInfo {
+# + return - A `ReviewDecisionInfo` record with `success`, `decision`, `decidedBy`, and `decidedAt` fields.
+isolated function buildReviewDecisionResponse(string decision, string? userId) returns ReviewDecisionInfo {
     time:Utc now = time:utcNow();
     return {success: true, decision: decision, decidedBy: userId ?: "unknown", decidedAt: time:utcToString(now)};
 }
@@ -1161,6 +1300,34 @@ isolated function ensureWorkflowDetailAccess(string? rolesHeader) returns http:F
     [string, string...]? callerRoles = parseRolesHeader(rolesHeader);
     if callerRoles is () {
         return <http:Forbidden>{body: errorBody("Unauthorized: x-user-roles header is required to view workflow details")};
+    }
+    return ();
+}
+
+# A review activity with declared roles requires a matching caller role (same rule as human
+# tasks). A review activity with no declared roles is visible to any caller by default;
+# when `reviewActivityAccessRole` is configured, the caller must hold that role instead.
+isolated function canAccessReviewActivity(string[] taskRoles, [string, string...]? callerRoles) returns boolean {
+    if taskRoles.length() > 0 {
+        return hasRoleIntersection(taskRoles, callerRoles);
+    }
+    string? requiredRole = reviewActivityAccessRole;
+    if requiredRole is string && requiredRole.trim().length() > 0 {
+        return callerRoles !is () && callerRoles.indexOf(requiredRole) != ();
+    }
+    return true;
+}
+
+# Guard for review activity decision routes: when `reviewActivityAccessRole` is configured,
+# the caller must hold it. Task-declared roles are enforced separately by the native
+# completion path against the task's memo.
+isolated function reviewDecisionRoleError([string, string...]? callerRoles) returns http:Forbidden? {
+    string? requiredRole = reviewActivityAccessRole;
+    if requiredRole is string && requiredRole.trim().length() > 0 {
+        if callerRoles is () || callerRoles.indexOf(requiredRole) is () {
+            return <http:Forbidden>{body: errorBody(
+                    "Unauthorized: the '" + requiredRole + "' role is required to decide review activities")};
+        }
     }
     return ();
 }
@@ -1206,17 +1373,17 @@ isolated function paginateHumanTasks(HumanTaskSummary[] items, int 'limit, strin
     return {items: pageItems, nextPageToken: nextToken, hasMore: hasMore};
 }
 
-isolated function paginateRetryTasks(RetryTaskSummary[] items, int 'limit, string? pageToken)
-        returns RetryTaskPage {
-    RetryTaskSummary[] sorted = from RetryTaskSummary t in items
+isolated function paginateReviewActivities(ReviewActivitySummary[] items, int 'limit, string? pageToken)
+        returns ReviewActivityPage {
+    ReviewActivitySummary[] sorted = from ReviewActivitySummary t in items
         order by t.startTime ascending, t.taskId ascending select t;
-    RetryTaskSummary[] remaining = sorted;
+    ReviewActivitySummary[] remaining = sorted;
     if pageToken is string {
         [string, string] cursor = decodeCursorToken(pageToken);
         string cursorTime = cursor[0];
         string cursorId = cursor[1];
         if cursorTime != "" {
-            remaining = from RetryTaskSummary t in sorted
+            remaining = from ReviewActivitySummary t in sorted
                 where t.startTime > cursorTime
                     || (t.startTime == cursorTime && t.taskId > cursorId)
                 select t;
@@ -1224,10 +1391,10 @@ isolated function paginateRetryTasks(RetryTaskSummary[] items, int 'limit, strin
     }
     int count = remaining.length();
     boolean hasMore = count > 'limit;
-    RetryTaskSummary[] pageItems = hasMore ? remaining.slice(0, 'limit) : remaining;
+    ReviewActivitySummary[] pageItems = hasMore ? remaining.slice(0, 'limit) : remaining;
     string? nextToken = ();
     if hasMore {
-        RetryTaskSummary last = pageItems[pageItems.length() - 1];
+        ReviewActivitySummary last = pageItems[pageItems.length() - 1];
         nextToken = encodeCursorToken(last.startTime, last.taskId);
     }
     return {items: pageItems, nextPageToken: nextToken, hasMore: hasMore};
@@ -1266,7 +1433,7 @@ isolated function humanTaskErrorResponse(error err)
     return <http:InternalServerError>{body: errorBody(msg)};
 }
 
-isolated function retryTaskErrorResponse(error err)
+isolated function reviewActivityErrorResponse(error err)
         returns http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
     string msg = err.message();
     if msg.includes("not found") || msg.includes("NOT_FOUND") {

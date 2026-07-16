@@ -22,7 +22,10 @@ import io.ballerina.lib.workflow.ModuleUtils;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
 import io.ballerina.runtime.api.creators.ErrorCreator;
+import io.ballerina.runtime.api.types.FunctionType;
+import io.ballerina.runtime.api.types.Parameter;
 import io.ballerina.runtime.api.types.Type;
+import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BFunctionPointer;
@@ -38,7 +41,9 @@ import io.temporal.workflow.Workflow;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -205,56 +210,93 @@ public final class WorkflowContextNative {
             Map<String, Object> decision = callBuiltinRetryTask(fullActivityName, currentArgs, lastErrorMsg,
                                                                 workflowType);
 
-            String action = decision.containsKey("action") ? String.valueOf(decision.get("action")) : "fail";
+            String action = decision.containsKey("action") ? String.valueOf(decision.get("action")) : "reject";
 
             switch (action) {
-                case "retry" -> {
+                case "proceed" -> {
                     // Re-run with the same arguments
                 }
-                case "retry-with-input" -> {
-                    // Replace args with the new input map provided by the human
+                case "proceed-with-input" -> {
+                    // Merge the reviewer's edits over the existing arguments: keys present in the
+                    // edited input override, omitted keys keep their last-used values — so a form
+                    // that submits only the corrected fields does not drop the rest.
                     Object newInput = decision.get("input");
                     if (newInput instanceof Map<?, ?> inputMap) {
-                        currentArgs = (Map<String, Object>) inputMap;
+                        Map<String, Object> merged = new HashMap<>(currentArgs);
+                        inputMap.forEach((key, value) -> merged.put(String.valueOf(key), value));
+                        currentArgs = merged;
                     }
                     // else: keep existing args (safety fallback)
                 }
                 default -> {
-                    // "fail" or any unknown action — surface the original error
-                    return ErrorCreator.createError(StringUtils.fromString(lastErrorMsg != null ? lastErrorMsg :
-                                                                           "Activity failed and manual retry decision" +
-                                                                                   " was 'fail'"));
+                    // "reject" or any unknown action — surface the original error, appending the
+                    // reviewer's feedback when present.
+                    Object feedback = decision.get("feedback");
+                    String base = lastErrorMsg != null ? lastErrorMsg
+                            : "Activity failed and the review decision was 'reject'";
+                    String message = feedback instanceof String fb && !fb.isBlank()
+                            ? base + " (reviewer: " + fb + ")" : base;
+                    return ErrorCreator.createError(StringUtils.fromString(message));
                 }
             }
         }
     }
 
     /**
-     * Starts a built-in RetryTask child workflow and blocks until a human sends a {@code "taskDecision"} signal.
-     * Returns the signal payload map ({@code action}, optionally {@code input}).
+     * Starts a built-in review-activity child workflow and blocks until a human sends a {@code "taskDecision"}
+     * signal. Returns the signal payload map ({@code action}, optionally {@code input}/{@code feedback}).
+     * <p>Used for the on-failure manual-retry path (via {@link #callBuiltinRetryTask}); the pre-run
+     * approval gate (PRE_RUN) shares this starter when gated-activity policies land.
+     *
+     * @param trigger          {@code "PRE_RUN"} (approval gate) or {@code "ON_FAILURE"} (rerun decision)
+     * @param fullActivityName the qualified activity name (also used as the task name)
+     * @param activityArgs     the proposed (or last-attempted) arguments, shown to the reviewer
+     * @param errorMessage     the failure message for ON_FAILURE, or empty/null for PRE_RUN
+     * @param userRoles        roles permitted to decide (empty → any role)
+     * @param timeoutMillis    max wait for a decision, or null to wait indefinitely
+     * @return the decision map
      */
     @SuppressWarnings("unchecked")
-    private static Map<String, Object> callBuiltinRetryTask(String fullActivityName, Map<String, Object> activityArgs,
-                                                            String errorMessage, String workflowType) {
-
-        // Task name is derived from the activity name (already qualified with workflow type)
+    static Map<String, Object> startReviewActivity(String trigger, String fullActivityName,
+                                                   Map<String, Object> activityArgs, String errorMessage,
+                                                   String[] userRoles, Long timeoutMillis) {
         String qualifiedTaskName = fullActivityName;
-
         String parentWorkflowId = Workflow.getInfo().getWorkflowId();
-        String retryTaskId = "retrytask-" + Workflow.randomUUID();
+        String reviewId = "reviewactivity-" + Workflow.randomUUID();
 
-        // Ensure the built-in retry task workflow type is registered
         WorkflowWorkerNative.ensureRetryTaskRegistered();
+
+        String[] roles = userRoles != null ? userRoles : new String[0];
+
+        // Title and description distinguish the review trigger for task inboxes: a failed
+        // activity awaiting a rerun decision reads differently from a pre-run approval gate.
+        boolean onFailure = "ON_FAILURE".equals(trigger);
+        String title = onFailure
+                ? "Review failed activity: " + fullActivityName
+                : "Approval required: " + fullActivityName;
+        String description = onFailure
+                ? "Activity '" + fullActivityName + "' failed with: "
+                        + (errorMessage != null && !errorMessage.isBlank() ? errorMessage : "an unknown error")
+                        + ". Proceed to rerun it with the original input, proceed with edited input, "
+                        + "or reject to surface the failure to the workflow."
+                : "Activity '" + fullActivityName + "' is awaiting approval before it runs. "
+                        + "Proceed to run it with the proposed input, proceed with edited input, "
+                        + "or reject to skip the call.";
 
         // Memo — readable without fetching full history
         Map<String, Object> memo = new HashMap<>();
-        memo.put("workflowKind", "RETRY_TASK");
+        memo.put("workflowKind", "REVIEW_ACTIVITY");
+        memo.put("trigger", trigger);
         memo.put("activityName", fullActivityName);
         memo.put("taskName", qualifiedTaskName);
+        memo.put("title", title);
+        memo.put("description", description);
         memo.put("parentWorkflowId", parentWorkflowId);
         memo.put("errorMessage", errorMessage != null ? errorMessage : "");
         memo.put("activityArgs", activityArgs);
+        memo.put("userRoles", roles);
         memo.put("createdAt", java.time.Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString());
+        memo.put("formSchema", deriveReviewInputSchema(fullActivityName, activityArgs));
 
         // Input passed into the child workflow's execute()
         Map<String, Object> inputs = new HashMap<>();
@@ -264,22 +306,112 @@ public final class WorkflowContextNative {
         inputs.put("errorMessage", errorMessage != null ? errorMessage : "");
         inputs.put("activityArgs", activityArgs);
 
-        io.temporal.workflow.ChildWorkflowOptions childOptions =
-                io.temporal.workflow.ChildWorkflowOptions.newBuilder().setWorkflowId(retryTaskId).setParentClosePolicy(
-                        io.temporal.api.enums.v1.ParentClosePolicy.PARENT_CLOSE_POLICY_TERMINATE).setMemo(memo).build();
+        // REQUEST_CANCEL (not TERMINATE) so a review retired by its parent closing ends as
+        // CANCELED — distinguishable from an admin terminating the task (ballerina-library#8892).
+        io.temporal.workflow.ChildWorkflowOptions.Builder optsBuilder =
+                io.temporal.workflow.ChildWorkflowOptions.newBuilder().setWorkflowId(reviewId).setParentClosePolicy(
+                        io.temporal.api.enums.v1.ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL).setMemo(memo);
+        if (timeoutMillis != null && timeoutMillis > 0) {
+            optsBuilder.setWorkflowExecutionTimeout(java.time.Duration.ofMillis(timeoutMillis));
+        }
 
         io.temporal.workflow.ChildWorkflowStub childStub = Workflow.newUntypedChildWorkflowStub(
-                WorkflowWorkerNative.RETRYTASK_WORKFLOW_TYPE, childOptions);
+                WorkflowWorkerNative.RETRYTASK_WORKFLOW_TYPE, optsBuilder.build());
 
-        Object rawResult = childStub.execute(Object.class, inputs);
-
-        if (rawResult instanceof Map<?, ?> resultMap) {
-            return (Map<String, Object>) resultMap;
+        try {
+            Object rawResult = childStub.execute(Object.class, inputs);
+            if (rawResult instanceof Map<?, ?> resultMap) {
+                return (Map<String, Object>) resultMap;
+            }
+        } catch (io.temporal.failure.ChildWorkflowFailure e) {
+            // Timed out (or otherwise ended) without a decision — treat as reject and say so.
+            Map<String, Object> timedOut = new HashMap<>();
+            timedOut.put("action", "reject");
+            timedOut.put("feedback", "the review timed out before a human decided");
+            return timedOut;
         }
-        // Fallback: treat any unexpected result as "fail"
+        // Fallback: treat any unexpected result as reject
         Map<String, Object> failDecision = new HashMap<>();
-        failDecision.put("action", "fail");
+        failDecision.put("action", "reject");
         return failDecision;
+    }
+
+    // On-failure manual-retry review (the ManualRetry policy). Delegates to the shared starter.
+    private static Map<String, Object> callBuiltinRetryTask(String fullActivityName, Map<String, Object> activityArgs,
+                                                            String errorMessage, String workflowType) {
+        return startReviewActivity("ON_FAILURE", fullActivityName, activityArgs, errorMessage, new String[0], null);
+    }
+
+    /**
+     * Builds the JSON Schema for a review activity's {@code proceed-with-input} form: an object whose properties are
+     * the reviewed activity's data parameters (ballerina-library#8895). Preferred source is the registered activity
+     * function's signature (accurate types); when the activity is not in this JVM's registry (e.g. an agent tool
+     * closure) the schema is derived from the recorded argument values instead. The values themselves are served
+     * separately as {@code activityArgs} so a form can be pre-filled.
+     */
+    private static String deriveReviewInputSchema(String fullActivityName, Map<String, Object> activityArgs) {
+        try {
+            BFunctionPointer fn = WorkflowWorkerNative.getActivityRegistry().get(fullActivityName);
+            if (fn != null && fn.getType() instanceof FunctionType funcType) {
+                Parameter[] allParams = funcType.getParameters();
+                List<Parameter> dataParams = new ArrayList<>();
+                if (allParams != null) {
+                    for (Parameter p : allParams) {
+                        // Skip non-data parameters a reviewer can never supply: typedescs and
+                        // client objects (connections are bound at registration, not per call).
+                        if (p.type.getTag() == TypeTags.TYPEDESC_TAG || WorkflowWorkerNative.isObjectParam(p)) {
+                            continue;
+                        }
+                        dataParams.add(p);
+                    }
+                }
+                Parameter[] params = dataParams.toArray(new Parameter[0]);
+                // Honor parameter defaults: a defaultable activity parameter need not be supplied
+                // by the reviewer, so it must not appear in the schema's `required` list.
+                return TypesUtil.toJsonSchemaForParameters(params, 0, params.length, true);
+            }
+        } catch (Exception e) {
+            // Fall through to the value-derived schema below.
+        }
+
+        Map<String, Object> properties = new java.util.LinkedHashMap<>();
+        if (activityArgs != null) {
+            for (Map.Entry<String, Object> entry : activityArgs.entrySet()) {
+                Map<String, Object> prop = new java.util.LinkedHashMap<>();
+                String jsonType = jsonTypeOf(entry.getValue());
+                if (jsonType != null) {
+                    prop.put("type", jsonType);
+                }
+                properties.put(entry.getKey(), prop);
+            }
+        }
+        Map<String, Object> root = new java.util.LinkedHashMap<>();
+        root.put("type", "object");
+        root.put("properties", properties);
+        return TypesUtil.toJsonString(root);
+    }
+
+    // Maps a recorded argument value to its JSON Schema type name, or null when unknown (nil values).
+    private static String jsonTypeOf(Object value) {
+        if (value instanceof String) {
+            return "string";
+        }
+        if (value instanceof Boolean) {
+            return "boolean";
+        }
+        if (value instanceof Integer || value instanceof Long) {
+            return "integer";
+        }
+        if (value instanceof Number) {
+            return "number";
+        }
+        if (value instanceof Map) {
+            return "object";
+        }
+        if (value instanceof List || (value != null && value.getClass().isArray())) {
+            return "array";
+        }
+        return null;
     }
 
     /**
@@ -289,7 +421,7 @@ public final class WorkflowContextNative {
      * @param autoRetryMap the AutoRetry BMap passed as retryPolicy
      * @return configured RetryOptions
      */
-    private static io.temporal.common.RetryOptions buildPerCallRetryOptions(BMap<BString, Object> autoRetryMap) {
+    static io.temporal.common.RetryOptions buildPerCallRetryOptions(BMap<BString, Object> autoRetryMap) {
         io.temporal.common.RetryOptions.Builder builder = io.temporal.common.RetryOptions.newBuilder();
 
         // maxRetries → maximumAttempts (maxRetries=0 means 1 total attempt, no retries)
@@ -345,7 +477,7 @@ public final class WorkflowContextNative {
      *                          the catch block above.
      */
     @SuppressWarnings("unchecked")
-    private static Map<String, Object> convertArgsMapWithConnectionMarkers(BMap<BString, Object> args) {
+    static Map<String, Object> convertArgsMapWithConnectionMarkers(BMap<BString, Object> args) {
         Map<String, Object> result = new HashMap<>();
         for (BString key : args.getKeys()) {
             Object value = args.get(key);
@@ -573,10 +705,13 @@ public final class WorkflowContextNative {
             inputs.put("workflowDefinitionName", workflowDefinitionName);
 
             // --- Start child workflow and block until completion --------------------
+            // REQUEST_CANCEL (not TERMINATE) so a task retired by its parent closing ends as
+            // CANCELED — distinguishable from an admin terminating the task (ballerina-library#8892).
             ChildWorkflowOptions childOptions = ChildWorkflowOptions
                     .newBuilder()
                     .setWorkflowId(taskWorkflowId)
-                    .setParentClosePolicy(io.temporal.api.enums.v1.ParentClosePolicy.PARENT_CLOSE_POLICY_TERMINATE)
+                    .setParentClosePolicy(
+                            io.temporal.api.enums.v1.ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL)
                     .setMemo(memo)
                     .build();
 
@@ -601,6 +736,13 @@ public final class WorkflowContextNative {
                     af.getType())) {
                 return buildTimeoutError(af.getOriginalMessage());
             }
+            // Rejection via the management `fail` operation — the task workflow failed with the
+            // rejection reason as the failure message (ballerina-library#8892).
+            if (cause instanceof ApplicationFailure af
+                    && WorkflowWorkerNative.HUMANTASK_REJECTED_FAILURE_TYPE.equals(af.getType())) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Human task rejected: " + af.getOriginalMessage()));
+            }
             // Some other child workflow failure — surface as a generic error
             String msg = cause != null ? cause.getMessage() : e.getMessage();
             return ErrorCreator.createError(StringUtils.fromString("Human task failed: " + msg));
@@ -621,7 +763,7 @@ public final class WorkflowContextNative {
      * "no timeout" when the duration map is absent.
      */
     @SuppressWarnings("unchecked")
-    private static Long computeTimeoutMillis(BMap<BString, Object> duration) {
+    static Long computeTimeoutMillis(BMap<BString, Object> duration) {
         if (duration == null) {
             return null; // no timeout — wait indefinitely
         }

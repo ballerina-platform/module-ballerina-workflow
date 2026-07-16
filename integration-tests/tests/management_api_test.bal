@@ -24,7 +24,7 @@
 //   • listWorkflowInstances (with type / status / workflowId filters)
 //   • startWorkflowByType
 //   • getHumanTaskInfo / listAllHumanTasks / failHumanTask
-//   • getRetryTaskInfo / listAllRetryTasks
+//   • getReviewActivityInfo / listAllReviewActivities
 //
 // ================================================================================
 
@@ -295,7 +295,7 @@ function testGetHumanTaskInfo() returns error? {
     management:HumanTaskInfo info = check management:getHumanTaskInfo(taskId);
     test:assertFalse(info.taskId == "", "HumanTaskInfo must have a non-empty taskId");
     test:assertFalse(info.taskName == "", "HumanTaskInfo must have a non-empty taskName");
-    test:assertEquals(info.status, "RUNNING", "Active human task should be RUNNING");
+    test:assertEquals(info.status, "PENDING", "Active human task should be PENDING");
     test:assertTrue(info.userRoles.length() > 0, "HumanTaskInfo should include at least one user role");
         test:assertTrue(info.formSchema is string,
             "formSchema must be populated for human task: " + taskId);
@@ -379,27 +379,41 @@ function testFailHumanTask() returns error? {
 }
 
 // ================================================================================
-// RETRY TASK — getRetryTaskInfo / listAllRetryTasks
+// RETRY TASK — getReviewActivityInfo / listAllReviewActivities
 // ================================================================================
 
 @test:Config {
     groups: ["integration"]
 }
-function testGetRetryTaskInfo() returns error? {
+function testGetReviewActivityInfo() returns error? {
     string testId = uniqueId("retry-info");
     RetryActivityInput input = {id: testId, mode: "manual_retry_fail"};
     string workflowId = check workflow:run(manualRetryFailDecisionWorkflow, input);
 
-    management:RetryTaskSummary retryTask = check waitForPendingRetryTask(workflowId);
+    management:ReviewActivitySummary retryTask = check waitForPendingRetryTask(workflowId);
 
-    management:RetryTaskInfo info = check management:getRetryTaskInfo(retryTask.taskId);
-    test:assertFalse(info.taskId == "", "RetryTaskInfo must have a non-empty taskId");
-    test:assertFalse(info.activityName == "", "RetryTaskInfo must have a non-empty activityName");
-    test:assertFalse(info.errorMessage == "", "RetryTaskInfo should capture the activity error message");
-    test:assertEquals(info.status, "RUNNING", "Active retry task should be RUNNING");
+    management:ReviewActivityInfo info = check management:getReviewActivityInfo(retryTask.taskId);
+    test:assertFalse(info.taskId == "", "ReviewActivityInfo must have a non-empty taskId");
+    test:assertFalse(info.activityName == "", "ReviewActivityInfo must have a non-empty activityName");
+    test:assertFalse(info.errorMessage == "", "ReviewActivityInfo should capture the activity error message");
+    test:assertEquals(info.status, "PENDING", "Active review activity should be PENDING");
+    test:assertEquals(info.trigger, "ON_FAILURE", "A manual-retry review is failure-triggered");
+    test:assertTrue(info.title.includes("failed activity"),
+            "Title should indicate this reviews a failed activity, got: " + info.title);
+    test:assertTrue(info.description.includes(info.errorMessage),
+            "Description should include the failure message");
+    // ballerina-library#8895 — the input schema for proceed-with-input must be served.
+    test:assertTrue(info.formSchema is string, "ReviewActivityInfo must include a formSchema");
+    if info.formSchema is string {
+        string schema = <string>info.formSchema;
+        test:assertTrue(schema.includes("properties"),
+                "formSchema should be a JSON Schema object, got: " + schema);
+        test:assertTrue(schema.includes("\"message\""),
+                "formSchema should describe the editable activity argument 'message', got: " + schema);
+    }
 
     // Clean up — decide fail so the workflow terminates (workflow itself will also error out)
-    check management:completeRetryTask(retryTask.taskId, {action: "fail"});
+    check management:completeReviewActivity(retryTask.taskId, {action: "reject"});
     do {
         _ = check workflow:getWorkflowResult(workflowId, 15);
     } on fail {
@@ -410,9 +424,9 @@ function testGetRetryTaskInfo() returns error? {
 @test:Config {
     groups: ["integration"]
 }
-function testGetRetryTaskInfoNonExistentReturnsError() returns error? {
-    management:RetryTaskInfo|error result = management:getRetryTaskInfo("nonexistent-retrytask-xyz");
-    test:assertTrue(result is error, "getRetryTaskInfo for a nonexistent task should return an error");
+function testGetReviewActivityInfoNonExistentReturnsError() returns error? {
+    management:ReviewActivityInfo|error result = management:getReviewActivityInfo("nonexistent-retrytask-xyz");
+    test:assertTrue(result is error, "getReviewActivityInfo for a nonexistent task should return an error");
 }
 
 @test:Config {
@@ -423,16 +437,16 @@ function testListAllRetryTasksPending() returns error? {
     RetryActivityInput input = {id: testId, mode: "manual_retry_input"};
     string workflowId = check workflow:run(manualRetryWithInputWorkflow, input);
 
-    management:RetryTaskSummary expected = check waitForPendingRetryTask(workflowId);
+    management:ReviewActivitySummary expected = check waitForPendingRetryTask(workflowId);
 
-    management:RetryTaskSummary[] tasks = check management:listAllRetryTasks(status = "PENDING");
-    test:assertTrue(tasks.length() > 0, "listAllRetryTasks(PENDING) should find at least one task");
+    management:ReviewActivitySummary[] tasks = check management:listAllReviewActivities(status = "PENDING");
+    test:assertTrue(tasks.length() > 0, "listAllReviewActivities(PENDING) should find at least one task");
 
-    boolean found = (from management:RetryTaskSummary t in tasks where t.taskId == expected.taskId select t).length() > 0;
+    boolean found = (from management:ReviewActivitySummary t in tasks where t.taskId == expected.taskId select t).length() > 0;
     test:assertTrue(found, "The newly created retry task should appear in the PENDING list");
 
     // Clean up
-    check management:completeRetryTask(expected.taskId, {action: "retry-with-input", input: {mode: "ok"}});
+    check management:completeReviewActivity(expected.taskId, {action: "proceed-with-input", input: {mode: "ok"}});
     _ = check workflow:getWorkflowResult(workflowId, 30);
 }
 
@@ -440,8 +454,8 @@ function testListAllRetryTasksPending() returns error? {
     groups: ["integration"]
 }
 function testListAllRetryTasksNoFilter() returns error? {
-    management:RetryTaskSummary[]|error result = management:listAllRetryTasks();
-    test:assertFalse(result is error, "listAllRetryTasks() with no filters should not return an error");
+    management:ReviewActivitySummary[]|error result = management:listAllReviewActivities();
+    test:assertFalse(result is error, "listAllReviewActivities() with no filters should not return an error");
 }
 
 // ================================================================================
@@ -487,33 +501,7 @@ function testListPendingHumanTasksNoTasks() returns error? {
 }
 
 // ================================================================================
-// cancelHumanTask
-// ================================================================================
-
-@test:Config {
-    groups: ["integration"]
-}
-function testCancelHumanTask() returns error? {
-    ExpenseRequest input = {
-        id: uniqueId("cancel-ht"),
-        orderId: "ORD-CANCEL-001",
-        amount: 500.0,
-        requester: "Bob"
-    };
-    string parentWorkflowId = check workflow:run(expenseApprovalWorkflow, input);
-    management:HumanTaskGroup[] groups = check waitForPendingHumanTask(parentWorkflowId);
-    string taskId = groups[0].taskIds[0];
-
-    error? cancelResult = management:cancelHumanTask(taskId);
-    test:assertTrue(cancelResult is (), "cancelHumanTask should succeed for a valid pending task");
-
-    // Workflow should transition out of RUNNING after the task is cancelled
-    _ = check waitForWorkflowState(parentWorkflowId,
-            ["FAILED", "COMPLETED", "CANCELED", "CANCELLED", "TERMINATED"]);
-}
-
-// ================================================================================
-// listPendingRetryTasks
+// listPendingReviewActivities
 // ================================================================================
 
 @test:Config {
@@ -523,18 +511,18 @@ function testListPendingRetryTasks() returns error? {
     string testId = uniqueId("list-pending-rt");
     RetryActivityInput input = {id: testId, mode: "manual_retry_input"};
     string workflowId = check workflow:run(manualRetryWithInputWorkflow, input);
-    management:RetryTaskSummary expected = check waitForPendingRetryTask(workflowId);
+    management:ReviewActivitySummary expected = check waitForPendingRetryTask(workflowId);
 
-    management:RetryTaskSummary[] pending = check management:listPendingRetryTasks(workflowId);
+    management:ReviewActivitySummary[] pending = check management:listPendingReviewActivities(workflowId);
     test:assertTrue(pending.length() > 0,
-            "listPendingRetryTasks should find pending tasks for the parent workflow");
+            "listPendingReviewActivities should find pending tasks for the parent workflow");
 
-    boolean found = (from management:RetryTaskSummary t in pending
+    boolean found = (from management:ReviewActivitySummary t in pending
                      where t.taskId == expected.taskId select t).length() > 0;
     test:assertTrue(found, "The pending retry task should appear in the list");
 
     // Clean up
-    check management:completeRetryTask(expected.taskId, {action: "retry-with-input", input: {mode: "ok"}});
+    check management:completeReviewActivity(expected.taskId, {action: "proceed-with-input", input: {mode: "ok"}});
     _ = check workflow:getWorkflowResult(workflowId, 30);
 }
 
@@ -548,7 +536,7 @@ function testListPendingRetryTasksNoTasks() returns error? {
     string workflowId = check workflow:run(infoTestWorkflow, input);
     _ = check workflow:getWorkflowResult(workflowId, 30);
 
-    management:RetryTaskSummary[] pending = check management:listPendingRetryTasks(workflowId);
+    management:ReviewActivitySummary[] pending = check management:listPendingReviewActivities(workflowId);
     test:assertEquals(pending.length(), 0, "Completed workflow should have no pending retry tasks");
 }
 
@@ -626,33 +614,33 @@ function testGetHumanTaskInfoAfterCompletion() returns error? {
     // that reads the taskCompletion signal payload from workflow history.
     management:HumanTaskInfo info = check management:getHumanTaskInfo(taskId);
     test:assertFalse(info.taskId == "", "Completed task must have a non-empty taskId");
-    test:assertFalse(info.status == "RUNNING", "Completed task should not have RUNNING status");
+    test:assertEquals(info.status, "COMPLETED", "Completed task should have COMPLETED status");
     test:assertNotEquals(info.result, (), "Completed task should have a result");
 }
 
 // ================================================================================
-// getRetryTaskInfo — after retry decision (covers history signal-payload scanning)
+// getReviewActivityInfo — after retry decision (covers history signal-payload scanning)
 // ================================================================================
 
 @test:Config {
     groups: ["integration"]
 }
-function testGetRetryTaskInfoAfterDecision() returns error? {
+function testGetReviewActivityInfoAfterDecision() returns error? {
     string testId = uniqueId("retry-info-done");
     RetryActivityInput input = {id: testId, mode: "manual_retry_input"};
     string workflowId = check workflow:run(manualRetryWithInputWorkflow, input);
 
-    management:RetryTaskSummary retryTask = check waitForPendingRetryTask(workflowId);
+    management:ReviewActivitySummary retryTask = check waitForPendingRetryTask(workflowId);
     string taskId = retryTask.taskId;
 
     // Resolve the retry task — workflow retries and completes successfully
-    check management:completeRetryTask(taskId, {action: "retry-with-input", input: {mode: "ok"}});
+    check management:completeReviewActivity(taskId, {action: "proceed-with-input", input: {mode: "ok"}});
     _ = check workflow:getWorkflowResult(workflowId, 30);
 
-    // getRetryTaskInfo on a closed task covers the post-decision history-scanning path
-    management:RetryTaskInfo info = check management:getRetryTaskInfo(taskId);
+    // getReviewActivityInfo on a closed task covers the post-decision history-scanning path
+    management:ReviewActivityInfo info = check management:getReviewActivityInfo(taskId);
     test:assertFalse(info.taskId == "", "Decided task must have a non-empty taskId");
-    test:assertFalse(info.status == "RUNNING", "Decided task should not have RUNNING status");
+    test:assertEquals(info.status, "COMPLETED", "Decided task should have COMPLETED status");
 }
 
 // ================================================================================
@@ -682,27 +670,27 @@ function testListAllHumanTasksStatusAndTimeFilter() returns error? {
 }
 
 // ================================================================================
-// listAllRetryTasks — time filters (covers addTimeClause in ManagementNative)
+// listAllReviewActivities — time filters (covers addTimeClause in ManagementNative)
 // ================================================================================
 
 @test:Config {
     groups: ["integration"]
 }
 function testListAllRetryTasksWithTimeFilter() returns error? {
-    management:RetryTaskSummary[]|error result =
-            management:listAllRetryTasks(startTimeFrom = "2024-01-01T00:00:00Z");
+    management:ReviewActivitySummary[]|error result =
+            management:listAllReviewActivities(startTimeFrom = "2024-01-01T00:00:00Z");
     test:assertFalse(result is error,
-            "listAllRetryTasks with startTimeFrom should not return an error");
+            "listAllReviewActivities with startTimeFrom should not return an error");
 }
 
 @test:Config {
     groups: ["integration"]
 }
 function testListAllRetryTasksStatusAndTimeFilter() returns error? {
-    management:RetryTaskSummary[]|error result =
-            management:listAllRetryTasks(status = "PENDING", startTimeFrom = "2024-01-01T00:00:00Z");
+    management:ReviewActivitySummary[]|error result =
+            management:listAllReviewActivities(status = "PENDING", startTimeFrom = "2024-01-01T00:00:00Z");
     test:assertFalse(result is error,
-            "listAllRetryTasks with status + time filter should not return an error");
+            "listAllReviewActivities with status + time filter should not return an error");
 }
 
 // ================================================================================

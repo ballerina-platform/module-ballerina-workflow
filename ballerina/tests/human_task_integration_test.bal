@@ -201,8 +201,8 @@ function testFailHumanTaskBypassesPayloadValidation() returns error? {
             details = {"missingDocs": ["receipt"]}, callerRoles = ["APPROVER"]);
     test:assertTrue(failResult is (), "failHumanTask should succeed for a valid pending task");
 
-    // The rejection is delivered; the record-typed task cannot coerce the sentinel, so the workflow
-    // reaches a terminal (failed) state rather than staying pending.
+    // The rejection is delivered; the task workflow fails with the rejection reason
+    // (ballerina-library#8892), so the parent reaches a terminal state rather than staying pending.
     anydata|error wfResult = getWorkflowResult(workflowId, 15);
     test:assertTrue(wfResult is error, "Rejecting a record-typed task should terminate the workflow with an error");
 }

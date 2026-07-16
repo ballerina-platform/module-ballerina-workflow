@@ -97,6 +97,12 @@ public final class WorkflowWorkerNative {
      */
     public static final String HUMANTASK_TIMEOUT_FAILURE_TYPE = "HUMANTASK_TIMEOUT";
     /**
+     * ApplicationFailure type tag used to propagate a human task rejection (the management {@code fail} operation)
+     * through the child workflow boundary. Failing the child workflow makes the task's terminal status {@code FAILED}
+     * in Temporal visibility, matching the management API's task status model (ballerina-library#8892).
+     */
+    public static final String HUMANTASK_REJECTED_FAILURE_TYPE = "HUMANTASK_REJECTED";
+    /**
      * Prefix applied to all user-defined workflow types registered with Temporal. Allows
      * {@code WorkflowType STARTS_WITH 'workflow-'} queries to exclude internal child workflow types (humantask-*,
      * retrytask-*) without needing the NOT operator.
@@ -934,7 +940,7 @@ public final class WorkflowWorkerNative {
      * <p>Type references (named types, intersections introduced by client
      * declarations, etc.) are dereferenced with bounded depth before checking the tag.
      */
-    static boolean isObjectParam(Parameter param) {
+    public static boolean isObjectParam(Parameter param) {
         return isObjectType(param.type, 0);
     }
 
@@ -1765,6 +1771,19 @@ public final class WorkflowWorkerNative {
 
             if (signalArrived) {
                 SignalAwaitWrapper.SignalData signalData = signalFuture.get();
+                // A rejection (management `fail` operation) carries a top-level `__rejected` marker in
+                // the signal envelope — deliberately outside the user-facing `result` payload, so a
+                // legitimate completion result containing an `__rejected` field is never misread as a
+                // rejection. Fail the task workflow instead of completing it so its terminal status is
+                // FAILED — matching the task status model (ballerina-library#8892). The reason is
+                // propagated to the parent's awaitHumanTask through the failure message.
+                if (signalData.data() instanceof Map<?, ?> payloadMap
+                        && Boolean.TRUE.equals(payloadMap.get("__rejected"))) {
+                    Object reason = payloadMap.get("reason");
+                    throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
+                            reason instanceof String str && !str.isBlank() ? str : "The human task was rejected",
+                            HUMANTASK_REJECTED_FAILURE_TYPE);
+                }
                 // Return the raw signal data — awaitHumanTask extracts the "result" field
                 // and coerces it to the caller's typedesc T.
                 return signalData.data();
@@ -1782,13 +1801,14 @@ public final class WorkflowWorkerNative {
         }
 
         /**
-         * Executes the built-in manual retry task child workflow.
+         * Executes the built-in review activity child workflow (the former manual retry task).
          *
          * <p>Waits indefinitely for a {@code "taskDecision"} signal from a human operator.
          * The signal payload is a map with the following fields:
          * <ul>
-         *   <li>{@code action} — {@code "retry"}, {@code "retry-with-input"}, or {@code "fail"}</li>
-         *   <li>{@code input} — (optional) new named arguments map for {@code "retry-with-input"}</li>
+         *   <li>{@code action} — {@code "proceed"}, {@code "proceed-with-input"}, or {@code "reject"}</li>
+         *   <li>{@code input} — (optional) new named arguments map for {@code "proceed-with-input"}</li>
+         *   <li>{@code feedback} — (optional) reviewer note surfaced with a rejection</li>
          * </ul>
          *
          * <p>The decision map is returned directly to the parent workflow via the child-workflow
@@ -1823,9 +1843,9 @@ public final class WorkflowWorkerNative {
             if (decision instanceof Map<?, ?>) {
                 return decision;
             }
-            // Fallback: treat any unexpected payload as "fail"
+            // Fallback: treat any unexpected payload as "reject"
             Map<String, Object> failDecision = new HashMap<>();
-            failDecision.put("action", "fail");
+            failDecision.put("action", "reject");
             return failDecision;
         }
     }

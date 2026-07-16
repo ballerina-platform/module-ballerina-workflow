@@ -374,13 +374,9 @@ public final class ManagementNative {
             }
 
             String statusFilter = status instanceof BString bs ? bs.getValue() : null;
-            // PENDING maps to Running in Temporal status
-            String temporalStatus = statusFilter != null ? toHumanTaskTemporalStatus(statusFilter) : null;
-
             List<String> clauses = new ArrayList<>();
-            if (temporalStatus != null) {
-                clauses.add(String.format("ExecutionStatus = \"%s\"", temporalStatus));
-            }
+            // PENDING maps to Running in Temporal status; FAILED expands to Failed OR TimedOut.
+            addTaskStatusClause(clauses, statusFilter);
             addTimeClause(clauses, startTimeFrom, "StartTime", ">=");
             addTimeClause(clauses, startTimeTo, "StartTime", "<=");
             addTimeClause(clauses, closeTimeFrom, "CloseTime", ">=");
@@ -427,40 +423,6 @@ public final class ManagementNative {
     }
 
     /**
-     * Verifies that a workflow ID refers to a human task (workflowKind == "HUMAN_TASK"). Used by cancelHumanTask to
-     * validate kind without checking user roles, because the process itself may cancel a task when an alternative path
-     * makes it irrelevant.
-     *
-     * @param taskId the child workflow ID to check
-     * @return {@code null} on success, or a Ballerina error if the ID is not a human task
-     */
-    public static Object assertIsHumanTask(BString taskId) {
-        try {
-            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
-            if (client == null) {
-                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
-            }
-            String id = taskId.getValue();
-            DescribeWorkflowExecutionRequest req = DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
-                    client.getOptions().getNamespace()).setExecution(
-                    WorkflowExecution.newBuilder().setWorkflowId(id).build()).build();
-            DescribeWorkflowExecutionResponse resp = client.getWorkflowServiceStubs().blockingStub().withDeadlineAfter(
-                    GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS).describeWorkflowExecution(req);
-            Map<String, Payload> memoFields = resp.getWorkflowExecutionInfo().getMemo().getFieldsMap();
-            DataConverter dc = client.getOptions().getDataConverter();
-            String workflowKind = decodeMemoString(dc, memoFields, "workflowKind", null);
-            if (!"HUMAN_TASK".equals(workflowKind)) {
-                return ErrorCreator.createError(
-                        StringUtils.fromString("'" + id + "' is not a human task (workflowKind=" + workflowKind + ")"));
-            }
-            return null;
-        } catch (Exception e) {
-            return ErrorCreator.createError(StringUtils.fromString(
-                    "Failed to verify human task '" + taskId.getValue() + "': " + e.getMessage()));
-        }
-    }
-
-    /**
      * Returns detailed info for a single human task by calling DescribeWorkflowExecution and reading the memo fields
      * set by {@code awaitHumanTask} at task creation.
      *
@@ -493,6 +455,14 @@ public final class ManagementNative {
 
             DataConverter dc = client.getOptions().getDataConverter();
 
+            // Only human task workflows may be served here — a review activity or user workflow
+            // ID must not leak through this endpoint (ballerina-library#8894).
+            String workflowKind = decodeMemoString(dc, memoFields, "workflowKind", null);
+            if (!"HUMAN_TASK".equals(workflowKind)) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Human task not found: '" + taskIdStr + "' is not a human task workflow"));
+            }
+
             String taskName = decodeMemoString(dc, memoFields, "taskName", "");
             String parentId = decodeMemoString(dc, memoFields, "parentWorkflowId", "");
             String title = decodeMemoString(dc, memoFields, "title", taskName);
@@ -521,7 +491,7 @@ public final class ManagementNative {
             }
 
             // Status and timestamps from visibility info
-            String statusStr = convertStatus(execInfo.getStatus());
+            String statusStr = taskStatusFromTemporal(execInfo.getStatus());
             Timestamp st = execInfo.getStartTime();
             String startTime = Instant.ofEpochSecond(st.getSeconds(), st.getNanos()).toString();
             String closeTime = null;
@@ -724,7 +694,8 @@ public final class ManagementNative {
         record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentId));
         record.put(StringUtils.fromString("parentWorkflowType"),
                    parentWorkflowType != null ? StringUtils.fromString(parentWorkflowType) : null);
-        record.put(StringUtils.fromString("status"), StringUtils.fromString(convertStatus(wfInfo.getStatus())));
+        record.put(StringUtils.fromString("status"),
+                   StringUtils.fromString(taskStatusFromTemporal(wfInfo.getStatus())));
 
         Timestamp st = wfInfo.getStartTime();
         record.put(StringUtils.fromString("startTime"),
@@ -768,18 +739,54 @@ public final class ManagementNative {
     /**
      * Maps human task status names to Temporal execution status names for visibility queries. PENDING maps to Running.
      */
-    private static String toHumanTaskTemporalStatus(String status) {
-        if ("PENDING".equalsIgnoreCase(status)) {
-            return "Running";
+    private static void addTaskStatusClause(List<String> clauses, String status) {
+        if (status == null) {
+            return;
         }
-        return switch (status.toUpperCase(Locale.ROOT)) {
-            case "RUNNING" -> "Running";
-            case "COMPLETED" -> "Completed";
-            case "FAILED" -> "Failed";
-            case "CANCELED" -> "Canceled";
-            case "TERMINATED" -> "Terminated";
-            case "TIMED_OUT" -> "TimedOut";
-            default -> status;
+        switch (status.toUpperCase(Locale.ROOT)) {
+            case "PENDING", "RUNNING" -> clauses.add("ExecutionStatus = \"Running\"");
+            case "COMPLETED" -> clauses.add("ExecutionStatus = \"Completed\"");
+            // FAILED covers both a rejected/timed-out task workflow (Failed) and the rare
+            // execution-timeout case (TimedOut) — see taskStatusFromTemporal.
+            case "FAILED" -> clauses.add("(ExecutionStatus = \"Failed\" OR ExecutionStatus = \"TimedOut\")");
+            case "CANCELED" -> clauses.add("ExecutionStatus = \"Canceled\"");
+            case "TERMINATED" -> clauses.add("ExecutionStatus = \"Terminated\"");
+            default -> clauses.add(String.format("ExecutionStatus = \"%s\"", status.replace("\"", "")));
+        }
+    }
+
+    /**
+     * Returns {@code true} when the workflow ID uses a review activity instance prefix — the current
+     * {@code reviewactivity-} form or the pre-0.7.0 {@code retrytask-} form. Legacy persisted retry
+     * tasks remain visible and completable through both the review activity API and the deprecated
+     * retry-task API.
+     */
+    private static boolean isReviewActivityId(String workflowId) {
+        return workflowId.startsWith("reviewactivity-") || workflowId.startsWith("retrytask-");
+    }
+
+    /**
+     * Returns {@code true} when the memo kind marks a review activity — the current
+     * {@code REVIEW_ACTIVITY} kind or the pre-0.7.0 {@code RETRY_TASK} kind.
+     */
+    private static boolean isReviewActivityKind(String workflowKind) {
+        return "REVIEW_ACTIVITY".equals(workflowKind) || "RETRY_TASK".equals(workflowKind);
+    }
+
+    /**
+     * Maps a Temporal execution status to the task status model shared by human tasks and review activities
+     * (ballerina-library#8892): {@code PENDING} (awaiting a human), {@code COMPLETED} (a human completed it),
+     * {@code FAILED} (rejected via the fail operation, or timed out before anyone acted), {@code CANCELED}
+     * (retired internally because the parent workflow closed), {@code TERMINATED} (an admin terminated it).
+     */
+    private static String taskStatusFromTemporal(WorkflowExecutionStatus status) {
+        return switch (status) {
+            case WORKFLOW_EXECUTION_STATUS_RUNNING -> "PENDING";
+            case WORKFLOW_EXECUTION_STATUS_COMPLETED -> "COMPLETED";
+            case WORKFLOW_EXECUTION_STATUS_FAILED, WORKFLOW_EXECUTION_STATUS_TIMED_OUT -> "FAILED";
+            case WORKFLOW_EXECUTION_STATUS_CANCELED -> "CANCELED";
+            case WORKFLOW_EXECUTION_STATUS_TERMINATED -> "TERMINATED";
+            default -> "UNKNOWN";
         };
     }
 
@@ -844,16 +851,20 @@ public final class ManagementNative {
                 return validationError;
             }
 
-            // Convert RetryDecision BMap → serializable Java map
+            // Convert ReviewDecision BMap → serializable Java map
             Map<String, Object> javaDecision = new LinkedHashMap<>();
             Object actionVal = decision.get(StringUtils.fromString("action"));
-            javaDecision.put("action", actionVal != null ? actionVal.toString() : "fail");
+            javaDecision.put("action", actionVal != null ? actionVal.toString() : "reject");
 
             Object inputVal = decision.get(StringUtils.fromString("input"));
             if (inputVal != null) {
                 javaDecision.put("input", TypesUtil.convertBallerinaToJavaType(inputVal));
             }
-            // Embed audit fields so the history scan in getRetryTaskInfo can retrieve them
+            Object feedbackVal = decision.get(StringUtils.fromString("feedback"));
+            if (feedbackVal instanceof BString fb) {
+                javaDecision.put("feedback", fb.getValue());
+            }
+            // Embed audit fields so the history scan in getReviewActivityInfo can retrieve them
             javaDecision.put("decidedBy", userId instanceof BString bs ? bs.getValue() : "unknown");
             javaDecision.put("decidedAt", Instant.now().toString());
 
@@ -872,7 +883,9 @@ public final class ManagementNative {
     }
 
     /**
-     * Validates that {@code taskWorkflowId} is a running RETRY_TASK workflow and optionally checks that at least one of
+     * Validates that {@code taskWorkflowId} is a running review activity workflow (including pre-0.7.0
+     * RETRY_TASK instances) and optionally checks that at least
+     * one of
      * the caller's roles appears in the task's {@code userRoles}.
      *
      * @return {@code null} if all checks pass, or a Ballerina error
@@ -902,9 +915,9 @@ public final class ManagementNative {
 
             // workflowKind check
             String workflowKind = decodeMemoString(dc, memoFields, "workflowKind", null);
-            if (!"RETRY_TASK".equals(workflowKind)) {
+            if (!isReviewActivityKind(workflowKind)) {
                 return ErrorCreator.createError(StringUtils.fromString(
-                        "Invalid task: '" + taskWorkflowId + "' is not a retry task workflow (workflowKind=" +
+                        "Invalid task: '" + taskWorkflowId + "' is not a review activity workflow (workflowKind=" +
                                 workflowKind + ")"));
             }
 
@@ -948,7 +961,7 @@ public final class ManagementNative {
      * Scans the parent workflow's event history for child retry task workflows and returns them as
      * {@code RetryTaskSummary} records sorted alphabetically by task name.
      * <p>
-     * Child workflow ID format: {@code retrytask-{parentId}-{taskName}-{uuid}} where UUID is always 36 characters.
+     * Child workflow ID format: {@code reviewactivity-{parentId}-{taskName}-{uuid}} where UUID is always 36 characters.
      *
      * @param parentWorkflowId the parent workflow ID
      * @return a Ballerina {@code RetryTaskSummary[]} or an error
@@ -985,14 +998,14 @@ public final class ManagementNative {
                     if (event.getEventType() == EventType.EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED) {
                         var attrs = event.getStartChildWorkflowExecutionInitiatedEventAttributes();
                         String childId = attrs.getWorkflowId();
-                        if (childId.startsWith("retrytask-")) {
+                        if (isReviewActivityId(childId)) {
                             String taskName = decodeMemoString(dc, attrs.getMemo().getFieldsMap(), "taskName", childId);
                             childIdToTaskName.put(childId, taskName);
                             byTaskName.computeIfAbsent(taskName, k -> new ArrayList<>()).add(childId);
                         }
                     } else {
                         String completedChildId = getTerminalChildWorkflowId(event);
-                        if (completedChildId != null && completedChildId.startsWith("retrytask-")) {
+                        if (completedChildId != null && isReviewActivityId(completedChildId)) {
                             String taskName = childIdToTaskName.get(completedChildId);
                             if (taskName != null) {
                                 List<String> ids = byTaskName.get(taskName);
@@ -1010,7 +1023,7 @@ public final class ManagementNative {
             } while (!nextPageToken.isEmpty());
 
             RecordType summaryType = (RecordType) ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
-                                                                                 "RetryTaskSummary").getType();
+                                                                                 "ReviewActivitySummary").getType();
             BArray result = ValueCreator.createArrayValue(TypeCreator.createArrayType(summaryType));
 
             for (Map.Entry<String, List<String>> entry : byTaskName.entrySet()) {
@@ -1029,7 +1042,7 @@ public final class ManagementNative {
 
     /**
      * Lists all manual retry task instances via Temporal's visibility API. Filters executions whose workflow ID starts
-     * with {@code retrytask-}.
+     * with {@code reviewactivity-}.
      *
      * @param status optional status filter
      * @return a Ballerina {@code RetryTaskSummary[]} or an error
@@ -1043,12 +1056,8 @@ public final class ManagementNative {
             }
 
             String statusFilter = status instanceof BString bs ? bs.getValue() : null;
-            String temporalStatus = statusFilter != null ? toHumanTaskTemporalStatus(statusFilter) : null;
-
             List<String> clauses = new ArrayList<>();
-            if (temporalStatus != null) {
-                clauses.add(String.format("ExecutionStatus = \"%s\"", temporalStatus));
-            }
+            addTaskStatusClause(clauses, statusFilter);
             addTimeClause(clauses, startTimeFrom, "StartTime", ">=");
             addTimeClause(clauses, startTimeTo, "StartTime", "<=");
             addTimeClause(clauses, closeTimeFrom, "CloseTime", ">=");
@@ -1056,7 +1065,7 @@ public final class ManagementNative {
             String query = String.join(" AND ", clauses);
 
             RecordType summaryType = (RecordType) ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
-                                                                                 "RetryTaskSummary").getType();
+                                                                                 "ReviewActivitySummary").getType();
             BArray result = ValueCreator.createArrayValue(TypeCreator.createArrayType(summaryType));
 
             ByteString pageToken = ByteString.EMPTY;
@@ -1078,7 +1087,7 @@ public final class ManagementNative {
 
                 for (WorkflowExecutionInfo wfInfo : response.getExecutionsList()) {
                     String wfId = wfInfo.getExecution().getWorkflowId();
-                    if (!wfId.startsWith("retrytask-")) {
+                    if (!isReviewActivityId(wfId)) {
                         continue;
                     }
                     result.append(toRetryTaskSummaryRecord(client, wfInfo));
@@ -1125,11 +1134,26 @@ public final class ManagementNative {
             Map<String, Payload> memoFields = execInfo.getMemo().getFieldsMap();
             DataConverter dc = client.getOptions().getDataConverter();
 
+            // Only review activity workflows may be served here — a human task or user workflow
+            // ID must not leak through this endpoint (ballerina-library#8894).
+            String workflowKind = decodeMemoString(dc, memoFields, "workflowKind", null);
+            if (!isReviewActivityKind(workflowKind)) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Review activity not found: '" + taskIdStr + "' is not a review activity workflow"));
+            }
+
             String activityName = decodeMemoString(dc, memoFields, "activityName", "");
             String taskName = decodeMemoString(dc, memoFields, "taskName", "");
             String parentId = decodeMemoString(dc, memoFields, "parentWorkflowId", "");
             String errorMessage = decodeMemoString(dc, memoFields, "errorMessage", "");
             String createdAt = decodeMemoString(dc, memoFields, "createdAt", "");
+            // Older review activities (created before the trigger field) are all failure-driven.
+            String trigger = decodeMemoString(dc, memoFields, "trigger", "ON_FAILURE");
+            String title = decodeMemoString(dc, memoFields, "title",
+                    ("ON_FAILURE".equals(trigger) ? "Review failed activity: " : "Approval required: ")
+                            + activityName);
+            String description = decodeMemoString(dc, memoFields, "description", "");
+            String formSchema = decodeMemoString(dc, memoFields, "formSchema", null);
 
             String[] userRolesArr = new String[0];
             try {
@@ -1151,7 +1175,7 @@ public final class ManagementNative {
                 LOGGER.debug("Could not decode activityArgs memo field: {}", e.getMessage());
             }
 
-            String statusStr = convertStatus(execInfo.getStatus());
+            String statusStr = taskStatusFromTemporal(execInfo.getStatus());
             Timestamp st = execInfo.getStartTime();
             String startTime = Instant.ofEpochSecond(st.getSeconds(), st.getNanos()).toString();
             String closeTime = null;
@@ -1161,15 +1185,20 @@ public final class ManagementNative {
             }
 
             BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
-                                                                          "RetryTaskInfo");
+                                                                          "ReviewActivityInfo");
             record.put(StringUtils.fromString("taskId"), StringUtils.fromString(taskIdStr));
             record.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
             record.put(StringUtils.fromString("activityName"), StringUtils.fromString(activityName));
             record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentId));
+            record.put(StringUtils.fromString("trigger"), StringUtils.fromString(trigger));
+            record.put(StringUtils.fromString("title"), StringUtils.fromString(title));
+            record.put(StringUtils.fromString("description"), StringUtils.fromString(description));
             record.put(StringUtils.fromString("status"), StringUtils.fromString(statusStr));
             record.put(StringUtils.fromString("startTime"), StringUtils.fromString(startTime));
             record.put(StringUtils.fromString("closeTime"),
                        closeTime != null ? StringUtils.fromString(closeTime) : null);
+            record.put(StringUtils.fromString("formSchema"),
+                       formSchema != null ? StringUtils.fromString(formSchema) : null);
 
             BArray roles = ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING));
             for (String role : userRolesArr) {
@@ -1217,14 +1246,19 @@ public final class ManagementNative {
         } catch (Exception e) {
             // Fallback: minimal record with the info we already have
             BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
-                                                                          "RetryTaskSummary");
+                                                                          "ReviewActivitySummary");
             record.put(StringUtils.fromString("taskId"), StringUtils.fromString(taskId));
             record.put(StringUtils.fromString("taskName"), StringUtils.fromString(fallbackTaskName));
             record.put(StringUtils.fromString("activityName"), StringUtils.fromString(""));
             record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(""));
+            record.put(StringUtils.fromString("trigger"), StringUtils.fromString("ON_FAILURE"));
+            record.put(StringUtils.fromString("title"),
+                       StringUtils.fromString("Review failed activity: " + fallbackTaskName));
             record.put(StringUtils.fromString("status"), StringUtils.fromString("UNKNOWN"));
             record.put(StringUtils.fromString("startTime"), StringUtils.fromString(""));
             record.put(StringUtils.fromString("closeTime"), null);
+            record.put(StringUtils.fromString("userRoles"),
+                       ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING)));
             return record;
         }
     }
@@ -1244,14 +1278,29 @@ public final class ManagementNative {
         String taskName = decodeMemoString(dc, memoFields, "taskName", "");
         String activityName = decodeMemoString(dc, memoFields, "activityName", "");
         String parentId = decodeMemoString(dc, memoFields, "parentWorkflowId", "");
+        String trigger = decodeMemoString(dc, memoFields, "trigger", "ON_FAILURE");
+        String title = decodeMemoString(dc, memoFields, "title",
+                ("ON_FAILURE".equals(trigger) ? "Review failed activity: " : "Approval required: ") + activityName);
+        String[] userRolesArr = new String[0];
+        try {
+            Payload rolesPl = memoFields.get("userRoles");
+            if (rolesPl != null) {
+                userRolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
+            }
+        } catch (Exception e) {
+            LOGGER.debug("Could not decode userRoles from review summary memo: {}", e.getMessage());
+        }
 
         BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
-                                                                      "RetryTaskSummary");
+                                                                      "ReviewActivitySummary");
         record.put(StringUtils.fromString("taskId"), StringUtils.fromString(wfId));
         record.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
         record.put(StringUtils.fromString("activityName"), StringUtils.fromString(activityName));
         record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentId));
-        record.put(StringUtils.fromString("status"), StringUtils.fromString(convertStatus(wfInfo.getStatus())));
+        record.put(StringUtils.fromString("trigger"), StringUtils.fromString(trigger));
+        record.put(StringUtils.fromString("title"), StringUtils.fromString(title));
+        record.put(StringUtils.fromString("status"),
+                   StringUtils.fromString(taskStatusFromTemporal(wfInfo.getStatus())));
 
         Timestamp st = wfInfo.getStartTime();
         record.put(StringUtils.fromString("startTime"),
@@ -1264,6 +1313,12 @@ public final class ManagementNative {
         } else {
             record.put(StringUtils.fromString("closeTime"), null);
         }
+
+        BArray roles = ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING));
+        for (String role : userRolesArr) {
+            roles.append(StringUtils.fromString(role));
+        }
+        record.put(StringUtils.fromString("userRoles"), roles);
         return record;
     }
 
@@ -1378,7 +1433,7 @@ public final class ManagementNative {
 
     /**
      * Lists workflow instances via Temporal's visibility API with optional filters and pagination. Automatically
-     * excludes humantask- and retrytask- child workflows.
+     * excludes humantask- and reviewactivity- child workflows.
      *
      * @param status       optional status filter BString (RUNNING, COMPLETED, FAILED, …)
      * @param workflowType optional workflow type filter BString
@@ -1400,7 +1455,7 @@ public final class ManagementNative {
 
             // Build Temporal visibility query.
             // User workflow types are registered with the "workflow-" prefix so a simple
-            // STARTS_WITH clause filters out internal humantask-* and retrytask-* children
+            // STARTS_WITH clause filters out internal humantask-* and reviewactivity-* children
             // without needing the NOT operator (unsupported on standard visibility stores).
             List<String> clauses = new ArrayList<>();
 
@@ -1776,10 +1831,10 @@ public final class ManagementNative {
                         String childId = attrs.getWorkflowId();
                         String childType = attrs.getWorkflowType().getName();
                         String nodeType = childNodeType(childId);
-                        // For retrytask- children the instance ID no longer encodes the task name;
+                        // For reviewactivity- children the instance ID no longer encodes the task name;
                         // read it from the memo instead. Human tasks use shortTaskName() which
                         // parses the "humantask-workflowDef.taskName" WorkflowType correctly.
-                        String nodeName = childId.startsWith("retrytask-") ? decodeMemoString(dc, attrs
+                        String nodeName = isReviewActivityId(childId) ? decodeMemoString(dc, attrs
                                 .getMemo()
                                 .getFieldsMap(), "taskName", childType) : shortTaskName(childType, childId);
                         var node = newNode(eid, nodeName, nodeType, ts);
@@ -2042,8 +2097,8 @@ public final class ManagementNative {
         if (workflowId.startsWith("humantask-")) {
             return "HUMAN_TASK";
         }
-        if (workflowId.startsWith("retrytask-")) {
-            return "RETRY_TASK";
+        if (isReviewActivityId(workflowId)) {
+            return "REVIEW_ACTIVITY";
         }
         return "CHILD_WORKFLOW";
     }

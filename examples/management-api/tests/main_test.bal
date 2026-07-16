@@ -40,7 +40,7 @@ type HumanTaskPage record {
     boolean hasMore;
 };
 
-type RetryTaskSummaryRes record {
+type ReviewActivitySummaryRes record {
     string taskId;
     string taskName;
     string activityName;
@@ -49,7 +49,7 @@ type RetryTaskSummaryRes record {
 };
 
 type RetryTaskPage record {
-    RetryTaskSummaryRes[] items;
+    ReviewActivitySummaryRes[] items;
     string? nextPageToken;
     boolean hasMore;
 };
@@ -93,7 +93,7 @@ function waitForPendingHumanTask(http:Client mgmt, string workflowId, decimal ti
 // Polls the Management API until at least one pending retry task appears for
 // the given workflow, or the timeout elapses.
 function waitForPendingRetryTask(http:Client mgmt, string workflowId, decimal timeoutSecs = 15)
-        returns RetryTaskSummaryRes|error {
+        returns ReviewActivitySummaryRes|error {
     decimal elapsed = 0.0d;
     while elapsed < timeoutSecs {
         RetryTaskPage page = check mgmt->get(
@@ -211,7 +211,7 @@ function testHighValueApprovedWithEmailRetry() returns error? {
     // ── Step 2: Retry task for failed email ───────────────────────────────────
     // After approval the workflow calls sendProcurementEmail with "bad@example.com",
     // which fails. A ManualRetry task surfaces in the Management API.
-    RetryTaskSummaryRes retryTask = check waitForPendingRetryTask(mgmt, wfId);
+    ReviewActivitySummaryRes retryTask = check waitForPendingRetryTask(mgmt, wfId);
     test:assertTrue(retryTask.taskName.includes("sendProcurementEmail"),
             "Retry task name should include activity function name 'sendProcurementEmail'");
     test:assertEquals(retryTask.parentWorkflowId, wfId);

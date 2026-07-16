@@ -8,6 +8,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Renamed the management "retry task" concept to **review activity**
+  ([#8906](https://github.com/ballerina-platform/ballerina-library/issues/8906)): one
+  concept for a human reviewing an activity call — after it fails (`ON_FAILURE`, the
+  former manual retry) or, in an upcoming release, before it runs (`PRE_RUN`, an
+  approval gate). New management functions (`completeReviewActivity`,
+  `listPendingReviewActivities`, `listAllReviewActivities`, `getReviewActivityInfo`)
+  and HTTP routes (`/workflow/review-activities/...`) with unified decisions
+  `proceed` / `proceed-with-input` / `reject` (plus optional reviewer `feedback`).
+  The retry-task functions, types, and `/workflow/retry-tasks/...` routes are kept but
+  **deprecated**; review activity titles and descriptions now state that the task
+  reviews a failed activity. Retry tasks persisted by pre-0.7.0 releases
+  (`retrytask-*` IDs, `RETRY_TASK` memo kind) remain visible and completable through
+  both the review activity API and the deprecated retry-task API.
+- Review activity list and detail routes now apply the same role-based visibility as
+  human tasks: activities that declare roles require a matching `x-user-roles` entry.
+  Activities without declared roles are visible to any caller by default; the new
+  `reviewActivityAccessRole` configurable (default `()`) optionally restricts them —
+  and the decision routes — to callers holding the configured role.
+- [#8895](https://github.com/ballerina-platform/ballerina-library/issues/8895) -
+  `getReviewActivityInfo` (and `GET /workflow/review-activities/{taskId}`) now returns a
+  `formSchema` JSON Schema describing the input accepted by the `proceed-with-input`
+  decision — one property per data parameter of the reviewed activity — alongside the
+  recorded `activityArgs` (for pre-filling) and the activity's `errorMessage`.
+
 - Compile-time validation for `workflow:run()` calls: the first argument must be a
   function with the `@Workflow` annotation (`WORKFLOW_130`), the `input` argument type
   must match the workflow function's declared input parameter type (`WORKFLOW_131`),
@@ -19,6 +43,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   `data` argument type must match the event future's inner type (`WORKFLOW_135`).
 
 ### Changed
+
+- [#8892](https://github.com/ballerina-platform/ballerina-library/issues/8892) - Human
+  task and review activity statuses now mirror the underlying task workflow:
+  `PENDING` (awaiting a human) | `COMPLETED` (a human submitted a result) |
+  `FAILED` (rejected via the fail operation, or timed out before anyone acted) |
+  `CANCELED` (retired internally because the parent workflow closed) |
+  `TERMINATED` (an admin terminated the task). `TIMED_OUT` is folded into `FAILED`
+  (the workflow still receives a `HumanTaskTimeoutError`), the fail operation now fails
+  the task instance with the rejection reason (carried in a dedicated signal envelope, so
+  completion results that legitimately contain an `__rejected` field are unaffected),
+  task child workflows use a request-cancel
+  parent-close policy (so parent closure reports `CANCELED`, not `TERMINATED`), and the
+  `cancelHumanTask` operation was removed from the management API — cancellation happens
+  only internally.
 
 - `workflow:run()` now accepts any `anydata` value as the workflow input (previously
   `map<anydata>?`), matching the workflow function input contract. Primitive inputs
@@ -47,6 +85,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- [#8894](https://github.com/ballerina-platform/ballerina-library/issues/8894) -
+  `getReviewActivityInfo` / `GET /workflow/retry-tasks/{taskId}` no longer returns a bogus
+  record when given a human task ID — both info endpoints now validate the workflow kind
+  and return a not-found error for mismatches (and `getHumanTaskInfo` likewise rejects
+  review activity IDs).
+
 - [Fix#8820](https://github.com/ballerina-platform/ballerina-library/issues/8820) -
   `workflow:sendData()` now supports all persistable `anydata` payloads — primitive types
   (`boolean`, `int`, `float`, `decimal`, `string`), `json`, `xml`, and `table` — not only
@@ -59,6 +103,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   instead of failing the workflow ([#8866](https://github.com/ballerina-platform/ballerina-library/issues/8866)).
 - Generated JSON schemas no longer list optional record fields (declared with `?`) as
   `required`.
+
 
 ## [0.5.0] - 2026-06-18
 

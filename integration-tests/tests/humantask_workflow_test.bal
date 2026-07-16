@@ -250,61 +250,64 @@ function testListPendingHumanTasksEmptyForUnknownWorkflow() returns error? {
 }
 
 // ================================================================================
-// TEST 7 — cancelHumanTask: kind check rejects a non-human-task workflow
+// TEST 7 — getHumanTaskInfo: kind check rejects a non-human-task workflow
 // ================================================================================
 
 @test:Config {
     groups: ["integration", "humantask"]
 }
-function testCancelHumanTaskKindCheckRejectsRegularWorkflow() returns error? {
-    // Start a regular (non-human-task) workflow and attempt to cancel it via
-    // cancelHumanTask. The kind check must reject it — no role check is needed.
-    string testId = uniqueId("cancel-kind");
+function testGetHumanTaskInfoKindCheckRejectsRegularWorkflow() returns error? {
+    // Start a regular (non-human-task) workflow and attempt to read it via
+    // getHumanTaskInfo. The kind check must reject it (ballerina-library#8894).
+    string testId = uniqueId("ht-info-kind");
     InfoTestInput kindInput = {id: testId, name: "Ivan"};
     string workflowId = check workflow:run(infoTestWorkflow, kindInput);
 
     // Wait until it is visible in Temporal (RUNNING or COMPLETED)
     _ = check waitForWorkflowState(workflowId, ["RUNNING", "COMPLETED"]);
 
-    error? result = management:cancelHumanTask(workflowId, cancelledBy = "system");
+    management:HumanTaskInfo|error result = management:getHumanTaskInfo(workflowId);
     test:assertTrue(result is error,
-            "cancelHumanTask should reject a workflow that is not a human task");
+            "getHumanTaskInfo should reject a workflow that is not a human task");
     if result is error {
         string msg = result.message().toLowerAscii();
-        test:assertTrue(msg.includes("not a human task") || msg.includes("workflowkind"),
+        test:assertTrue(msg.includes("not a human task") || msg.includes("not found"),
                 "Error should explain the kind mismatch, got: " + result.message());
     }
 }
 
 // ================================================================================
-// TEST 8 — cancelHumanTask: happy path — cancel a pending human task (no role required)
+// TEST 8 — getReviewActivityInfo: rejects a human task ID (ballerina-library#8894)
 // ================================================================================
 
 @test:Config {
     groups: ["integration", "humantask"]
 }
-function testCancelHumanTaskHappyPath() returns error? {
-    // Start a human-task workflow and cancel the pending task before any human acts.
-    // cancelHumanTask must succeed without a role check — the process itself may cancel.
+function testGetReviewActivityInfoRejectsHumanTaskId() returns error? {
+    // Start a human-task workflow, take its pending task ID, and try to read it as a
+    // review activity. Before the fix this returned a bogus review activity record.
     ExpenseRequest input = {
-        id: uniqueId("ht-cancel"),
-        orderId: "ORD-HT-CANCEL-001",
+        id: uniqueId("ht-kind-mix"),
+        orderId: "ORD-HT-KIND-001",
         amount: 800.0,
         requester: "Julia"
     };
     string parentWorkflowId = check workflow:run(expenseApprovalWorkflow, input);
 
     management:HumanTaskGroup[] groups = check waitForPendingHumanTask(parentWorkflowId);
-    test:assertTrue(groups.length() > 0, "A pending human task should exist before cancellation");
+    test:assertTrue(groups.length() > 0, "A pending human task should exist");
     string taskId = groups[0].taskIds[0];
 
-    // Cancel without providing any user roles — kind check only
-    error? cancelResult = management:cancelHumanTask(taskId, cancelledBy = "automated-system");
-    test:assertTrue(cancelResult is (),
-            "cancelHumanTask should succeed for a valid pending human task");
+    management:ReviewActivityInfo|error result = management:getReviewActivityInfo(taskId);
+    test:assertTrue(result is error,
+            "getReviewActivityInfo must not return info for a human task ID");
+    if result is error {
+        string msg = result.message().toLowerAscii();
+        test:assertTrue(msg.includes("not a review activity") || msg.includes("not found"),
+                "Error should explain the kind mismatch, got: " + result.message());
+    }
 
-    // The parent workflow should now receive a terminal error or complete via error path
-    anydata|error wfResult = workflow:getWorkflowResult(parentWorkflowId, 15);
-    test:assertTrue(wfResult is error,
-            "Parent workflow should receive an error after the human task is cancelled");
+    // Clean up — complete the task so the workflow finishes
+    check workflow:completeHumanTask(taskId, {approved: true, comment: "cleanup"});
+    _ = check workflow:getWorkflowResult(parentWorkflowId, 15);
 }

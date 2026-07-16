@@ -30,7 +30,7 @@ type CalculationResult record {|
 // Workflow function that performs deterministic calculations only
 // No activity calls - pure computation
 @workflow:Workflow
-function calculatorWorkflow(CalculationInput input) returns CalculationResult|error {
+function calculatorWorkflow(workflow:Context ctx, CalculationInput input) returns CalculationResult|error {
     int result;
     match input.operation {
         "add" => {

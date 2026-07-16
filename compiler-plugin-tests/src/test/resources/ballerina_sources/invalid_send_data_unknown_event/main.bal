@@ -16,26 +16,22 @@
 
 import ballerina/workflow;
 
-type OrderInput record {|
-    string orderId;
+type ApprovalData record {|
+    boolean approved;
+    string comment;
 |};
 
-// This class is NOT a subtype of anydata - used for invalid return type
-class InvalidResult {
-    string status;
-
-    function init(string status) {
-        self.status = status;
-    }
-
-    function getStatus() returns string {
-        return self.status;
-    }
+@workflow:Workflow
+function approvalWorkflow(workflow:Context ctx, string input, record {|
+    future<ApprovalData> approval;
+    future<string> cancellation;
+|} events) returns string|error {
+    ApprovalData decision = check wait events.approval;
+    return decision.approved ? "approved" : "rejected";
 }
 
-// Invalid: Workflow function with non-anydata return type
-// Should trigger WORKFLOW_105 error
-@workflow:Workflow
-function workflowWithInvalidReturn(workflow:Context ctx, OrderInput input) returns InvalidResult|error {
-    return new InvalidResult("DONE");
+public function notifyWorkflow(string workflowId) returns error? {
+    ApprovalData decision = {approved: true, comment: "LGTM"};
+    // Invalid: 'approvals' is not a field of the events record - WORKFLOW_134
+    check workflow:sendData(approvalWorkflow, workflowId, "approvals", decision);
 }

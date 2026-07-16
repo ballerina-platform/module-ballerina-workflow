@@ -79,7 +79,7 @@ import java.util.regex.Pattern;
  * <p>
  * Validates:
  * <ul>
- *   <li>@Workflow functions have valid signature: (Context?, anydata input, record{future<anydata>...} events?)</li>
+ *   <li>@Workflow functions have valid signature: (Context, anydata input?, record{future<anydata>...} events?)</li>
  *   <li>@Activity functions have anydata parameters and anydata|error return type</li>
  * </ul>
  *
@@ -126,7 +126,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
     /**
      * Validates @Workflow function signature.
      * <ul>
-     *   <li>Optional first parameter: workflow:Context</li>
+     *   <li>Mandatory first parameter: workflow:Context</li>
      *   <li>Optional input parameter: subtype of anydata</li>
      *   <li>Optional events parameter: record with future anydata fields</li>
      *   <li>Return type: subtype of anydata|error</li>
@@ -134,15 +134,14 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
      * <p>
      * Valid signatures:
      * <ul>
-     *   <li>function process() returns R|error</li>
      *   <li>function process(Context ctx) returns R|error</li>
-     *   <li>function process(Input input) returns R|error</li>
-     *   <li>function process(Events events) returns R|error</li>
      *   <li>function process(Context ctx, Input input) returns R|error</li>
      *   <li>function process(Context ctx, Events events) returns R|error</li>
-     *   <li>function process(Input input, Events events) returns R|error</li>
      *   <li>function process(Context ctx, Input input, Events events) returns R|error</li>
      * </ul>
+     * The mandatory Context parameter also prevents @Workflow functions from being
+     * invoked directly as normal functions — callers outside the workflow runtime
+     * cannot construct a workflow:Context.
      */
     private void validateProcessFunction(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context) {
         SemanticModel semanticModel = context.semanticModel();
@@ -155,16 +154,15 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         FunctionSymbol functionSymbol = (FunctionSymbol) symbolOpt.get();
         FunctionTypeSymbol typeSymbol = functionSymbol.typeDescriptor();
 
-        // Get parameters
+        // Get parameters — workflow:Context is mandatory as the first parameter
         Optional<List<ParameterSymbol>> paramsOpt = typeSymbol.params();
         if (paramsOpt.isEmpty() || paramsOpt.get().isEmpty()) {
-            // No parameters is valid - validate return type only
-            validateReturnType(functionNode, context, typeSymbol);
+            reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_100);
             return;
         }
 
         List<ParameterSymbol> params = paramsOpt.get();
-        
+
         // Check for excess parameters (max 3: Context, input, events)
         if (params.size() > 3) {
             reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_106);
@@ -175,13 +173,15 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         boolean hasInput = false;
         boolean hasEvents = false;
 
-        // Check first parameter - could be Context, input, or events
+        // First parameter must be workflow:Context
         ParameterSymbol firstParam = params.get(paramIndex);
         TypeSymbol firstParamType = firstParam.typeDescriptor();
 
-        if (WorkflowPluginUtils.isContextType(firstParamType)) {
-            paramIndex++;
+        if (!WorkflowPluginUtils.isContextType(firstParamType)) {
+            reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_100);
+            return;
         }
+        paramIndex++;
 
         // Check remaining parameters - they can be input and/or events
         // The order should be: [Context], [input], [events]
@@ -833,41 +833,11 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
     }
 
     /**
-     * Validates the events parameter type - should be a record with future<anydata> fields.
-     * All fields in the record must be future types.
+     * Validates the events parameter type - should be a non-empty record whose every field is
+     * a future type. Delegates to {@link WorkflowPluginUtils#isEventsRecordType(TypeSymbol)}.
      */
     private boolean isValidEventsType(TypeSymbol typeSymbol) {
-        TypeSymbol resolvedType = WorkflowPluginUtils.resolveTypeReference(typeSymbol);
-        TypeDescKind kind = resolvedType.typeKind();
-
-        // Must be a record type
-        if (kind != TypeDescKind.RECORD) {
-            return false;
-        }
-
-        // Check that it's a RecordTypeSymbol and all fields are future types
-        if (resolvedType instanceof RecordTypeSymbol recordType) {
-
-            // Get all record fields and validate each is a future type
-            java.util.Map<String, io.ballerina.compiler.api.symbols.RecordFieldSymbol> fields = 
-                    recordType.fieldDescriptors();
-            
-            if (fields.isEmpty()) {
-                // Empty record is not a valid events record
-                return false;
-            }
-            
-            for (io.ballerina.compiler.api.symbols.RecordFieldSymbol field : fields.values()) {
-                TypeSymbol fieldType = WorkflowPluginUtils.resolveTypeReference(field.typeDescriptor());
-                
-                // Each field must be a future type
-                if (fieldType.typeKind() != TypeDescKind.FUTURE) {
-                    return false;
-                }
-            }
-        }
-
-        return true;
+        return WorkflowPluginUtils.isEventsRecordType(typeSymbol);
     }
 
     /**

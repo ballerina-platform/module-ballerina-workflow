@@ -370,6 +370,24 @@ public final class TypesUtil {
      * @return JSON schema string for an object with parameter-named fields
      */
     public static String toJsonSchemaForParameters(Parameter[] parameters, int startIndex, int endExclusive) {
+        return toJsonSchemaForParameters(parameters, startIndex, endExclusive, false);
+    }
+
+    /**
+     * Builds a JSON Schema object for a list of function parameters, optionally treating defaultable
+     * parameters as not required. Callers describing a call-site input form (where the runtime
+     * supplies the declared default when a value is omitted) should pass
+     * {@code honorParameterDefaults = true}; nilable parameters are never required.
+     *
+     * @param parameters             function parameters
+     * @param startIndex             first parameter index to include
+     * @param endExclusive           exclusive upper bound
+     * @param honorParameterDefaults when {@code true}, parameters declared with a default value are
+     *                               omitted from {@code required}
+     * @return JSON schema string for an object with parameter-named fields
+     */
+    public static String toJsonSchemaForParameters(Parameter[] parameters, int startIndex, int endExclusive,
+                                                   boolean honorParameterDefaults) {
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("type", "object");
 
@@ -383,7 +401,8 @@ public final class TypesUtil {
                 Parameter p = parameters[i];
                 String name = p.name != null && !p.name.isBlank() ? p.name : "arg" + i;
                 properties.put(name, toJsonSchemaObject(p.type, 0));
-                if (!isNilableType(p.type, 0)) {
+                boolean defaultable = honorParameterDefaults && p.isDefault;
+                if (!defaultable && !isNilableType(p.type, 0)) {
                     required.add(name);
                 }
             }
@@ -573,7 +592,7 @@ public final class TypesUtil {
         return map;
     }
 
-    private static String toJsonString(Object value) {
+    public static String toJsonString(Object value) {
         if (value == null) {
             return "null";
         }

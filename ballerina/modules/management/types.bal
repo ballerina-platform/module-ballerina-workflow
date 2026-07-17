@@ -82,7 +82,11 @@ public type HumanTaskGroup record {|
 # + taskName - Task type name (the `taskName` passed to `awaitHumanTask`)
 # + parentWorkflowId - Workflow ID of the parent that created this task
 # + parentWorkflowType - Registered workflow type of the parent, or `()` if not available
-# + status - Current status: PENDING | COMPLETED | TIMED_OUT | CANCELED | TERMINATED
+# + status - Current status, mirroring the underlying task workflow:
+#            `PENDING` (awaiting a human) | `COMPLETED` (a human submitted a result) |
+#            `FAILED` (rejected via the fail operation, or timed out before anyone acted) |
+#            `CANCELED` (retired internally because the parent workflow closed) |
+#            `TERMINATED` (an admin terminated the task workflow)
 # + startTime - ISO-8601 timestamp when the task was created
 # + closeTime - ISO-8601 timestamp when the task ended, or `()` if still pending
 # + userRoles - Roles permitted to complete this task
@@ -104,7 +108,11 @@ public type HumanTaskSummary record {|
 # + taskId - Child workflow ID of this task instance
 # + taskName - Task type name
 # + parentWorkflowId - Workflow ID of the parent that created this task
-# + status - Current status: PENDING | COMPLETED | TIMED_OUT | CANCELED | TERMINATED
+# + status - Current status, mirroring the underlying task workflow:
+#            `PENDING` (awaiting a human) | `COMPLETED` (a human submitted a result) |
+#            `FAILED` (rejected via the fail operation, or timed out before anyone acted) |
+#            `CANCELED` (retired internally because the parent workflow closed) |
+#            `TERMINATED` (an admin terminated the task workflow)
 # + startTime - ISO-8601 timestamp when the task was created
 # + closeTime - ISO-8601 timestamp when the task ended, or `()` if still pending
 # + title - Display title shown in the task inbox
@@ -138,67 +146,149 @@ public type HumanTaskInfo record {|
 // MANUAL RETRY TASK TYPES
 // ================================================================================
 
-# Decision submitted by a human to resolve a failed activity.
+# Decision submitted by a human to resolve a review activity — a proposed
+# activity call awaiting approval before it runs, or a failed activity awaiting
+# a rerun decision.
 #
-# + action - `"retry"` re-runs the activity with the original arguments;
-#            `"retry-with-input"` re-runs it with the `input` map overriding arguments;
-#            `"fail"` surfaces the original error back to the workflow.
+# + action - `"proceed"` runs (or reruns) the activity with the original arguments;
+#            `"proceed-with-input"` runs it with the `input` map overriding arguments;
+#            `"reject"` skips the activity: the proposed call is not made, or the
+#            original failure is surfaced back to the workflow.
 # + input - New named arguments for the activity. Only relevant when `action` is
-#           `"retry-with-input"`. Keys must match the activity's parameter names.
-public type RetryDecision record {|
-    "retry"|"retry-with-input"|"fail" action;
+#           `"proceed-with-input"`. Keys must match the activity's parameter names.
+# + feedback - Optional reviewer note. On `"reject"` it is relayed to the caller
+#              so the workflow can act on it (e.g. surface it in the failure message).
+public type ReviewDecision record {|
+    "proceed"|"proceed-with-input"|"reject" action;
     map<anydata>? input = ();
+    string? feedback = ();
 |};
 
-# Summary of a manual retry task instance for list views.
+# Summary of a review activity instance for list views.
 #
-# + taskId - Temporal workflow ID of this retry task (`retrytask-{parentId}-{taskName}-{uuid}`)
-# + taskName - User-facing task name (from `ManualRetry.taskName`, qualified with workflow type)
-# + activityName - Fully-qualified name of the failed activity (`workflowType.activityName`)
-# + parentWorkflowId - Workflow ID of the parent that triggered this task
-# + status - Current status: `PENDING` | `COMPLETED` | `CANCELED` | `TERMINATED`
-# + startTime - ISO-8601 timestamp when the task was created
-# + closeTime - ISO-8601 timestamp when the task ended, or `()` if still pending
-public type RetryTaskSummary record {|
+# + taskId - Temporal workflow ID of this review activity (`reviewactivity-{parentId}-{taskName}-{uuid}`)
+# + taskName - User-facing task name (qualified with workflow type)
+# + activityName - Fully-qualified name of the reviewed activity (`workflowType.activityName`)
+# + parentWorkflowId - Workflow ID of the parent that triggered this review
+# + trigger - Why the review was created: `PRE_RUN` (approval gate) | `ON_FAILURE` (rerun decision)
+# + title - Display title for task inboxes; indicates whether this reviews a failed
+#           activity (`ON_FAILURE`) or gates a proposed activity call (`PRE_RUN`)
+# + status - Current status, mirroring the underlying task workflow:
+#            `PENDING` (awaiting a decision) | `COMPLETED` (a human decided) |
+#            `FAILED` (the review timed out before a human decided) |
+#            `CANCELED` (retired internally because the parent workflow closed) |
+#            `TERMINATED` (an admin terminated the review workflow)
+# + startTime - ISO-8601 timestamp when the review was created
+# + closeTime - ISO-8601 timestamp when the review ended, or `()` if still pending
+# + userRoles - Roles permitted to review this activity; an empty array means any caller
+public type ReviewActivitySummary record {|
     string taskId;
     string taskName;
     string activityName;
     string parentWorkflowId;
+    string trigger;
+    string title;
     string status;
     string startTime;
     string? closeTime;
+    string[] userRoles;
 |};
 
-# Detailed info about a manual retry task, including the failure context.
+# Detailed info about a review activity, including the proposal or failure context.
 #
-# + taskId - Temporal workflow ID of this retry task
+# + taskId - Temporal workflow ID of this review activity
 # + taskName - User-facing task name
-# + activityName - Fully-qualified name of the failed activity
-# + parentWorkflowId - Workflow ID of the parent that triggered this task
-# + status - Current status: `PENDING` | `COMPLETED` | `CANCELED` | `TERMINATED`
-# + startTime - ISO-8601 timestamp when the task was created
-# + closeTime - ISO-8601 timestamp when the task ended, or `()` if still pending
-# + userRoles - Roles permitted to complete this retry task
-# + errorMessage - Error message from the failed activity invocation
-# + activityArgs - Arguments that were passed to the failed activity invocation
-# + createdAt - ISO-8601 timestamp stored in memo at task creation
-# + decidedBy - User ID of the person who submitted the retry decision, or `()` if pending
+# + activityName - Fully-qualified name of the reviewed activity
+# + parentWorkflowId - Workflow ID of the parent that triggered this review
+# + trigger - Why the review was created: `PRE_RUN` (approval gate) | `ON_FAILURE` (rerun decision)
+# + title - Display title for task inboxes; indicates whether this reviews a failed
+#           activity (`ON_FAILURE`) or gates a proposed activity call (`PRE_RUN`)
+# + description - Supporting context for the reviewer, including the failure message for
+#                 `ON_FAILURE` reviews
+# + status - Current status, mirroring the underlying task workflow:
+#            `PENDING` (awaiting a decision) | `COMPLETED` (a human decided) |
+#            `FAILED` (the review timed out before a human decided) |
+#            `CANCELED` (retired internally because the parent workflow closed) |
+#            `TERMINATED` (an admin terminated the review workflow)
+# + startTime - ISO-8601 timestamp when the review was created
+# + closeTime - ISO-8601 timestamp when the review ended, or `()` if still pending
+# + userRoles - Roles permitted to complete this review activity
+# + errorMessage - Error message from the failed activity invocation (empty for a pre-run gate)
+# + activityArgs - Arguments proposed for (or passed to) the activity invocation; use these to
+#                  pre-fill the `formSchema` form
+# + formSchema - JSON Schema describing the `input` accepted by the `proceed-with-input`
+#                decision — one property per data parameter of the reviewed activity —
+#                or `()` when no schema could be derived
+# + createdAt - ISO-8601 timestamp stored in memo at review creation
+# + decidedBy - User ID of the person who submitted the decision, or `()` if pending
 # + decidedAt - ISO-8601 timestamp when the decision was submitted, or `()` if pending
-public type RetryTaskInfo record {|
+public type ReviewActivityInfo record {|
     string taskId;
     string taskName;
     string activityName;
     string parentWorkflowId;
+    string trigger;
+    string title;
+    string description;
     string status;
     string startTime;
     string? closeTime;
     [string, string...] userRoles;
     string errorMessage;
     map<json>? activityArgs;
+    string? formSchema;
     string createdAt;
     string? decidedBy;
     string? decidedAt;
 |};
+
+// ================================================================================
+// DEPRECATED RETRY TASK TYPES
+// ================================================================================
+//
+// "Retry task" was renamed to "review activity" so the same concept covers both a
+// failed activity awaiting a rerun decision (the former retry task, ON_FAILURE) and
+// a gated activity awaiting approval before it runs (PRE_RUN). These shims keep the
+// pre-0.7.0 names compiling; new code should use the ReviewActivity* types.
+
+# Decision submitted by a human to resolve a manual retry task.
+#
+# + action - `"retry"` re-runs the activity with the original arguments;
+#            `"retry-with-input"` re-runs it with the `input` map overriding arguments;
+#            `"fail"` surfaces the original error back to the workflow.
+# + input - New named arguments for the activity. Only relevant when `action` is
+#           `"retry-with-input"`. Keys must match the activity's parameter names.
+# # Deprecated
+# Use `ReviewDecision` with actions `proceed` / `proceed-with-input` / `reject` instead.
+@deprecated
+public type RetryDecision record {|
+    "retry"|"retry-with-input"|"fail" action;
+    map<anydata>? input = ();
+|};
+
+# Summary of a manual retry task instance for list views.
+# # Deprecated
+# Use `ReviewActivitySummary` instead.
+@deprecated
+public type RetryTaskSummary ReviewActivitySummary;
+
+# Detailed info about a manual retry task, including the failure context.
+# # Deprecated
+# Use `ReviewActivityInfo` instead.
+@deprecated
+public type RetryTaskInfo ReviewActivityInfo;
+
+# Paginated list of retry task summaries.
+# # Deprecated
+# Use `ReviewActivityPage` instead.
+@deprecated
+public type RetryTaskPage ReviewActivityPage;
+
+# Audit record returned by retry task decision operations.
+# # Deprecated
+# Use `ReviewDecisionInfo` instead.
+@deprecated
+public type RetryDecisionInfo ReviewDecisionInfo;
 
 // ================================================================================
 // COMPLETION AUDIT
@@ -215,13 +305,13 @@ public type CompletionInfo record {|
     string completedAt;
 |};
 
-# Audit record returned by manual retry task decision operations.
+# Audit record returned by review activity decision operations.
 #
 # + success - Always true on the success path
-# + decision - The decision taken: `"retry"`, `"retry-with-input"`, or `"fail"`
+# + decision - The decision taken: `"proceed"`, `"proceed-with-input"`, or `"reject"`
 # + decidedBy - User ID extracted from the `x-user-id` request header
 # + decidedAt - ISO-8601 timestamp of when the decision was processed
-public type RetryDecisionInfo record {|
+public type ReviewDecisionInfo record {|
     boolean success;
     string decision;
     string decidedBy;
@@ -263,7 +353,7 @@ public enum ActivityNodeType {
     SIGNAL,
     CHILD_WORKFLOW,
     HUMAN_TASK,
-    RETRY_TASK
+    REVIEW_ACTIVITY
 }
 
 # A node in the activity execution tree for a workflow instance.
@@ -417,13 +507,13 @@ public type HumanTaskPage record {|
     boolean hasMore;
 |};
 
-# Paginated list of retry task summaries.
+# Paginated list of review activity summaries.
 #
-# + items - Retry task summaries for this page
+# + items - Review activity summaries for this page
 # + nextPageToken - Opaque continuation token, or `()` on the last page
 # + hasMore - True when more pages follow
-public type RetryTaskPage record {|
-    RetryTaskSummary[] items;
+public type ReviewActivityPage record {|
+    ReviewActivitySummary[] items;
     string? nextPageToken;
     boolean hasMore;
 |};

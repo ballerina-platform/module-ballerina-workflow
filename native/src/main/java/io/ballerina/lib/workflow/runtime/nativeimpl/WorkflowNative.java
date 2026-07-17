@@ -735,7 +735,7 @@ public final class WorkflowNative {
             // payload against the task's expected result type (ballerina-library#8866).
             BArray callerRolesArray = (callerRoles instanceof BArray ba) ? ba : null;
             Object validationError = validateHumanTaskAndRoles(client, taskWorkflowId.getValue(), callerRolesArray,
-                                                               result);
+                                                               result, false);
             if (validationError != null) {
                 return validationError;
             }
@@ -761,6 +761,59 @@ public final class WorkflowNative {
     }
 
     /**
+     * Fails (rejects) a pending human task. Sends a {@code taskCompletion} signal whose envelope
+     * carries a top-level {@code __rejected} marker (plus the reason and optional details), so the
+     * built-in human task workflow fails with {@code HUMANTASK_REJECTED} instead of completing
+     * (ballerina-library#8892). The rejection metadata lives in the signal envelope — not inside the
+     * user-facing {@code result} payload — so a legitimate completion result that happens to contain
+     * an {@code __rejected} field is never misread as a rejection.
+     *
+     * @param taskWorkflowId the Temporal workflow ID of the human task child workflow
+     * @param reason         human-readable rejection reason (becomes the task failure message)
+     * @param details        optional structured details recorded with the rejection
+     * @param callerRoles    optional caller roles for authorization enforcement
+     * @param userId         optional user ID stored in the audit trail
+     * @return {@code null} on success, or a Ballerina error
+     */
+    public static Object failHumanTask(BString taskWorkflowId, BString reason, Object details,
+                                       Object callerRoles, Object userId) {
+        try {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString("Workflow client not initialized"));
+            }
+
+            // Kind/status/role checks only — a rejection carries no result payload to validate.
+            BArray callerRolesArray = (callerRoles instanceof BArray ba) ? ba : null;
+            Object validationError = validateHumanTaskAndRoles(client, taskWorkflowId.getValue(), callerRolesArray,
+                                                               null, true);
+            if (validationError != null) {
+                return validationError;
+            }
+
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("__rejected", true);
+            payload.put("reason", reason.getValue());
+            if (details != null) {
+                payload.put("details", TypesUtil.convertBallerinaToJavaType(details));
+            }
+            payload.put("completedBy", userId instanceof BString bs ? bs.getValue() : "unknown");
+            payload.put("completedAt", java.time.Instant.now().toString());
+
+            boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(taskWorkflowId.getValue(),
+                                                                                   "taskCompletion", payload);
+            if (!delivered) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Failed to fail human task: task '" + taskWorkflowId.getValue() +
+                                "' completed or was no longer running when signal was delivered"));
+            }
+            return null;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString("Failed to fail human task: " + e.getMessage()));
+        }
+    }
+
+    /**
      * Fetches the Temporal memo for {@code taskWorkflowId} and:
      * <ol>
      *   <li>Always asserts {@code workflowKind == "HUMAN_TASK"} — prevents signalling
@@ -776,7 +829,8 @@ public final class WorkflowNative {
      * was added).  The {@code workflowKind} check is never skipped.
      */
     private static Object validateHumanTaskAndRoles(WorkflowClient client, String taskWorkflowId,
-                                                    BArray callerRolesArray, Object result) {
+                                                    BArray callerRolesArray, Object result,
+                                                    boolean skipPayloadValidation) {
         try {
             DescribeWorkflowExecutionRequest req = DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
                     client.getOptions().getNamespace()).setExecution(
@@ -816,10 +870,13 @@ public final class WorkflowNative {
 
             // 2. Payload type check — reject completions whose result does not match the task's expected type.
             // This runs before the signal is sent so an invalid payload never completes the task
-            // (ballerina-library#8866). Skipped when the expected type is unknown in this JVM.
-            Object payloadError = validateCompletionPayload(dc, memoFields, result);
-            if (payloadError != null) {
-                return payloadError;
+            // (ballerina-library#8866). Skipped when the expected type is unknown in this JVM, and for
+            // rejections (failHumanTask), which carry no result payload.
+            if (!skipPayloadValidation) {
+                Object payloadError = validateCompletionPayload(dc, memoFields, result);
+                if (payloadError != null) {
+                    return payloadError;
+                }
             }
 
             // 3. Role intersection — only when callerRoles was supplied
@@ -887,12 +944,6 @@ public final class WorkflowNative {
             return null;
         }
 
-        // A rejection sent via failHumanTask carries a sentinel payload that intentionally does not conform to the
-        // task's result type; deliver it unchanged so the waiting workflow can observe the rejection.
-        if (isRejectionPayload(result)) {
-            return null;
-        }
-
         io.ballerina.runtime.api.types.Type expectedType =
                 WorkflowWorkerNative.getHumanTaskResultType("humantask-" + qualifiedTaskName);
         if (expectedType == null) {
@@ -907,17 +958,4 @@ public final class WorkflowNative {
         return null;
     }
 
-    /**
-     * Returns {@code true} when {@code result} is a human task rejection sentinel — a map carrying
-     * {@code __rejected: true} as sent by {@code failHumanTask}. Such payloads intentionally do not conform to the
-     * task's result type and must bypass completion payload validation.
-     */
-    @SuppressWarnings("unchecked")
-    private static boolean isRejectionPayload(Object result) {
-        if (result instanceof BMap) {
-            BMap<BString, Object> map = (BMap<BString, Object>) result;
-            return Boolean.TRUE.equals(map.get(StringUtils.fromString("__rejected")));
-        }
-        return false;
-    }
 }

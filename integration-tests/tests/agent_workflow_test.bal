@@ -41,7 +41,7 @@ function waitForAgentResponse(string workflowId, string expected) returns boolea
 
 @test:Config {}
 function testDurableAgentPromptDriven() returns error? {
-    string agentId = check workflow:run(stockCheckAgent,
+    string agentId = check workflow:runDurableAgent(stockCheckAgent,
             {id: "agent-int-001", request: "Is the laptop in stock?"});
 
     _ = check workflow:getWorkflowResult(agentId, 60);
@@ -54,17 +54,17 @@ function testDurableAgentPromptDriven() returns error? {
 function testDurableAgentMultiTurnConversation() returns error? {
     // MULTI_EVENT: FIFO re-armed chat waits across turns against the real server,
     // with per-turn responses observable via management:getAgentResponse.
-    string agentId = check workflow:run(conversationalStockAgent,
+    string agentId = check workflow:runDurableAgent(conversationalStockAgent,
             {id: "agent-int-conv-001", request: "hello"});
 
     test:assertTrue(waitForAgentResponse(agentId, "Turn 1 answer"),
             "Turn 1 answer should be observable while the agent waits for chat");
 
-    check workflow:sendData(conversationalStockAgent, agentId, "chat", "how are you");
+    _ = check workflow:updateAgentAsync(conversationalStockAgent, agentId, "chat", "how are you");
     test:assertTrue(waitForAgentResponse(agentId, "Echo: how are you"),
             "Turn 2 should consume the next chat message");
 
-    check workflow:sendData(conversationalStockAgent, agentId, "chat", "ok bye");
+    _ = check workflow:updateAgentAsync(conversationalStockAgent, agentId, "chat", "ok bye");
     _ = check workflow:getWorkflowResult(agentId, 60);
     test:assertEquals(check management:getAgentResponse(agentId), "Conversation ended",
             "The model ends the conversation by answering without waiting");
@@ -74,7 +74,7 @@ function testDurableAgentMultiTurnConversation() returns error? {
 function testDurableAgentUpdateConversation() returns error? {
     // updateAgent (Temporal Update) against the real server: each call delivers
     // the message and returns the answer of the turn that consumed it.
-    string agentId = check workflow:run(conversationalStockAgent,
+    string agentId = check workflow:runDurableAgent(conversationalStockAgent,
             {id: "agent-int-update-001", request: "hello"});
 
     string reply1 = check workflow:updateAgent(conversationalStockAgent, agentId, "chat", "how are you");
@@ -90,12 +90,12 @@ function testDurableAgentUpdateConversation() returns error? {
 
 @test:Config {}
 function testDurableAgentChatDriven() returns error? {
-    string agentId = check workflow:run(chatDrivenStockAgent,
+    string agentId = check workflow:runDurableAgent(chatDrivenStockAgent,
             {id: "agent-int-002", request: "unused"});
 
     // Give the agent a moment to start and park on the chat event, then send it.
     runtime:sleep(2);
-    check workflow:sendData(chatDrivenStockAgent, agentId, "chat", "Check availability of laptop");
+    _ = check workflow:updateAgentAsync(chatDrivenStockAgent, agentId, "chat", "Check availability of laptop");
 
     _ = check workflow:getWorkflowResult(agentId, 60);
 

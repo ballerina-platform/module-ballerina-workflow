@@ -96,7 +96,12 @@ subprojects {
         ballerinaStdLibs "io.ballerina.stdlib:jwt-ballerina:${stdlibJwtVersion}"
         ballerinaStdLibs "io.ballerina.stdlib:oauth2-ballerina:${stdlibOAuth2Version}"
         ballerinaStdLibs "io.ballerina.lib:data.jsondata-ballerina:${stdlibDataJsonDataVersion}"
+        ballerinaStdLibs "io.ballerina.lib:data.xmldata-ballerina:${stdlibDataXmldataVersion}"
         ballerinaStdLibs "io.ballerina.stdlib:http-ballerina:${stdlibHttpVersion}"
+        ballerinaStdLibs "io.ballerina.stdlib:math.vector-ballerina:${stdlibMathVectorVersion}"
+        ballerinaStdLibs "io.ballerina.stdlib:mcp-ballerina:${stdlibMcpVersion}"
+        ballerinaStdLibs "io.ballerina.stdlib:random-ballerina:${stdlibRandomVersion}"
+        ballerinaStdLibs "io.ballerina.stdlib:yaml-ballerina:${stdlibYamlVersion}"
         ballerinaStdLibs "io.ballerina.stdlib:observe-ballerina:${observeVersion}"
         ballerinaStdLibs "io.ballerina:observe-ballerina:${observeInternalVersion}"
     }

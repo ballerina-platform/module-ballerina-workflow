@@ -56,6 +56,11 @@ task updateTomlFiles {
 
 task commitTomlFiles {
     doLast {
+        // Only auto-commit regenerated toml files when explicitly requested
+        // (e.g. CI/release runs pass -PcommitToml). Local builds stay commit-free.
+        if (!project.hasProperty('commitToml')) {
+            return
+        }
         project.exec {
             ignoreExitValue true
             if (Os.isFamily(Os.FAMILY_WINDOWS)) {

@@ -14,6 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import ballerina/ai;
 import ballerina/jballerina.java;
 import ballerina/log;
 
@@ -77,6 +78,33 @@ public isolated function registerConnection(string name, object {} connection)
         returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
     name: "registerConnection"
+} external;
+
+# Registers an AI tool function of a durable agent so that the built-in
+# `executeAgentTool` activity wrapper can resolve and invoke it on any worker.
+#
+# This is an **internal** function used by the compiler plugin. It is emitted at
+# module init time for every function reference found in a
+# `ctx.registerTools([...])` call inside a `@workflow:DurableAgent` body. The
+# tool's advertised name is derived from its `@ai:AgentTool` annotation (falling
+# back to the function name), matching the runtime normalization performed by
+# `AgentContext.registerTools`.
+#
+# + agentName - The agent's registered workflow name
+# + tool - The `@ai:AgentTool` function to register
+# + return - `true` on success (idempotent), or an error
+public isolated function registerAgentTool(string agentName, ai:FunctionTool tool) returns boolean|error {
+    ai:ToolConfig[] configs = ai:getToolConfigs([tool]);
+    if configs.length() == 0 {
+        return error("Agent tool functions must be annotated with @ai:AgentTool");
+    }
+    return registerAgentToolNative(agentName, configs[0].name, tool);
+}
+
+isolated function registerAgentToolNative(string agentName, string toolName, function tool)
+        returns boolean|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
+    name: "registerAgentToolFunction"
 } external;
 
 # Registers a human task type so that the workflow worker can route child workflows

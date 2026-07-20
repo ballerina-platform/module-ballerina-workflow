@@ -32,9 +32,11 @@ import java.util.Map;
 public class WorkflowModifierContext {
 
     private final Map<String, ProcessFunctionInfo> processInfoMap;
+    private final Map<String, AgentFunctionInfo> agentInfoMap;
 
     public WorkflowModifierContext() {
         this.processInfoMap = new HashMap<>();
+        this.agentInfoMap = new HashMap<>();
     }
 
     /**
@@ -53,5 +55,23 @@ public class WorkflowModifierContext {
      */
     public Map<String, ProcessFunctionInfo> getProcessInfoMap() {
         return processInfoMap;
+    }
+
+    /**
+     * Adds an agent function information to the context.
+     *
+     * @param agentInfo the agent function information
+     */
+    public void addAgentInfo(AgentFunctionInfo agentInfo) {
+        this.agentInfoMap.put(agentInfo.functionName(), agentInfo);
+    }
+
+    /**
+     * Gets all agent function information stored in this context.
+     *
+     * @return map of function name to AgentFunctionInfo
+     */
+    public Map<String, AgentFunctionInfo> getAgentInfoMap() {
+        return agentInfoMap;
     }
 }

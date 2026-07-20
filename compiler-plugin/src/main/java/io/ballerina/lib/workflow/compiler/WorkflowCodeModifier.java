@@ -56,6 +56,13 @@ public class WorkflowCodeModifier extends CodeModifier {
                 SyntaxKind.FUNCTION_DEFINITION
         );
 
+        // Register the analysis task that collects @DurableAgent function information
+        // (tools, model provider, parameter names) for agent codegen.
+        modifierContext.addSyntaxNodeAnalysisTask(
+                new AgentFunctionAnalysisTask(this.userData),
+                SyntaxKind.FUNCTION_DEFINITION
+        );
+
         // Register the analysis task that collects module-level `final` client
         // variables so the source modifier can emit registerConnection calls.
         modifierContext.addSyntaxNodeAnalysisTask(

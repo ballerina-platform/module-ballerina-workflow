@@ -1,0 +1,8 @@
+[package]
+org = "test"
+name = "valid_agent_basic"
+version = "0.1.0"
+distribution = "2201.13.0"
+
+[build-options]
+observabilityIncluded = false

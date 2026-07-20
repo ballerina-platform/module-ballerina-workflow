@@ -21,8 +21,12 @@ package io.ballerina.lib.workflow.test;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.utils.StringUtils;
+import io.ballerina.runtime.api.values.BObject;
 import io.ballerina.runtime.api.values.BString;
 import io.ballerina.runtime.api.values.BTypedesc;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Native implementations for test-only external functions.
@@ -101,5 +105,24 @@ public final class TestNatives {
         Object javaResult = TypesUtil.convertBallerinaToJavaType(result);
         Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(javaResult);
         return TypesUtil.validateAndConvert(ballerinaResult, typedesc.getDescribingType());
+    }
+
+    /**
+     * Backs the {@code generate} remote method of the mock {@code ai:ModelProvider} used in agent tests. Because
+     * {@code ai:ModelProvider.generate} is dependently typed, implementations must have an external body — real
+     * providers (Wso2, Anthropic, OpenAI) all bind it to Java. This mock returns a fixed structured value coerced
+     * to the requested type.
+     *
+     * @param self     the mock model provider object (unused)
+     * @param prompt   the prompt object (unused)
+     * @param typedesc the expected return type
+     * @return the fixed value coerced to {@code typedesc}, or an error
+     */
+    public static Object mockGenerate(BObject self, BObject prompt, BTypedesc typedesc) {
+        Map<String, Object> fixed = new HashMap<>();
+        fixed.put("summary", "generated summary");
+        fixed.put("score", 7L);
+        Object ballerinaValue = TypesUtil.convertJavaToBallerinaType(fixed);
+        return TypesUtil.cloneWithType(ballerinaValue, typedesc.getDescribingType());
     }
 }

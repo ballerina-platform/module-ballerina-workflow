@@ -108,6 +108,23 @@ task buildExamples {
             it == 'test' || it.endsWith(':test')
         }
 
+        // The compiler-plugin tests compile agent test sources that import ballerina/ai
+        // transitively via ballerina/workflow; that online compilation can pull the latest
+        // ai release into the local central cache, and its BIR fails to load under this
+        // distribution's toolchain. The examples resolve ai transitively too, and an offline
+        // build picks the newest cached version — so remove any ai other than the pinned one
+        // to force the examples onto ballerina/ai:${ballerinaAiVersion}.
+        def aiVersion = project.rootProject.findProperty("ballerinaAiVersion")
+        def aiCacheDir = new File("${System.getProperty('user.home')}/.ballerina/repositories/central.ballerina.io/bala/ballerina/ai")
+        if (aiVersion != null && aiCacheDir.exists()) {
+            aiCacheDir.eachDir { verDir ->
+                if (verDir.name != aiVersion) {
+                    logger.lifecycle("Removing non-pinned ballerina/ai:${verDir.name} from the local cache")
+                    verDir.deleteDir()
+                }
+            }
+        }
+
         examplesDir.eachDir { exampleDir ->
             def packageName = examplePackageNames[exampleDir.name]
             if (packageName == null) {
@@ -131,7 +148,12 @@ task buildExamples {
 
             // Respect Gradle -x test: build examples without running bal tests.
             // When tests run, enable coverage so reports can be uploaded to codecov.
-            def balCommand = testsExcluded ? 'build' : "test ${testCoverageParam}"
+            // Build offline: everything the examples need is already local — the workflow
+            // module is staged into the runtime repo and ballerina/ai is pulled into the
+            // cache by :workflow-ballerina:pullExternalDependencies. Offline keeps resolution
+            // pinned to that ai version instead of drifting to a newer Central release whose
+            // BIR the pinned distribution's toolchain cannot load.
+            def balCommand = testsExcluded ? 'build --offline' : "test --offline ${testCoverageParam}"
             exec {
                 workingDir exampleDir
                 environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
@@ -181,9 +203,9 @@ task runExamples {
                 workingDir exampleDir
                 environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
                 if (Os.isFamily(Os.FAMILY_WINDOWS)) {
-                    commandLine 'cmd', '/c', "${distributionBinPath}/bal.bat run"
+                    commandLine 'cmd', '/c', "${distributionBinPath}/bal.bat run --offline"
                 } else {
-                    commandLine 'sh', '-c', "${distributionBinPath}/bal run"
+                    commandLine 'sh', '-c', "${distributionBinPath}/bal run --offline"
                 }
             }
 

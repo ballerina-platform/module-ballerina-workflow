@@ -49,6 +49,8 @@ bin
 velocity.log*
 *Ballerina.lock
 Dependencies.toml
+# Committed to pin ballerina/ai to a version the distribution's toolchain can load
+# (a newer Central release resolves by default but its BIR fails to load here).
 !ballerina/Dependencies.toml
 !integration-tests/Dependencies.toml
 

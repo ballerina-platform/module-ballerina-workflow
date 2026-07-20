@@ -374,7 +374,7 @@ public final class TypesUtil {
     }
 
     /**
-     * Builds a JSON Schema object for a list of function parameters, optionally treating defaultable
+     * Builds a JSON Schema string for a list of function parameters, optionally treating defaultable
      * parameters as not required. Callers describing a call-site input form (where the runtime
      * supplies the declared default when a value is omitted) should pass
      * {@code honorParameterDefaults = true}; nilable parameters are never required.
@@ -388,6 +388,34 @@ public final class TypesUtil {
      */
     public static String toJsonSchemaForParameters(Parameter[] parameters, int startIndex, int endExclusive,
                                                    boolean honorParameterDefaults) {
+        return toJsonString(toParameterSchemaMap(parameters, startIndex, endExclusive, honorParameterDefaults));
+    }
+
+    /**
+     * Builds a JSON Schema object (as a map) for a list of function parameters. Same shape as
+     * {@link #toJsonSchemaForParameters} but returns the underlying map so callers can embed it into larger
+     * structures (e.g. an agent tool definition) without a string round-trip.
+     *
+     * @param parameters   function parameters
+     * @param startIndex   first parameter index to include
+     * @param endExclusive exclusive upper bound
+     * @return a map representing the JSON schema object
+     */
+    public static Map<String, Object> toParameterSchemaMap(Parameter[] parameters, int startIndex, int endExclusive) {
+        return toParameterSchemaMap(parameters, startIndex, endExclusive, false);
+    }
+
+    /**
+     * Builds a JSON Schema object (as a map), optionally treating defaultable parameters as not required.
+     *
+     * @param parameters             function parameters
+     * @param startIndex             first parameter index to include
+     * @param endExclusive           exclusive upper bound
+     * @param honorParameterDefaults when {@code true}, defaultable parameters are omitted from {@code required}
+     * @return a map representing the JSON schema object
+     */
+    public static Map<String, Object> toParameterSchemaMap(Parameter[] parameters, int startIndex, int endExclusive,
+                                                           boolean honorParameterDefaults) {
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("type", "object");
 
@@ -412,7 +440,7 @@ public final class TypesUtil {
         if (!required.isEmpty()) {
             root.put("required", required);
         }
-        return toJsonString(root);
+        return root;
     }
 
     private static Object toJsonSchemaObject(Type rawType, int depth) {
@@ -592,6 +620,12 @@ public final class TypesUtil {
         return map;
     }
 
+    /**
+     * Serializes a plain Java value (maps, lists, strings, numbers, booleans, null) to a JSON string.
+     *
+     * @param value the value to serialize
+     * @return the JSON string
+     */
     public static String toJsonString(Object value) {
         if (value == null) {
             return "null";

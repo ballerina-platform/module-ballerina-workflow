@@ -19,6 +19,7 @@
 package io.ballerina.lib.workflow.worker;
 
 import io.ballerina.lib.workflow.ModuleUtils;
+import io.ballerina.lib.workflow.context.AgentContextNative;
 import io.ballerina.lib.workflow.context.SignalAwaitWrapper;
 import io.ballerina.lib.workflow.context.WorkflowContextNative;
 import io.ballerina.lib.workflow.registry.EventInfo;
@@ -75,6 +76,7 @@ import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -120,11 +122,23 @@ public final class WorkflowWorkerNative {
     /**
      * Prefix applied to all user-defined workflow types registered with Temporal. Allows
      * {@code WorkflowType STARTS_WITH 'workflow-'} queries to exclude internal child workflow types (humantask-*,
-     * retrytask-*) without needing the NOT operator.
+     * reviewactivity-*) without needing the NOT operator.
      */
     public static final String WORKFLOW_TYPE_PREFIX = "workflow-";
     /**
-     * Temporal workflow type used for all built-in manual retry task child workflows. Prefixed with {@code retrytask-}
+     * Temporal update name used by {@code workflow:updateAgent} for request-response interactions with durable
+     * agents. Args layout: eventName (String), payload (Object); the update result is the agent's turn response.
+     */
+    public static final String AGENT_UPDATE_NAME = "agentUpdate";
+
+    /**
+     * Query returning the agent updates that were accepted but whose turn has not completed yet
+     * ({@code [{updateId, eventName}, ...]}). Lets clients rediscover in-flight requests after a crash.
+     */
+    public static final String PENDING_AGENT_UPDATES_QUERY = "pendingAgentUpdates";
+    /**
+     * Temporal workflow type used for all built-in review activity child workflows. Prefixed with
+     * {@code reviewactivity-}
      * so internal workflows are clearly separated from user-defined ones and can be identified via a simple STARTS_WITH
      * check.
      */
@@ -206,6 +220,16 @@ public final class WorkflowWorkerNative {
     // The registration routine prefixes the variable name with the caller module
     // identity so names remain globally unique across modules in the same JVM.
     private static final Map<String, BObject> CONNECTION_REGISTRY = new ConcurrentHashMap<>();
+    // Maps an agent's workflow type (e.g. {@code workflow-processOrderAgent}) to the
+    // ai:ModelProvider client used by its LLM activities. Populated at runtime by
+    // AgentContext.runDurableAgent.
+    private static final Map<String, BObject> AGENT_MODEL_REGISTRY = new ConcurrentHashMap<>();
+    // Maps "<agent workflow type>.<tool name>" to the AI tool function pointer invoked by the
+    // built-in executeAgentTool activity wrapper. Populated at module init by the
+    // compiler-plugin-emitted `wfInternal:registerAgentTool(...)` calls (so every worker has
+    // the pointer) and again at runtime by AgentContext.registerTools (covers dynamically
+    // constructed ai:ToolConfig values on the worker that runs the agent body).
+    private static final Map<String, BFunctionPointer> AGENT_TOOL_REGISTRY = new ConcurrentHashMap<>();
     // Flags for singleton state
     private static final AtomicBoolean initialized = new AtomicBoolean(false);
     private static final AtomicBoolean started = new AtomicBoolean(false);
@@ -1097,6 +1121,85 @@ public final class WorkflowWorkerNative {
     }
 
     /**
+     * Registers the {@code ai:ModelProvider} client used by an agent workflow's built-in LLM activities. Called at
+     * runtime from {@code AgentContext.runDurableAgent} (via {@code AgentContextNative.registerModel}) with the agent's
+     * full workflow type as the key.
+     *
+     * @param workflowType the agent's full workflow type (already {@code workflow-}-prefixed)
+     * @param model        the model provider client object
+     */
+    public static void putAgentModel(String workflowType, BObject model) {
+        AGENT_MODEL_REGISTRY.put(workflowType, model);
+        LOGGER.debug("Registered agent model provider for: {}", workflowType);
+    }
+
+    /**
+     * Registers an AI tool function pointer for an agent so the built-in {@code executeAgentTool} activity wrapper
+     * can resolve it on this worker. Called from generated module-init code (see
+     * {@code wfInternal:registerAgentTool}) with the agent's unprefixed workflow name.
+     *
+     * @param agentName the agent's registered workflow name (unprefixed)
+     * @param toolName  the tool's advertised name (from its {@code @ai:AgentTool} annotation or function name)
+     * @param tool      the tool function pointer
+     * @return {@code true} on success (idempotent)
+     */
+    public static Object registerAgentToolFunction(BString agentName, BString toolName, BFunctionPointer tool) {
+        String key = WORKFLOW_TYPE_PREFIX + agentName.getValue() + "." + toolName.getValue();
+        AGENT_TOOL_REGISTRY.put(key, tool);
+        LOGGER.debug("Registered agent tool function: {}", key);
+        return true;
+    }
+
+    /**
+     * Stores an AI tool function pointer under the agent's full workflow type. Called at runtime by
+     * {@code AgentContext.registerTools}.
+     *
+     * @param workflowType the agent's full workflow type (already {@code workflow-}-prefixed)
+     * @param toolName     the tool's advertised name
+     * @param tool         the tool function pointer
+     */
+    public static void putAgentTool(String workflowType, String toolName, BFunctionPointer tool) {
+        AGENT_TOOL_REGISTRY.put(workflowType + "." + toolName, tool);
+    }
+
+    /**
+     * Resolves the registered AI tool function pointer for the built-in {@code executeAgentTool} activity, whose
+     * Ballerina body delegates execution to {@code ai:executeTool} (typed argument conversion and {@code ai:Context}
+     * injection are handled by the ai module).
+     *
+     * @param agentName the agent's full workflow type
+     * @param toolName  the tool's advertised name
+     * @return the tool function pointer, or a {@code BError} when not registered
+     */
+    public static Object getAgentToolFunction(BString agentName, BString toolName) {
+        String key = agentName.getValue() + "." + toolName.getValue();
+        BFunctionPointer tool = AGENT_TOOL_REGISTRY.get(key);
+        if (tool == null) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Agent tool '" + toolName.getValue() + "' is not registered on this worker for '"
+                            + agentName.getValue() + "'."));
+        }
+        return tool;
+    }
+
+    /**
+     * Returns the model provider registered for the given agent workflow type. Called from the built-in
+     * {@code llmChat} activity, which receives the full workflow type (already {@code workflow-}-prefixed).
+     *
+     * @param agentWorkflowType the agent's full workflow type
+     * @return the registered model provider, or a {@code BError} when none is registered
+     */
+    public static Object getAgentModel(BString agentWorkflowType) {
+        BObject model = AGENT_MODEL_REGISTRY.get(agentWorkflowType.getValue());
+        if (model == null) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "No model provider is registered for agent '" + agentWorkflowType.getValue()
+                            + "'. Define a module-level final ai:ModelProvider variable in the agent's module."));
+        }
+        return model;
+    }
+
+    /**
      * Gets error details from a Ballerina error as a serializable map.
      *
      * @param error the Ballerina error
@@ -1307,6 +1410,17 @@ public final class WorkflowWorkerNative {
         // Per-workflow signal wrapper for managing signal futures
         // This handles signal recording and replay scenarios
         private final SignalAwaitWrapper signalWrapper = new SignalAwaitWrapper();
+        // Set on the workflow thread by execute() when the registered function is a durable
+        // agent; read by the dynamic update handler (also on the workflow thread) to reject
+        // updateAgent calls targeting non-agent workflows.
+        private boolean agentWorkflow = false;
+        // The agent's native context state; set when the AgentContext is created. Used by the
+        // update handler's closing fast-path and the failure backstop that settles updates.
+        private AgentContextNative.AgentContextInfo agentContextInfo = null;
+        // Accepted-but-unanswered agent updates (updateId -> eventName). Workflow code is
+        // single-threaded, so no synchronization is needed; insertion order is preserved for
+        // stable client-side listings.
+        private final Map<String, String> pendingAgentUpdates = new java.util.LinkedHashMap<>();
         // Per-workflow-instance service object (created fresh for each workflow execution including replays)
         // This ensures isolation between workflow instances and proper state management
         private BObject serviceObject;
@@ -1399,10 +1513,71 @@ public final class WorkflowWorkerNative {
                                      );
             LOGGER.debug("[JWorkflowAdapter] Dynamic signal handler registered");
 
+            // Register a dynamic update handler backing `workflow:updateAgent` — the
+            // request-response counterpart of sendData for durable agents. The payload is
+            // enqueued into the agent's event channel carrying a responder promise; the
+            // agent loop completes the responder with the answer of the turn that consumed
+            // the message, which becomes the update result. Only meaningful for durable
+            // agents: normal workflows bind incoming data imperatively, so there is no
+            // framework-owned response to correlate.
+            Workflow.registerListener(
+                    (io.temporal.workflow.DynamicUpdateHandler) (updateName, encodedArgs) -> {
+                        if (!AGENT_UPDATE_NAME.equals(updateName)) {
+                            throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
+                                    "Unknown update '" + updateName + "'", "error");
+                        }
+                        if (!this.agentWorkflow) {
+                            throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
+                                    "updateAgent is only supported for @workflow:DurableAgent workflows",
+                                    "error");
+                        }
+                        String eventName = encodedArgs.get(0, String.class);
+                        Object payload = encodedArgs.get(1, Object.class);
+                        LOGGER.debug("[JWorkflowAdapter] Agent update received for event '{}'", eventName);
+
+                        // Closing fast-path: the agent is finishing, so nobody would consume
+                        // an enqueued message — answer immediately from the final state.
+                        AgentContextNative.AgentContextInfo info = this.agentContextInfo;
+                        if (info != null && info.isClosing()) {
+                            String failure = info.closingFailure();
+                            if (failure != null) {
+                                throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
+                                        "The agent finished without consuming this update: " + failure, "error");
+                            }
+                            return info.finalResponse();
+                        }
+
+                        String updateId = Workflow.getCurrentUpdateInfo()
+                                .map(io.temporal.workflow.UpdateInfo::getUpdateId).orElse("");
+                        if (!updateId.isEmpty()) {
+                            this.pendingAgentUpdates.put(updateId, eventName);
+                        }
+                        try {
+                            io.temporal.workflow.CompletablePromise<Object> responder = Workflow.newPromise();
+                            signalWrapper.recordUpdate(eventName, payload, responder);
+                            Workflow.await(responder::isCompleted);
+                            return responder.get();
+                        } finally {
+                            if (!updateId.isEmpty()) {
+                                this.pendingAgentUpdates.remove(updateId);
+                            }
+                        }
+                    }
+                                     );
+            LOGGER.debug("[JWorkflowAdapter] Dynamic update handler registered");
+
             // Register a dynamic query handler that routes to service methods
             Workflow.registerListener(
                     (io.temporal.workflow.DynamicQueryHandler) (queryName, encodedArgs) -> {
                         LOGGER.debug("[JWorkflowAdapter] Query received: {}", queryName);
+
+                        // Framework-owned query: in-flight agent updates for crash-recovery check-back.
+                        if (PENDING_AGENT_UPDATES_QUERY.equals(queryName)) {
+                            List<Map<String, String>> pending = new ArrayList<>();
+                            this.pendingAgentUpdates.forEach((id, event) ->
+                                    pending.add(Map.of("updateId", id, "eventName", event)));
+                            return pending;
+                        }
 
                         try {
                             // Use the workflow's current ServiceObject instance
@@ -1515,8 +1690,11 @@ public final class WorkflowWorkerNative {
                 // Extract workflow arguments from EncodedValues
                 Object[] workflowArgs = extractWorkflowArguments(args);
 
-                // Check if the process function expects a Context parameter
+                // Check if the process function expects a Context / AgentContext parameter
                 boolean hasContext = EventExtractor.hasContextParameter(processFunction);
+                boolean hasAgentContext = EventExtractor.hasAgentContextParameter(processFunction);
+                this.agentWorkflow = hasAgentContext;
+                boolean hasFirstCtxParam = hasContext || hasAgentContext;
 
                 // Convert workflow arguments to match expected parameter types.
                 // After Temporal JSON round-trip, record inputs arrive as map<anydata>
@@ -1524,7 +1702,7 @@ public final class WorkflowWorkerNative {
                 if (processFunction != null && workflowArgs.length > 0) {
                     FunctionType funcType = (FunctionType) processFunction.getType();
                     Parameter[] params = funcType.getParameters();
-                    int startIdx = hasContext ? 1 : 0;
+                    int startIdx = hasFirstCtxParam ? 1 : 0;
                     for (int i = 0; i < workflowArgs.length; i++) {
                         int paramIdx = startIdx + i;
                         if (paramIdx < params.length && workflowArgs[i] != null) {
@@ -1548,8 +1726,10 @@ public final class WorkflowWorkerNative {
                 // Build arguments array with Context and Events as needed
                 List<Object> argsList = new ArrayList<>();
 
-                // Add Context as first argument if needed
-                if (hasContext) {
+                // Add Context / AgentContext as first argument if needed
+                if (hasAgentContext) {
+                    argsList.add(createAgentContext(processFunction));
+                } else if (hasContext) {
                     BObject contextObj = createWorkflowContext();
                     argsList.add(contextObj);
                 }
@@ -1614,12 +1794,26 @@ public final class WorkflowWorkerNative {
                                      err.getMessage());
                     }
 
+                    // Backstop for durable agents: settle outstanding updateAgent requests
+                    // (and yield until their handlers finish) before failing the workflow, so
+                    // accepted updates fail with the agent's error instead of
+                    // "workflow completed before the update completed". Covers agent-body
+                    // failures outside runDurableAgent's own settle path.
+                    if (this.agentContextInfo != null) {
+                        AgentContextNative.settleUpdates(this.agentContextInfo, err.getMessage());
+                    }
+
                     // Convert the full BError chain into an ApplicationFailure chain
                     // so the Temporal UI shows a structured cause/details hierarchy.
                     io.temporal.failure.ApplicationFailure failure = berrorToApplicationFailure(err);
                     failure.setNonRetryable(true);
 
                     throw failure;
+                }
+
+                // Backstop for durable agents completing normally outside the loop's settle path.
+                if (this.agentContextInfo != null) {
+                    AgentContextNative.settleUpdates(this.agentContextInfo, null);
                 }
 
                 // Convert Ballerina result to Java type for Temporal serialization
@@ -1774,6 +1968,35 @@ public final class WorkflowWorkerNative {
                     "Context",
                     nativeContextHandle
                                                  );
+        }
+
+        /**
+         * Creates a Ballerina {@code AgentContext} object for a durable agent workflow. The native handle carries the
+         * workflow identity, this instance's signal wrapper, and the declared event names so the agent loop can
+         * register tools, wait for events, and run durably.
+         *
+         * @param processFunction the agent function pointer (used to extract declared event names)
+         * @return the AgentContext BObject
+         */
+        private BObject createAgentContext(BFunctionPointer processFunction) {
+            if (workflowModule == null) {
+                io.temporal.failure.ApplicationFailure failure =
+                        io.temporal.failure.ApplicationFailure.newFailure(
+                                "Ballerina workflow module is not properly initialized.", "error");
+                failure.setNonRetryable(true);
+                failure.setStackTrace(new StackTraceElement[0]);
+                throw failure;
+            }
+            io.temporal.workflow.WorkflowInfo temporalInfo = Workflow.getInfo();
+            // Update channels are declared imperatively via ctx.registerUpdateEvents;
+            // the set starts empty and fills as the agent body registers channels.
+            AgentContextNative.AgentContextInfo agentInfo =
+                    new AgentContextNative.AgentContextInfo(
+                            temporalInfo.getWorkflowId(), temporalInfo.getWorkflowType(),
+                            signalWrapper, new HashSet<>());
+            this.agentContextInfo = agentInfo;
+            Object nativeContextHandle = ValueCreator.createHandleValue(agentInfo);
+            return ValueCreator.createObjectValue(workflowModule, "AgentContext", nativeContextHandle);
         }
 
         /**

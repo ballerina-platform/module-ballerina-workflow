@@ -74,6 +74,7 @@ public final class DurableAgentNative {
     private static final String TOOL_SPEC_RECORD = "DurableAgentToolSpec";
     private static final String EVENT_SPEC_RECORD = "DurableAgentEventSpec";
     private static final String HUMAN_TASK_SPEC_RECORD = "DurableAgentHumanTaskSpec";
+    private static final String PEER_SPEC_RECORD = "DurableAgentPeerSpec";
 
     private DurableAgentNative() {
     }
@@ -91,6 +92,7 @@ public final class DurableAgentNative {
         private final Map<String, BFunctionPointer> tools = new LinkedHashMap<>();
         private final Map<String, EventDecl> events = new LinkedHashMap<>();
         private final Map<String, Object> humanTasks = new LinkedHashMap<>();
+        private final Map<String, PeerDecl> peers = new LinkedHashMap<>();
 
         AgentDecl(String agentName, BObject model, Object systemPrompt, long maxIter) {
             this.agentName = agentName;
@@ -130,7 +132,20 @@ public final class DurableAgentNative {
         public Map<String, Object> humanTasks() {
             return humanTasks;
         }
+
+        public Map<String, PeerDecl> peers() {
+            return peers;
+        }
     }
+
+    /**
+     * A declared peer agent.
+     *
+     * @param name        the tool name advertised to the model
+     * @param targetAgent the peer agent's name
+     * @param meta        declaration metadata (description, wait, callbackChannel, gating)
+     */
+    public record PeerDecl(String name, String targetAgent, Object meta) { }
 
     /**
      * A declared activity capability.
@@ -370,6 +385,18 @@ public final class DurableAgentNative {
                         ModuleUtils.getModule(), HUMAN_TASK_SPEC_RECORD, fields));
             }
 
+            BMap<BString, Object> peerProbe = ValueCreator.createRecordValue(
+                    ModuleUtils.getModule(), PEER_SPEC_RECORD);
+            BArray peers = ValueCreator.createArrayValue(TypeCreator.createArrayType(peerProbe.getType()));
+            for (PeerDecl peer : decl.peers().values()) {
+                Map<String, Object> fields = new HashMap<>();
+                fields.put("name", StringUtils.fromString(peer.name()));
+                fields.put("targetAgent", StringUtils.fromString(peer.targetAgent()));
+                fields.put("meta", peer.meta());
+                peers.append(ValueCreator.createRecordValue(
+                        ModuleUtils.getModule(), PEER_SPEC_RECORD, fields));
+            }
+
             Map<String, Object> spec = new HashMap<>();
             spec.put("systemPrompt", decl.systemPrompt());
             spec.put("maxIter", decl.maxIter());
@@ -378,6 +405,7 @@ public final class DurableAgentNative {
             spec.put("tools", tools);
             spec.put("events", events);
             spec.put("humanTasks", humanTasks);
+            spec.put("peers", peers);
             return ValueCreator.createRecordValue(ModuleUtils.getModule(), RUN_SPEC_RECORD, spec);
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -547,6 +575,57 @@ public final class DurableAgentNative {
             return readEventReplyInWorkflow(instanceId.getValue(), token.getValue(), typedesc, true);
         }
         return readEventResultFromClient(env, instanceId.getValue(), token.getValue(), typedesc, true);
+    }
+
+    /**
+     * Registers a peer-agent declaration of a durable agent.
+     *
+     * @param agentName   the declaring agent's name
+     * @param peerName    the tool name advertised to the model
+     * @param targetAgent the peer agent's name (its module-level variable name)
+     * @param meta        declaration metadata (description, wait, callbackChannel, gating)
+     * @return true on success, or a BError when the agent is unknown
+     */
+    public static Object registerDurableAgentPeer(BString agentName, BString peerName, BString targetAgent,
+                                                  Object meta) {
+        AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName.getValue());
+        if (decl == null) {
+            return unknownAgentError(agentName.getValue());
+        }
+        decl.peers().put(peerName.getValue(),
+                new PeerDecl(peerName.getValue(), targetAgent.getValue(), meta));
+        return true;
+    }
+
+    /**
+     * Starts a peer durable agent as a true Temporal child workflow of the calling agent.
+     * Used by the ReAct loop's peer-agent dispatch.
+     *
+     * @param targetAgent the peer agent's name
+     * @param query       the delegated task or question
+     * @return the child instance ID as a Ballerina string, or a BError
+     */
+    public static Object runPeerAgent(BString targetAgent, BString query) {
+        String target = targetAgent.getValue();
+        if (AGENT_DECL_REGISTRY.get(target) == null) {
+            return unknownAgentError(target);
+        }
+        Map<String, Object> runInput = new HashMap<>();
+        runInput.put("agentName", target);
+        runInput.put("query", query.getValue());
+        runInput.put("input", null);
+        return WorkflowContextNative.startDurableAgentChild(target, runInput);
+    }
+
+    /**
+     * Durably waits for a peer agent child started by {@code runPeerAgent} and returns its final
+     * response as anydata.
+     *
+     * @param childId the peer child instance ID
+     * @return the peer's final response, or a BError
+     */
+    public static Object waitForPeerAgentResult(BString childId) {
+        return WorkflowContextNative.readDurableAgentChildRaw(childId.getValue(), true);
     }
 
     // -----------------------------------------------------------------------------------------

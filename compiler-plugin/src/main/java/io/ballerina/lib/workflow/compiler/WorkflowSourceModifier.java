@@ -380,6 +380,14 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                     .append("\", ").append(task.metaSource() != null ? task.metaSource() : "()")
                     .append(");").append(System.lineSeparator());
         }
+        for (DurableAgentDeclInfo.PeerDecl peer : decl.peers()) {
+            body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                    .append(":registerDurableAgentPeer(").append(agentNameLiteral)
+                    .append(", \"").append(escapeBallerinaStringLiteral(peer.name()))
+                    .append("\", \"").append(escapeBallerinaStringLiteral(peer.targetAgent()))
+                    .append("\", ").append(peer.metaSource() != null ? peer.metaSource() : "()")
+                    .append(");").append(System.lineSeparator());
+        }
         // Register the shared object-model runner as this agent's workflow (the agent's own
         // workflow type + its activity map incl. the built-in agent activities), and bind the
         // agent's identity to the object so its driver methods (run/getResult/...) resolve it.

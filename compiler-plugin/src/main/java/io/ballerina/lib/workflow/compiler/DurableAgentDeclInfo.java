@@ -35,6 +35,7 @@ import java.util.List;
  * @param aiToolRefs         source refs of {@code @ai:AgentTool} function tools
  * @param events             declared event channels
  * @param humanTasks         declared human tasks
+ * @param peers              declared peer agents (model-driven delegation)
  *
  * @since 0.9.0
  */
@@ -46,13 +47,15 @@ public record DurableAgentDeclInfo(String agentName,
                                    List<ActivityDecl> activities,
                                    List<String> aiToolRefs,
                                    List<EventDecl> events,
-                                   List<HumanTaskDecl> humanTasks) {
+                                   List<HumanTaskDecl> humanTasks,
+                                   List<PeerDecl> peers) {
 
     public DurableAgentDeclInfo {
         activities = List.copyOf(activities);
         aiToolRefs = List.copyOf(aiToolRefs);
         events = List.copyOf(events);
         humanTasks = List.copyOf(humanTasks);
+        peers = List.copyOf(peers);
     }
 
     /**
@@ -85,4 +88,14 @@ public record DurableAgentDeclInfo(String agentName,
      *                   or null when there is none
      */
     public record HumanTaskDecl(String name, String metaSource) { }
+
+    /**
+     * A declared peer agent, advertised to the model as a delegable tool.
+     *
+     * @param name        the tool name advertised to the model
+     * @param targetAgent the peer's agent name (its module-level variable name)
+     * @param metaSource  source text of a json metadata mapping (description, wait,
+     *                    callbackChannel, gating), or null when there is none
+     */
+    public record PeerDecl(String name, String targetAgent, String metaSource) { }
 }

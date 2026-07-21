@@ -196,6 +196,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         List<String> aiToolRefs = new ArrayList<>();
         List<DurableAgentDeclInfo.EventDecl> events = new ArrayList<>();
         List<DurableAgentDeclInfo.HumanTaskDecl> humanTasks = new ArrayList<>();
+        List<DurableAgentDeclInfo.PeerDecl> peers = new ArrayList<>();
 
         Set<String> seenNames = new HashSet<>();
 
@@ -214,7 +215,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 case "tools" -> extractTools(value, aiToolRefs, seenNames, agentName, context);
                 case "events" -> extractEvents(value, events, seenNames, agentName, context);
                 case "humanTasks" -> extractHumanTasks(value, humanTasks, seenNames, agentName, context);
-                case "peers" -> extractPeerNames(value, seenNames, agentName, context);
+                case "peers" -> extractPeers(value, peers, seenNames, agentName, context);
                 default -> {
                     // systemPrompt/model handled above; unknown fields are the type checker's concern
                 }
@@ -222,7 +223,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         }
 
         return new DurableAgentDeclInfo(agentName, workflowPrefix, modelSource, systemPromptSource,
-                maxIterSource, activities, aiToolRefs, events, humanTasks);
+                maxIterSource, activities, aiToolRefs, events, humanTasks, peers);
     }
 
     private void extractActivities(ExpressionNode value, List<DurableAgentDeclInfo.ActivityDecl> activities,
@@ -379,8 +380,9 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         }
     }
 
-    private void extractPeerNames(ExpressionNode value, Set<String> seenNames, String agentName,
-                                  SyntaxNodeAnalysisContext context) {
+    private void extractPeers(ExpressionNode value, List<DurableAgentDeclInfo.PeerDecl> peers,
+                              Set<String> seenNames, String agentName,
+                              SyntaxNodeAnalysisContext context) {
         if (!(value instanceof ListConstructorExpressionNode list)) {
             return;
         }
@@ -388,15 +390,33 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             if (!(member instanceof MappingConstructorExpressionNode peerMapping)) {
                 continue;
             }
+            String name = null;
+            String targetAgent = null;
+            StringBuilder meta = new StringBuilder();
+            Location nameLocation = peerMapping.location();
             for (MappingFieldNode peerField : peerMapping.fields()) {
-                if (peerField instanceof SpecificFieldNode sf && sf.valueExpr().isPresent()
-                        && "name".equals(sf.fieldName().toSourceCode().strip())) {
-                    String name = stringLiteralValue(sf.valueExpr().get());
-                    if (name != null) {
-                        checkUnique(name, seenNames, agentName, sf.valueExpr().get().location(), context);
+                if (!(peerField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
+                    continue;
+                }
+                String key = sf.fieldName().toSourceCode().strip();
+                ExpressionNode fieldValue = sf.valueExpr().get();
+                switch (key) {
+                    case "name" -> {
+                        name = stringLiteralValue(fieldValue);
+                        nameLocation = fieldValue.location();
                     }
+                    // The peer's identity is its module-level variable name — the same name
+                    // its own declaration registers under.
+                    case "agent" -> targetAgent = simpleName(fieldValue.toSourceCode().strip());
+                    default -> appendMetaField(meta, key, fieldValue.toSourceCode().strip());
                 }
             }
+            if (name == null || targetAgent == null) {
+                continue;
+            }
+            checkUnique(name, seenNames, agentName, nameLocation, context);
+            peers.add(new DurableAgentDeclInfo.PeerDecl(name, targetAgent,
+                    meta.isEmpty() ? null : "{" + meta + "}"));
         }
     }
 

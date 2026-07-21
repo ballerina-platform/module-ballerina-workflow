@@ -249,7 +249,7 @@ isolated function dispatchAgentTool(handle ctxHandle, string agentName, AgentFun
     // Gated capability: create a PRE_RUN review activity and suspend durably until a
     // human decides. On reject the model is told why (so it re-plans); on proceed the
     // tool runs, optionally with arguments the reviewer edited.
-    if requiresApproval && (kind == "activity" || kind == "aitool") {
+    if requiresApproval && (kind == "activity" || kind == "aitool" || kind.startsWith("peeragent:")) {
         string decisionJson = check awaitAgentToolReview(ctxHandle, call.name, args.toJson().toJsonString());
         json decision = check decisionJson.fromJsonString();
         string action = check decision.action;
@@ -287,6 +287,9 @@ isolated function dispatchAgentTool(handle ctxHandle, string agentName, AgentFun
     } else if kind.startsWith("event:") {
         // Suspends the agent durably until the data event arrives.
         result = awaitAgentEvent(ctxHandle, kind.substring(6));
+    } else if kind.startsWith("peeragent:") {
+        // Delegates to a peer durable agent running as a true Temporal child workflow.
+        result = dispatchPeerAgent(ctxHandle, kind.substring(10), args);
     } else {
         return string `Error: unsupported tool kind '${kind}' for tool '${call.name}'`;
     }
@@ -488,6 +491,9 @@ public isolated function runDurableAgentObject(AgentContext ctx, map<anydata> ru
     foreach DurableAgentHumanTaskSpec taskSpec in spec.humanTasks {
         check registerDeclaredHumanTask(ctx, taskSpec);
     }
+    foreach DurableAgentPeerSpec peerSpec in spec.peers {
+        check registerDeclaredPeer(ctx, peerSpec);
+    }
 
     ai:SystemPrompt systemPrompt = check spec.systemPrompt.cloneWithType();
 
@@ -540,6 +546,41 @@ isolated function registerDeclaredActivity(AgentContext ctx, DurableAgentActivit
         (), requiresApproval, retryPolicy);
 }
 
+# Registers one declared peer agent on the runner's context, converting the
+# declaration metadata (description, wait, callbackChannel, gating).
+#
+# + ctx - The agent context
+# + peerSpec - The declared peer
+# + return - An error when registration fails
+isolated function registerDeclaredPeer(AgentContext ctx, DurableAgentPeerSpec peerSpec)
+        returns error? {
+    string? description = ();
+    boolean waitForReply = true;
+    string? callbackChannel = ();
+    boolean requiresApproval = false;
+    json meta = peerSpec.meta;
+    if meta is map<json> {
+        json descriptionJson = meta["description"];
+        if descriptionJson is string {
+            description = descriptionJson;
+        }
+        json waitJson = meta["wait"];
+        if waitJson is boolean {
+            waitForReply = waitJson;
+        }
+        json channelJson = meta["callbackChannel"];
+        if channelJson is string {
+            callbackChannel = channelJson;
+        }
+        json approvalJson = meta["requiresApproval"];
+        if approvalJson is boolean {
+            requiresApproval = approvalJson;
+        }
+    }
+    check ctx.registerPeerAgent(peerSpec.name, peerSpec.targetAgent, description,
+        waitForReply, callbackChannel, requiresApproval);
+}
+
 # Registers one declared human task capability on the runner's context.
 #
 # + ctx - The agent context
@@ -569,3 +610,48 @@ isolated function registerDeclaredHumanTask(AgentContext ctx, DurableAgentHumanT
     }
     check ctx.registerHumanTask(taskSpec.name, roles, anydata, title, description, ());
 }
+
+# Dispatches one model-requested peer delegation. The peer runs as a true Temporal
+# child workflow of this agent. Synchronous peers ("peeragent:<target>") suspend
+# durably for the peer's final response; asynchronous peers
+# ("peeragent:<target>#<channel>") return immediately with a correlation id, and a
+# detached wait injects the peer's reply into the declared callback event channel.
+#
+# + ctxHandle - The agent context handle
+# + peerSpec - The encoded target ("<target>" or "<target>#<callbackChannel>")
+# + args - The model's tool-call arguments ({query})
+# + return - The peer's response (sync), a dispatch acknowledgement (async), or an error
+isolated function dispatchPeerAgent(handle ctxHandle, string peerSpec, map<anydata> args)
+        returns anydata|error {
+    int? separator = peerSpec.indexOf("#");
+    string targetAgent = separator is int ? peerSpec.substring(0, separator) : peerSpec;
+    string? callbackChannel = separator is int ? peerSpec.substring(separator + 1) : ();
+
+    anydata queryArg = args["query"];
+    string query = queryArg is string ? queryArg : args.toJson().toJsonString();
+
+    string childId = check runPeerAgent(targetAgent, query);
+    if callbackChannel is () {
+        return waitForPeerAgentResult(childId);
+    }
+    check armPeerAgentCallback(ctxHandle, childId, callbackChannel);
+    return "Delegated to peer agent '" + targetAgent + "' asynchronously (correlation id "
+        + childId + "). Its reply will arrive as the '" + callbackChannel
+        + "' event - wait for that event when you need the result.";
+}
+
+isolated function runPeerAgent(string targetAgent, string query) returns string|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "runPeerAgent"
+} external;
+
+isolated function waitForPeerAgentResult(string childId) returns anydata|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "waitForPeerAgentResult"
+} external;
+
+isolated function armPeerAgentCallback(handle ctxHandle, string childId, string callbackChannel)
+        returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
+    name: "armPeerAgentCallback"
+} external;

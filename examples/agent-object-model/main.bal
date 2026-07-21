@@ -151,6 +151,78 @@ final workflow:DurableAgent orderAgent = check new ({
     maxIter: 8
 });
 
+// Planner mock: first turn delegates to the inventory peer; once the peer's
+// answer is visible as a tool result, the planner summarizes it.
+isolated client class PlannerModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        if messages !is ai:ChatMessage[] {
+            return {role: ai:ASSISTANT, content: "unexpected single message"};
+        }
+        foreach ai:ChatMessage message in messages {
+            if message is ai:ChatFunctionMessage && message.name == "askInventory" {
+                string? content = message.content;
+                return {
+                    role: ai:ASSISTANT,
+                    content: "Planner summary -> peer said: " + (content ?: "no reply")
+                };
+            }
+        }
+        return {
+            role: ai:ASSISTANT,
+            toolCalls: [{name: "askInventory", arguments: {"query": "Are laptops in stock?"}, id: "call-1"}]
+        };
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final PlannerModelProvider plannerModel = new;
+
+// Model-driven agent-to-agent delegation: the peer is advertised to the planner's
+// model as a tool; each delegation runs the peer agent as a true child workflow.
+final workflow:DurableAgent plannerAgent = check new ({
+    systemPrompt: {role: "Planner", instructions: "Plan orders by consulting peer agents."},
+    model: plannerModel,
+    peers: [
+        {agent: orderAgent, name: "askInventory", description: "Asks the inventory agent about stock."}
+    ],
+    maxIter: 6
+});
+
+type OrchestratorInput record {|
+    string id;
+|};
+
+# A plain workflow that composes durable agents: the sub-agents run as true
+# Temporal child workflows (lifecycle tied to this parent), results are read with
+# durable suspends, and conversational turns ride the reply-signal path — the
+# only deterministic way to correlate an event turn from inside a workflow.
+#
+# + ctx - The workflow context
+# + input - The orchestration input
+# + return - The combined sub-agent results, or an error
+@workflow:Workflow
+function orchestratorWorkflow(workflow:Context ctx, OrchestratorInput input) returns string|error {
+    // Imperative sub-agent: run() inside a workflow starts a child agent.
+    string subAgentId = check orderAgent.run("Check whether laptops are in stock.");
+    string subResult = check orderAgent.waitForResult(subAgentId);
+
+    // Conversational sub-agent driven turn-by-turn via reply signals.
+    string chatChildId = check chatAgent.run("Hello from the orchestrator");
+    string turnToken = check chatAgent.sendEvent(chatChildId, "chat", "One turn from a workflow");
+    string turnReply = check chatAgent.waitForEventResult(chatChildId, turnToken);
+
+    return subResult + " | " + turnReply;
+}
+
 public function main() returns error? {
     io:println("agent-object-model: module init completed — the durable agent declaration "
             + "was registered with the workflow runtime.");
@@ -189,4 +261,18 @@ public function main() returns error? {
     string secondTurn = check chatAgent.sendEvent(chatId, "chat", "Tell me a joke.");
     string secondReply = check chatAgent.waitForEventResult(chatId, secondTurn);
     io:println("chatAgent.waitForEventResult() [turn 2] -> " + secondReply);
+
+    // --- Agent-to-agent: a workflow orchestrating sub-agents as true children ---
+
+    string orchestrationId = check workflow:run(orchestratorWorkflow, {id: "orch-1"});
+    io:println("orchestratorWorkflow started -> " + orchestrationId);
+    anydata orchestrated = check workflow:getWorkflowResult(orchestrationId, 120);
+    io:println("orchestratorWorkflow result -> " + orchestrated.toString());
+
+    // --- Model-driven peer delegation: the planner's model calls the peer tool ---
+
+    string plannerId = check plannerAgent.run("Plan a laptop order.");
+    io:println("plannerAgent.run() -> instance " + plannerId);
+    string plannerResult = check plannerAgent.waitForResult(plannerId);
+    io:println("plannerAgent.waitForResult() -> " + plannerResult);
 }

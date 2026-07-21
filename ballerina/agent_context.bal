@@ -268,6 +268,30 @@ public client class AgentContext {
         return result;
     }
 
+    # Registers a peer durable agent as a delegable tool of this agent. Used by the
+    # object-model runner; not part of the public API surface.
+    #
+    # + name - The tool name advertised to the model
+    # + targetAgent - The peer agent's name (its module-level variable name)
+    # + description - What the peer does, for the model
+    # + waitForReply - `true`: the delegation blocks durably for the peer's result;
+    #                  `false`: the peer runs async and replies on `callbackChannel`
+    # + callbackChannel - Declared event channel receiving the async peer's reply
+    # + requiresApproval - Whether a PRE_RUN review gates each delegation
+    # + return - An error when the registration is invalid
+    isolated function registerPeerAgent(string name, string targetAgent, string? description = (),
+            boolean waitForReply = true, string? callbackChannel = (),
+            boolean requiresApproval = false) returns error? {
+        if !waitForReply && callbackChannel is () {
+            return error("Peer agent '" + name + "' declares wait = false but no callbackChannel");
+        }
+        string kindSpec = "peeragent:" + targetAgent
+            + (waitForReply ? "" : "#" + (callbackChannel ?: ""));
+        string desc = description ?: ("Delegates a task or question to the peer durable agent '"
+            + targetAgent + "'.");
+        return recordPeerTool(self.nativeContext, name, desc, kindSpec, requiresApproval);
+    }
+
     # Returns the agent's recorded final response for this run ("" when none was
     # recorded). Used by the object-model runner to surface the response as the
     # workflow result; not part of the public API surface.
@@ -363,6 +387,12 @@ isolated function setAgentModelProvider(handle nativeContext, object {} model) =
 isolated function registerAgentModelForContext(handle nativeContext) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "registerModel"
+} external;
+
+isolated function recordPeerTool(handle nativeContext, string name, string description,
+        string kindSpec, boolean requiresApproval) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.AgentContextNative",
+    name: "recordPeerTool"
 } external;
 
 isolated function readAgentContextFinalResponse(handle contextHandle) returns string = @java:Method {

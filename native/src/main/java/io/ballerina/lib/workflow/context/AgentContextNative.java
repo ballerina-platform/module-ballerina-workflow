@@ -128,6 +128,17 @@ public final class AgentContextNative {
             return finalResponse;
         }
 
+        /**
+         * Injects a data event into this agent's own signal queues, as if the event had
+         * arrived externally. Used by the asynchronous peer-callback path.
+         *
+         * @param eventName the event channel name
+         * @param data      the payload
+         */
+        public void recordEvent(String eventName, Object data) {
+            signalWrapper.recordSignal(eventName, data);
+        }
+
         public boolean isClosing() {
             return closing;
         }
@@ -341,6 +352,41 @@ public final class AgentContextNative {
      * @param parametersJson the tool's parameter JSON schema (nullable; derived from the function when absent)
      * @return null on success, or a Ballerina error
      */
+    /**
+     * Records a peer-agent tool on the agent context: advertised to the model with a generic
+     * {@code {query: string}} schema; the kind spec encodes the dispatch target
+     * ({@code peeragent:<targetAgent>} or {@code peeragent:<targetAgent>#<callbackChannel>}
+     * for asynchronous delegation).
+     *
+     * @param handle           the AgentContextInfo handle
+     * @param name             the tool name advertised to the model
+     * @param description      the tool description advertised to the model
+     * @param kindSpec         the encoded peeragent kind
+     * @param requiresApproval whether a PRE_RUN review gates each delegation
+     * @return null on success, or a BError
+     */
+    public static Object recordPeerTool(BHandle handle, BString name, BString description, BString kindSpec,
+                                        boolean requiresApproval) {
+        try {
+            AgentContextInfo info = (AgentContextInfo) handle.getValue();
+            Map<String, Object> schema = new LinkedHashMap<>();
+            schema.put("type", "object");
+            Map<String, Object> properties = new LinkedHashMap<>();
+            Map<String, Object> query = new LinkedHashMap<>();
+            query.put("type", "string");
+            query.put("description", "The task or question to delegate to the peer agent");
+            properties.put("query", query);
+            schema.put("properties", properties);
+            schema.put("required", java.util.List.of("query"));
+            info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, kindSpec.getValue(),
+                    null, null, requiresApproval, null));
+            return null;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to register peer agent tool: " + e.getMessage()));
+        }
+    }
+
     public static Object recordAiTool(BHandle handle, BFunctionPointer fn, BString name, BString description,
                                       Object parametersJson, boolean requiresApproval) {
         try {

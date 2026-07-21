@@ -307,6 +307,12 @@ type DurableAgentHumanTaskSpec record {|
     json meta = ();
 |};
 
+type DurableAgentPeerSpec record {|
+    string name;
+    string targetAgent;
+    json meta = ();
+|};
+
 type DurableAgentRunSpec record {|
     json systemPrompt;
     int maxIter;
@@ -315,6 +321,7 @@ type DurableAgentRunSpec record {|
     DurableAgentToolSpec[] tools = [];
     DurableAgentEventSpec[] events = [];
     DurableAgentHumanTaskSpec[] humanTasks = [];
+    DurableAgentPeerSpec[] peers = [];
 |};
 
 isolated function getDurableAgentRunSpec(string agentName) returns DurableAgentRunSpec|error = @java:Method {

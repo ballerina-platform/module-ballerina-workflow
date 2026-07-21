@@ -1145,6 +1145,77 @@ public final class WorkflowContextNative {
     }
 
     /**
+     * Reads a durable-agent child's result without type binding: the raw final response converted
+     * to its natural Ballerina value. Used by the peer-agent dispatch, whose contract is anydata.
+     *
+     * @param childId  the child instance ID
+     * @param blocking whether to durably wait for completion
+     * @return the child's result as a Ballerina value, an AgentBusyError (non-blocking), or a BError
+     */
+    public static Object readDurableAgentChildRaw(String childId, boolean blocking) {
+        try {
+            if (blocking) {
+                WorkflowWorkerNative.awaitWhileSuspended();
+            }
+            ChildWorkflowHandle handle = CHILD_HANDLES.get().get(childId);
+            if (handle == null) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Unknown peer agent instance '" + childId + "'"));
+            }
+            if (!blocking && !handle.result().isCompleted()) {
+                return io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative
+                        .createAgentBusyError(childId);
+            }
+            try {
+                return TypesUtil.convertJavaToBallerinaType(handle.result().get());
+            } catch (ChildWorkflowFailure e) {
+                return ErrorCreator.createError(StringUtils.fromString(childFailureMessage(e)));
+            }
+        } catch (io.temporal.worker.NonDeterministicException e) {
+            throw e;
+        } catch (io.temporal.failure.TemporalFailure e) {
+            throw e;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to read the result of peer agent instance '" + childId + "': " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Arms the asynchronous peer-callback path: a detached workflow task awaits the peer child's
+     * result and injects it into the calling agent's own callback event channel, as if the event
+     * had arrived externally. The model consumes it later with the channel's wait tool.
+     *
+     * @param ctxHandle       the calling agent's AgentContextInfo handle
+     * @param childId         the peer child instance ID (also the correlation id in the payload)
+     * @param callbackChannel the declared event channel that receives the peer's reply
+     * @return null on success, or a BError when the child handle is unknown
+     */
+    public static Object armPeerAgentCallback(io.ballerina.runtime.api.values.BHandle ctxHandle,
+                                              BString childId, BString callbackChannel) {
+        ChildWorkflowHandle handle = CHILD_HANDLES.get().get(childId.getValue());
+        if (handle == null) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Unknown peer agent instance '" + childId.getValue() + "'"));
+        }
+        io.ballerina.lib.workflow.context.AgentContextNative.AgentContextInfo info =
+                (io.ballerina.lib.workflow.context.AgentContextNative.AgentContextInfo) ctxHandle.getValue();
+        String channel = callbackChannel.getValue();
+        String correlationId = childId.getValue();
+        io.temporal.workflow.Async.procedure(() -> {
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("correlationId", correlationId);
+            try {
+                payload.put("response", handle.result().get());
+            } catch (Exception e) {
+                payload.put("error", e.getMessage() != null ? e.getMessage() : "the peer agent failed");
+            }
+            info.recordEvent(channel, payload);
+        });
+        return null;
+    }
+
+    /**
      * Builds an untyped child workflow stub for the given @Workflow function name. The child workflow type uses
      * the same user-workflow prefix as {@code workflow:run}, so it resolves against the worker's process
      * registry. REQUEST_CANCEL (not TERMINATE) ties the child's lifecycle to the parent while letting it end as

@@ -128,7 +128,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         if (hasAnnotation(functionNode, semanticModel, WorkflowConstants.AGENT_ANNOTATION)) {
             if (hasAnnotation(functionNode, semanticModel, WorkflowConstants.PROCESS_ANNOTATION)
                     || hasAnnotation(functionNode, semanticModel, WorkflowConstants.ACTIVITY_ANNOTATION)) {
-                reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_138);
+                reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_142);
             }
             validateAgentFunction(functionNode, context);
             // The agent body configures the durable loop; direct AI calls there are equally
@@ -149,7 +149,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
     }
 
     /**
-     * Node visitor that reports {@link WorkflowDiagnostic#WORKFLOW_144} for direct AI model-provider remote calls
+     * Node visitor that reports {@link WorkflowDiagnostic#WORKFLOW_148} for direct AI model-provider remote calls
      * and AI agent method calls.
      */
     private static class DirectAiCallValidator extends NodeVisitor {
@@ -211,9 +211,9 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
 
         private void reportAiCall(io.ballerina.tools.diagnostics.Location location) {
             DiagnosticInfo diagnosticInfo = new DiagnosticInfo(
-                    WorkflowDiagnostic.WORKFLOW_144.getCode(),
-                    WorkflowDiagnostic.WORKFLOW_144.getMessage(),
-                    WorkflowDiagnostic.WORKFLOW_144.getSeverity());
+                    WorkflowDiagnostic.WORKFLOW_148.getCode(),
+                    WorkflowDiagnostic.WORKFLOW_148.getMessage(),
+                    WorkflowDiagnostic.WORKFLOW_148.getSeverity());
             context.reportDiagnostic(DiagnosticFactory.createDiagnostic(diagnosticInfo, location));
         }
     }
@@ -1049,11 +1049,11 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
     /**
      * Validates a {@code @workflow:DurableAgent} function.
      * <ul>
-     *   <li>WORKFLOW_141 — must have a body (not {@code = external})</li>
-     *   <li>WORKFLOW_142 — signature must be {@code (workflow:AgentContext ctx, InputRecord input,
+     *   <li>WORKFLOW_145 — must have a body (not {@code = external})</li>
+     *   <li>WORKFLOW_146 — signature must be {@code (workflow:AgentContext ctx, InputRecord input,
      *       EventsRecord events?)} with input a subtype of anydata</li>
      *   <li>WORKFLOW_132 — the events parameter, when present, must be an all-{@code future} record</li>
-     *   <li>WORKFLOW_143 — return type must be {@code error?}</li>
+     *   <li>WORKFLOW_147 — return type must be {@code error?}</li>
      * </ul>
      */
     private void validateAgentFunction(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context) {
@@ -1061,7 +1061,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
 
         // Body must not be external.
         if (functionNode.functionBody().kind() == SyntaxKind.EXTERNAL_FUNCTION_BODY) {
-            reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_141);
+            reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_145);
         }
 
         Optional<Symbol> symbolOpt = semanticModel.symbol(functionNode);
@@ -1074,11 +1074,11 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         // declared imperatively via ctx.registerUpdateEvents, not in the signature.
         List<ParameterSymbol> params = typeSymbol.params().orElse(List.of());
         if (params.size() == 3 && isValidEventsType(params.get(2).typeDescriptor())) {
-            reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_139);
+            reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_143);
         } else if (params.size() != 2
                 || !isAgentContextType(params.get(0).typeDescriptor())
                 || !WorkflowPluginUtils.isSubtypeOfAnydata(params.get(1).typeDescriptor(), semanticModel)) {
-            reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_142);
+            reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_146);
         }
 
         // buildAndRun() is terminal: it must be the last top-level statement of the body.
@@ -1087,7 +1087,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         // Return type: error? (no value).
         Optional<TypeSymbol> returnTypeOpt = typeSymbol.returnTypeDescriptor();
         if (returnTypeOpt.isPresent() && !isErrorOptional(returnTypeOpt.get(), semanticModel)) {
-            reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_143);
+            reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_147);
         }
     }
 
@@ -1110,9 +1110,9 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                 String methodName = methodCall.methodName().toSourceCode().trim();
                 if (WorkflowConstants.BUILD_AND_RUN_METHOD.equals(methodName)
                         && !isLastTopLevelStatement(methodCall, bodyBlock, lastStatement)) {
-                    DiagnosticInfo info = new DiagnosticInfo(WorkflowDiagnostic.WORKFLOW_140.getCode(),
-                            WorkflowDiagnostic.WORKFLOW_140.getMessage(),
-                            WorkflowDiagnostic.WORKFLOW_140.getSeverity());
+                    DiagnosticInfo info = new DiagnosticInfo(WorkflowDiagnostic.WORKFLOW_144.getCode(),
+                            WorkflowDiagnostic.WORKFLOW_144.getMessage(),
+                            WorkflowDiagnostic.WORKFLOW_144.getSeverity());
                     context.reportDiagnostic(DiagnosticFactory.createDiagnostic(info, methodCall.location()));
                 }
                 methodCall.arguments().forEach(arg -> arg.accept(this));

@@ -178,27 +178,42 @@ public enum WorkflowDiagnostic {
                     + "contextually expected type '%s' of this 'callActivity' call",
             DiagnosticSeverity.ERROR),
     WORKFLOW_138("WORKFLOW_138",
-            "@DurableAgent cannot be combined with @Workflow or @Activity on the same function",
+            "'workflow:%s' cannot be called inside a workflow function. Use 'ctx->%s' instead, "
+                    + "which starts a true child workflow whose lifecycle is tied to this workflow",
             DiagnosticSeverity.ERROR),
     WORKFLOW_139("WORKFLOW_139",
+            "The first argument of '%s' must be a function with the @Workflow annotation",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_140("WORKFLOW_140",
+            "Input type mismatch in '%s': workflow function '%s' expects input of type "
+                    + "'%s', but found '%s'",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_141("WORKFLOW_141",
+            "Workflow function '%s' does not declare an input parameter, but an input argument "
+                    + "was provided to '%s'",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_142("WORKFLOW_142",
+            "@DurableAgent cannot be combined with @Workflow or @Activity on the same function",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_143("WORKFLOW_143",
             "a @DurableAgent function must not declare an events parameter; declare update channels "
                     + "imperatively via ctx.registerUpdateEvents(name, requestType) instead",
             DiagnosticSeverity.ERROR),
-    WORKFLOW_140("WORKFLOW_140",
+    WORKFLOW_144("WORKFLOW_144",
             "buildAndRun() must be the last statement of the @DurableAgent function and cannot appear "
                     + "inside conditional or loop blocks",
             DiagnosticSeverity.ERROR),
-    WORKFLOW_141("WORKFLOW_141",
+    WORKFLOW_145("WORKFLOW_145",
             "@DurableAgent function must have a function body; an external body is not allowed",
             DiagnosticSeverity.ERROR),
-    WORKFLOW_142("WORKFLOW_142",
+    WORKFLOW_146("WORKFLOW_146",
             "@DurableAgent function signature must be '(workflow:AgentContext ctx, InputType input)' "
                     + "where the input is a subtype of 'anydata'",
             DiagnosticSeverity.ERROR),
-    WORKFLOW_143("WORKFLOW_143",
+    WORKFLOW_147("WORKFLOW_147",
             "@DurableAgent function return type must be 'error?'",
             DiagnosticSeverity.ERROR),
-    WORKFLOW_144("WORKFLOW_144",
+    WORKFLOW_148("WORKFLOW_148",
             "Direct AI calls are not allowed inside a workflow: LLM responses are non-deterministic and "
                     + "break workflow replay. Wrap the call in an @workflow:Activity function and invoke it "
                     + "via 'ctx->callActivity' (or register it on the agent via 'registerActivity')",

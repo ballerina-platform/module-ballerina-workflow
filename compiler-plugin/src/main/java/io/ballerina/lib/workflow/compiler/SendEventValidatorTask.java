@@ -76,6 +76,15 @@ public class SendEventValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCo
             return;
         }
 
+        // workflow:sendData is a client verb; inside a workflow body data must be sent with
+        // ctx->sendDataToChildWorkflow, which uses a deterministic external-workflow signal.
+        if (WorkflowPluginUtils.isInsideWorkflowFunction(callNode, semanticModel)) {
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_138, callNode.location(),
+                    WorkflowConstants.SEND_DATA_FUNCTION,
+                    WorkflowConstants.SEND_DATA_TO_CHILD_WORKFLOW_METHOD);
+            return;
+        }
+
         SeparatedNodeList<FunctionArgumentNode> arguments = callNode.arguments();
         ExpressionNode workflowFuncExpr = WorkflowFunctionCallUtils.getArgumentExpression(
                 arguments, 0, WORKFLOW_PARAM_NAME);

@@ -670,6 +670,52 @@ public class WorkflowCompilerPluginTest {
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_130);
     }
 
+    // ===== child workflow composition validation =====
+
+    @Test(groups = "valid")
+    public void testValidChildWorkflowComposition() {
+        // runChildWorkflow/getChildWorkflowResult/waitForChildWorkflow/callWorkflow/
+        // sendDataToChildWorkflow used correctly inside a workflow produce no diagnostics.
+        String packagePath = "valid_child_workflow_composition";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for valid child-workflow composition. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidRunInsideWorkflow() {
+        // workflow:run and workflow:sendData are client verbs; inside a workflow body the
+        // child-workflow context methods must be used instead.
+        String packagePath = "invalid_run_inside_workflow";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_138");
+        Assert.assertEquals(diags.size(), 2,
+                "Expected 2 WORKFLOW_138 errors (workflow:run and workflow:sendData inside a "
+                        + "workflow body). Errors: " + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidChildWorkflowTarget() {
+        String packagePath = "invalid_child_workflow_target";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_139");
+        Assert.assertEquals(diags.size(), 2,
+                "Expected 2 WORKFLOW_139 errors (runChildWorkflow with a plain function and "
+                        + "callWorkflow with an @Activity function). Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidChildWorkflowInput() {
+        String packagePath = "invalid_child_workflow_input";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation errors for child workflow input mismatches");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_140);
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_141);
+    }
+
     // ===== workflow:sendData event name and data type validation =====
 
     @Test(groups = "invalid")
@@ -866,13 +912,13 @@ public class WorkflowCompilerPluginTest {
     @Test(groups = "invalid")
     public void testInvalidAgentExternalBody() {
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_agent_external_body");
-        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_141);
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_145);
     }
 
     @Test(groups = "invalid")
     public void testInvalidAgentNoContext() {
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_agent_no_context");
-        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_142);
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_146);
     }
 
     @Test(groups = "invalid")
@@ -880,7 +926,7 @@ public class WorkflowCompilerPluginTest {
         // Declaring an events parameter on a @DurableAgent is forbidden: update
         // channels are registered imperatively via ctx.registerUpdateEvents.
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_agent_events_shape");
-        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_139);
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_143);
     }
 
     @Test(groups = "invalid")
@@ -888,7 +934,7 @@ public class WorkflowCompilerPluginTest {
         // Direct model-provider/agent calls inside a @Workflow body are non-deterministic;
         // the same calls wrapped in @workflow:Activity functions are valid.
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_direct_ai_call");
-        List<Diagnostic> aiCallDiags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_144");
+        List<Diagnostic> aiCallDiags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_148");
         Assert.assertEquals(aiCallDiags.size(), 2,
                 "Expected exactly the two direct AI calls inside the workflow to be flagged. Got: "
                         + getDiagnosticMessages(diagnosticResult));
@@ -897,13 +943,13 @@ public class WorkflowCompilerPluginTest {
     @Test(groups = "invalid")
     public void testInvalidAgentReturnType() {
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_agent_return_type");
-        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_143);
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_147);
     }
 
     @Test(groups = "invalid")
     public void testInvalidAgentWithWorkflowAnnotation() {
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_agent_with_workflow_annotation");
-        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_138);
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_142);
     }
 
     // ===== sendData validation test cases =====

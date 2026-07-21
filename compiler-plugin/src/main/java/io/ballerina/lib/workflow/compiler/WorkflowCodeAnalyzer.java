@@ -47,5 +47,10 @@ public class WorkflowCodeAnalyzer extends CodeAnalyzer {
         // Add syntax node analysis task for function calls to validate workflow:run usage
         // and to reject direct calls to @Workflow functions
         analysisContext.addSyntaxNodeAnalysisTask(new RunCallValidatorTask(), SyntaxKind.FUNCTION_CALL);
+
+        // Add syntax node analysis task for remote method calls to validate the child-workflow
+        // composition methods (ctx->runChildWorkflow / ctx->callWorkflow)
+        analysisContext.addSyntaxNodeAnalysisTask(new ChildWorkflowCallValidatorTask(),
+                SyntaxKind.REMOTE_METHOD_CALL_ACTION);
     }
 }

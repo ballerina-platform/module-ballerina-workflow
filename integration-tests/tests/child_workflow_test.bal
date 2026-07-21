@@ -15,10 +15,11 @@
 // under the License.
 
 // ================================================================================
-// CHILD WORKFLOW / IMPLICIT ACTIVITY - TESTS
+// CHILD WORKFLOW COMPOSITION - TESTS
 // ================================================================================
-// Tests that workflow:run and workflow:sendData work as implicit activities
-// when called from inside a @Workflow function.
+// Tests the child-workflow composition methods on the workflow context:
+// runChildWorkflow, getChildWorkflowResult (WorkflowBusyError), waitForChildWorkflow,
+// callWorkflow, and sendDataToChildWorkflow.
 
 import ballerina/test;
 import ballerina/workflow;
@@ -27,15 +28,59 @@ import ballerina/workflow;
     groups: ["integration"]
 }
 function testParentStartsChildWorkflow() returns error? {
-    // Parent workflow starts a child workflow using workflow:run() inside workflow.
-    // The call is routed through an implicit activity for determinism.
+    // Parent starts a true child workflow with ctx->runChildWorkflow and durably
+    // waits for its result with ctx->waitForChildWorkflow.
     string testId = uniqueId("parent-child");
     ParentInput input = {id: testId};
     string workflowId = check workflow:run(parentWorkflow, input);
 
     anydata result = check workflow:getWorkflowResult(workflowId, 60);
-    test:assertTrue((<string>result).startsWith("Parent received: child-processed:"),
+    test:assertEquals(<string>result, "Parent received: child-processed:from-parent-" + testId,
         "Parent result should contain the child workflow's processed output");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testFanOutFanIn() returns error? {
+    // Parent fans out two children and gathers both results.
+    string testId = uniqueId("fan-out");
+    ParentInput input = {id: testId};
+    string workflowId = check workflow:run(fanOutParentWorkflow, input);
+
+    anydata result = check workflow:getWorkflowResult(workflowId, 60);
+    test:assertEquals(<string>result,
+        "child-processed:first-" + testId + "|child-processed:second-" + testId,
+        "Fan-out parent should combine both child results in start order");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testGetChildWorkflowResultBusy() returns error? {
+    // A non-blocking read right after starting a slow child observes
+    // workflow:WorkflowBusyError; the durable wait then returns the result.
+    string testId = uniqueId("busy-check");
+    ParentInput input = {id: testId};
+    string workflowId = check workflow:run(busyCheckParentWorkflow, input);
+
+    anydata result = check workflow:getWorkflowResult(workflowId, 60);
+    test:assertEquals(<string>result, "busy:slow-child-processed:" + testId,
+        "The early non-blocking read should observe the busy state");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testCallWorkflow() returns error? {
+    // ctx->callWorkflow starts the child and waits for its result in one call.
+    string testId = uniqueId("call-workflow");
+    ParentInput input = {id: testId};
+    string workflowId = check workflow:run(callWorkflowParentWorkflow, input);
+
+    anydata result = check workflow:getWorkflowResult(workflowId, 60);
+    test:assertEquals(<string>result, "child-processed:called-" + testId,
+        "callWorkflow should return the child's result");
 }
 
 @test:Config {
@@ -47,8 +92,8 @@ function testSenderSendsDataToReceiver() returns error? {
     ReceiverInput receiverInput = {id: testId};
     string receiverWorkflowId = check workflow:run(receiverWorkflow, receiverInput);
 
-    // Now start the sender workflow which sends data to the receiver
-    // from inside the workflow using workflow:sendData() as an implicit activity
+    // Now start the sender workflow which sends data to the receiver from inside
+    // the workflow using ctx->sendDataToChildWorkflow (an external-workflow signal)
     SenderInput senderInput = {targetWorkflowId: receiverWorkflowId};
     string senderWorkflowId = check workflow:run(senderWorkflow, senderInput);
 

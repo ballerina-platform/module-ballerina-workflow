@@ -176,6 +176,21 @@ public enum WorkflowDiagnostic {
     WORKFLOW_137("WORKFLOW_137",
             "The activity function '%s' returns '%s', which is incompatible with the "
                     + "contextually expected type '%s' of this 'callActivity' call",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_138("WORKFLOW_138",
+            "'workflow:%s' cannot be called inside a workflow function. Use 'ctx->%s' instead, "
+                    + "which starts a true child workflow whose lifecycle is tied to this workflow",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_139("WORKFLOW_139",
+            "The first argument of '%s' must be a function with the @Workflow annotation",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_140("WORKFLOW_140",
+            "Input type mismatch in '%s': workflow function '%s' expects input of type "
+                    + "'%s', but found '%s'",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_141("WORKFLOW_141",
+            "Workflow function '%s' does not declare an input parameter, but an input argument "
+                    + "was provided to '%s'",
             DiagnosticSeverity.ERROR);
 
     private final String code;

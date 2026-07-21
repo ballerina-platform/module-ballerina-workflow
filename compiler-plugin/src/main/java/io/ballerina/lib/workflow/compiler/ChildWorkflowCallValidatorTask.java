@@ -21,13 +21,11 @@ package io.ballerina.lib.workflow.compiler;
 import io.ballerina.compiler.api.SemanticModel;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.ParameterSymbol;
-import io.ballerina.compiler.api.symbols.Symbol;
-import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.api.symbols.TypeDescKind;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
-import io.ballerina.compiler.syntax.tree.FunctionCallExpressionNode;
+import io.ballerina.compiler.syntax.tree.RemoteMethodCallActionNode;
 import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.projects.plugins.AnalysisTask;
@@ -39,98 +37,71 @@ import io.ballerina.tools.diagnostics.Location;
 import java.util.Optional;
 
 /**
- * Validation task for {@code workflow:run} calls and direct @Workflow function calls.
+ * Validation task for the child-workflow composition methods on {@code workflow:Context}:
+ * {@code ctx->runChildWorkflow(childWorkflow, input)} and
+ * {@code ctx->callWorkflow(childWorkflow, input)}.
  * <p>
  * Validates:
  * <ul>
- *   <li>The first argument of {@code workflow:run} is a function with the @Workflow annotation</li>
- *   <li>The {@code input} argument type matches the workflow function's declared input
- *       parameter type (any {@code anydata} subtype, including {@code string}, records, etc.)</li>
- *   <li>No input argument is passed when the workflow function declares no input parameter</li>
- *   <li>@Workflow functions are never invoked directly as normal functions — workflows must be
- *       started via {@code workflow:run}</li>
+ *   <li>The first argument is a function with the @Workflow annotation ({@code WORKFLOW_139})</li>
+ *   <li>The {@code input} argument type matches the child workflow function's declared input
+ *       parameter type ({@code WORKFLOW_140})</li>
+ *   <li>No input argument is passed when the child workflow function declares no input
+ *       parameter ({@code WORKFLOW_141})</li>
  * </ul>
  *
- * @since 0.6.0
+ * @since 0.9.0
  */
-public class RunCallValidatorTask implements AnalysisTask<SyntaxNodeAnalysisContext> {
+public class ChildWorkflowCallValidatorTask implements AnalysisTask<SyntaxNodeAnalysisContext> {
 
+    private static final String CHILD_WORKFLOW_PARAM_NAME = "childWorkflow";
     private static final String INPUT_PARAM_NAME = "input";
-    private static final String PROCESS_FUNCTION_PARAM_NAME = "processFunction";
 
     @Override
     public void perform(SyntaxNodeAnalysisContext context) {
-        if (!(context.node() instanceof FunctionCallExpressionNode callNode)) {
+        if (!(context.node() instanceof RemoteMethodCallActionNode callNode)) {
+            return;
+        }
+        String methodName = callNode.methodName().name().text();
+        if (!WorkflowConstants.RUN_CHILD_WORKFLOW_METHOD.equals(methodName)
+                && !WorkflowConstants.CALL_WORKFLOW_METHOD.equals(methodName)) {
             return;
         }
         SemanticModel semanticModel = context.semanticModel();
-
-        // Disallow direct calls to @Workflow functions from anywhere.
-        // Workflows can only be started through workflow:run.
-        if (isDirectWorkflowFunctionCall(callNode, semanticModel)) {
-            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_136,
-                    callNode.functionName().location());
+        Optional<TypeSymbol> receiverType = semanticModel.typeOf(callNode.expression());
+        if (receiverType.isEmpty() || !WorkflowPluginUtils.isContextType(receiverType.get())) {
             return;
         }
-
-        if (!WorkflowFunctionCallUtils.isWorkflowModuleFunctionCall(callNode, semanticModel,
-                WorkflowConstants.RUN_FUNCTION)) {
-            return;
-        }
-
-        // workflow:run is a client verb; inside a workflow body a child must be started
-        // with ctx->runChildWorkflow so it becomes a true Temporal child workflow.
-        if (WorkflowPluginUtils.isInsideWorkflowFunction(callNode, semanticModel)) {
-            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_138, callNode.location(),
-                    WorkflowConstants.RUN_FUNCTION, WorkflowConstants.RUN_CHILD_WORKFLOW_METHOD);
-            return;
-        }
-        validateRunCall(callNode, context);
+        validateChildWorkflowCall(callNode, methodName, context);
     }
 
     /**
-     * Returns {@code true} when the call directly invokes a function carrying the @Workflow annotation.
-     * For example, {@code orderProcess("input")}.
+     * Validates a {@code ctx->runChildWorkflow(childWorkflow, input)} or
+     * {@code ctx->callWorkflow(childWorkflow, input)} call.
      */
-    private boolean isDirectWorkflowFunctionCall(FunctionCallExpressionNode callNode,
-                                                 SemanticModel semanticModel) {
-        Optional<Symbol> symbolOpt = semanticModel.symbol(callNode);
-        if (symbolOpt.isEmpty() || symbolOpt.get().kind() != SymbolKind.FUNCTION) {
-            return false;
-        }
-        FunctionSymbol functionSymbol = (FunctionSymbol) symbolOpt.get();
-        return WorkflowPluginUtils.hasWorkflowAnnotation(functionSymbol,
-                WorkflowConstants.PROCESS_ANNOTATION);
-    }
-
-    /**
-     * Validates a {@code workflow:run(processFunction, input)} call.
-     */
-    private void validateRunCall(FunctionCallExpressionNode callNode, SyntaxNodeAnalysisContext context) {
+    private void validateChildWorkflowCall(RemoteMethodCallActionNode callNode, String methodName,
+                                           SyntaxNodeAnalysisContext context) {
         SemanticModel semanticModel = context.semanticModel();
         SeparatedNodeList<FunctionArgumentNode> arguments = callNode.arguments();
         if (arguments.isEmpty()) {
             return;
         }
 
-        // Resolve the processFunction argument (first positional or named).
-        ExpressionNode processFuncExpr = WorkflowFunctionCallUtils.getArgumentExpression(
-                arguments, 0, PROCESS_FUNCTION_PARAM_NAME);
-        if (processFuncExpr == null) {
+        ExpressionNode childFuncExpr = WorkflowFunctionCallUtils.getArgumentExpression(
+                arguments, 0, CHILD_WORKFLOW_PARAM_NAME);
+        if (childFuncExpr == null) {
             return;
         }
 
         Optional<FunctionSymbol> workflowFuncOpt =
-                WorkflowPluginUtils.getWorkflowFunctionSymbol(processFuncExpr, semanticModel);
+                WorkflowPluginUtils.getWorkflowFunctionSymbol(childFuncExpr, semanticModel);
         if (workflowFuncOpt.isEmpty()) {
-            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_130, processFuncExpr.location(),
-                    WorkflowConstants.RUN_FUNCTION);
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_139, childFuncExpr.location(), methodName);
             return;
         }
         FunctionSymbol workflowFunc = workflowFuncOpt.get();
         String workflowName = workflowFunc.getName().orElse("");
 
-        // Resolve the input argument (second positional or named `input`).
         ExpressionNode inputExpr = WorkflowFunctionCallUtils.getArgumentExpression(
                 arguments, 1, INPUT_PARAM_NAME);
         if (inputExpr == null) {
@@ -149,8 +120,8 @@ public class RunCallValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCont
             // Explicit nil means "no input" and is fine for a no-input workflow;
             // any other value has nowhere to go.
             if (!isNilInput) {
-                reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_132, inputExpr.location(),
-                        workflowName);
+                reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_141, inputExpr.location(),
+                        workflowName, methodName);
             }
             return;
         }
@@ -158,15 +129,14 @@ public class RunCallValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCont
 
         // Constructor expressions (mapping/list/table) are typed by their contextually
         // expected type (`anydata` here), so their static type cannot be compared with
-        // subtypeOf without false positives. Validate the shape only: the declared input
-        // type must be able to accept a value of the constructor's kind. Member-level
+        // subtypeOf without false positives. Validate the shape only; member-level
         // conversion is handled by the runtime.
         if (inputExpr.kind() == SyntaxKind.MAPPING_CONSTRUCTOR
                 || inputExpr.kind() == SyntaxKind.LIST_CONSTRUCTOR
                 || inputExpr.kind() == SyntaxKind.TABLE_CONSTRUCTOR) {
             if (!WorkflowPluginUtils.canAcceptConstructorExpression(declaredInputType, inputExpr.kind())) {
-                reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_131, inputExpr.location(),
-                        workflowName, declaredInputType.signature(),
+                reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_140, inputExpr.location(),
+                        methodName, workflowName, declaredInputType.signature(),
                         WorkflowPluginUtils.describeConstructorExpression(inputExpr.kind()));
             }
             return;
@@ -175,8 +145,8 @@ public class RunCallValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCont
         // Explicit nil is only valid when the declared input type is nilable; the
         // subtype check below covers that (nil is a subtype of any nilable type).
         if (!inputType.subtypeOf(declaredInputType)) {
-            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_131, inputExpr.location(),
-                    workflowName, declaredInputType.signature(), inputType.signature());
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_140, inputExpr.location(),
+                    methodName, workflowName, declaredInputType.signature(), inputType.signature());
         }
     }
 

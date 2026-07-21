@@ -85,7 +85,7 @@ public isolated function registerConnection(string name, object {} connection)
 #
 # This is an **internal** function used by the compiler plugin. It is emitted at
 # module init time for every function reference found in a
-# `ctx.registerTools([...])` call inside a `@workflow:DurableAgent` body. The
+# `ctx.registerTools([...])` call inside a `@workflow:DurableAgentFunction` body. The
 # tool's advertised name is derived from its `@ai:AgentTool` annotation (falling
 # back to the function name), matching the runtime normalization performed by
 # `AgentContext.registerTools`.
@@ -120,4 +120,66 @@ isolated function registerAgentToolNative(string agentName, string toolName, fun
 public isolated function registerHumanTask(string taskName) returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
     name: "registerHumanTask"
+} external;
+
+// ---------------------------------------------------------------------------
+// Object-model durable agent declaration registration
+// ---------------------------------------------------------------------------
+// These are **internal** functions emitted by the compiler plugin at module init
+// for every module-level `final workflow:DurableAgent x = new ({...})`
+// declaration. The plugin decomposes the constructor config into these calls;
+// the runner workflow resolves the declaration by agent name at run time.
+
+# Registers a durable agent declaration: identity, model, system prompt, and
+# reasoning limit. Must be called before the capability registrations below.
+#
+# + agentName - The agent's name (its module-level variable name)
+# + model - The agent's `ai:ModelProvider`
+# + systemPrompt - The agent's system prompt (`role` + `instructions`)
+# + maxIter - Per-turn reasoning iteration cap
+# + return - `true` on success, or an error for a duplicate agent name
+public isolated function registerDurableAgentDecl(string agentName, ai:ModelProvider model,
+        json systemPrompt, int maxIter) returns boolean|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "registerDurableAgentDecl"
+} external;
+
+# Registers an activity capability declaration of a durable agent.
+#
+# + agentName - The agent's name
+# + toolName - The tool name advertised to the model
+# + activity - The `@workflow:Activity` function
+# + meta - Declaration metadata (description, gating, retry policy)
+# + return - `true` on success, or an error for an unknown agent
+public isolated function registerDurableAgentActivity(string agentName, string toolName,
+        function activity, json meta = ()) returns boolean|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "registerDurableAgentActivity"
+} external;
+
+# Registers an event channel declaration of a durable agent.
+#
+# + agentName - The agent's name
+# + eventName - The channel name
+# + request - The channel's request type
+# + response - The channel's response type; `()` for one-way channels
+# + cardinality - `"SINGLE_EVENT"` or `"MULTI_EVENT"`
+# + return - `true` on success, or an error for an unknown agent
+public isolated function registerDurableAgentEvent(string agentName, string eventName,
+        typedesc<anydata> request, typedesc<anydata>? response = (),
+        string cardinality = "SINGLE_EVENT") returns boolean|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "registerDurableAgentEvent"
+} external;
+
+# Registers a human task capability declaration of a durable agent.
+#
+# + agentName - The agent's name
+# + taskName - The task name
+# + meta - Declaration metadata (roles, title, description)
+# + return - `true` on success, or an error for an unknown agent
+public isolated function registerDurableAgentHumanTask(string agentName, string taskName,
+        json meta = ()) returns boolean|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "registerDurableAgentHumanTask"
 } external;

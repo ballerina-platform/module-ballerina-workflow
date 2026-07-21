@@ -56,7 +56,7 @@ public class WorkflowCodeModifier extends CodeModifier {
                 SyntaxKind.FUNCTION_DEFINITION
         );
 
-        // Register the analysis task that collects @DurableAgent function information
+        // Register the analysis task that collects @DurableAgentFunction function information
         // (tools, model provider, parameter names) for agent codegen.
         modifierContext.addSyntaxNodeAnalysisTask(
                 new AgentFunctionAnalysisTask(this.userData),
@@ -68,6 +68,18 @@ public class WorkflowCodeModifier extends CodeModifier {
         modifierContext.addSyntaxNodeAnalysisTask(
                 new ConnectionVariableAnalysisTask(this.userData),
                 SyntaxKind.MODULE_VAR_DECL
+        );
+
+        // Register the analysis task that collects object-model durable agent declarations
+        // (final workflow:DurableAgent x = new ({...})) for module-init registration codegen,
+        // and rejects local/non-final declarations.
+        modifierContext.addSyntaxNodeAnalysisTask(
+                new DurableAgentDeclAnalysisTask(this.userData),
+                SyntaxKind.MODULE_VAR_DECL
+        );
+        modifierContext.addSyntaxNodeAnalysisTask(
+                new DurableAgentDeclAnalysisTask(this.userData),
+                SyntaxKind.LOCAL_VAR_DECL
         );
 
         // Register the source modifier task that performs the actual transformations

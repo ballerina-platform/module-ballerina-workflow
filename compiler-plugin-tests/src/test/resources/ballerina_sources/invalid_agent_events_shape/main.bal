@@ -26,6 +26,6 @@ function checkInventory(string item) returns boolean|error {
     return item.length() > 0;
 }
 
-@workflow:DurableAgent
+@workflow:DurableAgentFunction
 function orderAgent(workflow:AgentContext ctx, OrderRequest req, record {| future<string> chat; |} events) returns error? {
 }

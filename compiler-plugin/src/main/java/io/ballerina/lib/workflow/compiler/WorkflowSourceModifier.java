@@ -81,13 +81,16 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         List<Map.Entry<DocumentId, WorkflowModifierContext>> entries = new ArrayList<>();
         List<ProcessFunctionInfo> allProcessInfos = new ArrayList<>();
         List<AgentFunctionInfo> allAgentInfos = new ArrayList<>();
+        List<DurableAgentDeclInfo> allDurableAgentDecls = new ArrayList<>();
 
         for (Map.Entry<DocumentId, WorkflowModifierContext> entry : this.modifierContextMap.entrySet()) {
             if (!entry.getValue().getProcessInfoMap().isEmpty()
-                    || !entry.getValue().getAgentInfoMap().isEmpty()) {
+                    || !entry.getValue().getAgentInfoMap().isEmpty()
+                    || !entry.getValue().getDurableAgentDeclMap().isEmpty()) {
                 entries.add(entry);
                 allProcessInfos.addAll(entry.getValue().getProcessInfoMap().values());
                 allAgentInfos.addAll(entry.getValue().getAgentInfoMap().values());
+                allDurableAgentDecls.addAll(entry.getValue().getDurableAgentDeclMap().values());
             }
         }
 
@@ -158,6 +161,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             ModulePartNode updatedRootNode = transformDocument(
                     rootNode, workflowContext, isLastDocument ? allProcessInfos : null,
                     isLastDocument ? allAgentInfos : Collections.emptyList(),
+                    isLastDocument ? allDurableAgentDecls : Collections.emptyList(),
                     isLastDocument
                         ? collectConnectionNames(documentId.moduleId().toString(), isTestDocument)
                         : Collections.emptyList());
@@ -184,6 +188,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
     private ModulePartNode transformDocument(ModulePartNode rootNode, WorkflowModifierContext workflowContext,
                                              List<ProcessFunctionInfo> allProcessInfos,
                                              List<AgentFunctionInfo> allAgentInfos,
+                                             List<DurableAgentDeclInfo> allDurableAgentDecls,
                                              List<String> connectionNames) {
         NodeList<ModuleMemberDeclarationNode> members = rootNode.members();
         List<ModuleMemberDeclarationNode> newMembers = new ArrayList<>();
@@ -194,8 +199,9 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         // When allProcessInfos is non-null this is the target document:
         // generate a private function that registers every workflow and
         // starts the runtime, plus a module-level variable that calls it.
-        if (allProcessInfos != null && !allProcessInfos.isEmpty()) {
-            newMembers.add(createRegisterAndStartFunction(allProcessInfos, allAgentInfos, connectionNames));
+        if (allProcessInfos != null && (!allProcessInfos.isEmpty() || !allDurableAgentDecls.isEmpty())) {
+            newMembers.add(createRegisterAndStartFunction(allProcessInfos, allAgentInfos,
+                    allDurableAgentDecls, connectionNames));
             newMembers.add(createRegisterAndStartInvocation());
         }
 
@@ -248,7 +254,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
      */
     private ModuleMemberDeclarationNode createRegisterAndStartFunction(
             List<ProcessFunctionInfo> allProcessInfos, List<AgentFunctionInfo> allAgentInfos,
-            List<String> connectionNames) {
+            List<DurableAgentDeclInfo> allDurableAgentDecls, List<String> connectionNames) {
         StringBuilder body = new StringBuilder();
         body.append("function __registerWorkflowsAndStart() returns boolean|error {");
         body.append(System.lineSeparator());
@@ -299,6 +305,12 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             }
         }
 
+        // Register object-model durable agent declarations: identity + model first, then the
+        // capability declarations, re-referencing the same symbols the user's config named.
+        for (DurableAgentDeclInfo decl : allDurableAgentDecls) {
+            appendDurableAgentRegistration(body, decl);
+        }
+
         body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
                 .append(":startWorkflowRuntime();").append(System.lineSeparator());
         body.append("    return true;").append(System.lineSeparator());
@@ -316,6 +328,58 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
     private ModuleVariableDeclarationNode createRegisterAndStartInvocation() {
         return (ModuleVariableDeclarationNode) NodeParser.parseModuleMemberDeclaration(
                 "boolean _ = check __registerWorkflowsAndStart();");
+    }
+
+    /**
+     * Appends the registration statements for one object-model durable agent declaration.
+     * <pre>
+     * _ = check wfInternal:registerDurableAgentDecl("orderAgent", wso2Model, {...}, 16);
+     * _ = check wfInternal:registerDurableAgentActivity("orderAgent", "checkStock", checkStock, {...});
+     * _ = check wfInternal:registerAgentTool("orderAgent", priceLookup);
+     * _ = check wfInternal:registerDurableAgentEvent("orderAgent", "chat", string, string, "MULTI_EVENT");
+     * _ = check wfInternal:registerDurableAgentHumanTask("orderAgent", "approval", {...});
+     * </pre>
+     */
+    private void appendDurableAgentRegistration(StringBuilder body, DurableAgentDeclInfo decl) {
+        if (decl.modelSource() == null || decl.systemPromptSource() == null) {
+            return;
+        }
+        String agentNameLiteral = "\"" + escapeBallerinaStringLiteral(decl.agentName()) + "\"";
+        body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                .append(":registerDurableAgentDecl(").append(agentNameLiteral)
+                .append(", ").append(decl.modelSource())
+                .append(", ").append(decl.systemPromptSource())
+                .append(", ").append(decl.maxIterSource() != null ? decl.maxIterSource() : "16")
+                .append(");").append(System.lineSeparator());
+        for (DurableAgentDeclInfo.ActivityDecl activity : decl.activities()) {
+            body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                    .append(":registerDurableAgentActivity(").append(agentNameLiteral)
+                    .append(", \"").append(escapeBallerinaStringLiteral(activity.toolName()))
+                    .append("\", ").append(activity.functionRefSource())
+                    .append(", ").append(activity.metaSource() != null ? activity.metaSource() : "()")
+                    .append(");").append(System.lineSeparator());
+        }
+        for (String toolRef : decl.aiToolRefs()) {
+            body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                    .append(":registerAgentTool(").append(agentNameLiteral)
+                    .append(", ").append(toolRef).append(");").append(System.lineSeparator());
+        }
+        for (DurableAgentDeclInfo.EventDecl event : decl.events()) {
+            body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                    .append(":registerDurableAgentEvent(").append(agentNameLiteral)
+                    .append(", \"").append(escapeBallerinaStringLiteral(event.name()))
+                    .append("\", ").append(event.requestTypeSource())
+                    .append(", ").append(event.responseTypeSource() != null ? event.responseTypeSource() : "()")
+                    .append(", \"").append(event.cardinality()).append("\");")
+                    .append(System.lineSeparator());
+        }
+        for (DurableAgentDeclInfo.HumanTaskDecl task : decl.humanTasks()) {
+            body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                    .append(":registerDurableAgentHumanTask(").append(agentNameLiteral)
+                    .append(", \"").append(escapeBallerinaStringLiteral(task.name()))
+                    .append("\", ").append(task.metaSource() != null ? task.metaSource() : "()")
+                    .append(");").append(System.lineSeparator());
+        }
     }
 
     private String buildActivitiesArg(ProcessFunctionInfo processInfo) {

@@ -14,17 +14,23 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import ballerina/ai;
 import ballerina/workflow;
 
-type OrderRequest record {|
-    string id;
-    string request;
-|};
+final ai:Wso2ModelProvider chatModel = check new ("http://localhost:9099", "test-token");
 
 @workflow:Activity
 function checkInventory(string item) returns boolean|error {
     return item.length() > 0;
 }
 
-@workflow:DurableAgentFunction
-function orderAgent(workflow:AgentContext ctx, OrderRequest req) returns error? = external;
+public function setupAgent() returns error? {
+    // ERROR: a workflow:DurableAgent cannot be declared inside a function body —
+    // it has no stable module-scoped identity for module-init registration.
+    final workflow:DurableAgent orderAgent = check new ({
+        systemPrompt: {role: "Order assistant", instructions: "Help the user."},
+        model: chatModel,
+        activities: [checkInventory]
+    });
+    _ = orderAgent;
+}

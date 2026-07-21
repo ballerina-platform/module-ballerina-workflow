@@ -83,7 +83,7 @@ public enum AgentInteractionPattern {
 }
 
 # The execution context for a durable AI agent. Injected as the first parameter
-# of a `@workflow:DurableAgent` function.
+# of a `@workflow:DurableAgentFunction` function.
 #
 # Unlike `workflow:Context`, this context deliberately does not expose
 # `callActivity`, `sleep`, or `awaitHumanTask`. Instead, capabilities are
@@ -241,7 +241,7 @@ public client class AgentContext {
     # Builds the agent from everything registered on this context (activities, AI
     # tools, human tasks, update channels) and hands control to the durable ReAct
     # loop. This is a terminal operation: it must be the last statement of the
-    # `@workflow:DurableAgent` function (enforced by the compiler plugin). Every
+    # `@workflow:DurableAgentFunction` function (enforced by the compiler plugin). Every
     # LLM call and tool call is executed durably, so the agent survives worker
     # crashes and can suspend for days waiting on human tasks or updates.
     #

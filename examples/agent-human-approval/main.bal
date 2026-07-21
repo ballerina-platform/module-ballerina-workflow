@@ -49,7 +49,7 @@ function checkInventory(string item) returns string|error {
 // human task — a durable sub-workflow — and suspends (for hours or days,
 // without holding a thread) until a manager completes it, then reports the
 // decision back to the user.
-@workflow:DurableAgent
+@workflow:DurableAgentFunction
 function orderAgent(workflow:AgentContext durableAgentContext, OrderRequest req) returns error? {
     check durableAgentContext.registerActivity(checkInventory);
     check durableAgentContext.registerUpdateEvents("chat", string);

@@ -78,7 +78,7 @@ final AgentMockModelProvider agentMockModel = new;
 # + ctx - The agent context
 # + input - The agent input
 # + return - An error if the agent fails
-@workflow:DurableAgent
+@workflow:DurableAgentFunction
 function stockCheckAgent(workflow:AgentContext ctx, AgentStockInput input) returns error? {
     check ctx.registerActivity(agentCheckStock);
     check ctx.buildAndRun(input.request,
@@ -91,7 +91,7 @@ function stockCheckAgent(workflow:AgentContext ctx, AgentStockInput input) retur
 # + ctx - The agent context
 # + input - The agent input
 # + return - An error if the agent fails
-@workflow:DurableAgent
+@workflow:DurableAgentFunction
 function chatDrivenStockAgent(workflow:AgentContext ctx, AgentStockInput input) returns error? {
     check ctx.registerActivity(agentCheckStock);
     check ctx.registerUpdateEvents("chat", string);
@@ -151,7 +151,7 @@ final ConversationMockModelProvider conversationMockModel = new;
 # + ctx - The agent context
 # + input - The agent input
 # + return - An error if the agent fails
-@workflow:DurableAgent
+@workflow:DurableAgentFunction
 function conversationalStockAgent(workflow:AgentContext ctx, AgentStockInput input) returns error? {
     check ctx.registerUpdateEvents("chat", string);
     check ctx.buildAndRun(input.request,

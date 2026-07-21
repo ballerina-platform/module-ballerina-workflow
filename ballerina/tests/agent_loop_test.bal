@@ -140,7 +140,7 @@ type AgentOrderInput record {|
     string request;
 |};
 
-@DurableAgent
+@DurableAgentFunction
 function stockAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerActivity(checkStock);
     check ctx.buildAndRun(input.request,
@@ -148,7 +148,7 @@ function stockAgent(AgentContext ctx, AgentOrderInput input) returns error? {
             model = mockAgentModel);
 }
 
-@DurableAgent
+@DurableAgentFunction
 function chatStockAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerActivity(checkStock);
     check ctx.registerUpdateEvents("chat", string);
@@ -157,7 +157,7 @@ function chatStockAgent(AgentContext ctx, AgentOrderInput input) returns error? 
             model = mockAgentModel);
 }
 
-@DurableAgent
+@DurableAgentFunction
 function loopingAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerActivity(checkStock);
     check ctx.buildAndRun(input.request,
@@ -166,7 +166,7 @@ function loopingAgent(AgentContext ctx, AgentOrderInput input) returns error? {
             maxIter = 2);
 }
 
-@DurableAgent
+@DurableAgentFunction
 function unknownToolAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerActivity(checkStock);
     check ctx.buildAndRun(input.request,
@@ -207,7 +207,7 @@ isolated client class AiToolMockModelProvider {
 
 final AiToolMockModelProvider aiToolAgentModel = new;
 
-@DurableAgent
+@DurableAgentFunction
 function priceAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerAgentTool(lookupPrice);
     check ctx.buildAndRun(input.request,
@@ -251,7 +251,7 @@ isolated client class HumanTaskMockModelProvider {
 
 final HumanTaskMockModelProvider humanTaskAgentModel = new;
 
-@DurableAgent
+@DurableAgentFunction
 function approvalAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerActivity(checkStock);
     check ctx.registerHumanTask("approveOrder", "APPROVER", ApprovalResult,
@@ -289,7 +289,7 @@ isolated client class EventToolMockModelProvider {
 
 final EventToolMockModelProvider eventToolAgentModel = new;
 
-@DurableAgent
+@DurableAgentFunction
 function eventWaitingAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerActivity(checkStock);
     check ctx.registerUpdateEvents("approval", string);
@@ -350,7 +350,7 @@ isolated client class ConversationMockModelProvider {
 
 final ConversationMockModelProvider conversationAgentModel = new;
 
-@DurableAgent
+@DurableAgentFunction
 function conversationAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerUpdateEvents("chat", string);
     check ctx.buildAndRun(input.request,
@@ -359,7 +359,7 @@ function conversationAgent(AgentContext ctx, AgentOrderInput input) returns erro
 }
 
 // MULTI_EVENT without the mandatory eventTimeout — must fail at registration.
-@DurableAgent
+@DurableAgentFunction
 function unsafeConversationAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerUpdateEvents("chat", string);
     check ctx.buildAndRun(input.request,
@@ -368,7 +368,7 @@ function unsafeConversationAgent(AgentContext ctx, AgentOrderInput input) return
 }
 
 // Model that always waits — exercises the maxEventWaits safety cap.
-@DurableAgent
+@DurableAgentFunction
 function cappedConversationAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerUpdateEvents("chat", string);
     check ctx.buildAndRun(input.request,
@@ -405,7 +405,7 @@ isolated client class TimeoutMockModelProvider {
 
 final TimeoutMockModelProvider timeoutAgentModel = new;
 
-@DurableAgent
+@DurableAgentFunction
 function timeoutAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerUpdateEvents("approval", string);
     check ctx.buildAndRun(input.request,
@@ -446,7 +446,7 @@ isolated client class ContextToolMockModelProvider {
 
 final ContextToolMockModelProvider contextToolAgentModel = new;
 
-@DurableAgent
+@DurableAgentFunction
 function contextToolAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerAgentTool(contextualLookup);
     check ctx.buildAndRun(input.request,
@@ -464,7 +464,7 @@ isolated class TestToolKit {
     }
 }
 
-@DurableAgent
+@DurableAgentFunction
 function toolkitAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerAgentTool(new TestToolKit());
     check ctx.buildAndRun(input.request,
@@ -500,7 +500,7 @@ isolated client class SlowApprovalMockModelProvider {
 
 final SlowApprovalMockModelProvider slowApprovalAgentModel = new;
 
-@DurableAgent
+@DurableAgentFunction
 function humanTaskTimeoutAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerHumanTask("slowApproval", "APPROVER", ApprovalResult, timeout = {seconds: 2});
     check ctx.buildAndRun(input.request,
@@ -548,7 +548,7 @@ isolated client class AutoChatMockModelProvider {
 
 final AutoChatMockModelProvider autoChatModel = new;
 
-@DurableAgent
+@DurableAgentFunction
 function autoConversationAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerUpdateEvents("chat", string);
     check ctx.buildAndRun(systemPrompt = {role: "", instructions: "Answer briefly."}, model = autoChatModel, interaction = MULTI_EVENT, eventTimeout = {seconds: 60});
@@ -556,7 +556,7 @@ function autoConversationAgent(AgentContext ctx, AgentOrderInput input) returns 
 
 // Same behaviour with a short timeout: with no follow-up message the
 // conversation must end gracefully on its own.
-@DurableAgent
+@DurableAgentFunction
 function shortTimeoutConversationAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerUpdateEvents("chat", string);
     check ctx.buildAndRun(systemPrompt = {role: "", instructions: "Answer briefly."}, model = autoChatModel, interaction = MULTI_EVENT, eventTimeout = {seconds: 2});
@@ -586,7 +586,7 @@ isolated client class EndAfterFirstChatMockModelProvider {
 
 final EndAfterFirstChatMockModelProvider endAfterFirstChatModel = new;
 
-@DurableAgent
+@DurableAgentFunction
 function endingAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerUpdateEvents("chat", string);
     check ctx.buildAndRun(systemPrompt = {role: "", instructions: "End after the first reply."},

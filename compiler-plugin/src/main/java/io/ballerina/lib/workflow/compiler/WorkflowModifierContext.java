@@ -33,10 +33,30 @@ public class WorkflowModifierContext {
 
     private final Map<String, ProcessFunctionInfo> processInfoMap;
     private final Map<String, AgentFunctionInfo> agentInfoMap;
+    private final Map<String, DurableAgentDeclInfo> durableAgentDeclMap;
 
     public WorkflowModifierContext() {
         this.processInfoMap = new HashMap<>();
         this.agentInfoMap = new HashMap<>();
+        this.durableAgentDeclMap = new HashMap<>();
+    }
+
+    /**
+     * Adds an object-model durable agent declaration to the context.
+     *
+     * @param declInfo the durable agent declaration information
+     */
+    public void addDurableAgentDecl(DurableAgentDeclInfo declInfo) {
+        this.durableAgentDeclMap.put(declInfo.agentName(), declInfo);
+    }
+
+    /**
+     * Gets all object-model durable agent declarations stored in this context.
+     *
+     * @return map of agent name to DurableAgentDeclInfo
+     */
+    public Map<String, DurableAgentDeclInfo> getDurableAgentDeclMap() {
+        return durableAgentDeclMap;
     }
 
     /**

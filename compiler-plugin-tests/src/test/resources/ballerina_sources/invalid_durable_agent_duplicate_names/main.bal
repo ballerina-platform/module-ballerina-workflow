@@ -14,17 +14,26 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import ballerina/ai;
 import ballerina/workflow;
 
-type OrderRequest record {|
-    string id;
-    string request;
-|};
+final ai:Wso2ModelProvider chatModel = check new ("http://localhost:9099", "test-token");
 
 @workflow:Activity
-function checkInventory(string item) returns boolean|error {
+function approval(string item) returns boolean|error {
     return item.length() > 0;
 }
 
-@workflow:DurableAgentFunction
-function orderAgent(workflow:AgentContext ctx, OrderRequest req) returns error? = external;
+// ERROR: "approval" is used by an activity, an event, and a human task — capabilities
+// share one flat namespace per agent.
+final workflow:DurableAgent orderAgent = check new ({
+    systemPrompt: {role: "Order assistant", instructions: "Help the user."},
+    model: chatModel,
+    activities: [approval],
+    events: [
+        {name: "approval", request: string}
+    ],
+    humanTasks: [
+        {name: "approval", roles: "manager"}
+    ]
+});

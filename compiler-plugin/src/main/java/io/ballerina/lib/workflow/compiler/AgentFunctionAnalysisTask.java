@@ -39,7 +39,8 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Analysis task (code-modifier phase) that detects {@code @workflow:DurableAgent} functions and collects the tool
+ * Analysis task (code-modifier phase) that detects {@code @workflow:DurableAgentFunction} functions and
+ * collects the tool
  * references from {@code ctx.registerActivity(...)} call sites and {@code ctx.runDurableAgent(..., tools = [...])}
  * arguments, so the
  * source modifier can register those tools (plus the built-in {@code llmChat}/{@code generate} activities) at module
@@ -68,7 +69,7 @@ public class AgentFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnalysi
 
         String workflowPrefix = extractWorkflowPrefix(agentAnnotation);
         if (workflowPrefix == null) {
-            // Unqualified @DurableAgent — only inside the workflow package itself, no codegen there.
+            // Unqualified @DurableAgentFunction — only inside the workflow package itself, no codegen there.
             return;
         }
 

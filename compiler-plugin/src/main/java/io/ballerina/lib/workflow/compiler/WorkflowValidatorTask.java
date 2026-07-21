@@ -124,7 +124,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
             validateActivityFunction(functionNode, context);
         }
 
-        // Check if function has @DurableAgent annotation
+        // Check if function has @DurableAgentFunction annotation
         if (hasAnnotation(functionNode, semanticModel, WorkflowConstants.AGENT_ANNOTATION)) {
             if (hasAnnotation(functionNode, semanticModel, WorkflowConstants.PROCESS_ANNOTATION)
                     || hasAnnotation(functionNode, semanticModel, WorkflowConstants.ACTIVITY_ANNOTATION)) {
@@ -1043,11 +1043,11 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
     }
 
     // =========================================================================
-    // @DurableAgent function validation
+    // @DurableAgentFunction function validation
     // =========================================================================
 
     /**
-     * Validates a {@code @workflow:DurableAgent} function.
+     * Validates a {@code @workflow:DurableAgentFunction} function.
      * <ul>
      *   <li>WORKFLOW_145 — must have a body (not {@code = external})</li>
      *   <li>WORKFLOW_146 — signature must be {@code (workflow:AgentContext ctx, InputRecord input,

@@ -25,7 +25,8 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Holds information about a {@code @workflow:DurableAgent} function, collected during the code-modifier analysis phase
+ * Holds information about a {@code @workflow:DurableAgentFunction} function, collected during the
+ * code-modifier analysis phase
  * and consumed by {@link WorkflowSourceModifier} to emit the agent's registrations at module init on every worker: its
  * workflow (with activity tools plus the built-in {@code llmChat}/{@code generate}/{@code executeAgentTool}
  * activities), its AI tool function pointers, and its human task types.

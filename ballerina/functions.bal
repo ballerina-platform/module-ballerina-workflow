@@ -33,13 +33,13 @@ public isolated function run(function processFunction, anydata input = ()) retur
 } external;
 
 # Starts a new durable agent instance and returns its unique ID. The dedicated
-# starter mirrors `run` for `@workflow:DurableAgent` functions.
+# starter mirrors `run` for `@workflow:DurableAgentFunction` functions.
 #
 # ```ballerina
 # string agentId = check workflow:runDurableAgent(orderAgent, input = {"orderId": "ORD-123"});
 # ```
 #
-# + agentFunction - The agent function (must have `@DurableAgent`)
+# + agentFunction - The agent function (must have `@DurableAgentFunction`)
 # + input - Optional input data for the agent
 # + return - The agent (workflow) ID, or an error
 public isolated function runDurableAgent(function agentFunction, anydata input = ())
@@ -70,7 +70,7 @@ public isolated function sendData(function workflow, string workflowId, string d
 # agent answers and returns that answer coerced to the expected type `T`.
 # For structured `T`, the agent's textual answer is parsed as JSON.
 #
-# Only supported for `@workflow:DurableAgent` workflows: their data intake and
+# Only supported for `@workflow:DurableAgentFunction` workflows: their data intake and
 # turn answers are framework-managed, so the response can be correlated
 # implicitly. For plain workflows use one-way `sendData` instead.
 #
@@ -78,7 +78,7 @@ public isolated function sendData(function workflow, string workflowId, string d
 # string reply = check workflow:updateAgent(orderAgent, agentId, "chat", "Is the laptop available?");
 # ```
 #
-# + agentFunction - The agent function (must have `@workflow:DurableAgent`)
+# + agentFunction - The agent function (must have `@workflow:DurableAgentFunction`)
 # + agentId - Target agent (workflow) ID (from `run`)
 # + eventName - The event field name declared in the agent's signature
 # + data - The request payload
@@ -104,7 +104,7 @@ public isolated function updateAgent(function agentFunction, string agentId, str
 # string updateId = check workflow:updateAgentAsync(orderAgent, agentId, "chat", "Expedite my order");
 # ```
 #
-# + agentFunction - The agent function (must have `@workflow:DurableAgent`)
+# + agentFunction - The agent function (must have `@workflow:DurableAgentFunction`)
 # + agentId - Target agent (workflow) ID (from `runDurableAgent`)
 # + eventName - The update channel registered by the agent
 # + data - The request payload

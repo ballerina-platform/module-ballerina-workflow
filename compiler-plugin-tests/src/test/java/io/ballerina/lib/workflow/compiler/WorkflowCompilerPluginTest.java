@@ -890,7 +890,7 @@ public class WorkflowCompilerPluginTest {
                 "Expected message to contain '" + substring + "' but got: " + diagnostic.message());
     }
 
-    // ===== @DurableAgent (imperative) test cases =====
+    // ===== @DurableAgentFunction (imperative) test cases =====
     //
     // These fixtures deliberately do NOT import ballerina/ai: the ai compiler
     // plugin needs swagger-core, which is not on the BuildProject test harness
@@ -905,7 +905,7 @@ public class WorkflowCompilerPluginTest {
         // workflow with its tools + built-in llmChat/generate activities, compiling cleanly.
         DiagnosticResult diagnosticResult = getDiagnosticResult("valid_agent_basic");
         Assert.assertEquals(diagnosticResult.errorCount(), 0,
-                "Expected no errors for a valid @DurableAgent. Errors: "
+                "Expected no errors for a valid @DurableAgentFunction. Errors: "
                         + getDiagnosticMessages(diagnosticResult));
     }
 
@@ -923,7 +923,7 @@ public class WorkflowCompilerPluginTest {
 
     @Test(groups = "invalid")
     public void testInvalidAgentEventsShape() {
-        // Declaring an events parameter on a @DurableAgent is forbidden: update
+        // Declaring an events parameter on a @DurableAgentFunction is forbidden: update
         // channels are registered imperatively via ctx.registerUpdateEvents.
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_agent_events_shape");
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_143);
@@ -950,6 +950,43 @@ public class WorkflowCompilerPluginTest {
     public void testInvalidAgentWithWorkflowAnnotation() {
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_agent_with_workflow_annotation");
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_142);
+    }
+
+    // ===== object-model durable agent declaration test cases =====
+
+    @Test(groups = "valid")
+    public void testValidDurableAgentObject() {
+        // A module-level `final workflow:DurableAgent x = new ({...})` with activities
+        // (bare + decl form), an @ai:AgentTool, events, and human tasks compiles cleanly,
+        // including the generated module-init registration.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("valid_durable_agent_object");
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for a valid object-model durable agent. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentNotFinal() {
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_durable_agent_not_final");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_149);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentLocalDeclaration() {
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_durable_agent_local");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_149);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentDuplicateNames() {
+        // "approval" is used by an activity, an event, and a human task — one flat namespace,
+        // so the second and third uses are each flagged.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(
+                "invalid_durable_agent_duplicate_names");
+        List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_150");
+        Assert.assertEquals(diags.size(), 2,
+                "Expected 2 WORKFLOW_150 errors for the duplicate capability names. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
     }
 
     // ===== sendData validation test cases =====

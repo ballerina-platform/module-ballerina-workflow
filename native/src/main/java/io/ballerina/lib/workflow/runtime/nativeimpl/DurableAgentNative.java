@@ -35,8 +35,13 @@ import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BObject;
 import io.ballerina.runtime.api.values.BString;
 import io.ballerina.runtime.api.values.BTypedesc;
+import io.temporal.client.UpdateOptions;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowStub;
+import io.temporal.client.WorkflowUpdateHandle;
+import io.temporal.client.WorkflowUpdateStage;
+import io.temporal.workflow.Workflow;
+import io.temporal.workflow.WorkflowLocal;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -62,8 +67,6 @@ import java.util.concurrent.TimeUnit;
  */
 public final class DurableAgentNative {
 
-    private static final String NOT_SUPPORTED_YET =
-            " is not supported yet: the object-model runner lands in a later phase";
     private static final String AGENT_NAME_FIELD = "agentName";
     private static final String AGENT_BUSY_ERROR = "AgentBusyError";
     private static final String RUN_SPEC_RECORD = "DurableAgentRunSpec";
@@ -508,30 +511,225 @@ public final class DurableAgentNative {
     }
 
     /**
-     * Placeholder for {@code DurableAgent.getEventResult} until typed events land.
+     * Non-blocking event-turn read ({@code DurableAgent.getEventResult}): the turn's response if
+     * it is ready, or a {@code workflow:AgentBusyError} while unanswered.
      *
+     * @param env        the Ballerina runtime environment
      * @param self       the DurableAgent object
      * @param instanceId the agent instance ID
      * @param token      the sendEvent correlation token
      * @param typedesc   the expected response type descriptor
-     * @return a BError describing that the operation is not supported yet
+     * @return the typed response, an AgentBusyError, or a BError
      */
-    public static Object getEventResult(BObject self, BString instanceId, BString token, BTypedesc typedesc) {
-        return notSupportedYet("getEventResult");
+    public static Object getEventResult(Environment env, BObject self, BString instanceId, BString token,
+                                        BTypedesc typedesc) {
+        if (isInsideWorkflow()) {
+            return readEventReplyInWorkflow(instanceId.getValue(), token.getValue(), typedesc, false);
+        }
+        return readEventResultFromClient(env, instanceId.getValue(), token.getValue(), typedesc, false);
     }
 
     /**
-     * Placeholder for {@code DurableAgent.waitForEventResult} until typed events land.
+     * Blocking event-turn read ({@code DurableAgent.waitForEventResult}): waits until the turn is
+     * answered. Inside a workflow this durably suspends on the reply signal; from a service it
+     * blocks on the update result, which lives in history and is re-fetchable after a crash.
      *
+     * @param env        the Ballerina runtime environment
      * @param self       the DurableAgent object
      * @param instanceId the agent instance ID
      * @param token      the sendEvent correlation token
      * @param typedesc   the expected response type descriptor
-     * @return a BError describing that the operation is not supported yet
+     * @return the typed response, or a BError
      */
-    public static Object waitForEventResult(BObject self, BString instanceId, BString token,
+    public static Object waitForEventResult(Environment env, BObject self, BString instanceId, BString token,
                                             BTypedesc typedesc) {
-        return notSupportedYet("waitForEventResult");
+        if (isInsideWorkflow()) {
+            return readEventReplyInWorkflow(instanceId.getValue(), token.getValue(), typedesc, true);
+        }
+        return readEventResultFromClient(env, instanceId.getValue(), token.getValue(), typedesc, true);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Event turns (sendEvent / getEventResult / waitForEventResult)
+    // -----------------------------------------------------------------------------------------
+
+    /**
+     * Replies to event turns this workflow execution sent to agents via the reply-signal path,
+     * keyed by correlation token. {@link WorkflowLocal} scopes the store to the workflow
+     * execution; on replay the reply signals are re-delivered from history in the same order,
+     * so reads are deterministic.
+     */
+    private static final WorkflowLocal<Map<String, Object>> AGENT_EVENT_REPLIES =
+            WorkflowLocal.withCachedInitial(HashMap::new);
+
+    /**
+     * Records a reply-signal envelope ({token, response} or {token, error}) for an event turn
+     * this workflow sent. Called by the workflow adapter's signal handler.
+     *
+     * @param token the correlation token
+     * @param reply the reply envelope
+     */
+    public static void recordAgentEventReply(String token, Map<?, ?> reply) {
+        AGENT_EVENT_REPLIES.get().put(token, reply);
+    }
+
+    /**
+     * Sends an event turn to a running agent instance ({@code DurableAgent.sendEvent}) and
+     * returns a correlation token. From a service the turn rides a Temporal Update (the token is
+     * the update ID — durable, crash-recoverable via the pending-updates query). From inside a
+     * workflow updates are unavailable, so the turn is delivered as a deterministic external
+     * signal carrying a reply-to address; the agent answers with a reply signal correlated by
+     * the token.
+     *
+     * @param env        the Ballerina runtime environment
+     * @param self       the DurableAgent object
+     * @param instanceId the agent instance ID returned by run()
+     * @param eventName  a channel declared in the agent's events
+     * @param data       the payload
+     * @return the correlation token as a Ballerina string, or a BError
+     */
+    public static Object sendEvent(Environment env, BObject self, BString instanceId, BString eventName,
+                                   Object data) {
+        Object javaData = data == null ? null : TypesUtil.convertBallerinaToJavaType(data);
+        String instance = instanceId.getValue();
+        String event = eventName.getValue();
+
+        if (isInsideWorkflow()) {
+            try {
+                WorkflowWorkerNative.awaitWhileSuspended();
+                String token = "evt-" + Workflow.randomUUID();
+                Map<String, Object> envelope = new HashMap<>();
+                envelope.put("token", token);
+                envelope.put("eventName", event);
+                envelope.put("data", javaData);
+                envelope.put("replyTo", Workflow.getInfo().getWorkflowId());
+                Workflow.newUntypedExternalWorkflowStub(instance)
+                        .signal(WorkflowWorkerNative.AGENT_EVENT_SIGNAL_NAME, envelope);
+                return StringUtils.fromString(token);
+            } catch (io.temporal.worker.NonDeterministicException e) {
+                throw e;
+            } catch (io.temporal.failure.CanceledFailure e) {
+                throw e;
+            } catch (io.temporal.workflow.SignalExternalWorkflowException e) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Failed to send event to agent instance '" + instance + "': "
+                                + (e.getCause() != null ? e.getCause().getMessage() : e.getMessage())));
+            } catch (io.temporal.failure.TemporalFailure e) {
+                throw e;
+            } catch (Exception e) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Failed to send event to agent instance '" + instance + "': " + e.getMessage()));
+            }
+        }
+
+        return env.yieldAndRun(() -> {
+            try {
+                WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+                if (client == null) {
+                    return ErrorCreator.createError(StringUtils.fromString("Workflow client not initialized"));
+                }
+                WorkflowStub stub = client.newUntypedWorkflowStub(instance);
+                UpdateOptions<Object> options = UpdateOptions.newBuilder(Object.class)
+                        .setUpdateName(WorkflowWorkerNative.AGENT_UPDATE_NAME)
+                        .setWaitForStage(WorkflowUpdateStage.ACCEPTED)
+                        .build();
+                WorkflowUpdateHandle<Object> handle = stub.startUpdate(options, event, javaData);
+                return StringUtils.fromString(handle.getId());
+            } catch (Exception e) {
+                Throwable cause = e.getCause();
+                String message = cause != null && cause.getMessage() != null ? cause.getMessage()
+                        : e.getMessage();
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Failed to send event to agent instance '" + instance + "': " + message));
+            }
+        });
+    }
+
+    /**
+     * Reads one event turn's reply inside a workflow (reply-signal correlation store).
+     */
+    private static Object readEventReplyInWorkflow(String instanceId, String token, BTypedesc typedesc,
+                                                   boolean blocking) {
+        try {
+            if (blocking) {
+                WorkflowWorkerNative.awaitWhileSuspended();
+                Workflow.await(() -> AGENT_EVENT_REPLIES.get().containsKey(token));
+            }
+            Object reply = AGENT_EVENT_REPLIES.get().get(token);
+            if (reply == null) {
+                return createAgentBusyError(instanceId);
+            }
+            if (reply instanceof Map<?, ?> replyMap) {
+                Object error = replyMap.get("error");
+                if (error != null) {
+                    return ErrorCreator.createError(StringUtils.fromString(String.valueOf(error)));
+                }
+                Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(replyMap.get("response"));
+                return TypesUtil.cloneWithType(ballerinaResult, typedesc.getDescribingType());
+            }
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Malformed agent event reply for token '" + token + "'"));
+        } catch (io.temporal.worker.NonDeterministicException e) {
+            throw e;
+        } catch (io.temporal.failure.TemporalFailure e) {
+            throw e;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to read the event result for token '" + token + "': " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Reads one event turn's result from a service (Temporal Update handle).
+     */
+    private static Object readEventResultFromClient(Environment env, String instanceId, String token,
+                                                    BTypedesc typedesc, boolean blocking) {
+        return env.yieldAndRun(() -> {
+            try {
+                WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+                if (client == null) {
+                    return ErrorCreator.createError(StringUtils.fromString("Workflow client not initialized"));
+                }
+                WorkflowStub stub = client.newUntypedWorkflowStub(instanceId);
+                WorkflowUpdateHandle<Object> handle = stub.getUpdateHandle(token, Object.class);
+                Object raw;
+                if (blocking) {
+                    raw = handle.getResultAsync().get();
+                } else {
+                    try {
+                        raw = handle.getResultAsync(1, TimeUnit.MILLISECONDS).get();
+                    } catch (Exception e) {
+                        if (isTimeout(e)) {
+                            return createAgentBusyError(instanceId);
+                        }
+                        throw e;
+                    }
+                }
+                Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(raw);
+                return TypesUtil.cloneWithType(ballerinaResult, typedesc.getDescribingType());
+            } catch (Exception e) {
+                if (isTimeout(e)) {
+                    return createAgentBusyError(instanceId);
+                }
+                Throwable cause = e.getCause();
+                String message = cause != null && cause.getMessage() != null ? cause.getMessage()
+                        : e.getMessage();
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Failed to read the event result for token '" + token + "' of agent instance '"
+                                + instanceId + "': " + message));
+            }
+        });
+    }
+
+    private static boolean isTimeout(Throwable e) {
+        Throwable current = e;
+        while (current != null) {
+            if (current instanceof java.util.concurrent.TimeoutException) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private static String boundAgentName(BObject self) {
@@ -563,11 +761,6 @@ public final class DurableAgentNative {
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(AGENT_BUSY_ERROR + ": " + message));
         }
-    }
-
-    private static Object notSupportedYet(String method) {
-        return ErrorCreator.createError(StringUtils.fromString(
-                "workflow:DurableAgent." + method + NOT_SUPPORTED_YET));
     }
 
     private static Object unboundAgentError(String method) {

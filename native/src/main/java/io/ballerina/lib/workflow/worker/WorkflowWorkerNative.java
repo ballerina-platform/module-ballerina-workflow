@@ -130,6 +130,19 @@ public final class WorkflowWorkerNative {
      * agents. Args layout: eventName (String), payload (Object); the update result is the agent's turn response.
      */
     public static final String AGENT_UPDATE_NAME = "agentUpdate";
+    /**
+     * Internal signal carrying an event turn from a WORKFLOW caller to a durable agent
+     * (DurableAgent.sendEvent inside a workflow). Envelope: {token, eventName, data, replyTo}.
+     * The agent answers by signalling {@link #AGENT_EVENT_REPLY_SIGNAL_NAME} back to {@code replyTo}
+     * — the reply-signal correlation of the object-model A2A design (updates cannot be issued
+     * from inside a workflow; signals in both directions are deterministic and replay-safe).
+     */
+    public static final String AGENT_EVENT_SIGNAL_NAME = "__agent_event";
+    /**
+     * Internal signal carrying an agent's answer for one {@link #AGENT_EVENT_SIGNAL_NAME} turn back
+     * to the workflow that sent it. Envelope: {token, response} or {token, error}.
+     */
+    public static final String AGENT_EVENT_REPLY_SIGNAL_NAME = "__agent_event_reply";
 
     /**
      * Query returning the agent updates that were accepted but whose turn has not completed yet
@@ -1451,6 +1464,82 @@ public final class WorkflowWorkerNative {
                                 LOGGER.warn("[JWorkflowAdapter] Could not upsert {} memo: {}",
                                             SUSPENDED_MEMO_KEY, e.getMessage());
                             }
+                            return;
+                        }
+
+                        // Framework-owned A2A signals (object-model durable agents).
+                        // A reply for an event turn this workflow sent to an agent: record it in the
+                        // per-execution correlation store keyed by token; DurableAgent.getEventResult /
+                        // waitForEventResult read it from there.
+                        if (AGENT_EVENT_REPLY_SIGNAL_NAME.equals(signalName)) {
+                            try {
+                                Object envelope = encodedArgs.get(0, Object.class);
+                                if (envelope instanceof Map<?, ?> replyMap) {
+                                    Object token = replyMap.get("token");
+                                    if (token != null) {
+                                        io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative
+                                                .recordAgentEventReply(String.valueOf(token), replyMap);
+                                    }
+                                }
+                            } catch (Exception e) {
+                                LOGGER.warn("[JWorkflowAdapter] Could not record agent event reply: {}",
+                                            e.getMessage());
+                            }
+                            return;
+                        }
+
+                        // An event turn sent by a WORKFLOW caller to this durable agent: enqueue it
+                        // exactly like an updateAgent turn, and when the turn is answered signal the
+                        // reply back to the caller. The wait+reply runs as a detached workflow task so
+                        // signal delivery is never blocked.
+                        if (AGENT_EVENT_SIGNAL_NAME.equals(signalName)) {
+                            if (!this.agentWorkflow) {
+                                LOGGER.warn("[JWorkflowAdapter] Ignoring {}: not a durable agent workflow",
+                                            AGENT_EVENT_SIGNAL_NAME);
+                                return;
+                            }
+                            Object envelope;
+                            try {
+                                envelope = encodedArgs.get(0, Object.class);
+                            } catch (Exception e) {
+                                LOGGER.warn("[JWorkflowAdapter] Could not extract agent event envelope: {}",
+                                            e.getMessage());
+                                return;
+                            }
+                            if (!(envelope instanceof Map<?, ?> eventMap)) {
+                                return;
+                            }
+                            String token = String.valueOf(eventMap.get("token"));
+                            String eventName = String.valueOf(eventMap.get("eventName"));
+                            String replyTo = String.valueOf(eventMap.get("replyTo"));
+                            Object payload = eventMap.get("data");
+                            io.temporal.workflow.Async.procedure(() -> {
+                                Map<String, Object> reply = new HashMap<>();
+                                reply.put("token", token);
+                                AgentContextNative.AgentContextInfo info = this.agentContextInfo;
+                                if (info != null && info.isClosing()) {
+                                    String failure = info.closingFailure();
+                                    if (failure != null) {
+                                        reply.put("error", "The agent finished without consuming this event: "
+                                                + failure);
+                                    } else {
+                                        reply.put("response", info.finalResponse());
+                                    }
+                                } else {
+                                    io.temporal.workflow.CompletablePromise<Object> responder =
+                                            Workflow.newPromise();
+                                    signalWrapper.recordUpdate(eventName, payload, responder);
+                                    Workflow.await(responder::isCompleted);
+                                    try {
+                                        reply.put("response", responder.get());
+                                    } catch (Exception e) {
+                                        reply.put("error", e.getMessage() != null ? e.getMessage()
+                                                : "the agent turn failed");
+                                    }
+                                }
+                                Workflow.newUntypedExternalWorkflowStub(replyTo)
+                                        .signal(AGENT_EVENT_REPLY_SIGNAL_NAME, reply);
+                            });
                             return;
                         }
 

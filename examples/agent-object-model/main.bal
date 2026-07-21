@@ -60,6 +60,48 @@ isolated client class ScriptedModelProvider {
 
 final ScriptedModelProvider orderModel = new;
 
+// Echo mock for the conversational agent: always answers the latest user turn.
+isolated client class EchoModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        if messages !is ai:ChatMessage[] {
+            return {role: ai:ASSISTANT, content: "unexpected single message"};
+        }
+        string lastUserTurn = "";
+        foreach ai:ChatMessage message in messages {
+            if message is ai:ChatUserMessage {
+                string|ai:Prompt content = message.content;
+                if content is string {
+                    lastUserTurn = content;
+                }
+            }
+        }
+        return {role: ai:ASSISTANT, content: "Echo: " + lastUserTurn};
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final EchoModelProvider chatModel = new;
+
+// A conversational agent: the MULTI_EVENT chat channel keeps the instance alive
+// between turns; each sendEvent("chat", ...) is one turn answered via its token.
+final workflow:DurableAgent chatAgent = check new ({
+    systemPrompt: {role: "Chat assistant", instructions: "Echo the user's messages."},
+    model: chatModel,
+    events: [
+        {name: "chat", request: string, response: string, cardinality: workflow:MULTI_EVENT}
+    ],
+    maxIter: 4
+});
+
 type EscalationReq record {|
     string reason;
 |};
@@ -131,4 +173,20 @@ public function main() returns error? {
     // Blocking, crash-resumable read: waits until the agent finishes.
     string result = check orderAgent.waitForResult(instanceId);
     io:println("orderAgent.waitForResult() -> " + result);
+
+    // --- Multi-turn conversation over a declared MULTI_EVENT channel ---
+
+    string chatId = check chatAgent.run("Hello there!");
+    io:println("chatAgent.run() -> instance " + chatId);
+
+    // Each sendEvent is one turn: the token correlates that turn's reply.
+    string turn = check chatAgent.sendEvent(chatId, "chat", "How are you today?");
+    io:println("chatAgent.sendEvent() -> token " + turn);
+
+    string reply = check chatAgent.waitForEventResult(chatId, turn);
+    io:println("chatAgent.waitForEventResult() -> " + reply);
+
+    string secondTurn = check chatAgent.sendEvent(chatId, "chat", "Tell me a joke.");
+    string secondReply = check chatAgent.waitForEventResult(chatId, secondTurn);
+    io:println("chatAgent.waitForEventResult() [turn 2] -> " + secondReply);
 }

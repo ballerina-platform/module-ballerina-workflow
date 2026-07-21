@@ -216,10 +216,10 @@ public isolated class DurableAgent {
     # + return - A correlation token for `getEventResult`/`waitForEventResult`,
     #            or an error
     public isolated function sendEvent(string instanceId, string eventName, anydata data)
-            returns string|error {
-        return error("workflow:DurableAgent.sendEvent is not supported yet: "
-                + "the object-model runner lands in a later phase");
-    }
+            returns string|error = @java:Method {
+        'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+        name: "sendEvent"
+    } external;
 
     # Returns the final result of an instance if it has finished, without waiting.
     # While the instance is still working (e.g. suspended on a human task) a

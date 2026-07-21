@@ -21,7 +21,7 @@ import ballerina/time;
 # Configuration for a durable agent run: the agent's identity (system prompt),
 # its model, and reasoning limits. Tools, activities, human tasks, and update
 # channels are registered on the context before `buildAndRun`.
-public type AgentRunConfig record {|
+type AgentRunConfig record {|
     # The system prompt assigned to the agent
     @display {label: "System Prompt"}
     ai:SystemPrompt systemPrompt;
@@ -43,7 +43,7 @@ public type AgentRunConfig record {|
     # channel once per run) or `MULTI_EVENT` (re-armable channels for multi-turn
     # conversations; requires `eventTimeout`)
     @display {label: "Interaction Pattern"}
-    AgentInteractionPattern interaction = SINGLE_EVENT;
+    EventCardinality interaction = SINGLE_EVENT;
 
     # Maximum wait per update/event. On timeout the model is told the wait timed
     # out so it can wrap up gracefully. Required for `MULTI_EVENT`
@@ -67,23 +67,13 @@ public type AgentRunConfig record {|
 # + userRoles - Role(s) permitted to decide the review. Defaults to `"manager"`
 # + timeout - Maximum time to wait for a decision. On timeout the model is told
 #             the review timed out so it can wrap up. Omit to wait indefinitely
-public type ApprovalConfig record {|
+type ApprovalConfig record {|
     string|string[] userRoles = "manager";
     time:Duration? timeout = ();
 |};
 
-# How a durable agent consumes its update-channel requests and data events.
-public enum AgentInteractionPattern {
-    # Each registered update channel/event may be consumed once per run (default)
-    SINGLE_EVENT,
-    # Events are re-armable: the agent may wait repeatedly on the same event, each wait
-    # consuming the next queued payload (conversational agents). Requires an event
-    # timeout as its safety mechanism
-    MULTI_EVENT
-}
-
 # The execution context for a durable AI agent. Injected as the first parameter
-# of a `@workflow:DurableAgentFunction` function.
+# of the object-model runner workflow (`runDurableAgentObject`).
 #
 # Unlike `workflow:Context`, this context deliberately does not expose
 # `callActivity`, `sleep`, or `awaitHumanTask`. Instead, capabilities are
@@ -98,7 +88,7 @@ public enum AgentInteractionPattern {
 #   a human-task sub-workflow starts and the agent suspends durably until a
 #   person completes it
 # - `registerUpdateEvents` — declares a named two-way update channel (request and
-#   optional response types); `workflow:updateAgent` drives it from outside
+#   optional response types); `DurableAgent.sendEvent` drives it from outside
 # - `buildAndRun` — builds the agent from everything registered above and hands
 #   control to the durable ReAct loop; must be the last statement of the agent
 public client class AgentContext {
@@ -141,7 +131,7 @@ public client class AgentContext {
     #              `AutoRetry` (durable backoff retries), or `ManualRetry` (create a
     #              review activity on failure so a human decides to rerun or fail)
     # + return - An error if the tool cannot be registered, otherwise nil
-    public isolated function registerActivity(function activity, string? name = (),
+    isolated function registerActivity(function activity, string? name = (),
             string? description = (), map<anydata|object {}>? bindings = (),
             boolean requiresApproval = false,
             AutoRetry|ManualRetry|NoRetry retryPolicy = NoRetry) returns error? {
@@ -166,7 +156,7 @@ public client class AgentContext {
     #            control; ignored when `requiresApproval` is `false`
     # + return - An error if the tool cannot be registered (e.g. a function
     #            missing the `@ai:AgentTool` annotation), otherwise nil
-    public isolated function registerAgentTool(ai:BaseToolKit|ai:ToolConfig|ai:FunctionTool tool,
+    isolated function registerAgentTool(ai:BaseToolKit|ai:ToolConfig|ai:FunctionTool tool,
             boolean requiresApproval = false, string[]? gatedTools = ()) returns error? {
         if tool is ai:BaseToolKit {
             foreach ai:ToolConfig config in tool.getTools() {
@@ -193,7 +183,7 @@ public client class AgentContext {
         return gatedTools is () || gatedTools.indexOf(toolName) != ();
     }
 
-    # Declares a named two-way update channel for the agent. `workflow:updateAgent`
+    # Declares a named two-way update channel for the agent. `DurableAgent.sendEvent`
     # sends a request on the channel and blocks until the agent answers the turn
     # that consumed it. Inside the ReAct loop the channel also appears as a durable
     # wait: a channel named `chat` drives the conversation itself.
@@ -203,7 +193,7 @@ public client class AgentContext {
     # + responseType - The expected response type; when provided, the turn answer
     #                  is validated against it before completing the update
     # + return - An error if the channel cannot be registered, otherwise nil
-    public isolated function registerUpdateEvents(string name, typedesc<anydata> requestType,
+    isolated function registerUpdateEvents(string name, typedesc<anydata> requestType,
             typedesc<anydata>? responseType = ()) returns error? {
         return registerAgentUpdateEvent(self.nativeContext, name, requestType, responseType);
     }
@@ -231,7 +221,7 @@ public client class AgentContext {
     # + timeout - Maximum time to wait for completion. On timeout the model is told
     #             the task timed out so it can react. Omit to wait indefinitely
     # + return - An error if the task cannot be registered, otherwise nil
-    public isolated function registerHumanTask(string taskName, string|string[] userRoles,
+    isolated function registerHumanTask(string taskName, string|string[] userRoles,
             typedesc<anydata> resultType = anydata, string? title = (), string? description = (),
             time:Duration? timeout = ()) returns error? {
         return recordHumanTaskTool(self.nativeContext, taskName, userRoles, resultType, title, description,
@@ -241,7 +231,7 @@ public client class AgentContext {
     # Builds the agent from everything registered on this context (activities, AI
     # tools, human tasks, update channels) and hands control to the durable ReAct
     # loop. This is a terminal operation: it must be the last statement of the
-    # `@workflow:DurableAgentFunction` function (enforced by the compiler plugin). Every
+    # object-model runner (the loop is framework-driven). Every
     # LLM call and tool call is executed durably, so the agent survives worker
     # crashes and can suspend for days waiting on human tasks or updates.
     #
@@ -249,7 +239,7 @@ public client class AgentContext {
     #           first `chat` update channel request
     # + config - The agent configuration (system prompt, model, limits)
     # + return - An error if the agent fails, otherwise nil
-    public isolated function buildAndRun(@display {label: "Query"} string query = "",
+    isolated function buildAndRun(@display {label: "Query"} string query = "",
             *AgentRunConfig config) returns error? {
         check setAgentInteraction(self.nativeContext, config.interaction, config.eventTimeout,
                 config.maxEventWaits);
@@ -261,7 +251,7 @@ public client class AgentContext {
         json toolDefs = check toolDefsJson.fromJsonString();
         AgentToolDef[] defs = check toolDefs.cloneWithType();
         error? result = runAgentLoop(self.nativeContext, agentName, config, query, defs);
-        // Settle any outstanding updateAgent requests before the workflow completes:
+        // Settle any outstanding event turns before the workflow completes:
         // unconsumed updates receive the agent's final response (or its failure)
         // instead of failing with "workflow completed before the update completed".
         finishAgentUpdates(self.nativeContext, result is error ? result.message() : ());

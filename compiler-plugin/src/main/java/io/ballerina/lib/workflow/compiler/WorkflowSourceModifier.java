@@ -80,37 +80,15 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         // a single registerWorkflowsAndStart() call that covers every workflow.
         List<Map.Entry<DocumentId, WorkflowModifierContext>> entries = new ArrayList<>();
         List<ProcessFunctionInfo> allProcessInfos = new ArrayList<>();
-        List<AgentFunctionInfo> allAgentInfos = new ArrayList<>();
         List<DurableAgentDeclInfo> allDurableAgentDecls = new ArrayList<>();
 
         for (Map.Entry<DocumentId, WorkflowModifierContext> entry : this.modifierContextMap.entrySet()) {
             if (!entry.getValue().getProcessInfoMap().isEmpty()
-                    || !entry.getValue().getAgentInfoMap().isEmpty()
                     || !entry.getValue().getDurableAgentDeclMap().isEmpty()) {
                 entries.add(entry);
                 allProcessInfos.addAll(entry.getValue().getProcessInfoMap().values());
-                allAgentInfos.addAll(entry.getValue().getAgentInfoMap().values());
                 allDurableAgentDecls.addAll(entry.getValue().getDurableAgentDeclMap().values());
             }
-        }
-
-        // An agent registers as an ordinary workflow whose activities are its
-        // tools plus the built-in LLM chat activity. Modeling agents as
-        // ProcessFunctionInfo entries reuses the registerWorkflow emission and
-        // the qualified-import copying below (workflow:llmChat needs the
-        // ballerina/workflow import in the generated-code document).
-        for (AgentFunctionInfo agent : allAgentInfos) {
-            Map<String, String> activityMap = new java.util.LinkedHashMap<>(agent.activityToolRefs());
-            activityMap.put(WorkflowConstants.LLM_CHAT_ACTIVITY,
-                    agent.workflowPrefix() + ":" + WorkflowConstants.LLM_CHAT_ACTIVITY);
-            activityMap.put(WorkflowConstants.GENERATE_ACTIVITY,
-                    agent.workflowPrefix() + ":" + WorkflowConstants.GENERATE_ACTIVITY);
-            activityMap.put(WorkflowConstants.EXECUTE_AGENT_TOOL_ACTIVITY,
-                    agent.workflowPrefix() + ":" + WorkflowConstants.EXECUTE_AGENT_TOOL_ACTIVITY);
-            // Human tasks registered on the AgentContext reuse the same qualified
-            // "<functionName>.<taskName>" init registration as awaitHumanTask call sites.
-            allProcessInfos.add(new ProcessFunctionInfo(agent.functionName(), activityMap,
-                    agent.humanTaskNames()));
         }
 
         // Collect import declarations across every document in the module(s) being
@@ -160,7 +138,6 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
 
             ModulePartNode updatedRootNode = transformDocument(
                     rootNode, workflowContext, isLastDocument ? allProcessInfos : null,
-                    isLastDocument ? allAgentInfos : Collections.emptyList(),
                     isLastDocument ? allDurableAgentDecls : Collections.emptyList(),
                     isLastDocument
                         ? collectConnectionNames(documentId.moduleId().toString(), isTestDocument)
@@ -187,7 +164,6 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
 
     private ModulePartNode transformDocument(ModulePartNode rootNode, WorkflowModifierContext workflowContext,
                                              List<ProcessFunctionInfo> allProcessInfos,
-                                             List<AgentFunctionInfo> allAgentInfos,
                                              List<DurableAgentDeclInfo> allDurableAgentDecls,
                                              List<String> connectionNames) {
         NodeList<ModuleMemberDeclarationNode> members = rootNode.members();
@@ -200,7 +176,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         // generate a private function that registers every workflow and
         // starts the runtime, plus a module-level variable that calls it.
         if (allProcessInfos != null && (!allProcessInfos.isEmpty() || !allDurableAgentDecls.isEmpty())) {
-            newMembers.add(createRegisterAndStartFunction(allProcessInfos, allAgentInfos,
+            newMembers.add(createRegisterAndStartFunction(allProcessInfos,
                     allDurableAgentDecls, connectionNames));
             newMembers.add(createRegisterAndStartInvocation());
         }
@@ -253,7 +229,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
      * </pre>
      */
     private ModuleMemberDeclarationNode createRegisterAndStartFunction(
-            List<ProcessFunctionInfo> allProcessInfos, List<AgentFunctionInfo> allAgentInfos,
+            List<ProcessFunctionInfo> allProcessInfos,
             List<DurableAgentDeclInfo> allDurableAgentDecls, List<String> connectionNames) {
         StringBuilder body = new StringBuilder();
         body.append("function __registerWorkflowsAndStart() returns boolean|error {");
@@ -293,18 +269,6 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                     .append(System.lineSeparator());
         }
 
-        // Register each agent's AI tool function pointers so the built-in
-        // executeAgentTool activity wrapper can resolve them on every worker.
-        for (AgentFunctionInfo agentInfo : allAgentInfos) {
-            for (String toolRef : agentInfo.aiToolRefs()) {
-                body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                        .append(":registerAgentTool(\"")
-                        .append(escapeBallerinaStringLiteral(agentInfo.functionName()))
-                        .append("\", ").append(toolRef).append(");")
-                        .append(System.lineSeparator());
-            }
-        }
-
         // Register object-model durable agent declarations: identity + model first, then the
         // capability declarations, re-referencing the same symbols the user's config named.
         for (DurableAgentDeclInfo decl : allDurableAgentDecls) {
@@ -335,7 +299,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
      * <pre>
      * _ = check wfInternal:registerDurableAgentDecl("orderAgent", wso2Model, {...}, 16);
      * _ = check wfInternal:registerDurableAgentActivity("orderAgent", "checkStock", checkStock, {...});
-     * _ = check wfInternal:registerAgentTool("orderAgent", priceLookup);
+     * _ = check wfInternal:registerDurableAgentTool("orderAgent", priceLookup);
      * _ = check wfInternal:registerDurableAgentEvent("orderAgent", "chat", string, string, "MULTI_EVENT");
      * _ = check wfInternal:registerDurableAgentHumanTask("orderAgent", "approval", {...});
      * </pre>
@@ -378,6 +342,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                     .append(":registerDurableAgentHumanTask(").append(agentNameLiteral)
                     .append(", \"").append(escapeBallerinaStringLiteral(task.name()))
                     .append("\", ").append(task.metaSource() != null ? task.metaSource() : "()")
+                    .append(", ").append(task.resultTypeSource() != null ? task.resultTypeSource() : "anydata")
                     .append(");").append(System.lineSeparator());
         }
         for (DurableAgentDeclInfo.PeerDecl peer : decl.peers()) {

@@ -1,8 +1,0 @@
-[package]
-org = "test"
-name = "invalid_agent_with_workflow_annotation"
-version = "0.1.0"
-distribution = "2201.13.0"
-
-[build-options]
-observabilityIncluded = false

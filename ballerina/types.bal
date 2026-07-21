@@ -118,26 +118,13 @@ public type HumanTaskTimeoutDetail record {|
 # Catch with `on fail workflow:HumanTaskTimeoutError e` to run compensation logic.
 public type HumanTaskTimeoutError distinct error<HumanTaskTimeoutDetail>;
 
-# Detail record for `UpdatePendingError`.
+# A turn a durable agent has accepted but not yet answered. Returned by
+# `getPendingAgentUpdates` so callers can rediscover in-flight event turns after
+# a crash and fetch their answers via `DurableAgent.getEventResult` /
+# `waitForEventResult` (the update ID is the turn's correlation token).
 #
-# + agentId - The agent's workflow ID
-# + updateId - The update ID to check back with
-public type UpdatePendingDetail record {|
-    string agentId;
-    string updateId;
-|};
-
-# Returned by `getAgentUpdateResult` when the agent has not finished the turn yet —
-# typically because it is suspended on a human task. The request stays durably
-# accepted on the workflow server; check back later with the same update ID.
-public type UpdatePendingError distinct error<UpdatePendingDetail>;
-
-# A request a durable agent has accepted but not yet answered. Returned by
-# `getPendingAgentUpdates` so callers can rediscover in-flight turns after a
-# crash and fetch their answers via `getAgentUpdateResult`.
-#
-# + updateId - The update ID to fetch the answer with
-# + eventName - The update channel the request was sent on
+# + updateId - The turn's correlation token
+# + eventName - The event channel the turn was sent on
 public type PendingAgentUpdate record {|
     string updateId;
     string eventName;

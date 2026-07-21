@@ -1,8 +1,0 @@
-[package]
-org = "test"
-name = "invalid_agent_return_type"
-version = "0.1.0"
-distribution = "2201.13.0"
-
-[build-options]
-observabilityIncluded = false

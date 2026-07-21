@@ -890,7 +890,7 @@ public class WorkflowCompilerPluginTest {
                 "Expected message to contain '" + substring + "' but got: " + diagnostic.message());
     }
 
-    // ===== @DurableAgentFunction (imperative) test cases =====
+    // ===== direct-AI-call validation (WORKFLOW_148) =====
     //
     // These fixtures deliberately do NOT import ballerina/ai: the ai compiler
     // plugin needs swagger-core, which is not on the BuildProject test harness
@@ -899,37 +899,7 @@ public class WorkflowCompilerPluginTest {
     // End-to-end runs with a real ai:ModelProvider are covered by the package unit
     // tests and the integration test / example.
 
-    @Test(groups = "valid")
-    public void testValidAgentBasic() {
-        // Codegen must scan ctx.registerActivities([...]) and register the agent as a
-        // workflow with its tools + built-in llmChat/generate activities, compiling cleanly.
-        DiagnosticResult diagnosticResult = getDiagnosticResult("valid_agent_basic");
-        Assert.assertEquals(diagnosticResult.errorCount(), 0,
-                "Expected no errors for a valid @DurableAgentFunction. Errors: "
-                        + getDiagnosticMessages(diagnosticResult));
-    }
-
-    @Test(groups = "invalid")
-    public void testInvalidAgentExternalBody() {
-        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_agent_external_body");
-        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_145);
-    }
-
-    @Test(groups = "invalid")
-    public void testInvalidAgentNoContext() {
-        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_agent_no_context");
-        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_146);
-    }
-
-    @Test(groups = "invalid")
-    public void testInvalidAgentEventsShape() {
-        // Declaring an events parameter on a @DurableAgentFunction is forbidden: update
-        // channels are registered imperatively via ctx.registerUpdateEvents.
-        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_agent_events_shape");
-        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_143);
-    }
-
-    @Test(groups = "invalid")
+                    @Test(groups = "invalid")
     public void testInvalidDirectAiCall() {
         // Direct model-provider/agent calls inside a @Workflow body are non-deterministic;
         // the same calls wrapped in @workflow:Activity functions are valid.
@@ -940,19 +910,7 @@ public class WorkflowCompilerPluginTest {
                         + getDiagnosticMessages(diagnosticResult));
     }
 
-    @Test(groups = "invalid")
-    public void testInvalidAgentReturnType() {
-        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_agent_return_type");
-        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_147);
-    }
-
-    @Test(groups = "invalid")
-    public void testInvalidAgentWithWorkflowAnnotation() {
-        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_agent_with_workflow_annotation");
-        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_142);
-    }
-
-    // ===== object-model durable agent declaration test cases =====
+            // ===== object-model durable agent declaration test cases =====
 
     @Test(groups = "valid")
     public void testValidDurableAgentObject() {

@@ -84,10 +84,11 @@ public record DurableAgentDeclInfo(String agentName,
      * A declared human task.
      *
      * @param name       the task name
-     * @param metaSource source text of a json metadata mapping (roles, title, description),
-     *                   or null when there is none
+     * @param metaSource       source text of a json metadata mapping (roles, title,
+     *                         description), or null when there is none
+     * @param resultTypeSource source text of the result typedesc expression, or null
      */
-    public record HumanTaskDecl(String name, String metaSource) { }
+    public record HumanTaskDecl(String name, String metaSource, String resultTypeSource) { }
 
     /**
      * A declared peer agent, advertised to the model as a delegable tool.

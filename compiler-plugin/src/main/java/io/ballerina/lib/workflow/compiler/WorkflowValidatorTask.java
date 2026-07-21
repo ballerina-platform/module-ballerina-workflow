@@ -39,7 +39,6 @@ import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FieldAccessExpressionNode;
 import io.ballerina.compiler.syntax.tree.ForkStatementNode;
 import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
-import io.ballerina.compiler.syntax.tree.FunctionBodyBlockNode;
 import io.ballerina.compiler.syntax.tree.FunctionCallExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.ListConstructorExpressionNode;
@@ -49,7 +48,6 @@ import io.ballerina.compiler.syntax.tree.MethodCallExpressionNode;
 import io.ballerina.compiler.syntax.tree.NamedArgumentNode;
 import io.ballerina.compiler.syntax.tree.NamedWorkerDeclarationNode;
 import io.ballerina.compiler.syntax.tree.Node;
-import io.ballerina.compiler.syntax.tree.NodeList;
 import io.ballerina.compiler.syntax.tree.NodeVisitor;
 import io.ballerina.compiler.syntax.tree.NonTerminalNode;
 import io.ballerina.compiler.syntax.tree.ParameterNode;
@@ -59,7 +57,6 @@ import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
 import io.ballerina.compiler.syntax.tree.SimpleNameReferenceNode;
 import io.ballerina.compiler.syntax.tree.SpecificFieldNode;
 import io.ballerina.compiler.syntax.tree.StartActionNode;
-import io.ballerina.compiler.syntax.tree.StatementNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.compiler.syntax.tree.TupleTypeDescriptorNode;
 import io.ballerina.compiler.syntax.tree.TypeDescriptorNode;
@@ -124,17 +121,6 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
             validateActivityFunction(functionNode, context);
         }
 
-        // Check if function has @DurableAgentFunction annotation
-        if (hasAnnotation(functionNode, semanticModel, WorkflowConstants.AGENT_ANNOTATION)) {
-            if (hasAnnotation(functionNode, semanticModel, WorkflowConstants.PROCESS_ANNOTATION)
-                    || hasAnnotation(functionNode, semanticModel, WorkflowConstants.ACTIVITY_ANNOTATION)) {
-                reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_142);
-            }
-            validateAgentFunction(functionNode, context);
-            // The agent body configures the durable loop; direct AI calls there are equally
-            // non-deterministic — the loop itself performs LLM calls durably as activities.
-            validateNoDirectAiCalls(functionNode, context);
-        }
     }
 
     /**
@@ -1042,133 +1028,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                 functionNode.functionName().location()));
     }
 
-    // =========================================================================
-    // @DurableAgentFunction function validation
-    // =========================================================================
-
-    /**
-     * Validates a {@code @workflow:DurableAgentFunction} function.
-     * <ul>
-     *   <li>WORKFLOW_145 — must have a body (not {@code = external})</li>
-     *   <li>WORKFLOW_146 — signature must be {@code (workflow:AgentContext ctx, InputRecord input,
-     *       EventsRecord events?)} with input a subtype of anydata</li>
-     *   <li>WORKFLOW_132 — the events parameter, when present, must be an all-{@code future} record</li>
-     *   <li>WORKFLOW_147 — return type must be {@code error?}</li>
-     * </ul>
-     */
-    private void validateAgentFunction(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context) {
-        SemanticModel semanticModel = context.semanticModel();
-
-        // Body must not be external.
-        if (functionNode.functionBody().kind() == SyntaxKind.EXTERNAL_FUNCTION_BODY) {
-            reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_145);
-        }
-
-        Optional<Symbol> symbolOpt = semanticModel.symbol(functionNode);
-        if (symbolOpt.isEmpty() || symbolOpt.get().kind() != SymbolKind.FUNCTION) {
-            return;
-        }
-        FunctionTypeSymbol typeSymbol = ((FunctionSymbol) symbolOpt.get()).typeDescriptor();
-
-        // Signature: exactly (AgentContext ctx, InputRecord input). Update channels are
-        // declared imperatively via ctx.registerUpdateEvents, not in the signature.
-        List<ParameterSymbol> params = typeSymbol.params().orElse(List.of());
-        if (params.size() == 3 && isValidEventsType(params.get(2).typeDescriptor())) {
-            reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_143);
-        } else if (params.size() != 2
-                || !isAgentContextType(params.get(0).typeDescriptor())
-                || !WorkflowPluginUtils.isSubtypeOfAnydata(params.get(1).typeDescriptor(), semanticModel)) {
-            reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_146);
-        }
-
-        // buildAndRun() is terminal: it must be the last top-level statement of the body.
-        validateBuildAndRunPlacement(functionNode, context);
-
-        // Return type: error? (no value).
-        Optional<TypeSymbol> returnTypeOpt = typeSymbol.returnTypeDescriptor();
-        if (returnTypeOpt.isPresent() && !isErrorOptional(returnTypeOpt.get(), semanticModel)) {
-            reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_147);
-        }
-    }
-
-    /**
-     * Validates that every {@code buildAndRun()} call inside the agent function is the final
-     * top-level statement of the function body — never nested in conditionals or loops, and
-     * never followed by further statements.
-     */
-    private void validateBuildAndRunPlacement(FunctionDefinitionNode functionNode,
-                                              SyntaxNodeAnalysisContext context) {
-        if (!(functionNode.functionBody() instanceof FunctionBodyBlockNode bodyBlock)) {
-            return;
-        }
-        NodeList<StatementNode> statements = bodyBlock.statements();
-        StatementNode lastStatement = statements.isEmpty() ? null : statements.get(statements.size() - 1);
-
-        functionNode.functionBody().accept(new NodeVisitor() {
-            @Override
-            public void visit(MethodCallExpressionNode methodCall) {
-                String methodName = methodCall.methodName().toSourceCode().trim();
-                if (WorkflowConstants.BUILD_AND_RUN_METHOD.equals(methodName)
-                        && !isLastTopLevelStatement(methodCall, bodyBlock, lastStatement)) {
-                    DiagnosticInfo info = new DiagnosticInfo(WorkflowDiagnostic.WORKFLOW_144.getCode(),
-                            WorkflowDiagnostic.WORKFLOW_144.getMessage(),
-                            WorkflowDiagnostic.WORKFLOW_144.getSeverity());
-                    context.reportDiagnostic(DiagnosticFactory.createDiagnostic(info, methodCall.location()));
-                }
-                methodCall.arguments().forEach(arg -> arg.accept(this));
-                methodCall.expression().accept(this);
-            }
-        });
-    }
-
-    // True when the call's enclosing statement is directly in the function body block and is
-    // its final statement.
-    private boolean isLastTopLevelStatement(MethodCallExpressionNode methodCall,
-                                            FunctionBodyBlockNode bodyBlock, StatementNode lastStatement) {
-        Node node = methodCall;
-        while (node != null && !(node instanceof StatementNode)) {
-            node = node.parent();
-        }
-        if (node == null || node != lastStatement) {
-            return false;
-        }
-        return node.parent() == bodyBlock;
-    }
-
-    /**
-     * Returns true when the type is the {@code workflow:AgentContext} object type.
-     */
-    private boolean isAgentContextType(TypeSymbol typeSymbol) {
-        TypeSymbol resolved = WorkflowPluginUtils.resolveTypeReference(typeSymbol);
-        Optional<String> nameOpt = resolved.getName();
-        if (nameOpt.isEmpty() || !WorkflowConstants.AGENT_CONTEXT_TYPE.equals(nameOpt.get())) {
-            return false;
-        }
-        Optional<io.ballerina.compiler.api.symbols.ModuleSymbol> moduleOpt = resolved.getModule();
-        return moduleOpt.isPresent() && WorkflowPluginUtils.isWorkflowModule(moduleOpt.get());
-    }
-
-    /**
-     * Returns true when the type is {@code ()} or a subtype of {@code error?} (i.e. only nil and error members).
-     */
-    private boolean isErrorOptional(TypeSymbol typeSymbol, SemanticModel semanticModel) {
-        TypeSymbol resolved = WorkflowPluginUtils.resolveTypeReference(typeSymbol);
-        if (resolved.typeKind() == TypeDescKind.NIL) {
-            return true;
-        }
-        if (resolved.typeKind() == TypeDescKind.UNION) {
-            for (TypeSymbol member : ((UnionTypeSymbol) resolved).memberTypeDescriptors()) {
-                TypeSymbol m = WorkflowPluginUtils.resolveTypeReference(member);
-                if (m.typeKind() != TypeDescKind.NIL && !m.subtypeOf(semanticModel.types().ERROR)) {
-                    return false;
-                }
-            }
-            return true;
-        }
-        return resolved.subtypeOf(semanticModel.types().ERROR);
-    }
-
-    // =========================================================================
+            // =========================================================================
     // ctx->await usage validation
     // =========================================================================
 

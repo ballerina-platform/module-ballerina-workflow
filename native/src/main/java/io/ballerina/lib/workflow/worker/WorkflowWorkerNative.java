@@ -1493,11 +1493,11 @@ public final class WorkflowWorkerNative {
                         // reply back to the caller. The wait+reply runs as a detached workflow task so
                         // signal delivery is never blocked.
                         if (AGENT_EVENT_SIGNAL_NAME.equals(signalName)) {
-                            if (!this.agentWorkflow) {
-                                LOGGER.warn("[JWorkflowAdapter] Ignoring {}: not a durable agent workflow",
-                                            AGENT_EVENT_SIGNAL_NAME);
-                                return;
-                            }
+                            // NOTE: do not gate on this.agentWorkflow here — the signal can arrive
+                            // in the first workflow task, before execute() has inspected the
+                            // function and set the flag. Enqueueing is safe regardless: the signal
+                            // wrapper exists from construction, and only an agent loop consumes
+                            // these turns.
                             Object envelope;
                             try {
                                 envelope = encodedArgs.get(0, Object.class);

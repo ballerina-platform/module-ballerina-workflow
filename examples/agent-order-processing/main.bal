@@ -18,11 +18,6 @@ import ballerina/ai;
 import ballerina/io;
 import ballerina/workflow;
 
-type OrderRequest record {|
-    string orderId;
-    string userPrompt;
-|};
-
 // The WSO2 default model provider, configured via `ballerina.ai.wso2ProviderConfig`
 // in Config.toml (see README.md — the Ballerina VS Code extension can generate it).
 final ai:Wso2ModelProvider orderModel = check ai:getDefaultModelProvider();
@@ -35,45 +30,42 @@ function checkInventory(string item) returns string|error {
     return item + " is in stock";
 }
 
-// A conversational durable AI agent. The body configures the agent imperatively
-// and hands control to the durable ReAct loop. With the MULTI_EVENT interaction
-// pattern the model answers each turn and then durably re-arms the chat wait —
-// suspending for hours or days without holding a thread — until the user says
-// goodbye (or the safety timeout/wait-cap kicks in).
-@workflow:DurableAgentFunction
-function orderAgent(workflow:AgentContext durableAgentContext, OrderRequest req) returns error? {
-    check durableAgentContext.registerActivity(checkInventory);
-    check durableAgentContext.registerUpdateEvents("chat", string);
-    check durableAgentContext.buildAndRun(req.userPrompt,
-            systemPrompt = {
-                role: string `You are the assistant for order ${req.orderId}.`,
-                instructions: string `Use the checkInventory tool to answer product availability questions.
-                        The conversation stays open automatically after each answer.
-                        When the user says goodbye or asks to end the conversation, call the
-                        endConversation tool with a short farewell.`
-            },
-            model = orderModel, interaction = workflow:MULTI_EVENT, eventTimeout = {minutes: 5});
-}
+// A conversational durable AI agent, declared once as a module-level object whose
+// constructor config carries every capability. The MULTI_EVENT chat channel keeps
+// the conversation open after each answer — the agent suspends durably for hours
+// or days without holding a thread — until the user says goodbye (or the safety
+// timeout/wait-cap kicks in).
+final workflow:DurableAgent orderAgent = check new ({
+    systemPrompt: {
+        role: "You are the assistant for order ORD-001.",
+        instructions: string `Use the checkInventory tool to answer product availability questions.
+                The conversation stays open automatically after each answer.
+                When the user says goodbye or asks to end the conversation, call the
+                endConversation tool with a short farewell.`
+    },
+    model: orderModel,
+    activities: [checkInventory],
+    events: [
+        {name: "chat", request: string, response: string, cardinality: workflow:MULTI_EVENT}
+    ]
+});
 
 public function main() returns error? {
-    // Start the agent with no initial prompt: it suspends durably until the
-    // first chat message arrives. (An initial prompt would start a one-way
-    // turn whose answer no updateAgent call is waiting for — drive every turn
-    // you want a reply from via updateAgent instead.)
-    string agentId = check workflow:runDurableAgent(orderAgent, {orderId: "ORD-001", userPrompt: ""});
+    // Start the agent with no initial query: it suspends durably until the first
+    // chat message arrives. Every turn you want a reply from is driven via
+    // sendEvent, whose token correlates that turn's answer.
+    string agentId = check orderAgent.run("");
     io:println("Agent started with ID: " + agentId);
 
-    // Each turn is a synchronous request-response (a Temporal Update under the
-    // hood): the message and the agent's answer for that turn travel together.
-    string reply1 = check workflow:updateAgent(orderAgent, agentId, "chat", "Is the laptop available?");
-    io:println("Turn 1: " + reply1);
+    string turn1 = check orderAgent.sendEvent(agentId, "chat", "Is the laptop available?");
+    io:println("Turn 1: " + check orderAgent.waitForEventResult(agentId, turn1));
 
-    string reply2 = check workflow:updateAgent(orderAgent, agentId, "chat", "Please expedite the shipping");
-    io:println("Turn 2: " + reply2);
+    string turn2 = check orderAgent.sendEvent(agentId, "chat", "Please expedite the shipping");
+    io:println("Turn 2: " + check orderAgent.waitForEventResult(agentId, turn2));
 
     // The model ends the conversation when the user says goodbye.
-    string reply3 = check workflow:updateAgent(orderAgent, agentId, "chat", "That's all, goodbye!");
-    io:println("Final: " + reply3);
+    string turn3 = check orderAgent.sendEvent(agentId, "chat", "That's all, goodbye!");
+    io:println("Final: " + check orderAgent.waitForEventResult(agentId, turn3));
 
-    _ = check workflow:getWorkflowResult(agentId);
+    _ = check orderAgent.waitForResult(agentId);
 }

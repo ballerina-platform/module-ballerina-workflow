@@ -73,6 +73,20 @@ isolated client class MockModelProvider {
 
 final MockModelProvider mockAgentModel = new;
 
+// Turn driver for the object-model event API: sendEvent/waitForEventResult key on the
+// instance id, so one driver object exercises turns against any agent instance. Replaces
+// the removed workflow:updateAgent in these loop tests.
+final DurableAgent agentTurnDriver = check new ({
+    systemPrompt: {role: "driver", instructions: "unused"},
+    model: mockAgentModel
+});
+
+isolated function updateAgentTurn(string agentId, string eventName, anydata data)
+        returns string|error {
+    string token = check agentTurnDriver.sendEvent(agentId, eventName, data);
+    return agentTurnDriver.waitForEventResult(agentId, token);
+}
+
 isolated client class LoopingMockModelProvider {
     *ai:ModelProvider;
 
@@ -140,7 +154,6 @@ type AgentOrderInput record {|
     string request;
 |};
 
-@DurableAgentFunction
 function stockAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerActivity(checkStock);
     check ctx.buildAndRun(input.request,
@@ -148,7 +161,6 @@ function stockAgent(AgentContext ctx, AgentOrderInput input) returns error? {
             model = mockAgentModel);
 }
 
-@DurableAgentFunction
 function chatStockAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerActivity(checkStock);
     check ctx.registerUpdateEvents("chat", string);
@@ -157,7 +169,6 @@ function chatStockAgent(AgentContext ctx, AgentOrderInput input) returns error? 
             model = mockAgentModel);
 }
 
-@DurableAgentFunction
 function loopingAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerActivity(checkStock);
     check ctx.buildAndRun(input.request,
@@ -166,7 +177,6 @@ function loopingAgent(AgentContext ctx, AgentOrderInput input) returns error? {
             maxIter = 2);
 }
 
-@DurableAgentFunction
 function unknownToolAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerActivity(checkStock);
     check ctx.buildAndRun(input.request,
@@ -207,7 +217,6 @@ isolated client class AiToolMockModelProvider {
 
 final AiToolMockModelProvider aiToolAgentModel = new;
 
-@DurableAgentFunction
 function priceAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerAgentTool(lookupPrice);
     check ctx.buildAndRun(input.request,
@@ -251,7 +260,6 @@ isolated client class HumanTaskMockModelProvider {
 
 final HumanTaskMockModelProvider humanTaskAgentModel = new;
 
-@DurableAgentFunction
 function approvalAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerActivity(checkStock);
     check ctx.registerHumanTask("approveOrder", "APPROVER", ApprovalResult,
@@ -289,7 +297,6 @@ isolated client class EventToolMockModelProvider {
 
 final EventToolMockModelProvider eventToolAgentModel = new;
 
-@DurableAgentFunction
 function eventWaitingAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerActivity(checkStock);
     check ctx.registerUpdateEvents("approval", string);
@@ -350,7 +357,6 @@ isolated client class ConversationMockModelProvider {
 
 final ConversationMockModelProvider conversationAgentModel = new;
 
-@DurableAgentFunction
 function conversationAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerUpdateEvents("chat", string);
     check ctx.buildAndRun(input.request,
@@ -359,7 +365,6 @@ function conversationAgent(AgentContext ctx, AgentOrderInput input) returns erro
 }
 
 // MULTI_EVENT without the mandatory eventTimeout — must fail at registration.
-@DurableAgentFunction
 function unsafeConversationAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerUpdateEvents("chat", string);
     check ctx.buildAndRun(input.request,
@@ -368,7 +373,6 @@ function unsafeConversationAgent(AgentContext ctx, AgentOrderInput input) return
 }
 
 // Model that always waits — exercises the maxEventWaits safety cap.
-@DurableAgentFunction
 function cappedConversationAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerUpdateEvents("chat", string);
     check ctx.buildAndRun(input.request,
@@ -405,7 +409,6 @@ isolated client class TimeoutMockModelProvider {
 
 final TimeoutMockModelProvider timeoutAgentModel = new;
 
-@DurableAgentFunction
 function timeoutAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerUpdateEvents("approval", string);
     check ctx.buildAndRun(input.request,
@@ -446,7 +449,6 @@ isolated client class ContextToolMockModelProvider {
 
 final ContextToolMockModelProvider contextToolAgentModel = new;
 
-@DurableAgentFunction
 function contextToolAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerAgentTool(contextualLookup);
     check ctx.buildAndRun(input.request,
@@ -464,7 +466,6 @@ isolated class TestToolKit {
     }
 }
 
-@DurableAgentFunction
 function toolkitAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerAgentTool(new TestToolKit());
     check ctx.buildAndRun(input.request,
@@ -500,7 +501,6 @@ isolated client class SlowApprovalMockModelProvider {
 
 final SlowApprovalMockModelProvider slowApprovalAgentModel = new;
 
-@DurableAgentFunction
 function humanTaskTimeoutAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerHumanTask("slowApproval", "APPROVER", ApprovalResult, timeout = {seconds: 2});
     check ctx.buildAndRun(input.request,
@@ -548,7 +548,6 @@ isolated client class AutoChatMockModelProvider {
 
 final AutoChatMockModelProvider autoChatModel = new;
 
-@DurableAgentFunction
 function autoConversationAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerUpdateEvents("chat", string);
     check ctx.buildAndRun(systemPrompt = {role: "", instructions: "Answer briefly."}, model = autoChatModel, interaction = MULTI_EVENT, eventTimeout = {seconds: 60});
@@ -556,7 +555,6 @@ function autoConversationAgent(AgentContext ctx, AgentOrderInput input) returns 
 
 // Same behaviour with a short timeout: with no follow-up message the
 // conversation must end gracefully on its own.
-@DurableAgentFunction
 function shortTimeoutConversationAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerUpdateEvents("chat", string);
     check ctx.buildAndRun(systemPrompt = {role: "", instructions: "Answer briefly."}, model = autoChatModel, interaction = MULTI_EVENT, eventTimeout = {seconds: 2});
@@ -586,7 +584,6 @@ isolated client class EndAfterFirstChatMockModelProvider {
 
 final EndAfterFirstChatMockModelProvider endAfterFirstChatModel = new;
 
-@DurableAgentFunction
 function endingAgent(AgentContext ctx, AgentOrderInput input) returns error? {
     check ctx.registerUpdateEvents("chat", string);
     check ctx.buildAndRun(systemPrompt = {role: "", instructions: "End after the first reply."},
@@ -906,11 +903,11 @@ function testAgentUpdateConversation() returns error? {
     }
     string agentId = runResult;
 
-    string reply1 = check updateAgent(conversationAgent, agentId, "chat", "how are you");
+    string reply1 = check updateAgentTurn(agentId, "chat", "how are you");
     test:assertEquals(reply1, "Echo: how are you",
             "updateAgent should return the answer of the turn that consumed the request");
 
-    string reply2 = check updateAgent(conversationAgent, agentId, "chat", "ok bye");
+    string reply2 = check updateAgentTurn(agentId, "chat", "ok bye");
     test:assertEquals(reply2, "Conversation ended",
             "The final answer should complete the last update");
 
@@ -933,17 +930,18 @@ function testAgentUpdateStructuredResponse() returns error? {
     }
     string agentId = runResult;
 
-    UpdateStatus status = check updateAgent(conversationAgent, agentId, "chat", "give me json");
+    string statusJson = check updateAgentTurn(agentId, "chat", "give me json");
+    UpdateStatus status = check statusJson.fromJsonStringWithType();
     test:assertEquals(status, <UpdateStatus>{status: "ok", count: 2},
             "Structured T should parse the agent's JSON answer");
 
-    string finalReply = check updateAgent(conversationAgent, agentId, "chat", "ok bye");
+    string finalReply = check updateAgentTurn(agentId, "chat", "ok bye");
     test:assertEquals(finalReply, "Conversation ended");
     _ = check getWorkflowResult(agentId, 30);
 }
 
 isolated function updateEndingAgent(string agentId, string message) returns string|error {
-    return updateAgent(endingAgent, agentId, "chat", message);
+    return updateAgentTurn(agentId, "chat", message);
 }
 
 @test:Config {groups: ["unit"]}
@@ -958,15 +956,15 @@ function testAgentAutoContinuesConversation() returns error? {
     }
     string agentId = runResult;
 
-    string reply1 = check updateAgent(autoConversationAgent, agentId, "chat", "first");
+    string reply1 = check updateAgentTurn(agentId, "chat", "first");
     test:assertEquals(reply1, "Auto: first",
             "The loop should answer turn 1 without a model wait-tool call");
 
-    string reply2 = check updateAgent(autoConversationAgent, agentId, "chat", "second");
+    string reply2 = check updateAgentTurn(agentId, "chat", "second");
     test:assertEquals(reply2, "Auto: second",
             "The loop should auto-continue and answer turn 2");
 
-    string reply3 = check updateAgent(autoConversationAgent, agentId, "chat", "ok bye");
+    string reply3 = check updateAgentTurn(agentId, "chat", "ok bye");
     test:assertEquals(reply3, "Ended by request",
             "endConversation's farewell should become the final response");
 
@@ -984,7 +982,7 @@ function testAgentConversationEndsOnTimeout() returns error? {
     }
     string agentId = runResult;
 
-    string reply = check updateAgent(shortTimeoutConversationAgent, agentId, "chat", "hello");
+    string reply = check updateAgentTurn(agentId, "chat", "hello");
     test:assertEquals(reply, "Auto: hello");
 
     // The 2s wait for the next message elapses — the agent must complete cleanly.
@@ -1031,7 +1029,7 @@ function testUpdateAgentRejectsPlainWorkflow() returns error? {
     string workflowId = runResult;
     runtime:sleep(1);
 
-    string|error result = updateAgent(parkedPlainWorkflow, workflowId, "go", "ping");
+    string|error result = updateAgentTurn(workflowId, "go", "ping");
     test:assertTrue(result is error, "updateAgent on a plain workflow should fail");
     if result is error {
         test:assertTrue(result.message().includes("DurableAgent"),

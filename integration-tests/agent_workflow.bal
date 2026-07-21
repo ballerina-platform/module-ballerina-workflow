@@ -24,15 +24,6 @@ import ballerina/ai;
 import ballerina/jballerina.java;
 import ballerina/workflow;
 
-# Input for the agent workflows.
-#
-# + id - The workflow identifier
-# + request - The user's request forwarded to the agent
-type AgentStockInput record {|
-    string id;
-    string request;
-|};
-
 # Inventory-lookup tool exposed to the agent; runs as a durable activity.
 #
 # + item - Item to look up
@@ -73,31 +64,22 @@ isolated client class AgentMockModelProvider {
 
 final AgentMockModelProvider agentMockModel = new;
 
-# Prompt-driven durable agent: reasons over the initial request.
-#
-# + ctx - The agent context
-# + input - The agent input
-# + return - An error if the agent fails
-@workflow:DurableAgentFunction
-function stockCheckAgent(workflow:AgentContext ctx, AgentStockInput input) returns error? {
-    check ctx.registerActivity(agentCheckStock);
-    check ctx.buildAndRun(input.request,
-            systemPrompt = {role: "", instructions: "You are an inventory assistant. Use agentCheckStock for availability."},
-            model = agentMockModel);
-}
+# Prompt-driven durable agent: reasons over the run query.
+final workflow:DurableAgent stockCheckAgent = check new ({
+    systemPrompt: {role: "", instructions: "You are an inventory assistant. Use agentCheckStock for availability."},
+    model: agentMockModel,
+    activities: [agentCheckStock]
+});
 
 # Chat-driven durable agent: waits durably for the first chat event before reasoning.
-#
-# + ctx - The agent context
-# + input - The agent input
-# + return - An error if the agent fails
-@workflow:DurableAgentFunction
-function chatDrivenStockAgent(workflow:AgentContext ctx, AgentStockInput input) returns error? {
-    check ctx.registerActivity(agentCheckStock);
-    check ctx.registerUpdateEvents("chat", string);
-    check ctx.buildAndRun(systemPrompt = {role: "", instructions: "You are an inventory assistant. Use agentCheckStock for availability."},
-            model = agentMockModel);
-}
+final workflow:DurableAgent chatDrivenStockAgent = check new ({
+    systemPrompt: {role: "", instructions: "You are an inventory assistant. Use agentCheckStock for availability."},
+    model: agentMockModel,
+    activities: [agentCheckStock],
+    events: [
+        {name: "chat", request: string, response: string}
+    ]
+});
 
 // Scripted conversation driven by the loop's framework-owned continuity: turn 1
 // answers, later turns echo the latest user (chat) message, "bye" ends it.
@@ -145,16 +127,12 @@ isolated client class ConversationMockModelProvider {
 
 final ConversationMockModelProvider conversationMockModel = new;
 
-# Multi-turn conversational agent (MULTI_EVENT interaction): the model answers
-# each turn and re-arms the chat wait until the user says bye.
-#
-# + ctx - The agent context
-# + input - The agent input
-# + return - An error if the agent fails
-@workflow:DurableAgentFunction
-function conversationalStockAgent(workflow:AgentContext ctx, AgentStockInput input) returns error? {
-    check ctx.registerUpdateEvents("chat", string);
-    check ctx.buildAndRun(input.request,
-            systemPrompt = {role: "", instructions: "Chat with the user until they say bye."},
-            model = conversationMockModel, interaction = workflow:MULTI_EVENT, eventTimeout = {minutes: 5});
-}
+# Multi-turn conversational agent (MULTI_EVENT chat channel): the model answers
+# each turn and the loop re-arms the chat wait until the user says bye.
+final workflow:DurableAgent conversationalStockAgent = check new ({
+    systemPrompt: {role: "", instructions: "Chat with the user until they say bye."},
+    model: conversationMockModel,
+    events: [
+        {name: "chat", request: string, response: string, cardinality: workflow:MULTI_EVENT}
+    ]
+});

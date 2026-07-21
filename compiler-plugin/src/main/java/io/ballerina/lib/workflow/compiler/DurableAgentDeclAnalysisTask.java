@@ -352,6 +352,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 continue;
             }
             String name = null;
+            String resultTypeSource = null;
             StringBuilder meta = new StringBuilder();
             Location nameLocation = taskMapping.location();
             for (MappingFieldNode taskField : taskMapping.fields()) {
@@ -365,9 +366,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                         name = stringLiteralValue(fieldValue);
                         nameLocation = fieldValue.location();
                     }
-                    // resultType is a typedesc and timeout a structured duration — both stay out
-                    // of the json metadata; the runner reads them when task support lands.
-                    case "resultType", "timeout" -> { }
+                    // The result typedesc travels separately (it is not json); the timeout stays
+                    // out of the metadata until task timeouts land on the runner.
+                    case "resultType" -> resultTypeSource = fieldValue.toSourceCode().strip();
+                    case "timeout" -> { }
                     default -> appendMetaField(meta, key, fieldValue.toSourceCode().strip());
                 }
             }
@@ -376,7 +378,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             }
             checkUnique(name, seenNames, agentName, nameLocation, context);
             humanTasks.add(new DurableAgentDeclInfo.HumanTaskDecl(name,
-                    meta.isEmpty() ? null : "{" + meta + "}"));
+                    meta.isEmpty() ? null : "{" + meta + "}", resultTypeSource));
         }
     }
 

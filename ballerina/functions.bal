@@ -16,7 +16,6 @@
 
 import ballerina/jballerina.java;
 
-
 # Starts a new workflow instance and returns its unique ID.
 #
 # ```ballerina
@@ -28,22 +27,6 @@ import ballerina/jballerina.java;
 #           function's declared input parameter type (any `anydata` subtype)
 # + return - The workflow ID, or an error
 public isolated function run(function processFunction, anydata input = ()) returns string|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
-    name: "run"
-} external;
-
-# Starts a new durable agent instance and returns its unique ID. The dedicated
-# starter mirrors `run` for `@workflow:DurableAgentFunction` functions.
-#
-# ```ballerina
-# string agentId = check workflow:runDurableAgent(orderAgent, input = {"orderId": "ORD-123"});
-# ```
-#
-# + agentFunction - The agent function (must have `@DurableAgentFunction`)
-# + input - Optional input data for the agent
-# + return - The agent (workflow) ID, or an error
-public isolated function runDurableAgent(function agentFunction, anydata input = ())
-        returns string|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
     name: "run"
 } external;
@@ -61,84 +44,6 @@ public isolated function runDurableAgent(function agentFunction, anydata input =
 # + return - An error if sending fails
 public isolated function sendData(function workflow, string workflowId, string dataName, anydata data) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative"
-} external;
-
-# Sends a request to a running durable agent and waits for its response — the
-# request-response counterpart of `sendData`, modeled as a Temporal Update.
-# The payload is delivered to the agent's event wait (the message and the
-# agent's answer for that turn travel together); the call blocks until the
-# agent answers and returns that answer coerced to the expected type `T`.
-# For structured `T`, the agent's textual answer is parsed as JSON.
-#
-# Only supported for `@workflow:DurableAgentFunction` workflows: their data intake and
-# turn answers are framework-managed, so the response can be correlated
-# implicitly. For plain workflows use one-way `sendData` instead.
-#
-# ```ballerina
-# string reply = check workflow:updateAgent(orderAgent, agentId, "chat", "Is the laptop available?");
-# ```
-#
-# + agentFunction - The agent function (must have `@workflow:DurableAgentFunction`)
-# + agentId - Target agent (workflow) ID (from `run`)
-# + eventName - The event field name declared in the agent's signature
-# + data - The request payload
-# + T - Expected response type (inferred from context)
-# + return - The agent's answer for the turn that consumed this request, or an error
-public isolated function updateAgent(function agentFunction, string agentId, string eventName, anydata data,
-        typedesc<anydata> T = <>) returns T|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
-    name: "updateAgent"
-} external;
-
-# Sends a request to a running durable agent without waiting for the answer.
-# Returns as soon as the request is durably accepted by the workflow server,
-# with an update ID for fetching the answer later via `getAgentUpdateResult` —
-# from this or any other process.
-#
-# Prefer this over the blocking `updateAgent` whenever the turn may take long,
-# e.g. when the agent escalates to a human task: no thread or connection is
-# held while the agent is suspended, and neither the request nor the answer is
-# lost if the caller crashes.
-#
-# ```ballerina
-# string updateId = check workflow:updateAgentAsync(orderAgent, agentId, "chat", "Expedite my order");
-# ```
-#
-# + agentFunction - The agent function (must have `@workflow:DurableAgentFunction`)
-# + agentId - Target agent (workflow) ID (from `runDurableAgent`)
-# + eventName - The update channel registered by the agent
-# + data - The request payload
-# + return - The update ID to check back with, or an error
-public isolated function updateAgentAsync(function agentFunction, string agentId, string eventName,
-        anydata data) returns string|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
-    name: "updateAgentAsync"
-} external;
-
-# Fetches the agent's answer for a request sent with `updateAgentAsync`. Waits
-# up to `timeoutSeconds`; when the agent has not finished the turn yet (e.g. it
-# is suspended on a human task) a `workflow:UpdatePendingError` is returned and
-# the caller should check back later with the same update ID. The answer is
-# read from the workflow history, so it remains retrievable after crashes and
-# from other processes.
-#
-# ```ballerina
-# string|error answer = workflow:getAgentUpdateResult(agentId, updateId);
-# if answer is workflow:UpdatePendingError {
-#     // still working - check back later
-# }
-# ```
-#
-# + agentId - Target agent (workflow) ID
-# + updateId - The update ID returned by `updateAgentAsync`
-# + timeoutSeconds - How long to wait before reporting the update as pending
-# + T - Expected response type (inferred from context)
-# + return - The agent's answer, a `workflow:UpdatePendingError` when the turn
-#            is still in progress, or an error
-public isolated function getAgentUpdateResult(string agentId, string updateId,
-        decimal timeoutSeconds = 30, typedesc<anydata> T = <>) returns T|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
-    name: "getAgentUpdateResult"
 } external;
 
 # Lists the requests a running durable agent has accepted but not yet answered.

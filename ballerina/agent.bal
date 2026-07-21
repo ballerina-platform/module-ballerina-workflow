@@ -80,7 +80,7 @@ public type AgentFunctionMessage record {|
 # Any message in an agent conversation.
 public type AgentChatMessage AgentSystemMessage|AgentUserMessage|AgentAssistantMessage|AgentFunctionMessage;
 
-# Runs the durable agent ReAct loop. Called from `AgentContext.runDurableAgent`;
+# Runs the durable agent ReAct loop. Called from `AgentContext.buildAndRun`;
 # not intended to be called directly.
 #
 # Conversation history is a workflow-local variable (replay-safe). Tool calls
@@ -608,7 +608,7 @@ isolated function registerDeclaredHumanTask(AgentContext ctx, DurableAgentHumanT
             description = descriptionJson;
         }
     }
-    check ctx.registerHumanTask(taskSpec.name, roles, anydata, title, description, ());
+    check ctx.registerHumanTask(taskSpec.name, roles, taskSpec.resultType, title, description, ());
 }
 
 # Dispatches one model-requested peer delegation. The peer runs as a true Temporal

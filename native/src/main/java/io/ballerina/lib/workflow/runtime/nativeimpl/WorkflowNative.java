@@ -28,16 +28,11 @@ import io.ballerina.runtime.api.creators.TypeCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
 import io.ballerina.runtime.api.types.MapType;
 import io.ballerina.runtime.api.types.RecordType;
-import io.ballerina.runtime.api.types.Type;
-import io.ballerina.runtime.api.utils.JsonUtils;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BArray;
-import io.ballerina.runtime.api.values.BDecimal;
-import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
-import io.ballerina.runtime.api.values.BTypedesc;
 import io.temporal.api.common.v1.WorkflowExecution;
 import io.temporal.api.enums.v1.EventType;
 import io.temporal.api.enums.v1.WorkflowExecutionStatus;
@@ -47,11 +42,8 @@ import io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest;
 import io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionResponse;
 import io.temporal.api.workflowservice.v1.GetWorkflowExecutionHistoryRequest;
 import io.temporal.api.workflowservice.v1.GetWorkflowExecutionHistoryResponse;
-import io.temporal.client.UpdateOptions;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowStub;
-import io.temporal.client.WorkflowUpdateHandle;
-import io.temporal.client.WorkflowUpdateStage;
 import io.temporal.workflow.Workflow;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,7 +58,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-
 
 /**
  * Native implementation for workflow module functions.
@@ -279,171 +270,7 @@ public final class WorkflowNative {
         });
     }
 
-    /**
-     * Backs {@code workflow:updateAgent} — the request-response counterpart of {@code sendData} for durable
-     * agents, modeled as a Temporal Update. Blocks until the agent consumes the message and answers the turn,
-     * then coerces the response to the caller's dependently-typed {@code T}: directly for string-compatible
-     * targets, or by parsing the response text as JSON for structured targets.
-     *
-     * @param env           the runtime environment
-     * @param agentFunction the agent function (symmetry with sendData; reserved for compile-time validation)
-     * @param agentId       the agent's workflow ID
-     * @param eventName     the event field name declared in the agent's signature
-     * @param data          the request payload
-     * @param typedesc      the expected response type
-     * @return the agent's turn response coerced to {@code T}, or a Ballerina error
-     */
-    public static Object updateAgent(Environment env, BFunctionPointer agentFunction, BString agentId,
-                                     BString eventName, Object data, BTypedesc typedesc) {
-        if (isInsideWorkflow()) {
-            return ErrorCreator.createError(StringUtils.fromString(
-                    "updateAgent cannot be called inside a workflow; use it from services or main"));
-        }
-        Object javaData = TypesUtil.convertBallerinaToJavaType(data);
-        String agentIdStr = agentId.getValue();
-        String eventNameStr = eventName.getValue();
-        Type targetType = typedesc.getDescribingType();
-
-        return env.yieldAndRun(() -> {
-            CompletableFuture<Object> balFuture = new CompletableFuture<>();
-
-            WorkflowRuntime.getInstance().getExecutor().execute(() -> {
-                try {
-                    WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
-                    if (client == null) {
-                        balFuture.complete(ErrorCreator.createError(StringUtils.fromString(
-                                "Workflow client not initialized. Ensure worker is initialized.")));
-                        return;
-                    }
-                    WorkflowStub stub = client.newUntypedWorkflowStub(agentIdStr);
-                    Object result = stub.update(WorkflowWorkerNative.AGENT_UPDATE_NAME,
-                            Object.class, eventNameStr, javaData);
-                    balFuture.complete(coerceAgentResponse(result, targetType));
-                } catch (Exception e) {
-                    Throwable cause = e.getCause();
-                    String message = cause != null && cause.getMessage() != null
-                            ? cause.getMessage() : e.getMessage();
-                    balFuture.complete(ErrorCreator.createError(StringUtils.fromString(
-                            "Failed to update agent '" + agentIdStr + "': " + message)));
-                }
-            });
-
-            return getResult(balFuture);
-        });
-    }
-
-    /**
-     * Backs {@code workflow:updateAgentAsync} — the non-blocking counterpart of {@code updateAgent}. Starts the
-     * Temporal Update and waits only for the {@code ACCEPTED} stage: the request is durably admitted into the
-     * workflow history and this returns the update ID. The agent's answer is fetched later (from any process)
-     * via {@link #getAgentUpdateResult}, so long turns — e.g. a human-task escalation — hold no caller thread
-     * and survive caller crashes.
-     *
-     * @param env           the runtime environment
-     * @param agentFunction the agent function (symmetry with updateAgent; reserved for compile-time validation)
-     * @param agentId       the agent's workflow ID
-     * @param eventName     the update channel registered by the agent
-     * @param data          the request payload
-     * @return the update ID as a Ballerina string, or a Ballerina error
-     */
-    public static Object updateAgentAsync(Environment env, BFunctionPointer agentFunction, BString agentId,
-                                          BString eventName, Object data) {
-        if (isInsideWorkflow()) {
-            return ErrorCreator.createError(StringUtils.fromString(
-                    "updateAgentAsync cannot be called inside a workflow; use it from services or main"));
-        }
-        Object javaData = TypesUtil.convertBallerinaToJavaType(data);
-        String agentIdStr = agentId.getValue();
-        String eventNameStr = eventName.getValue();
-
-        return env.yieldAndRun(() -> {
-            CompletableFuture<Object> balFuture = new CompletableFuture<>();
-
-            WorkflowRuntime.getInstance().getExecutor().execute(() -> {
-                try {
-                    WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
-                    if (client == null) {
-                        balFuture.complete(ErrorCreator.createError(StringUtils.fromString(
-                                "Workflow client not initialized. Ensure worker is initialized.")));
-                        return;
-                    }
-                    WorkflowStub stub = client.newUntypedWorkflowStub(agentIdStr);
-                    UpdateOptions<Object> options = UpdateOptions.newBuilder(Object.class)
-                            .setUpdateName(WorkflowWorkerNative.AGENT_UPDATE_NAME)
-                            .setWaitForStage(WorkflowUpdateStage.ACCEPTED)
-                            .build();
-                    WorkflowUpdateHandle<Object> handle = stub.startUpdate(options, eventNameStr, javaData);
-                    balFuture.complete(StringUtils.fromString(handle.getId()));
-                } catch (Exception e) {
-                    Throwable cause = e.getCause();
-                    String message = cause != null && cause.getMessage() != null
-                            ? cause.getMessage() : e.getMessage();
-                    balFuture.complete(ErrorCreator.createError(StringUtils.fromString(
-                            "Failed to send update to agent '" + agentIdStr + "': " + message)));
-                }
-            });
-
-            return getResult(balFuture);
-        });
-    }
-
-    /**
-     * Backs {@code workflow:getAgentUpdateResult}. Re-attaches to a previously accepted update by its ID and
-     * waits up to the given timeout for the agent's turn answer. On timeout a {@code UpdatePendingError} is
-     * returned so the caller can check back later — the update result lives in the workflow history, so it is
-     * retrievable from any process at any time.
-     *
-     * @param env            the runtime environment
-     * @param agentId        the agent's workflow ID
-     * @param updateId       the update ID returned by {@code updateAgentAsync}
-     * @param timeoutSeconds how long to wait before reporting the update as pending
-     * @param typedesc       the expected response type
-     * @return the agent's answer coerced to {@code T}, an {@code UpdatePendingError}, or a Ballerina error
-     */
-    public static Object getAgentUpdateResult(Environment env, BString agentId, BString updateId,
-                                              BDecimal timeoutSeconds, BTypedesc typedesc) {
-        if (isInsideWorkflow()) {
-            return ErrorCreator.createError(StringUtils.fromString(
-                    "getAgentUpdateResult cannot be called inside a workflow; use it from services or main"));
-        }
-        String agentIdStr = agentId.getValue();
-        String updateIdStr = updateId.getValue();
-        long timeoutMillis = (long) (timeoutSeconds.floatValue() * 1000);
-        Type targetType = typedesc.getDescribingType();
-
-        return env.yieldAndRun(() -> {
-            CompletableFuture<Object> balFuture = new CompletableFuture<>();
-
-            WorkflowRuntime.getInstance().getExecutor().execute(() -> {
-                try {
-                    WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
-                    if (client == null) {
-                        balFuture.complete(ErrorCreator.createError(StringUtils.fromString(
-                                "Workflow client not initialized. Ensure worker is initialized.")));
-                        return;
-                    }
-                    WorkflowStub stub = client.newUntypedWorkflowStub(agentIdStr);
-                    WorkflowUpdateHandle<Object> handle = stub.getUpdateHandle(updateIdStr, Object.class);
-                    Object result = handle.getResultAsync(timeoutMillis, TimeUnit.MILLISECONDS).get();
-                    balFuture.complete(coerceAgentResponse(result, targetType));
-                } catch (Exception e) {
-                    if (isTimeout(e)) {
-                        balFuture.complete(buildUpdatePendingError(agentIdStr, updateIdStr));
-                        return;
-                    }
-                    Throwable cause = e.getCause();
-                    String message = cause != null && cause.getMessage() != null
-                            ? cause.getMessage() : e.getMessage();
-                    balFuture.complete(ErrorCreator.createError(StringUtils.fromString(
-                            "Failed to fetch update result for agent '" + agentIdStr + "': " + message)));
-                }
-            });
-
-            return getResult(balFuture);
-        });
-    }
-
-    /**
+                /**
      * Backs {@code workflow:getPendingAgentUpdates}: queries the agent workflow for the updates it has
      * accepted but not yet answered, so callers can rediscover in-flight turns after a crash and fetch
      * their answers via {@link #getAgentUpdateResult}.
@@ -503,66 +330,7 @@ public final class WorkflowNative {
         });
     }
 
-    /**
-     * Returns {@code true} when the exception (or any of its causes) is a timeout — the update is still
-     * in flight rather than failed.
-     */
-    private static boolean isTimeout(Throwable e) {
-        Throwable current = e;
-        for (int depth = 0; current != null && depth < 8; depth++) {
-            // The SDK surfaces an expired result wait either as a TimeoutException or as a
-            // gRPC DEADLINE_EXCEEDED from the underlying long poll — both mean "still running".
-            if (current instanceof java.util.concurrent.TimeoutException
-                    || current.getClass().getSimpleName().contains("Timeout")
-                    || (current.getMessage() != null && current.getMessage().contains("DEADLINE_EXCEEDED"))) {
-                return true;
-            }
-            current = current.getCause();
-        }
-        return false;
-    }
-
-    /**
-     * Builds a Ballerina {@code UpdatePendingError} carrying the agent and update IDs so callers can
-     * check back with the same handle.
-     */
-    private static BError buildUpdatePendingError(String agentId, String updateId) {
-        BMap<BString, Object> detail = ValueCreator.createMapValue();
-        detail.put(StringUtils.fromString("agentId"), StringUtils.fromString(agentId));
-        detail.put(StringUtils.fromString("updateId"), StringUtils.fromString(updateId));
-        try {
-            return ErrorCreator.createError(ModuleUtils.getModule(), "UpdatePendingError", StringUtils.fromString(
-                    "The agent is still working on this request (it may be waiting on a human task). "
-                            + "Check back with update ID '" + updateId + "'"), null, detail);
-        } catch (Exception e) {
-            return ErrorCreator.createError(StringUtils.fromString(
-                    "UpdatePendingError: the agent is still working on update '" + updateId + "'"), detail);
-        }
-    }
-
-    /**
-     * Coerces an agent's textual turn response to the caller's expected type. String-compatible targets convert
-     * directly; for structured targets the response text is parsed as JSON first (enabling typed responses when
-     * the model answers with JSON).
-     */
-    private static Object coerceAgentResponse(Object result, Type targetType) {
-        Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(result);
-        Object converted = TypesUtil.validateAndConvert(ballerinaResult, targetType);
-        if (converted instanceof BError && ballerinaResult instanceof BString textResponse) {
-            try {
-                Object parsed = JsonUtils.parse(textResponse.getValue());
-                Object parsedConverted = TypesUtil.validateAndConvert(parsed, targetType);
-                if (!(parsedConverted instanceof BError)) {
-                    return parsedConverted;
-                }
-            } catch (Exception ignore) {
-                // Fall through to the original conversion error.
-            }
-        }
-        return converted;
-    }
-
-    /**
+                /**
      * Routes a {@code workflow:sendData} call through a built-in implicit activity.
      */
     private static Object sendDataAsImplicitActivity(String workflowId, String dataName, Object javaData) {

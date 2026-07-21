@@ -249,14 +249,23 @@ public final class DurableAgentNative {
      * @param meta      declaration metadata (roles, result type, title, description, timeout)
      * @return true on success, or a BError when the agent is unknown
      */
-    public static Object registerDurableAgentHumanTask(BString agentName, BString taskName, Object meta) {
+    public static Object registerDurableAgentHumanTask(BString agentName, BString taskName, Object meta,
+                                                       BTypedesc resultType) {
         AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName.getValue());
         if (decl == null) {
             return unknownAgentError(agentName.getValue());
         }
-        decl.humanTasks().put(taskName.getValue(), meta);
+        decl.humanTasks().put(taskName.getValue(), new HumanTaskDeclEntry(meta, resultType));
         return true;
     }
+
+    /**
+     * A declared human task capability.
+     *
+     * @param meta       declaration metadata (roles, title, description)
+     * @param resultType the expected result typedesc
+     */
+    public record HumanTaskDeclEntry(Object meta, BTypedesc resultType) { }
 
     /**
      * Resolves a declared durable agent by name, or null when not registered. Used by the runner
@@ -380,7 +389,12 @@ public final class DurableAgentNative {
             for (Map.Entry<String, Object> task : decl.humanTasks().entrySet()) {
                 Map<String, Object> fields = new HashMap<>();
                 fields.put("name", StringUtils.fromString(task.getKey()));
-                fields.put("meta", task.getValue());
+                if (task.getValue() instanceof HumanTaskDeclEntry entry) {
+                    fields.put("meta", entry.meta());
+                    fields.put("resultType", entry.resultType());
+                } else {
+                    fields.put("meta", task.getValue());
+                }
                 humanTasks.append(ValueCreator.createRecordValue(
                         ModuleUtils.getModule(), HUMAN_TASK_SPEC_RECORD, fields));
             }

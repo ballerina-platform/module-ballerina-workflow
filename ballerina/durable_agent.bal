@@ -28,9 +28,14 @@ import ballerina/time;
 // existing durable ReAct loop.
 // ---------------------------------------------------------------------------
 
-# How a declared event channel consumes its requests: `SINGLE_EVENT` consumes the
-# channel once per run; `MULTI_EVENT` re-arms the wait each turn (conversations).
-public type EventCardinality SINGLE_EVENT|MULTI_EVENT;
+# How a declared event channel consumes its requests.
+public enum EventCardinality {
+    # The channel is consumed once per run (default)
+    SINGLE_EVENT,
+    # The channel re-arms after every turn: the agent may wait on it repeatedly, each
+    # wait consuming the next queued payload (conversational agents)
+    MULTI_EVENT
+}
 
 # A named event channel of a durable agent. `request`/`response` capture both
 # sides' types; a nil `response` declares a one-way channel (no result read).
@@ -305,6 +310,7 @@ type DurableAgentEventSpec record {|
 type DurableAgentHumanTaskSpec record {|
     string name;
     json meta = ();
+    typedesc<anydata> resultType = anydata;
 |};
 
 type DurableAgentPeerSpec record {|

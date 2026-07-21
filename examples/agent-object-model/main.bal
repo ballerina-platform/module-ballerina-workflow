@@ -16,18 +16,49 @@
 
 // Object-model durable agent sample: the agent is declared once as a module-level
 // `final workflow:DurableAgent` whose constructor config carries every capability.
-// The compiler plugin generates the module-init registration from the config; the
-// driver methods come online with the object-model runner (next phase).
+// The compiler plugin generates the module-init registration from the config, and
+// `run()` starts the agent's own workflow type on the shared object-model runner.
+// The model is a scripted mock ai:ModelProvider so no credentials are needed.
 
 import ballerina/ai;
 import ballerina/io;
+import ballerina/jballerina.java;
 import ballerina/workflow;
-import ballerina/workflow.internal as wfInternal;
 
-// A placeholder provider: the constructor does not connect, and no LLM call is made
-// in this phase. Swap for `ai:getDefaultModelProvider()` + Config.toml when running
-// the agent for real.
-final ai:Wso2ModelProvider orderModel = check new ("http://localhost:9099", "test-token");
+// Scripted mock: the first turn requests a checkInventory tool call; once the tool
+// result is visible in the conversation, the model answers and the run completes.
+isolated client class ScriptedModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        if messages !is ai:ChatMessage[] {
+            return {role: ai:ASSISTANT, content: "unexpected single message"};
+        }
+        foreach ai:ChatMessage message in messages {
+            if message is ai:ChatFunctionMessage && message.name == "checkInventory" {
+                string? content = message.content;
+                return {
+                    role: ai:ASSISTANT,
+                    content: "Inventory check finished: " + (content ?: "no result")
+                };
+            }
+        }
+        return {
+            role: ai:ASSISTANT,
+            toolCalls: [{name: "checkInventory", arguments: {"item": "laptop"}, id: "call-1"}]
+        };
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final ScriptedModelProvider orderModel = new;
 
 type EscalationReq record {|
     string reason;
@@ -70,7 +101,6 @@ final workflow:DurableAgent orderAgent = check new ({
     ],
     tools: [priceLookup],
     events: [
-        {name: "chat", request: string, response: string, cardinality: workflow:MULTI_EVENT},
         {name: "escalate", request: EscalationReq}
     ],
     humanTasks: [
@@ -83,25 +113,22 @@ public function main() returns error? {
     io:println("agent-object-model: module init completed — the durable agent declaration "
             + "was registered with the workflow runtime.");
 
-    // Phase-1 state: the declaration surface is live; the runner methods report
-    // themselves as not yet supported instead of failing silently.
-    string|error runResult = orderAgent.run("Where is order ORD-1?");
-    if runResult is error {
-        io:println("orderAgent.run() -> " + runResult.message());
+    // Start the agent durably: run() always returns the new instance id, never the
+    // result — the agent may suspend for days on a human task without holding a thread.
+    string instanceId = check orderAgent.run("Check whether laptops are in stock.");
+    io:println("orderAgent.run() -> instance " + instanceId);
+
+    // Non-blocking read: while the agent is still reasoning this returns AgentBusyError.
+    string|error early = orderAgent.getResult(instanceId);
+    if early is workflow:AgentBusyError {
+        io:println("orderAgent.getResult() -> AgentBusyError (still working — as expected)");
+    } else if early is error {
+        io:println("orderAgent.getResult() -> error: " + early.message());
     } else {
-        io:println("orderAgent.run() unexpectedly succeeded: " + runResult);
+        io:println("orderAgent.getResult() -> " + early);
     }
 
-    string|error sendResult = orderAgent.sendEvent("wf-1", "chat", "cancel it");
-    if sendResult is error {
-        io:println("orderAgent.sendEvent() -> " + sendResult.message());
-    }
-
-    // Prove the generated module-init registration ran: a second registration under the
-    // same agent name must be rejected as a duplicate.
-    boolean|error dup = wfInternal:registerDurableAgentDecl("orderAgent", orderModel,
-        {role: "x", instructions: "y"}, 8);
-    io:println(dup is error
-        ? "decl registry check -> 'orderAgent' was already registered by the generated module-init code"
-        : "decl registry check -> MISSING: the generated registration did not run!");
+    // Blocking, crash-resumable read: waits until the agent finishes.
+    string result = check orderAgent.waitForResult(instanceId);
+    io:println("orderAgent.waitForResult() -> " + result);
 }

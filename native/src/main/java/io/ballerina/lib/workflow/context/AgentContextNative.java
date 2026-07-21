@@ -531,6 +531,17 @@ public final class AgentContextNative {
      * @param response the final response text
      * @return null (always succeeds)
      */
+    /**
+     * Returns the agent's recorded final response for this execution ("" when none).
+     *
+     * @param handle the AgentContextInfo handle
+     * @return the final response text as a Ballerina string
+     */
+    public static BString getFinalResponse(BHandle handle) {
+        AgentContextInfo info = (AgentContextInfo) handle.getValue();
+        return StringUtils.fromString(info.finalResponse == null ? "" : info.finalResponse);
+    }
+
     public static Object setResponse(BHandle handle, BString response) {
         AgentContextInfo info = (AgentContextInfo) handle.getValue();
         info.finalResponse = response.getValue();

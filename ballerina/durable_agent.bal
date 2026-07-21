@@ -171,12 +171,27 @@ public type AgentBusyError distinct error;
 # ```
 public isolated class DurableAgent {
 
+    private string agentName = "";
+
     # Declares the agent. Capabilities are fixed here and registered with the
     # workflow runtime at module init by the compiler plugin.
     #
     # + config - The agent's complete configuration
     # + return - An error when the configuration is invalid
     public isolated function init(*DurableAgentConfig config) returns error? {
+    }
+
+    # Binds the agent's stable identity — its module-level variable name — to this
+    # object. Called by the compiler-plugin-generated module-init code; not part of
+    # the public API surface. The first binding wins; later calls are ignored.
+    #
+    # + agentName - The agent's module-level variable name
+    public isolated function bindAgentName(string agentName) {
+        lock {
+            if self.agentName == "" {
+                self.agentName = agentName;
+            }
+        }
     }
 
     # Starts the agent durably and returns the new instance ID — always the ID,
@@ -187,10 +202,10 @@ public isolated class DurableAgent {
     # + query - The user turn appended to the agent's system prompt
     # + input - Optional structured input for the run
     # + return - The new agent instance ID, or an error
-    public isolated function run(string query, anydata input = ()) returns string|error {
-        return error("workflow:DurableAgent.run is not supported yet: "
-                + "the object-model runner lands in a later phase");
-    }
+    public isolated function run(string query, anydata input = ()) returns string|error = @java:Method {
+        'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+        name: "runAgent"
+    } external;
 
     # Sends an event to a running instance on a declared channel and returns a
     # correlation token for reading that turn's response.
@@ -261,3 +276,48 @@ public isolated class DurableAgent {
         name: "waitForEventResult"
     } external;
 }
+
+// ---------------------------------------------------------------------------
+// Object-model runner spec (internal)
+// ---------------------------------------------------------------------------
+// Built natively from the agent declaration registry; consumed by the shared
+// runner workflow (runDurableAgentObject) to register capabilities on its
+// AgentContext and start the ReAct loop.
+
+type DurableAgentActivitySpec record {|
+    string toolName;
+    function activity;
+    json meta = ();
+|};
+
+type DurableAgentToolSpec record {|
+    string toolName;
+    function tool;
+|};
+
+type DurableAgentEventSpec record {|
+    string name;
+    typedesc<anydata> request;
+    typedesc<anydata>? response = ();
+    string cardinality = "SINGLE_EVENT";
+|};
+
+type DurableAgentHumanTaskSpec record {|
+    string name;
+    json meta = ();
+|};
+
+type DurableAgentRunSpec record {|
+    json systemPrompt;
+    int maxIter;
+    ai:ModelProvider model;
+    DurableAgentActivitySpec[] activities = [];
+    DurableAgentToolSpec[] tools = [];
+    DurableAgentEventSpec[] events = [];
+    DurableAgentHumanTaskSpec[] humanTasks = [];
+|};
+
+isolated function getDurableAgentRunSpec(string agentName) returns DurableAgentRunSpec|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "getRunSpec"
+} external;

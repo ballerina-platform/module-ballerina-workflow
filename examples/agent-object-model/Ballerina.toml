@@ -6,3 +6,8 @@ distribution = "2201.13.4"
 
 [build-options]
 observabilityIncluded = true
+
+# The scripted mock model's `generate` uses the shipped TestNatives helper; user
+# interop declarations need the jar on this package's platform classpath.
+[[platform.java21.dependency]]
+path = "../../native/build/libs/workflow-native-0.8.0-SNAPSHOT.jar"

@@ -183,3 +183,39 @@ public isolated function registerDurableAgentHumanTask(string agentName, string 
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
     name: "registerDurableAgentHumanTask"
 } external;
+
+# Registers an AI tool of an object-model durable agent: stored on the declaration
+# (so the runner can advertise it to the model) and published to the agent tool
+# registry (so the built-in `executeAgentTool` activity can resolve it).
+#
+# + agentName - The agent's name (its module-level variable name)
+# + tool - The `@ai:AgentTool` function
+# + return - `true` on success, or an error
+public isolated function registerDurableAgentTool(string agentName, ai:FunctionTool tool)
+        returns boolean|error {
+    ai:ToolConfig[] configs = ai:getToolConfigs([tool]);
+    if configs.length() == 0 {
+        return error("Agent tool functions must be annotated with @ai:AgentTool");
+    }
+    return registerDurableAgentToolNative(agentName, configs[0].name, tool);
+}
+
+isolated function registerDurableAgentToolNative(string agentName, string toolName, function tool)
+        returns boolean|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "registerDurableAgentTool"
+} external;
+
+# Registers the shared object-model runner as an agent's workflow: the agent gets
+# its own workflow type (`workflow-<agentName>`) whose activities are the agent's
+# declared activity functions plus the built-in agent activities.
+#
+# + agentName - The agent's name (its module-level variable name)
+# + runner - The shared runner function (`workflow:runDurableAgentObject`)
+# + builtinActivities - The built-in agent activities keyed by activity name
+# + return - `true` on success, or an error
+public isolated function registerDurableAgentRunner(string agentName, function runner,
+        map<function> builtinActivities) returns boolean|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "registerDurableAgentRunner"
+} external;

@@ -1066,6 +1066,84 @@ public final class WorkflowContextNative {
         }
     }
 
+    // -----------------------------------------------------------------------------------------
+    // Durable agent (object model) child support — used by DurableAgentNative when
+    // DurableAgent.run / result reads execute inside a workflow.
+    // -----------------------------------------------------------------------------------------
+
+    private static final String CHILD_AGENT_ID_PREFIX = "childagent-";
+
+    /**
+     * Starts a durable agent instance as a true Temporal child workflow of the current workflow.
+     * The agent's workflow type is {@code workflow-<agentName>} and the handle is retained so
+     * {@code getResult}/{@code waitForResult} can await the child's result promise by the
+     * returned instance ID.
+     *
+     * @param agentName the agent name (module-level variable name)
+     * @param runInput  the runner input map ({agentName, query, input})
+     * @return the child instance ID as a Ballerina string, or a BError
+     */
+    public static Object startDurableAgentChild(String agentName, Map<String, Object> runInput) {
+        try {
+            WorkflowWorkerNative.awaitWhileSuspended();
+            String childId = CHILD_AGENT_ID_PREFIX + agentName + "-" + Workflow.randomUUID();
+            ChildWorkflowStub stub = newChildStub(agentName, childId);
+            Promise<Object> result = stub.executeAsync(Object.class, runInput);
+            stub.getExecution().get();
+            CHILD_HANDLES.get().put(childId, new ChildWorkflowHandle(stub, result));
+            return StringUtils.fromString(childId);
+        } catch (io.temporal.worker.NonDeterministicException e) {
+            throw e;
+        } catch (CanceledFailure e) {
+            throw e;
+        } catch (ChildWorkflowFailure e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to start durable agent '" + agentName + "': " + childFailureMessage(e)));
+        } catch (io.temporal.failure.TemporalFailure e) {
+            throw e;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to start durable agent '" + agentName + "': " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Reads the result of a durable agent child started with {@code startDurableAgentChild}.
+     * Non-blocking reads return a {@code workflow:AgentBusyError} while the child is running;
+     * blocking reads durably suspend until it completes.
+     *
+     * @param childId  the child instance ID returned by {@code startDurableAgentChild}
+     * @param typedesc the expected result type descriptor
+     * @param blocking whether to durably wait for completion
+     * @return the typed result, an AgentBusyError (non-blocking, still running), or a BError
+     */
+    public static Object readDurableAgentChildResult(String childId, BTypedesc typedesc, boolean blocking) {
+        try {
+            if (blocking) {
+                WorkflowWorkerNative.awaitWhileSuspended();
+            }
+            ChildWorkflowHandle handle = CHILD_HANDLES.get().get(childId);
+            if (handle == null) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Unknown durable agent instance '" + childId + "': result reads inside a workflow "
+                                + "are only available for agents started with run() in this workflow execution"));
+            }
+            if (!blocking && !handle.result().isCompleted()) {
+                return io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative
+                        .createAgentBusyError(childId);
+            }
+            return readChildResult(handle, typedesc);
+        } catch (io.temporal.worker.NonDeterministicException e) {
+            throw e;
+        } catch (io.temporal.failure.TemporalFailure e) {
+            throw e;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to read the result of durable agent instance '" + childId + "': "
+                            + e.getMessage()));
+        }
+    }
+
     /**
      * Builds an untyped child workflow stub for the given @Workflow function name. The child workflow type uses
      * the same user-workflow prefix as {@code workflow:run}, so it resolves against the worker's process

@@ -69,22 +69,17 @@ function testDurableAgentDeclRegistration() returns error? {
 
 @test:Config {}
 function testDurableAgentDriverStubs() {
-    // The driver methods are declaration anchors until the object-model runner lands;
-    // each returns a descriptive error rather than silently doing nothing.
+    // run() requires the plugin-generated name binding, which does not run for the
+    // module's own tests — an unbound object reports a descriptive error.
     string|error runResult = declTestAgent.run("hello");
-    test:assertTrue(runResult is error, "run should not be supported yet");
+    test:assertTrue(runResult is error, "run on an unbound agent should fail");
     if runResult is error {
-        test:assertTrue(runResult.message().includes("not supported yet"));
+        test:assertTrue(runResult.message().includes("no agent name is bound"));
     }
 
+    // The event-turn methods remain declaration anchors until typed events land.
     string|error sendResult = declTestAgent.sendEvent("wf-1", "chat", "hi");
     test:assertTrue(sendResult is error, "sendEvent should not be supported yet");
-
-    string|error getResult = declTestAgent.getResult("wf-1");
-    test:assertTrue(getResult is error, "getResult should not be supported yet");
-
-    string|error waitResult = declTestAgent.waitForResult("wf-1");
-    test:assertTrue(waitResult is error, "waitForResult should not be supported yet");
 
     string|error eventResult = declTestAgent.getEventResult("wf-1", "token-1");
     test:assertTrue(eventResult is error, "getEventResult should not be supported yet");

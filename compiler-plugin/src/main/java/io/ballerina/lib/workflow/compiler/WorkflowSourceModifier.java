@@ -361,7 +361,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         }
         for (String toolRef : decl.aiToolRefs()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerAgentTool(").append(agentNameLiteral)
+                    .append(":registerDurableAgentTool(").append(agentNameLiteral)
                     .append(", ").append(toolRef).append(");").append(System.lineSeparator());
         }
         for (DurableAgentDeclInfo.EventDecl event : decl.events()) {
@@ -380,6 +380,24 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                     .append("\", ").append(task.metaSource() != null ? task.metaSource() : "()")
                     .append(");").append(System.lineSeparator());
         }
+        // Register the shared object-model runner as this agent's workflow (the agent's own
+        // workflow type + its activity map incl. the built-in agent activities), and bind the
+        // agent's identity to the object so its driver methods (run/getResult/...) resolve it.
+        String prefix = decl.workflowPrefix();
+        if (prefix != null) {
+            body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                    .append(":registerDurableAgentRunner(").append(agentNameLiteral)
+                    .append(", ").append(prefix).append(":runDurableAgentObject, {")
+                    .append("\"").append(WorkflowConstants.LLM_CHAT_ACTIVITY).append("\": ")
+                    .append(prefix).append(":").append(WorkflowConstants.LLM_CHAT_ACTIVITY)
+                    .append(", \"").append(WorkflowConstants.GENERATE_ACTIVITY).append("\": ")
+                    .append(prefix).append(":").append(WorkflowConstants.GENERATE_ACTIVITY)
+                    .append(", \"").append(WorkflowConstants.EXECUTE_AGENT_TOOL_ACTIVITY).append("\": ")
+                    .append(prefix).append(":").append(WorkflowConstants.EXECUTE_AGENT_TOOL_ACTIVITY)
+                    .append("});").append(System.lineSeparator());
+        }
+        body.append("    ").append(decl.agentName()).append(".bindAgentName(")
+                .append(agentNameLiteral).append(");").append(System.lineSeparator());
     }
 
     private String buildActivitiesArg(ProcessFunctionInfo processInfo) {

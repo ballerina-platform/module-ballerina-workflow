@@ -441,3 +441,131 @@ isolated function getAgentModel(string agentName) returns ai:ModelProvider|error
     name: "getAgentModel"
 } external;
 
+
+
+// ============================================================================
+// Object-model durable agent runner
+// ============================================================================
+
+# Shared runner workflow for object-model durable agents. Registered by the
+# compiler plugin as the workflow function of every `final workflow:DurableAgent`
+# declaration (workflow type `workflow-<agentName>`), so the whole function-based
+# agent substrate — adapter dispatch, model/tool registries, management views —
+# works unchanged. The runner resolves the agent's declaration by name, registers
+# its capabilities on the AgentContext exactly as a function-based agent body
+# would, hands control to the durable ReAct loop, and returns the agent's final
+# response as the workflow result (so `getResult`/`waitForResult` read it from
+# the instance).
+#
+# This is an **internal** function referenced by generated code; do not call it
+# directly.
+#
+# + ctx - The agent context (injected by the workflow adapter)
+# + runInput - The run request: `{agentName, query, input}`
+# + return - The agent's final response, or an error
+public isolated function runDurableAgentObject(AgentContext ctx, map<anydata> runInput)
+        returns anydata|error {
+    string agentName = check runInput["agentName"].ensureType();
+    string query = check runInput["query"].ensureType();
+    anydata payload = runInput["input"];
+
+    DurableAgentRunSpec spec = check getDurableAgentRunSpec(agentName);
+
+    foreach DurableAgentActivitySpec activitySpec in spec.activities {
+        check registerDeclaredActivity(ctx, activitySpec);
+    }
+    foreach DurableAgentToolSpec toolSpec in spec.tools {
+        ai:FunctionTool toolFn = check toolSpec.tool.ensureType();
+        check ctx.registerAgentTool(toolFn);
+    }
+    boolean multiEvent = false;
+    foreach DurableAgentEventSpec eventSpec in spec.events {
+        check ctx.registerUpdateEvents(eventSpec.name, eventSpec.request, eventSpec.response);
+        if eventSpec.cardinality == "MULTI_EVENT" {
+            multiEvent = true;
+        }
+    }
+    foreach DurableAgentHumanTaskSpec taskSpec in spec.humanTasks {
+        check registerDeclaredHumanTask(ctx, taskSpec);
+    }
+
+    ai:SystemPrompt systemPrompt = check spec.systemPrompt.cloneWithType();
+
+    // Structured run input is surfaced to the model as part of the user turn.
+    string effectiveQuery = payload is () ? query
+        : query + "\n\nInput:\n" + payload.toJsonString();
+
+    check ctx.buildAndRun(effectiveQuery,
+        systemPrompt = systemPrompt,
+        model = spec.model,
+        maxIter = spec.maxIter,
+        interaction = multiEvent ? MULTI_EVENT : SINGLE_EVENT,
+        // Per-channel cardinality (and its timeout policy) lands with typed events;
+        // until then a multi-event agent uses a bounded default wait per turn.
+        eventTimeout = multiEvent ? {minutes: 30} : ()
+    );
+    return ctx.getFinalResponse();
+}
+
+# Registers one declared activity capability on the runner's context, converting
+# the declaration metadata (description, gating, retry policy) captured at compile
+# time.
+#
+# + ctx - The agent context
+# + activitySpec - The declared activity
+# + return - An error when registration fails
+isolated function registerDeclaredActivity(AgentContext ctx, DurableAgentActivitySpec activitySpec)
+        returns error? {
+    string? description = ();
+    boolean requiresApproval = false;
+    AutoRetry|ManualRetry|NoRetry retryPolicy = NoRetry;
+    json meta = activitySpec.meta;
+    if meta is map<json> {
+        json descriptionJson = meta["description"];
+        if descriptionJson is string {
+            description = descriptionJson;
+        }
+        json approvalJson = meta["requiresApproval"];
+        if approvalJson is boolean {
+            requiresApproval = approvalJson;
+        }
+        json retryJson = meta["retryPolicy"];
+        if retryJson is string && retryJson == ManualRetry {
+            retryPolicy = ManualRetry;
+        } else if retryJson is map<json> {
+            retryPolicy = check retryJson.cloneWithType(AutoRetry);
+        }
+    }
+    check ctx.registerActivity(activitySpec.activity, activitySpec.toolName, description,
+        (), requiresApproval, retryPolicy);
+}
+
+# Registers one declared human task capability on the runner's context.
+#
+# + ctx - The agent context
+# + taskSpec - The declared human task
+# + return - An error when registration fails
+isolated function registerDeclaredHumanTask(AgentContext ctx, DurableAgentHumanTaskSpec taskSpec)
+        returns error? {
+    string|string[] roles = "manager";
+    string? title = ();
+    string? description = ();
+    json meta = taskSpec.meta;
+    if meta is map<json> {
+        json rolesJson = meta["roles"];
+        if rolesJson is string {
+            roles = rolesJson;
+        } else if rolesJson is json[] {
+            roles = check rolesJson.cloneWithType();
+        }
+        json titleJson = meta["title"];
+        if titleJson is string {
+            title = titleJson;
+        }
+        json descriptionJson = meta["description"];
+        if descriptionJson is string {
+            description = descriptionJson;
+        }
+    }
+    check ctx.registerHumanTask(taskSpec.name, roles, anydata, title, description, ());
+}

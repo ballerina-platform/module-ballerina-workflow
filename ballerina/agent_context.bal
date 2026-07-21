@@ -267,6 +267,15 @@ public client class AgentContext {
         finishAgentUpdates(self.nativeContext, result is error ? result.message() : ());
         return result;
     }
+
+    # Returns the agent's recorded final response for this run ("" when none was
+    # recorded). Used by the object-model runner to surface the response as the
+    # workflow result; not part of the public API surface.
+    #
+    # + return - The final response text
+    isolated function getFinalResponse() returns string {
+        return readAgentContextFinalResponse(self.nativeContext);
+    }
 }
 
 // Internal shape of a registered tool: the LLM-facing definition plus the
@@ -354,4 +363,9 @@ isolated function setAgentModelProvider(handle nativeContext, object {} model) =
 isolated function registerAgentModelForContext(handle nativeContext) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "registerModel"
+} external;
+
+isolated function readAgentContextFinalResponse(handle contextHandle) returns string = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.AgentContextNative",
+    name: "getFinalResponse"
 } external;

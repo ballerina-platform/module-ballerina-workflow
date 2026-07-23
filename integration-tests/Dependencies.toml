@@ -84,7 +84,7 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "http"
-version = "2.16.4"
+version = "2.16.3"
 dependencies = [
 	{org = "ballerina", name = "auth"},
 	{org = "ballerina", name = "cache"},
@@ -336,7 +336,7 @@ modules = [
 [[package]]
 org = "ballerina"
 name = "time"
-version = "2.8.1"
+version = "2.8.0"
 dependencies = [
 	{org = "ballerina", name = "jballerina.java"}
 ]
@@ -347,7 +347,7 @@ modules = [
 [[package]]
 org = "ballerina"
 name = "url"
-version = "2.6.2"
+version = "2.6.1"
 dependencies = [
 	{org = "ballerina", name = "jballerina.java"}
 ]
@@ -366,7 +366,7 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "workflow"
-version = "0.7.0"
+version = "0.6.0"
 dependencies = [
 	{org = "ballerina", name = "email"},
 	{org = "ballerina", name = "http"},
@@ -388,7 +388,7 @@ modules = [
 [[package]]
 org = "ballerina"
 name = "workflow_tests"
-version = "0.7.0"
+version = "0.6.0"
 dependencies = [
 	{org = "ballerina", name = "email"},
 	{org = "ballerina", name = "http"},

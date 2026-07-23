@@ -524,7 +524,7 @@ isolated function registerDeclaredActivity(AgentContext ctx, DurableAgentActivit
         returns error? {
     string? description = ();
     boolean requiresApproval = false;
-    AutoRetry|ManualRetry|NoRetry retryPolicy = NoRetry;
+    AutoRetry|HumanReview|NoAutomaticRetry retryPolicy = NoAutomaticRetry;
     json meta = activitySpec.meta;
     if meta is map<json> {
         json descriptionJson = meta["description"];
@@ -539,7 +539,7 @@ isolated function registerDeclaredActivity(AgentContext ctx, DurableAgentActivit
         if retryJson is string {
             retryPolicy = retryJson;
         } else if retryJson is json[] {
-            retryPolicy = check retryJson.cloneWithType(ManualRetry);
+            retryPolicy = check retryJson.cloneWithType(HumanReview);
         } else if retryJson is map<json> {
             retryPolicy = check retryJson.cloneWithType(AutoRetry);
         }

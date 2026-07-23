@@ -71,7 +71,7 @@ public type ActivityDecl record {|
     map<anydata|object {}> bindings?;
     boolean requiresApproval = false;
     string|string[] userRoles?;
-    AutoRetry|ManualRetry|NoRetry retryPolicy = NoRetry;
+    AutoRetry|HumanReview|NoAutomaticRetry retryPolicy = NoAutomaticRetry;
 |};
 
 # An AI tool capability of a durable agent, with optional gating config. For the

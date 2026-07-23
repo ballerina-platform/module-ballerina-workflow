@@ -43,9 +43,19 @@ type ActivityRetryPolicy record {|
 // Activity retry policy types
 // ---------------------------------------------------------------------------
 
-# No retry. Errors from the activity are returned directly to the caller.
-# This is the default behaviour when no `retryPolicy` is specified.
-public const NoRetry  = ();
+# No automatic retry by the engine. Errors from the activity are returned
+# directly to the caller. This is the default behaviour when no `retryPolicy`
+# is specified. Note that an AI agent may still decide to call the activity
+# again from its own reasoning — this policy only disables engine-driven
+# retries.
+public const NoAutomaticRetry = ();
+
+# Deprecated alias of `NoAutomaticRetry`.
+# # Deprecated
+# Use `NoAutomaticRetry` instead: it makes explicit that only engine-driven
+# retries are disabled (an AI agent may still re-invoke the activity).
+@deprecated
+public const NoRetry = ();
 
 # Automatic retry configuration. When the activity fails, it is automatically
 # retried according to the configured backoff policy.
@@ -61,12 +71,18 @@ public type AutoRetry record {|
     decimal maxRetryDelay?;
 |};
 
-# Manual retry policy: the role(s) permitted to decide the retry review. Passing
-# a role name (or list of role names) as the `retryPolicy` creates a review task
-# on activity failure so a matching human can decide to retry, retry with
-# different input, or permanently fail. The task name is derived automatically
-# from the activity being called.
-public type ManualRetry string|string[];
+# Human-review retry policy: the role(s) permitted to decide the retry review.
+# Passing a role name (or list of role names) as the `retryPolicy` creates a
+# review task on activity failure so a matching human can decide to retry,
+# retry with different input, or permanently fail. The task name is derived
+# automatically from the activity being called.
+public type HumanReview string|string[];
+
+# Deprecated alias of `HumanReview`.
+# # Deprecated
+# Use `HumanReview` instead.
+@deprecated
+public type ManualRetry HumanReview;
 
 # Options for activity execution via `callActivity`.
 #

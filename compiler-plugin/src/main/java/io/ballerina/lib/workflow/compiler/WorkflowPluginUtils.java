@@ -36,6 +36,7 @@ import io.ballerina.compiler.syntax.tree.AnnotationNode;
 import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.MetadataNode;
+import io.ballerina.compiler.syntax.tree.Node;
 import io.ballerina.compiler.syntax.tree.NodeList;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 
@@ -447,5 +448,27 @@ public final class WorkflowPluginUtils {
             case TABLE_CONSTRUCTOR -> "a table value";
             default -> "an incompatible value";
         };
+    }
+
+    /**
+     * Returns {@code true} when the given node sits inside the body of a function carrying the
+     * {@code @Workflow} annotation. Used to reject client verbs ({@code workflow:run},
+     * {@code workflow:sendData}) inside workflow bodies, where the child-workflow context
+     * methods must be used instead.
+     *
+     * @param node          the syntax node to check
+     * @param semanticModel the semantic model
+     * @return true when an enclosing function definition has the @Workflow annotation
+     */
+    public static boolean isInsideWorkflowFunction(Node node, SemanticModel semanticModel) {
+        Node current = node.parent();
+        while (current != null) {
+            if (current instanceof FunctionDefinitionNode functionNode) {
+                return hasWorkflowAnnotation(functionNode, semanticModel,
+                        WorkflowConstants.PROCESS_ANNOTATION);
+            }
+            current = current.parent();
+        }
+        return false;
     }
 }

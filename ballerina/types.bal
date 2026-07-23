@@ -117,3 +117,13 @@ public type HumanTaskTimeoutDetail record {|
 # Returned by `awaitHumanTask` when no human acts within the configured deadline.
 # Catch with `on fail workflow:HumanTaskTimeoutError e` to run compensation logic.
 public type HumanTaskTimeoutError distinct error<HumanTaskTimeoutDetail>;
+
+// ---------------------------------------------------------------------------
+// Child workflow types
+// ---------------------------------------------------------------------------
+
+# Returned by the non-blocking `ctx->getChildWorkflowResult` read when the child
+# workflow is still running (e.g. suspended on a human task). Check back later, or
+# use the blocking `ctx->waitForChildWorkflow` form, which durably suspends until
+# the child completes.
+public type WorkflowBusyError distinct error;

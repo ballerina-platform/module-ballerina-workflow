@@ -536,8 +536,10 @@ isolated function registerDeclaredActivity(AgentContext ctx, DurableAgentActivit
             requiresApproval = approvalJson;
         }
         json retryJson = meta["retryPolicy"];
-        if retryJson is string && retryJson == ManualRetry {
-            retryPolicy = ManualRetry;
+        if retryJson is string {
+            retryPolicy = retryJson;
+        } else if retryJson is json[] {
+            retryPolicy = check retryJson.cloneWithType(ManualRetry);
         } else if retryJson is map<json> {
             retryPolicy = check retryJson.cloneWithType(AutoRetry);
         }

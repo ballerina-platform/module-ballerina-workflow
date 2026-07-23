@@ -821,11 +821,14 @@ function testActivityInvocationsOnSingleFailNoRetry() returns error? {
 // ============================================================================
 
 @test:Config {groups: ["unit"]}
-function testManualRetryIsConstant() {
-    // ManualRetry is a sentinel constant; task name is derived from the activity.
-    test:assertEquals(ManualRetry, "MANUAL_RETRY");
-    AutoRetry|string|() policy = ManualRetry;
-    test:assertEquals(policy, ManualRetry);
+function testManualRetryIsRolesAlias() {
+    // ManualRetry is the reviewer role(s): a role name or a list of role names.
+    ManualRetry single = "manager";
+    ManualRetry many = ["finance", "manager"];
+    AutoRetry|ManualRetry|NoRetry policy = single;
+    test:assertEquals(policy, "manager");
+    policy = many;
+    test:assertEquals(policy, <string[]>["finance", "manager"]);
 }
 
 @test:Config {groups: ["unit"]}
@@ -871,7 +874,7 @@ function failingActivityForRetry(string orderId) returns string|error {
 @Workflow
 function workflowWithManualRetry(Context ctx, string orderId) returns string|error {
     string result = check ctx->callActivity(failingActivityForRetry, {"orderId": orderId},
-            retryPolicy = ManualRetry);
+            retryPolicy = "manager");
     return result;
 }
 
@@ -879,7 +882,7 @@ function workflowWithManualRetry(Context ctx, string orderId) returns string|err
 @Workflow
 function workflowWithManualRetryFail(Context ctx, string orderId) returns string|error {
     string result = check ctx->callActivity(failingActivityForRetry, {"orderId": orderId},
-            retryPolicy = ManualRetry);
+            retryPolicy = "manager");
     return result;
 }
 

@@ -61,11 +61,12 @@ public type AutoRetry record {|
     decimal maxRetryDelay?;
 |};
 
-# Manual retry sentinel. When passed as the `retryPolicy`, a retry task is
-# created on activity failure so a human can decide to retry, retry with
+# Manual retry policy: the role(s) permitted to decide the retry review. Passing
+# a role name (or list of role names) as the `retryPolicy` creates a review task
+# on activity failure so a matching human can decide to retry, retry with
 # different input, or permanently fail. The task name is derived automatically
 # from the activity being called.
-public const string ManualRetry = "MANUAL_RETRY";
+public type ManualRetry string|string[];
 
 # Options for activity execution via `callActivity`.
 #

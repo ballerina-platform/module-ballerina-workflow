@@ -113,8 +113,11 @@ public final class WorkflowContextNative {
 
             Map<String, Object> namedArgs = convertArgsMapWithConnectionMarkers(args);
 
-            // Classify the retry policy
-            boolean isManualRetry = retryPolicy instanceof BString s && "MANUAL_RETRY".equals(s.getValue());
+            // Classify the retry policy: a string or string list is a ManualRetry policy
+            // carrying the reviewer role(s); a mapping is AutoRetry; nil is NoRetry.
+            boolean isManualRetry = retryPolicy instanceof BString
+                    || retryPolicy instanceof io.ballerina.runtime.api.values.BArray;
+            String[] manualRetryRoles = isManualRetry ? extractManualRetryRoles(retryPolicy) : new String[0];
             boolean isAutoRetry = false;
             BMap<BString, Object> retryPolicyMap = null;
             if (!isManualRetry && retryPolicy instanceof BMap<?, ?>) {
@@ -130,7 +133,8 @@ public final class WorkflowContextNative {
             if (isManualRetry) {
                 // Manual retry: run activity in a loop; on failure start a RetryTask
                 // child workflow and wait for a human decision.
-                return executeWithManualRetry(fullActivityName, workflowType, namedArgs, callConfig, typedesc);
+                return executeWithManualRetry(fullActivityName, workflowType, namedArgs, callConfig,
+                        manualRetryRoles, typedesc);
             }
 
             // AutoRetry or NoRetry — single Temporal activity invocation
@@ -183,9 +187,26 @@ public final class WorkflowContextNative {
      * {@code "retry-with-input"} (override args map).
      */
     @SuppressWarnings("unchecked")
+    // Reads the reviewer role(s) from a ManualRetry policy value: a string is one role, a
+    // string list is several; the legacy "MANUAL_RETRY" sentinel means any role.
+    private static String[] extractManualRetryRoles(Object retryPolicy) {
+        if (retryPolicy instanceof BString roleString) {
+            String value = roleString.getValue();
+            return "MANUAL_RETRY".equals(value) ? new String[0] : new String[]{value};
+        }
+        if (retryPolicy instanceof io.ballerina.runtime.api.values.BArray roleArray) {
+            String[] roles = new String[(int) roleArray.size()];
+            for (int i = 0; i < roles.length; i++) {
+                roles[i] = String.valueOf(roleArray.get(i));
+            }
+            return roles;
+        }
+        return new String[0];
+    }
+
     private static Object executeWithManualRetry(String fullActivityName, String workflowType,
                                                  Map<String, Object> initialArgs, Map<String, Object> callConfig,
-                                                 BTypedesc typedesc) {
+                                                 String[] reviewerRoles, BTypedesc typedesc) {
 
         io.temporal.activity.ActivityOptions activityOptions =
                 io.temporal.activity.ActivityOptions.newBuilder().setStartToCloseTimeout(
@@ -215,7 +236,7 @@ public final class WorkflowContextNative {
 
             // Activity failed — start a RetryTask child workflow and await the human decision
             Map<String, Object> decision = callBuiltinRetryTask(fullActivityName, currentArgs, lastErrorMsg,
-                                                                workflowType);
+                                                                reviewerRoles);
 
             String action = decision.containsKey("action") ? String.valueOf(decision.get("action")) : "reject";
 
@@ -347,8 +368,9 @@ public final class WorkflowContextNative {
 
     // On-failure manual-retry review (the ManualRetry policy). Delegates to the shared starter.
     private static Map<String, Object> callBuiltinRetryTask(String fullActivityName, Map<String, Object> activityArgs,
-                                                            String errorMessage, String workflowType) {
-        return startReviewActivity("ON_FAILURE", fullActivityName, activityArgs, errorMessage, new String[0], null);
+                                                            String errorMessage, String[] reviewerRoles) {
+        return startReviewActivity("ON_FAILURE", fullActivityName, activityArgs, errorMessage,
+                reviewerRoles, null);
     }
 
     /**

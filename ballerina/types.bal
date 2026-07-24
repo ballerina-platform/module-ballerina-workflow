@@ -43,9 +43,19 @@ type ActivityRetryPolicy record {|
 // Activity retry policy types
 // ---------------------------------------------------------------------------
 
-# No retry. Errors from the activity are returned directly to the caller.
-# This is the default behaviour when no `retryPolicy` is specified.
-public const NoRetry  = ();
+# No automatic retry by the engine. Errors from the activity are returned
+# directly to the caller. This is the default behaviour when no `retryPolicy`
+# is specified. Note that an AI agent may still decide to call the activity
+# again from its own reasoning — this policy only disables engine-driven
+# retries.
+public const NoAutomaticRetry = ();
+
+# Deprecated alias of `NoAutomaticRetry`.
+# # Deprecated
+# Use `NoAutomaticRetry` instead: it makes explicit that only engine-driven
+# retries are disabled (an AI agent may still re-invoke the activity).
+@deprecated
+public const NoRetry = ();
 
 # Automatic retry configuration. When the activity fails, it is automatically
 # retried according to the configured backoff policy.
@@ -61,11 +71,18 @@ public type AutoRetry record {|
     decimal maxRetryDelay?;
 |};
 
-# Manual retry sentinel. When passed as the `retryPolicy`, a retry task is
-# created on activity failure so a human can decide to retry, retry with
-# different input, or permanently fail. The task name is derived automatically
-# from the activity being called.
-public const string ManualRetry = "MANUAL_RETRY";
+# Human-review retry policy: the role(s) permitted to decide the retry review.
+# Passing a role name (or list of role names) as the `retryPolicy` creates a
+# review task on activity failure so a matching human can decide to retry,
+# retry with different input, or permanently fail. The task name is derived
+# automatically from the activity being called.
+public type HumanReview string|string[];
+
+# Deprecated alias of `HumanReview`.
+# # Deprecated
+# Use `HumanReview` instead.
+@deprecated
+public type ManualRetry HumanReview;
 
 # Options for activity execution via `callActivity`.
 #
@@ -117,3 +134,25 @@ public type HumanTaskTimeoutDetail record {|
 # Returned by `awaitHumanTask` when no human acts within the configured deadline.
 # Catch with `on fail workflow:HumanTaskTimeoutError e` to run compensation logic.
 public type HumanTaskTimeoutError distinct error<HumanTaskTimeoutDetail>;
+
+# A turn a durable agent has accepted but not yet answered. Returned by
+# `getPendingAgentUpdates` so callers can rediscover in-flight event turns after
+# a crash and fetch their answers via `DurableAgent.getEventResult` /
+# `waitForEventResult` (the update ID is the turn's correlation token).
+#
+# + updateId - The turn's correlation token
+# + eventName - The event channel the turn was sent on
+public type PendingAgentUpdate record {|
+    string updateId;
+    string eventName;
+|};
+
+// ---------------------------------------------------------------------------
+// Child workflow types
+// ---------------------------------------------------------------------------
+
+# Returned by the non-blocking `ctx->getChildWorkflowResult` read when the child
+# workflow is still running (e.g. suspended on a human task). Check back later, or
+# use the blocking `ctx->waitForChildWorkflow` form, which durably suspends until
+# the child completes.
+public type WorkflowBusyError distinct error;

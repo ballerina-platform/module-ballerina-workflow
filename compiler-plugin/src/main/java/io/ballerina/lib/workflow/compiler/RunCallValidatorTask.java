@@ -77,6 +77,14 @@ public class RunCallValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCont
                 WorkflowConstants.RUN_FUNCTION)) {
             return;
         }
+
+        // workflow:run is a client verb; inside a workflow body a child must be started
+        // with ctx->runChildWorkflow so it becomes a true Temporal child workflow.
+        if (WorkflowPluginUtils.isInsideWorkflowFunction(callNode, semanticModel)) {
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_138, callNode.location(),
+                    WorkflowConstants.RUN_FUNCTION, WorkflowConstants.RUN_CHILD_WORKFLOW_METHOD);
+            return;
+        }
         validateRunCall(callNode, context);
     }
 

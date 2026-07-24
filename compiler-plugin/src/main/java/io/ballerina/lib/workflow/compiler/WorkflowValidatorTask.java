@@ -31,6 +31,7 @@ import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.api.symbols.TupleTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeDescKind;
+import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.api.symbols.UnionTypeSymbol;
 import io.ballerina.compiler.syntax.tree.DefaultableParameterNode;
@@ -43,6 +44,7 @@ import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.ListConstructorExpressionNode;
 import io.ballerina.compiler.syntax.tree.MappingConstructorExpressionNode;
 import io.ballerina.compiler.syntax.tree.MappingFieldNode;
+import io.ballerina.compiler.syntax.tree.MethodCallExpressionNode;
 import io.ballerina.compiler.syntax.tree.NamedArgumentNode;
 import io.ballerina.compiler.syntax.tree.NamedWorkerDeclarationNode;
 import io.ballerina.compiler.syntax.tree.Node;
@@ -110,11 +112,95 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
             validateAwaitUsage(functionNode, context);
             // Validate no concurrency primitives (worker/fork/start) inside @Workflow
             validateNoConcurrencyPrimitives(functionNode, context);
+            // Validate no direct AI model/agent calls (non-deterministic) inside @Workflow
+            validateNoDirectAiCalls(functionNode, context);
         }
 
         // Check if function has @Activity annotation
         if (hasAnnotation(functionNode, semanticModel, WorkflowConstants.ACTIVITY_ANNOTATION)) {
             validateActivityFunction(functionNode, context);
+        }
+
+    }
+
+    /**
+     * Validates that no direct AI calls are made inside a workflow/agent body: remote calls on an
+     * {@code ai:ModelProvider} ({@code model->chat(...)}, {@code model->generate(...)}) and method calls on an
+     * {@code ai:Agent} ({@code agent.run(...)}). LLM responses differ between executions, so such calls break
+     * replay; they must be wrapped in an {@code @workflow:Activity} function instead.
+     */
+    private void validateNoDirectAiCalls(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context) {
+        DirectAiCallValidator validator = new DirectAiCallValidator(context);
+        functionNode.functionBody().accept(validator);
+    }
+
+    /**
+     * Node visitor that reports {@link WorkflowDiagnostic#WORKFLOW_148} for direct AI model-provider remote calls
+     * and AI agent method calls.
+     */
+    private static class DirectAiCallValidator extends NodeVisitor {
+
+        private static final String AI_AGENT_CLASS = "Agent";
+
+        private final SyntaxNodeAnalysisContext context;
+        private final SemanticModel semanticModel;
+
+        DirectAiCallValidator(SyntaxNodeAnalysisContext context) {
+            this.context = context;
+            this.semanticModel = context.semanticModel();
+        }
+
+        @Override
+        public void visit(RemoteMethodCallActionNode remoteCall) {
+            if (isAiReceiver(remoteCall.expression())) {
+                reportAiCall(remoteCall.methodName().location());
+            }
+            remoteCall.arguments().forEach(arg -> arg.accept(this));
+        }
+
+        @Override
+        public void visit(MethodCallExpressionNode methodCall) {
+            if (isAiReceiver(methodCall.expression())) {
+                reportAiCall(methodCall.methodName().location());
+            }
+            methodCall.arguments().forEach(arg -> arg.accept(this));
+            methodCall.expression().accept(this);
+        }
+
+        private boolean isAiReceiver(io.ballerina.compiler.syntax.tree.ExpressionNode receiver) {
+            Optional<TypeSymbol> typeOpt = semanticModel.typeOf(receiver);
+            if (typeOpt.isEmpty()) {
+                return false;
+            }
+            TypeSymbol type = typeOpt.get();
+            return WorkflowPluginUtils.isModelProviderType(type) || isAiAgentType(type, 0);
+        }
+
+        private boolean isAiAgentType(TypeSymbol typeSymbol, int depth) {
+            if (typeSymbol == null || depth > 6) {
+                return false;
+            }
+            if (typeSymbol instanceof TypeReferenceTypeSymbol typeRef) {
+                Optional<String> nameOpt = typeRef.getName();
+                if (nameOpt.isPresent() && AI_AGENT_CLASS.equals(nameOpt.get())
+                        && typeRef.getModule()
+                                .map(module -> WorkflowConstants.AI_PACKAGE_NAME.equals(
+                                        module.getName().orElse(""))
+                                        && WorkflowConstants.AI_PACKAGE_ORG.equals(module.id().orgName()))
+                                .orElse(false)) {
+                    return true;
+                }
+                return isAiAgentType(typeRef.typeDescriptor(), depth + 1);
+            }
+            return false;
+        }
+
+        private void reportAiCall(io.ballerina.tools.diagnostics.Location location) {
+            DiagnosticInfo diagnosticInfo = new DiagnosticInfo(
+                    WorkflowDiagnostic.WORKFLOW_148.getCode(),
+                    WorkflowDiagnostic.WORKFLOW_148.getMessage(),
+                    WorkflowDiagnostic.WORKFLOW_148.getSeverity());
+            context.reportDiagnostic(DiagnosticFactory.createDiagnostic(diagnosticInfo, location));
         }
     }
 
@@ -192,7 +278,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
             // Determine expected parameter type based on position
             // After context (or at start), next should be input or events
             // After input, next should be events
-            
+
             if (hasInput) {
                 // Already have input, so this parameter MUST be events
                 if (!isValidEventsType(paramType)) {
@@ -942,7 +1028,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                 functionNode.functionName().location()));
     }
 
-    // =========================================================================
+            // =========================================================================
     // ctx->await usage validation
     // =========================================================================
 

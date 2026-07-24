@@ -18,7 +18,6 @@
 
 package io.ballerina.lib.workflow.compiler;
 
-import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.IdentifierToken;
 import io.ballerina.compiler.syntax.tree.ImportDeclarationNode;
 import io.ballerina.compiler.syntax.tree.ImportOrgNameNode;
@@ -33,7 +32,6 @@ import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.compiler.syntax.tree.SyntaxTree;
 import io.ballerina.compiler.syntax.tree.Token;
-import io.ballerina.compiler.syntax.tree.TreeModifier;
 import io.ballerina.projects.DocumentId;
 import io.ballerina.projects.Module;
 import io.ballerina.projects.plugins.ModifierTask;
@@ -82,11 +80,14 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         // a single registerWorkflowsAndStart() call that covers every workflow.
         List<Map.Entry<DocumentId, WorkflowModifierContext>> entries = new ArrayList<>();
         List<ProcessFunctionInfo> allProcessInfos = new ArrayList<>();
+        List<DurableAgentDeclInfo> allDurableAgentDecls = new ArrayList<>();
 
         for (Map.Entry<DocumentId, WorkflowModifierContext> entry : this.modifierContextMap.entrySet()) {
-            if (!entry.getValue().getProcessInfoMap().isEmpty()) {
+            if (!entry.getValue().getProcessInfoMap().isEmpty()
+                    || !entry.getValue().getDurableAgentDeclMap().isEmpty()) {
                 entries.add(entry);
                 allProcessInfos.addAll(entry.getValue().getProcessInfoMap().values());
+                allDurableAgentDecls.addAll(entry.getValue().getDurableAgentDeclMap().values());
             }
         }
 
@@ -137,6 +138,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
 
             ModulePartNode updatedRootNode = transformDocument(
                     rootNode, workflowContext, isLastDocument ? allProcessInfos : null,
+                    isLastDocument ? allDurableAgentDecls : Collections.emptyList(),
                     isLastDocument
                         ? collectConnectionNames(documentId.moduleId().toString(), isTestDocument)
                         : Collections.emptyList());
@@ -162,12 +164,9 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
 
     private ModulePartNode transformDocument(ModulePartNode rootNode, WorkflowModifierContext workflowContext,
                                              List<ProcessFunctionInfo> allProcessInfos,
+                                             List<DurableAgentDeclInfo> allDurableAgentDecls,
                                              List<String> connectionNames) {
-        // Transform function bodies (replace activity calls)
-        WorkflowTreeModifier treeModifier = new WorkflowTreeModifier(workflowContext);
-        ModulePartNode modifiedRoot = (ModulePartNode) rootNode.apply(treeModifier);
-
-        NodeList<ModuleMemberDeclarationNode> members = modifiedRoot.members();
+        NodeList<ModuleMemberDeclarationNode> members = rootNode.members();
         List<ModuleMemberDeclarationNode> newMembers = new ArrayList<>();
         for (ModuleMemberDeclarationNode member : members) {
             newMembers.add(member);
@@ -176,13 +175,14 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         // When allProcessInfos is non-null this is the target document:
         // generate a private function that registers every workflow and
         // starts the runtime, plus a module-level variable that calls it.
-        if (allProcessInfos != null && !allProcessInfos.isEmpty()) {
-            newMembers.add(createRegisterAndStartFunction(allProcessInfos, connectionNames));
+        if (allProcessInfos != null && (!allProcessInfos.isEmpty() || !allDurableAgentDecls.isEmpty())) {
+            newMembers.add(createRegisterAndStartFunction(allProcessInfos,
+                    allDurableAgentDecls, connectionNames));
             newMembers.add(createRegisterAndStartInvocation());
         }
 
         NodeList<ModuleMemberDeclarationNode> updatedMembers = NodeFactory.createNodeList(newMembers);
-        return modifiedRoot.modify(modifiedRoot.imports(), updatedMembers, modifiedRoot.eofToken());
+        return rootNode.modify(rootNode.imports(), updatedMembers, rootNode.eofToken());
     }
 
     private List<String> collectConnectionNames(String moduleKey, boolean isTestDocument) {
@@ -229,7 +229,8 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
      * </pre>
      */
     private ModuleMemberDeclarationNode createRegisterAndStartFunction(
-            List<ProcessFunctionInfo> allProcessInfos, List<String> connectionNames) {
+            List<ProcessFunctionInfo> allProcessInfos,
+            List<DurableAgentDeclInfo> allDurableAgentDecls, List<String> connectionNames) {
         StringBuilder body = new StringBuilder();
         body.append("function __registerWorkflowsAndStart() returns boolean|error {");
         body.append(System.lineSeparator());
@@ -268,6 +269,12 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                     .append(System.lineSeparator());
         }
 
+        // Register object-model durable agent declarations: identity + model first, then the
+        // capability declarations, re-referencing the same symbols the user's config named.
+        for (DurableAgentDeclInfo decl : allDurableAgentDecls) {
+            appendDurableAgentRegistration(body, decl);
+        }
+
         body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
                 .append(":startWorkflowRuntime();").append(System.lineSeparator());
         body.append("    return true;").append(System.lineSeparator());
@@ -285,6 +292,85 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
     private ModuleVariableDeclarationNode createRegisterAndStartInvocation() {
         return (ModuleVariableDeclarationNode) NodeParser.parseModuleMemberDeclaration(
                 "boolean _ = check __registerWorkflowsAndStart();");
+    }
+
+    /**
+     * Appends the registration statements for one object-model durable agent declaration.
+     * <pre>
+     * _ = check wfInternal:registerDurableAgentDecl("orderAgent", wso2Model, {...}, 16);
+     * _ = check wfInternal:registerDurableAgentActivity("orderAgent", "checkStock", checkStock, {...});
+     * _ = check wfInternal:registerDurableAgentTool("orderAgent", priceLookup);
+     * _ = check wfInternal:registerDurableAgentEvent("orderAgent", "chat", string, string, "MULTI_EVENT");
+     * _ = check wfInternal:registerDurableAgentHumanTask("orderAgent", "approval", {...});
+     * </pre>
+     */
+    private void appendDurableAgentRegistration(StringBuilder body, DurableAgentDeclInfo decl) {
+        if (decl.modelSource() == null || decl.systemPromptSource() == null) {
+            return;
+        }
+        String agentNameLiteral = "\"" + escapeBallerinaStringLiteral(decl.agentName()) + "\"";
+        body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                .append(":registerDurableAgentDecl(").append(agentNameLiteral)
+                .append(", ").append(decl.modelSource())
+                .append(", ").append(decl.systemPromptSource())
+                .append(", ").append(decl.maxIterSource() != null ? decl.maxIterSource() : "16")
+                .append(");").append(System.lineSeparator());
+        for (DurableAgentDeclInfo.ActivityDecl activity : decl.activities()) {
+            body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                    .append(":registerDurableAgentActivity(").append(agentNameLiteral)
+                    .append(", \"").append(escapeBallerinaStringLiteral(activity.toolName()))
+                    .append("\", ").append(activity.functionRefSource())
+                    .append(", ").append(activity.metaSource() != null ? activity.metaSource() : "()")
+                    .append(");").append(System.lineSeparator());
+        }
+        for (String toolRef : decl.aiToolRefs()) {
+            body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                    .append(":registerDurableAgentTool(").append(agentNameLiteral)
+                    .append(", ").append(toolRef).append(");").append(System.lineSeparator());
+        }
+        for (DurableAgentDeclInfo.EventDecl event : decl.events()) {
+            body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                    .append(":registerDurableAgentEvent(").append(agentNameLiteral)
+                    .append(", \"").append(escapeBallerinaStringLiteral(event.name()))
+                    .append("\", ").append(event.requestTypeSource())
+                    .append(", ").append(event.responseTypeSource() != null ? event.responseTypeSource() : "()")
+                    .append(", \"").append(event.cardinality()).append("\");")
+                    .append(System.lineSeparator());
+        }
+        for (DurableAgentDeclInfo.HumanTaskDecl task : decl.humanTasks()) {
+            body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                    .append(":registerDurableAgentHumanTask(").append(agentNameLiteral)
+                    .append(", \"").append(escapeBallerinaStringLiteral(task.name()))
+                    .append("\", ").append(task.metaSource() != null ? task.metaSource() : "()")
+                    .append(", ").append(task.resultTypeSource() != null ? task.resultTypeSource() : "anydata")
+                    .append(");").append(System.lineSeparator());
+        }
+        for (DurableAgentDeclInfo.PeerDecl peer : decl.peers()) {
+            body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                    .append(":registerDurableAgentPeer(").append(agentNameLiteral)
+                    .append(", \"").append(escapeBallerinaStringLiteral(peer.name()))
+                    .append("\", \"").append(escapeBallerinaStringLiteral(peer.targetAgent()))
+                    .append("\", ").append(peer.metaSource() != null ? peer.metaSource() : "()")
+                    .append(");").append(System.lineSeparator());
+        }
+        // Register the shared object-model runner as this agent's workflow (the agent's own
+        // workflow type + its activity map incl. the built-in agent activities), and bind the
+        // agent's identity to the object so its driver methods (run/getResult/...) resolve it.
+        String prefix = decl.workflowPrefix();
+        if (prefix != null) {
+            body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                    .append(":registerDurableAgentRunner(").append(agentNameLiteral)
+                    .append(", ").append(prefix).append(":runDurableAgentObject, {")
+                    .append("\"").append(WorkflowConstants.LLM_CHAT_ACTIVITY).append("\": ")
+                    .append(prefix).append(":").append(WorkflowConstants.LLM_CHAT_ACTIVITY)
+                    .append(", \"").append(WorkflowConstants.GENERATE_ACTIVITY).append("\": ")
+                    .append(prefix).append(":").append(WorkflowConstants.GENERATE_ACTIVITY)
+                    .append(", \"").append(WorkflowConstants.EXECUTE_AGENT_TOOL_ACTIVITY).append("\": ")
+                    .append(prefix).append(":").append(WorkflowConstants.EXECUTE_AGENT_TOOL_ACTIVITY)
+                    .append("});").append(System.lineSeparator());
+        }
+        body.append("    ").append(decl.agentName()).append(".bindAgentName(")
+                .append(agentNameLiteral).append(");").append(System.lineSeparator());
     }
 
     private String buildActivitiesArg(ProcessFunctionInfo processInfo) {
@@ -481,35 +567,6 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
 
         return NodeFactory.createImportDeclarationNode(importKeyword, importOrgNameToken, moduleName,
                 importPrefix, semicolonToken);
-    }
-
-    /**
-     * Tree modifier that handles process functions.
-     * Note: Direct activity call transformation has been removed.
-     * Users must explicitly use ctx->callActivity(activityFunc, args...) pattern.
-     */
-    private static class WorkflowTreeModifier extends TreeModifier {
-        private final WorkflowModifierContext workflowContext;
-
-        WorkflowTreeModifier(WorkflowModifierContext workflowContext) {
-            this.workflowContext = workflowContext;
-        }
-
-        @Override
-        public FunctionDefinitionNode transform(FunctionDefinitionNode functionNode) {
-            String functionName = functionNode.functionName().text();
-
-            // Check if this is a process function - just apply standard transformation
-            if (workflowContext.getProcessInfoMap().containsKey(functionName)) {
-                return super.transform(functionNode);
-            }
-
-            return functionNode;
-        }
-
-        // Note: FunctionCallExpressionNode transformation removed.
-        // Direct activity calls are now disallowed and validated by WorkflowValidatorTask.
-        // Users must use ctx->callActivity(activityFunc, args...) pattern.
     }
 
     private static String escapeBallerinaStringLiteral(String value) {

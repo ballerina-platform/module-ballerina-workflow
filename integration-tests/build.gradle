@@ -68,8 +68,16 @@ clean {
 }
 
 task prepareIntegrationTestLibs(type: Copy) {
-    description = 'Downloads GreenMail SMTP fixture jars into integration-tests/libs'
+    description = 'Stages fixture jars (GreenMail SMTP, workflow-native test helpers) into integration-tests/libs'
+    dependsOn(':workflow-native:jar')
     from configurations.smtpFixtureLibs
+    // The agent integration tests bind mock ai:ModelProvider.generate and the
+    // final-response probe to classes in the workflow-native jar. Interop
+    // bindings are validated against the current package's own platform
+    // dependencies, so the jar is staged here under a version-stable name.
+    from("${project.rootDir}/native/build/libs/workflow-native-${project.version}.jar") {
+        rename { 'workflow-native-tests.jar' }
+    }
     into "$project.projectDir/libs"
 }
 
@@ -83,6 +91,11 @@ task updateTomlFiles {
 
 task commitTomlFiles {
     doLast {
+        // Only auto-commit regenerated toml files when explicitly requested
+        // (e.g. CI/release runs pass -PcommitToml). Local builds stay commit-free.
+        if (!project.hasProperty('commitToml')) {
+            return
+        }
         project.exec {
             ignoreExitValue true
             if (Os.isFamily(Os.FAMILY_WINDOWS)) {

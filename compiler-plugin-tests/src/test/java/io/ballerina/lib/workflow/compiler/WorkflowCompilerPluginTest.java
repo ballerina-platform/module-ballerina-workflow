@@ -670,6 +670,52 @@ public class WorkflowCompilerPluginTest {
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_130);
     }
 
+    // ===== child workflow composition validation =====
+
+    @Test(groups = "valid")
+    public void testValidChildWorkflowComposition() {
+        // runChildWorkflow/getChildWorkflowResult/waitForChildWorkflow/callWorkflow/
+        // sendDataToChildWorkflow used correctly inside a workflow produce no diagnostics.
+        String packagePath = "valid_child_workflow_composition";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for valid child-workflow composition. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidRunInsideWorkflow() {
+        // workflow:run and workflow:sendData are client verbs; inside a workflow body the
+        // child-workflow context methods must be used instead.
+        String packagePath = "invalid_run_inside_workflow";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_138");
+        Assert.assertEquals(diags.size(), 2,
+                "Expected 2 WORKFLOW_138 errors (workflow:run and workflow:sendData inside a "
+                        + "workflow body). Errors: " + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidChildWorkflowTarget() {
+        String packagePath = "invalid_child_workflow_target";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_139");
+        Assert.assertEquals(diags.size(), 2,
+                "Expected 2 WORKFLOW_139 errors (runChildWorkflow with a plain function and "
+                        + "callWorkflow with an @Activity function). Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidChildWorkflowInput() {
+        String packagePath = "invalid_child_workflow_input";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertTrue(diagnosticResult.errorCount() > 0,
+                "Expected validation errors for child workflow input mismatches");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_140);
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_141);
+    }
+
     // ===== workflow:sendData event name and data type validation =====
 
     @Test(groups = "invalid")
@@ -842,6 +888,63 @@ public class WorkflowCompilerPluginTest {
     private void assertMessageContains(Diagnostic diagnostic, String substring) {
         Assert.assertTrue(diagnostic.message().contains(substring),
                 "Expected message to contain '" + substring + "' but got: " + diagnostic.message());
+    }
+
+    // ===== direct-AI-call validation (WORKFLOW_148) =====
+    //
+    // These fixtures deliberately do NOT import ballerina/ai: the ai compiler
+    // plugin needs swagger-core, which is not on the BuildProject test harness
+    // classpath (it works under a real `bal build`). Validation of the workflow
+    // diagnostics and the tool-registration codegen needs only ballerina/workflow.
+    // End-to-end runs with a real ai:ModelProvider are covered by the package unit
+    // tests and the integration test / example.
+
+                    @Test(groups = "invalid")
+    public void testInvalidDirectAiCall() {
+        // Direct model-provider/agent calls inside a @Workflow body are non-deterministic;
+        // the same calls wrapped in @workflow:Activity functions are valid.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_direct_ai_call");
+        List<Diagnostic> aiCallDiags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_148");
+        Assert.assertEquals(aiCallDiags.size(), 2,
+                "Expected exactly the two direct AI calls inside the workflow to be flagged. Got: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+            // ===== object-model durable agent declaration test cases =====
+
+    @Test(groups = "valid")
+    public void testValidDurableAgentObject() {
+        // A module-level `final workflow:DurableAgent x = new ({...})` with activities
+        // (bare + decl form), an @ai:AgentTool, events, and human tasks compiles cleanly,
+        // including the generated module-init registration.
+        DiagnosticResult diagnosticResult = getDiagnosticResult("valid_durable_agent_object");
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for a valid object-model durable agent. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentNotFinal() {
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_not_final");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_149);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentLocalDeclaration() {
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_local");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_149);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentDuplicateNames() {
+        // "approval" is used by an activity, an event, and a human task — one flat namespace,
+        // so the second and third uses are each flagged.
+        DiagnosticResult diagnosticResult = getDiagnosticResult(
+                "invalid_durable_agent_duplicate_names");
+        List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_150");
+        Assert.assertEquals(diags.size(), 2,
+                "Expected 2 WORKFLOW_150 errors for the duplicate capability names. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
     }
 
     // ===== sendData validation test cases =====

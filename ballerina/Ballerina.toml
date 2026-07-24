@@ -1,12 +1,12 @@
 [package]
 org = "ballerina"
 name = "workflow"
-version = "0.7.0"
+version = "0.8.0"
 authors = ["Ballerina"]
 keywords = ["workflow"]
 repository = "https://github.com/ballerina-platform/module-ballerina-workflow"
 license = ["Apache-2.0"]
-distribution = "2201.13.2"
+distribution = "2201.13.4"
 
 [[package.modules]]
 name = "workflow.internal"
@@ -27,8 +27,8 @@ graalvmCompatible = false
 [[platform.java21.dependency]]
 groupId = "io.ballerina.lib"
 artifactId = "workflow-native"
-version = "0.7.0"
-path = "../native/build/libs/workflow-native-0.7.0-SNAPSHOT.jar"
+version = "0.8.0"
+path = "../native/build/libs/workflow-native-0.8.0-SNAPSHOT.jar"
 
 # Temporal SDK dependencies
 [[platform.java21.dependency]]

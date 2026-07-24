@@ -59,7 +59,6 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
-
 /**
  * Native implementation for workflow module functions.
  * <p>
@@ -271,7 +270,67 @@ public final class WorkflowNative {
         });
     }
 
-    /**
+                /**
+     * Backs {@code workflow:getPendingAgentUpdates}: queries the agent workflow for the updates it has
+     * accepted but not yet answered, so callers can rediscover in-flight turns after a crash and fetch
+     * their answers via {@link #getAgentUpdateResult}.
+     *
+     * @param env     the runtime environment
+     * @param agentId the agent's workflow ID
+     * @return a Ballerina {@code PendingAgentUpdate[]}, or a Ballerina error
+     */
+    public static Object getPendingAgentUpdates(Environment env, BString agentId) {
+        String agentIdStr = agentId.getValue();
+        return env.yieldAndRun(() -> {
+            CompletableFuture<Object> balFuture = new CompletableFuture<>();
+
+            WorkflowRuntime.getInstance().getExecutor().execute(() -> {
+                try {
+                    WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+                    if (client == null) {
+                        balFuture.complete(ErrorCreator.createError(StringUtils.fromString(
+                                "Workflow client not initialized. Ensure worker is initialized.")));
+                        return;
+                    }
+                    WorkflowStub stub = client.newUntypedWorkflowStub(agentIdStr);
+                    Object raw = stub.query(WorkflowWorkerNative.PENDING_AGENT_UPDATES_QUERY, Object.class);
+
+                    RecordType pendingType = (RecordType) ValueCreator.createRecordValue(
+                            ModuleUtils.getModule(), "PendingAgentUpdate").getType();
+                    List<BMap<BString, Object>> records = new ArrayList<>();
+                    if (raw instanceof List<?> entries) {
+                        for (Object entry : entries) {
+                            if (entry instanceof Map<?, ?> pendingEntry) {
+                                BMap<BString, Object> record = ValueCreator.createRecordValue(
+                                        ModuleUtils.getModule(), "PendingAgentUpdate");
+                                record.put(StringUtils.fromString("updateId"), StringUtils.fromString(
+                                        String.valueOf(pendingEntry.get("updateId"))));
+                                record.put(StringUtils.fromString("eventName"), StringUtils.fromString(
+                                        String.valueOf(pendingEntry.get("eventName"))));
+                                records.add(record);
+                            }
+                        }
+                    }
+                    BArray result = ValueCreator.createArrayValue(
+                            TypeCreator.createArrayType(pendingType));
+                    for (BMap<BString, Object> record : records) {
+                        result.append(record);
+                    }
+                    balFuture.complete(result);
+                } catch (Exception e) {
+                    Throwable cause = e.getCause();
+                    String message = cause != null && cause.getMessage() != null
+                            ? cause.getMessage() : e.getMessage();
+                    balFuture.complete(ErrorCreator.createError(StringUtils.fromString(
+                            "Failed to list pending updates for agent '" + agentIdStr + "': " + message)));
+                }
+            });
+
+            return getResult(balFuture);
+        });
+    }
+
+                /**
      * Routes a {@code workflow:sendData} call through a built-in implicit activity.
      */
     private static Object sendDataAsImplicitActivity(String workflowId, String dataName, Object javaData) {

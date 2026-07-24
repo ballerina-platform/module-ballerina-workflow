@@ -71,6 +71,24 @@ public isolated function getWorkflowInfoForRun(string workflowId, string runId)
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 
+# Gets the latest response produced by a durable agent (`@workflow:DurableAgentFunction`).
+# In a multi-turn conversation this is the answer of the most recent turn; it is
+# available while the agent is still running (e.g. suspended waiting for the next
+# chat event) as well as after it completes.
+#
+# ```ballerina
+# import ballerina/workflow.management;
+#
+# string? answer = check management:getAgentResponse(agentId);
+# ```
+#
+# + agentId - The agent's workflow ID (from `workflow:run`)
+# + return - The latest response text, `()` when the agent has not produced one yet,
+#            or an error
+public isolated function getAgentResponse(string agentId) returns string?|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
 # Lists all workflow types registered with this worker, for use in the workflow launcher UI.
 # Returns one entry per registered workflow function. The `inputSchema` field is `()` until
 # the compiler plugin generates JSON Schema at build time.

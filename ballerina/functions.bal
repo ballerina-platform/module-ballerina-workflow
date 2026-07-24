@@ -16,7 +16,6 @@
 
 import ballerina/jballerina.java;
 
-
 # Starts a new workflow instance and returns its unique ID.
 #
 # ```ballerina
@@ -45,6 +44,26 @@ public isolated function run(function processFunction, anydata input = ()) retur
 # + return - An error if sending fails
 public isolated function sendData(function workflow, string workflowId, string dataName, anydata data) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative"
+} external;
+
+# Lists the requests a running durable agent has accepted but not yet answered.
+# Use after a crash or restart to rediscover in-flight turns for a session and
+# fetch their answers via `getAgentUpdateResult` — nothing is lost while the
+# agent works, however long the turn takes.
+#
+# ```ballerina
+# workflow:PendingAgentUpdate[] pending = check workflow:getPendingAgentUpdates(agentId);
+# foreach var update in pending {
+#     string answer = check workflow:getAgentUpdateResult(agentId, update.updateId);
+# }
+# ```
+#
+# + agentId - Target agent (workflow) ID
+# + return - The in-flight updates (empty when the agent is idle), or an error
+public isolated function getPendingAgentUpdates(string agentId)
+        returns PendingAgentUpdate[]|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
+    name: "getPendingAgentUpdates"
 } external;
 
 # Waits for a workflow to complete and returns its result.

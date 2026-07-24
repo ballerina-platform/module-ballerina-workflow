@@ -8,6 +8,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Added **durable AI agents** (`workflow:DurableAgent`): an LLM agent declared once as
+  a module-level `final` **object** whose constructor config carries every capability —
+  `activities` (`@workflow:Activity` functions, gated/retried via `ActivityDecl`),
+  `tools` (`@ai:AgentTool` functions and toolkits), `events` (named two-way channels
+  with request/response types and per-channel `SINGLE_EVENT`/`MULTI_EVENT`
+  cardinality), `humanTasks`, and `peers` (other durable agents advertised to the
+  model as delegable tools). The agent runs as a Temporal-backed workflow, so its
+  reasoning loop, tool calls, and multi-turn conversations are journaled and survive
+  worker crashes and restarts. The compiler plugin generates the registration at
+  module init from the declaration (`WORKFLOW_149` enforces module-level `final`;
+  `WORKFLOW_150` enforces one flat capability namespace) and bans direct AI
+  model/agent calls inside workflow bodies (`WORKFLOW_148`).
+- Durable agent drivers: `agent.run(query, input)` starts an instance durably and
+  always returns the instance ID (a top-level start from services; a **true Temporal
+  child workflow** from inside a `@workflow:Workflow`, so sub-agents' lifecycles are
+  tied to the caller). Non-blocking reads (`getResult`/`getEventResult`) return the
+  value or a `workflow:AgentBusyError` while the agent is still working; blocking
+  reads (`waitForResult`/`waitForEventResult`) suspend durably inside workflows and
+  are crash-resumable from services. `sendEvent(instanceId, eventName, data)` sends
+  one turn and returns a correlation token — a Temporal Update from services
+  (rediscoverable via `getPendingAgentUpdates`), a deterministic reply-correlated
+  signal from inside workflows. Model-driven peer delegations run the peer agent as
+  a child workflow, synchronously or asynchronously with the reply delivered on a
+  declared callback event channel; peers honor `requiresApproval` via `PRE_RUN`
+  review activities, and manual activity retries surface as `ON_FAILURE` reviews.
+- Child workflow composition on the workflow context: `ctx->runChildWorkflow(fn, input)`
+  starts a **true Temporal child workflow** (lifecycle tied to the parent — closing the
+  parent cancels in-flight children) and returns its instance ID;
+  `ctx->getChildWorkflowResult(id)` reads the result without blocking, returning the new
+  `workflow:WorkflowBusyError` while the child is still running;
+  `ctx->waitForChildWorkflow(id)` durably suspends (crash-resumable, no thread held)
+  until the child completes; `ctx->callWorkflow(fn, input)` fuses start + durable wait;
+  and `ctx->sendDataToChildWorkflow(id, dataName, data)` signals a running workflow
+  instance from inside a workflow via a deterministic external-workflow signal.
+- Compile-time validation for the child-workflow methods: `workflow:run` and
+  `workflow:sendData` are now rejected inside a workflow body in favour of the context
+  methods (`WORKFLOW_138`); the first argument of `runChildWorkflow`/`callWorkflow` must
+  be a `@Workflow` function (`WORKFLOW_139`); and the `input` argument is validated
+  against the child workflow's declared input type (`WORKFLOW_140`, `WORKFLOW_141`).
+  Previously `workflow:run`/`sendData` inside a workflow were routed through implicit
+  activities, which started detached top-level workflows with no parent lifecycle.
+
 - Renamed the management "retry task" concept to **review activity**
   ([#8906](https://github.com/ballerina-platform/ballerina-library/issues/8906)): one
   concept for a human reviewing an activity call — after it fails (`ON_FAILURE`, the

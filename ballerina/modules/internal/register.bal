@@ -14,6 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import ballerina/ai;
 import ballerina/jballerina.java;
 import ballerina/log;
 
@@ -79,6 +80,33 @@ public isolated function registerConnection(string name, object {} connection)
     name: "registerConnection"
 } external;
 
+# Registers an AI tool function of a durable agent so that the built-in
+# `executeAgentTool` activity wrapper can resolve and invoke it on any worker.
+#
+# This is an **internal** function used by the compiler plugin. It is emitted at
+# module init time for every function reference found in a
+# `ctx.registerTools([...])` call inside a `@workflow:DurableAgentFunction` body. The
+# tool's advertised name is derived from its `@ai:AgentTool` annotation (falling
+# back to the function name), matching the runtime normalization performed by
+# `AgentContext.registerTools`.
+#
+# + agentName - The agent's registered workflow name
+# + tool - The `@ai:AgentTool` function to register
+# + return - `true` on success (idempotent), or an error
+public isolated function registerAgentTool(string agentName, ai:FunctionTool tool) returns boolean|error {
+    ai:ToolConfig[] configs = ai:getToolConfigs([tool]);
+    if configs.length() == 0 {
+        return error("Agent tool functions must be annotated with @ai:AgentTool");
+    }
+    return registerAgentToolNative(agentName, configs[0].name, tool);
+}
+
+isolated function registerAgentToolNative(string agentName, string toolName, function tool)
+        returns boolean|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
+    name: "registerAgentToolFunction"
+} external;
+
 # Registers a human task type so that the workflow worker can route child workflows
 # whose type equals `taskName` to the built-in human task handler.
 #
@@ -92,4 +120,118 @@ public isolated function registerConnection(string name, object {} connection)
 public isolated function registerHumanTask(string taskName) returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
     name: "registerHumanTask"
+} external;
+
+// ---------------------------------------------------------------------------
+// Object-model durable agent declaration registration
+// ---------------------------------------------------------------------------
+// These are **internal** functions emitted by the compiler plugin at module init
+// for every module-level `final workflow:DurableAgent x = new ({...})`
+// declaration. The plugin decomposes the constructor config into these calls;
+// the runner workflow resolves the declaration by agent name at run time.
+
+# Registers a durable agent declaration: identity, model, system prompt, and
+# reasoning limit. Must be called before the capability registrations below.
+#
+# + agentName - The agent's name (its module-level variable name)
+# + model - The agent's `ai:ModelProvider`
+# + systemPrompt - The agent's system prompt (`role` + `instructions`)
+# + maxIter - Per-turn reasoning iteration cap
+# + return - `true` on success, or an error for a duplicate agent name
+public isolated function registerDurableAgentDecl(string agentName, ai:ModelProvider model,
+        json systemPrompt, int maxIter) returns boolean|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "registerDurableAgentDecl"
+} external;
+
+# Registers an activity capability declaration of a durable agent.
+#
+# + agentName - The agent's name
+# + toolName - The tool name advertised to the model
+# + activity - The `@workflow:Activity` function
+# + meta - Declaration metadata (description, gating, retry policy)
+# + return - `true` on success, or an error for an unknown agent
+public isolated function registerDurableAgentActivity(string agentName, string toolName,
+        function activity, json meta = ()) returns boolean|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "registerDurableAgentActivity"
+} external;
+
+# Registers an event channel declaration of a durable agent.
+#
+# + agentName - The agent's name
+# + eventName - The channel name
+# + request - The channel's request type
+# + response - The channel's response type; `()` for one-way channels
+# + cardinality - `"SINGLE_EVENT"` or `"MULTI_EVENT"`
+# + return - `true` on success, or an error for an unknown agent
+public isolated function registerDurableAgentEvent(string agentName, string eventName,
+        typedesc<anydata> request, typedesc<anydata>? response = (),
+        string cardinality = "SINGLE_EVENT") returns boolean|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "registerDurableAgentEvent"
+} external;
+
+# Registers a human task capability declaration of a durable agent.
+#
+# + agentName - The agent's name
+# + taskName - The task name
+# + meta - Declaration metadata (roles, title, description)
+# + resultType - Expected result type; drives form schema generation
+# + return - `true` on success, or an error for an unknown agent
+public isolated function registerDurableAgentHumanTask(string agentName, string taskName,
+        json meta = (), typedesc<anydata> resultType = anydata) returns boolean|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "registerDurableAgentHumanTask"
+} external;
+
+# Registers an AI tool of an object-model durable agent: stored on the declaration
+# (so the runner can advertise it to the model) and published to the agent tool
+# registry (so the built-in `executeAgentTool` activity can resolve it).
+#
+# + agentName - The agent's name (its module-level variable name)
+# + tool - The `@ai:AgentTool` function
+# + return - `true` on success, or an error
+public isolated function registerDurableAgentTool(string agentName, ai:FunctionTool tool)
+        returns boolean|error {
+    ai:ToolConfig[] configs = ai:getToolConfigs([tool]);
+    if configs.length() == 0 {
+        return error("Agent tool functions must be annotated with @ai:AgentTool");
+    }
+    return registerDurableAgentToolNative(agentName, configs[0].name, tool);
+}
+
+isolated function registerDurableAgentToolNative(string agentName, string toolName, function tool)
+        returns boolean|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "registerDurableAgentTool"
+} external;
+
+# Registers the shared object-model runner as an agent's workflow: the agent gets
+# its own workflow type (`workflow-<agentName>`) whose activities are the agent's
+# declared activity functions plus the built-in agent activities.
+#
+# + agentName - The agent's name (its module-level variable name)
+# + runner - The shared runner function (`workflow:runDurableAgentObject`)
+# + builtinActivities - The built-in agent activities keyed by activity name
+# + return - `true` on success, or an error
+public isolated function registerDurableAgentRunner(string agentName, function runner,
+        map<function> builtinActivities) returns boolean|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "registerDurableAgentRunner"
+} external;
+
+# Registers a peer-agent declaration of an object-model durable agent: the peer is
+# advertised to the agent's model as a delegable tool and runs as a true Temporal
+# child workflow of the agent.
+#
+# + agentName - The declaring agent's name
+# + peerName - The tool name advertised to the model
+# + targetAgent - The peer agent's name (its module-level variable name)
+# + meta - Declaration metadata (description, wait, callbackChannel, gating)
+# + return - `true` on success, or an error
+public isolated function registerDurableAgentPeer(string agentName, string peerName,
+        string targetAgent, json meta = ()) returns boolean|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "registerDurableAgentPeer"
 } external;

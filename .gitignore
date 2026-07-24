@@ -49,6 +49,8 @@ bin
 velocity.log*
 *Ballerina.lock
 Dependencies.toml
+# Committed to pin ballerina/ai to a version the distribution's toolchain can load
+# (a newer Central release resolves by default but its BIR fails to load here).
 !ballerina/Dependencies.toml
 !integration-tests/Dependencies.toml
 
@@ -61,3 +63,7 @@ integration-tests/libs/*.jar
 
 # Java Logs
 java_pid*.hprof
+
+# Contains WSO2 model-provider credentials — generated locally (see the example README)
+examples/agent-order-processing/Config.toml
+examples/agent-human-approval/Config.toml

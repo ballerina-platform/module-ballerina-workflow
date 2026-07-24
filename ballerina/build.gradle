@@ -56,6 +56,11 @@ task updateTomlFiles {
 
 task commitTomlFiles {
     doLast {
+        // Only auto-commit regenerated toml files when explicitly requested
+        // (e.g. CI/release runs pass -PcommitToml). Local builds stay commit-free.
+        if (!project.hasProperty('commitToml')) {
+            return
+        }
         project.exec {
             ignoreExitValue true
             if (Os.isFamily(Os.FAMILY_WINDOWS)) {
@@ -93,7 +98,31 @@ publishing {
     }
 }
 
+// ballerina/ai is a Ballerina Central library that durable agents depend on. It is not
+// bundled in the distribution and is not staged by copyStdlibs, so the offline
+// `bal pack` cannot resolve it. Pull it into the local central cache (which the offline
+// build reads) before the package is built. All of ai's transitive dependencies are
+// already staged via the ballerinaStdLibs configuration.
+task pullExternalDependencies {
+    dependsOn copyStdlibs
+    doLast {
+        def balHome = "${project.projectDir}/build/jballerina-tools-${ballerinaLangVersion}"
+        def balExec = Os.isFamily(Os.FAMILY_WINDOWS) ? "${balHome}/bin/bal.bat" : "${balHome}/bin/bal"
+        project.exec {
+            // A no-op when the package is already cached (e.g. incremental local builds);
+            // a genuine resolution failure surfaces later as a "cannot resolve" compile error.
+            ignoreExitValue = true
+            if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+                commandLine 'cmd', '/c', "${balExec} pull ballerina/ai:${ballerinaAiVersion}"
+            } else {
+                commandLine 'sh', '-c', "${balExec} pull ballerina/ai:${ballerinaAiVersion}"
+            }
+        }
+    }
+}
+
 updateTomlFiles.dependsOn copyStdlibs
+updateTomlFiles.dependsOn pullExternalDependencies
 
 build.dependsOn "generatePomFileForMavenPublication"
 build.dependsOn ":${packageName}-native:build"

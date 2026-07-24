@@ -176,6 +176,34 @@ public enum WorkflowDiagnostic {
     WORKFLOW_137("WORKFLOW_137",
             "The activity function '%s' returns '%s', which is incompatible with the "
                     + "contextually expected type '%s' of this 'callActivity' call",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_138("WORKFLOW_138",
+            "'workflow:%s' cannot be called inside a workflow function. Use 'ctx->%s' instead, "
+                    + "which starts a true child workflow whose lifecycle is tied to this workflow",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_139("WORKFLOW_139",
+            "The first argument of '%s' must be a function with the @Workflow annotation",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_140("WORKFLOW_140",
+            "Input type mismatch in '%s': workflow function '%s' expects input of type "
+                    + "'%s', but found '%s'",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_141("WORKFLOW_141",
+            "Workflow function '%s' does not declare an input parameter, but an input argument "
+                    + "was provided to '%s'",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_148("WORKFLOW_148",
+            "Direct AI calls are not allowed inside a workflow: LLM responses are non-deterministic and "
+                    + "break workflow replay. Wrap the call in an @workflow:Activity function and invoke it "
+                    + "via 'ctx->callActivity' (or register it on the agent via 'registerActivity')",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_149("WORKFLOW_149",
+            "A 'workflow:DurableAgent' must be declared as a module-level 'final' variable: the compiler "
+                    + "generates its Temporal registration at module init from the declaration",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_150("WORKFLOW_150",
+            "Duplicate capability name '%s' in durable agent '%s': events, tools, activities, human "
+                    + "tasks, and peers share one flat namespace",
             DiagnosticSeverity.ERROR);
 
     private final String code;

@@ -58,14 +58,17 @@ public function main() returns error? {
     io:println("Agent started with ID: " + agentId);
 
     string turn1 = check orderAgent.sendEvent(agentId, "chat", "Is the laptop available?");
-    io:println("Turn 1: " + check orderAgent.waitForEventResult(agentId, turn1));
+    string reply1 = check orderAgent.waitForEventResult(agentId, turn1);
+    io:println("Turn 1: " + reply1);
 
     string turn2 = check orderAgent.sendEvent(agentId, "chat", "Please expedite the shipping");
-    io:println("Turn 2: " + check orderAgent.waitForEventResult(agentId, turn2));
+    string reply2 = check orderAgent.waitForEventResult(agentId, turn2);
+    io:println("Turn 2: " + reply2);
 
     // The model ends the conversation when the user says goodbye.
     string turn3 = check orderAgent.sendEvent(agentId, "chat", "That's all, goodbye!");
-    io:println("Final: " + check orderAgent.waitForEventResult(agentId, turn3));
+    string finalReply = check orderAgent.waitForEventResult(agentId, turn3);
+    io:println("Final: " + finalReply);
 
-    _ = check orderAgent.waitForResult(agentId);
+    string _ = check orderAgent.waitForResult(agentId);
 }

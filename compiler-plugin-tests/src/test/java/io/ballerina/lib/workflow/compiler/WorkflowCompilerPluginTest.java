@@ -917,7 +917,7 @@ public class WorkflowCompilerPluginTest {
         // A module-level `final workflow:DurableAgent x = new ({...})` with activities
         // (bare + decl form), an @ai:AgentTool, events, and human tasks compiles cleanly,
         // including the generated module-init registration.
-        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("valid_durable_agent_object");
+        DiagnosticResult diagnosticResult = getDiagnosticResult("valid_durable_agent_object");
         Assert.assertEquals(diagnosticResult.errorCount(), 0,
                 "Expected no errors for a valid object-model durable agent. Errors: "
                         + getDiagnosticMessages(diagnosticResult));
@@ -925,13 +925,13 @@ public class WorkflowCompilerPluginTest {
 
     @Test(groups = "invalid")
     public void testInvalidDurableAgentNotFinal() {
-        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_durable_agent_not_final");
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_not_final");
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_149);
     }
 
     @Test(groups = "invalid")
     public void testInvalidDurableAgentLocalDeclaration() {
-        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_durable_agent_local");
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_local");
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_149);
     }
 
@@ -939,7 +939,7 @@ public class WorkflowCompilerPluginTest {
     public void testInvalidDurableAgentDuplicateNames() {
         // "approval" is used by an activity, an event, and a human task — one flat namespace,
         // so the second and third uses are each flagged.
-        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(
+        DiagnosticResult diagnosticResult = getDiagnosticResult(
                 "invalid_durable_agent_duplicate_names");
         List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_150");
         Assert.assertEquals(diags.size(), 2,

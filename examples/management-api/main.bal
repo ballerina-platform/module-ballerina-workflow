@@ -19,13 +19,13 @@
 // Demonstrates the Ballerina Workflow Management HTTP Service alongside a
 // realistic workflow that uses:
 //   - awaitHumanTask — pauses execution for a human approval decision
-//   - ManualRetry    — pauses execution when an activity fails so an operator
+//   - Human-review retry (roles value) — pauses execution when an activity fails so an operator
 //                      can retry (optionally with corrected input)
 //
 // Scenario — IT Equipment Procurement:
 //   1. Staff submits a purchase request
 //   2. High-value requests (> $500) need MANAGER approval → human task
-//   3. After approval the workflow sends a procurement email → ManualRetry
+//   3. After approval the workflow sends a procurement email → human-review retry
 //      activity (simulates a flaky email service)
 //
 // Two HTTP services start together:
@@ -126,7 +126,7 @@ function validateRequest(string requestId, string item, decimal amount) returns 
 #
 # Simulates a flaky email service: requests addressed to an address that
 # contains the word `"bad"` are rejected, allowing the test to trigger the
-# `ManualRetry` path and then recover with corrected input.
+# human-review retry path and then recover with corrected input.
 #
 # + requestId - The procurement request identifier
 # + toEmail - Recipient address for the purchase-order notification
@@ -153,7 +153,7 @@ function sendProcurementEmail(string requestId, string toEmail, string item, dec
 # 2. High-value requests (> $500) create an "approveRequest" human task
 # and durably pause until a manager submits a decision via the
 # Management API (`POST /workflow/human-tasks/{taskId}/complete`).
-# 3. Sends a procurement email using `ManualRetry` so that delivery failures
+# 3. Sends a procurement email with a human-review retry policy ("operator") so delivery failures
 # surface as retry tasks in the Management API
 # (`GET /workflow/retry-tasks`) instead of crashing the workflow.
 # An operator can retry with the original or corrected arguments.
@@ -198,13 +198,13 @@ function processProcurementRequest(workflow:Context ctx, ProcurementRequest inpu
         io:println(string `[Workflow] Auto-approved: amount $${input.amount} is below threshold`);
     }
 
-    // Step 3 — Send procurement notification (ManualRetry for delivery failures)
+    // Step 3 — Send procurement notification (human-review retry for delivery failures)
     string _ = check ctx->callActivity(sendProcurementEmail, {
         "requestId": input.requestId,
         "toEmail": input.notifyEmail,
         "item": input.item,
         "amount": input.amount
-    }, retryPolicy = workflow:ManualRetry);
+    }, retryPolicy = "operator");
 
     io:println(string `[Workflow] Procurement completed for ${input.requestId}`);
     return {

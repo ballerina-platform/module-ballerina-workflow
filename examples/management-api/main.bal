@@ -19,7 +19,7 @@
 // Demonstrates the Ballerina Workflow Management HTTP Service alongside a
 // realistic workflow that uses:
 //   - awaitHumanTask — pauses execution for a human approval decision
-//   - Human-review retry (roles value) — pauses execution when an activity fails so an operator
+//   - Human-review retry (roles value) — pauses execution when an activity fails so an OPS user
 //                      can retry (optionally with corrected input)
 //
 // Scenario — IT Equipment Procurement:
@@ -153,7 +153,7 @@ function sendProcurementEmail(string requestId, string toEmail, string item, dec
 # 2. High-value requests (> $500) create an "approveRequest" human task
 # and durably pause until a manager submits a decision via the
 # Management API (`POST /workflow/human-tasks/{taskId}/complete`).
-# 3. Sends a procurement email with a human-review retry policy ("operator") so delivery failures
+# 3. Sends a procurement email with a human-review retry policy ("OPS") so delivery failures
 # surface as retry tasks in the Management API
 # (`GET /workflow/retry-tasks`) instead of crashing the workflow.
 # An operator can retry with the original or corrected arguments.
@@ -204,7 +204,7 @@ function processProcurementRequest(workflow:Context ctx, ProcurementRequest inpu
         "toEmail": input.notifyEmail,
         "item": input.item,
         "amount": input.amount
-    }, retryPolicy = "operator");
+    }, retryPolicy = "OPS");
 
     io:println(string `[Workflow] Procurement completed for ${input.requestId}`);
     return {

@@ -17,7 +17,6 @@
 import ballerina/jballerina.java;
 import ballerina/lang.runtime;
 import ballerina/test;
-import ballerina/workflow;
 import ballerina/workflow.management;
 
 // Probe: reads the final response the agent recorded on completion (agents have
@@ -64,7 +63,7 @@ function testDurableAgentMultiTurnConversation() returns error? {
             "Turn 2 should consume the next chat message");
 
     _ = check conversationalStockAgent.sendEvent(agentId, "chat", "ok bye");
-    _ = check conversationalStockAgent.waitForResult(agentId);
+    string _ = check conversationalStockAgent.waitForResult(agentId);
     test:assertEquals(check management:getAgentResponse(agentId), "Conversation ended",
             "The model ends the conversation by answering without waiting");
 }
@@ -85,7 +84,7 @@ function testDurableAgentEventTurnConversation() returns error? {
     test:assertEquals(reply2, "Conversation ended",
             "The final answer should complete the last turn");
 
-    _ = check conversationalStockAgent.waitForResult(agentId);
+    string _ = check conversationalStockAgent.waitForResult(agentId);
 }
 
 @test:Config {}

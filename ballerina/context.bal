@@ -174,6 +174,101 @@ public client class Context {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
         name: "awaitHumanTask"
     } external;
+
+    # Starts a child workflow and returns its instance ID without waiting for the result.
+    # The child is a true Temporal child workflow: its lifecycle is tied to this workflow,
+    # so when this workflow closes, in-flight children are cancelled with it.
+    #
+    # Use `getChildWorkflowResult` (non-blocking) or `waitForChildWorkflow` (durable wait)
+    # to read the child's result later — this enables fan-out/fan-in orchestration:
+    #
+    # ```ballerina
+    # string kycId = check ctx->runChildWorkflow(kycWorkflow, input = customer);   // fan out
+    # string scoreId = check ctx->runChildWorkflow(scoreWorkflow, input = customer);
+    # Kyc kyc = check ctx->waitForChildWorkflow(kycId);                            // gather
+    # Score score = check ctx->waitForChildWorkflow(scoreId);
+    # ```
+    #
+    # + childWorkflow - The child workflow function (must have `@Workflow`)
+    # + input - Optional input for the child workflow. Must match the child workflow
+    #           function's declared input parameter type (any `anydata` subtype)
+    # + return - The child workflow instance ID, or an error if the child could not start
+    remote isolated function runChildWorkflow(function childWorkflow, anydata input = ())
+            returns string|error = @java:Method {
+        'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
+        name: "runChildWorkflow"
+    } external;
+
+    # Returns the result of a child workflow started with `runChildWorkflow` if it has
+    # already completed, without waiting. While the child is still running (e.g. suspended
+    # on a human task) a `workflow:WorkflowBusyError` is returned — check back later, or
+    # switch to the blocking `waitForChildWorkflow` form.
+    #
+    # ```ballerina
+    # Kyc|error result = ctx->getChildWorkflowResult(kycId);
+    # if result is workflow:WorkflowBusyError { /* still running — do other work */ }
+    # ```
+    #
+    # + childWorkflowId - The child workflow instance ID returned by `runChildWorkflow`
+    # + T - Expected result type (inferred from context)
+    # + return - The child's result as `T`, a `workflow:WorkflowBusyError` while the child
+    #            is still running, or an error if the child failed
+    remote isolated function getChildWorkflowResult(string childWorkflowId, typedesc<anydata> T = <>)
+            returns T|error = @java:Method {
+        'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
+        name: "getChildWorkflowResult"
+    } external;
+
+    # Waits durably until a child workflow started with `runChildWorkflow` completes and
+    # returns its result. The wait is a durable suspend — no thread is held, and the wait
+    # survives worker crashes and restarts (on replay the result is served from history).
+    #
+    # + childWorkflowId - The child workflow instance ID returned by `runChildWorkflow`
+    # + T - Expected result type (inferred from context)
+    # + return - The child's result as `T`, or an error if the child failed
+    remote isolated function waitForChildWorkflow(string childWorkflowId, typedesc<anydata> T = <>)
+            returns T|error = @java:Method {
+        'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
+        name: "waitForChildWorkflow"
+    } external;
+
+    # Starts a child workflow and durably waits for its result — `runChildWorkflow`
+    # followed by `waitForChildWorkflow` fused into one call. "Blocking" here is a durable
+    # suspend, not a held thread, so this is safe for long-running children.
+    #
+    # ```ballerina
+    # Receipt receipt = check ctx->callWorkflow(billingWorkflow, input = order);
+    # ```
+    #
+    # + childWorkflow - The child workflow function (must have `@Workflow`)
+    # + input - Optional input for the child workflow. Must match the child workflow
+    #           function's declared input parameter type (any `anydata` subtype)
+    # + T - Expected result type (inferred from context)
+    # + return - The child's result as `T`, or an error if the child failed
+    remote isolated function callWorkflow(function childWorkflow, anydata input = (),
+            typedesc<anydata> T = <>) returns T|error = @java:Method {
+        'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
+        name: "callWorkflow"
+    } external;
+
+    # Sends data to a running workflow instance's events record from inside a workflow.
+    # This is the in-workflow counterpart of `workflow:sendData` and is typically used to
+    # signal a child workflow started with `runChildWorkflow`, but accepts any workflow
+    # instance ID.
+    #
+    # ```ballerina
+    # check ctx->sendDataToChildWorkflow(childId, "approval", {approved: true});
+    # ```
+    #
+    # + childWorkflowId - Target workflow instance ID (usually from `runChildWorkflow`)
+    # + dataName - Field name in the target workflow's events record
+    # + data - The data payload
+    # + return - An error if sending fails
+    remote isolated function sendDataToChildWorkflow(string childWorkflowId, string dataName,
+            anydata data) returns error? = @java:Method {
+        'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
+        name: "sendDataToChildWorkflow"
+    } external;
 }
 
 // Native function declarations

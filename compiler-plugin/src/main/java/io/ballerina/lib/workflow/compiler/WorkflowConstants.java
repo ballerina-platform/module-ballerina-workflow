@@ -58,4 +58,7 @@ public final class WorkflowConstants {
     public static final String SEND_DATA_FUNCTION = "sendData";
     public static final String RUN_FUNCTION = "run";
     public static final String AWAIT_METHOD = "await";
+    public static final String RUN_CHILD_WORKFLOW_METHOD = "runChildWorkflow";
+    public static final String CALL_WORKFLOW_METHOD = "callWorkflow";
+    public static final String SEND_DATA_TO_CHILD_WORKFLOW_METHOD = "sendDataToChildWorkflow";
 }

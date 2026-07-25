@@ -15,12 +15,14 @@
 // under the License.
 
 // ================================================================================
-// CHILD WORKFLOW (implicit activity tests)
+// CHILD WORKFLOW COMPOSITION
 // ================================================================================
 //
-// These workflows test that workflow:run and workflow:sendData work as implicit
-// activities when called from inside a @Workflow function. The function pointer
-// is resolved to a string name for Temporal serialization.
+// These workflows exercise the child-workflow composition methods on the workflow
+// context: ctx->runChildWorkflow (start, no wait), ctx->getChildWorkflowResult
+// (non-blocking read / WorkflowBusyError), ctx->waitForChildWorkflow (durable wait),
+// ctx->callWorkflow (start + wait fused), and ctx->sendDataToChildWorkflow (signal).
+// Children are true Temporal child workflows whose lifecycle is tied to the parent.
 //
 // ================================================================================
 
@@ -44,7 +46,7 @@ type ParentInput record {|
     string id;
 |};
 
-# Input for a workflow that receives data via sendData from another workflow.
+# Input for a workflow that receives data via sendDataToChildWorkflow from another workflow.
 #
 # + id - The workflow identifier
 type ReceiverInput record {|
@@ -92,33 +94,90 @@ function childWorkflow(workflow:Context ctx, ChildInput input) returns string|er
     return "child-processed:" + input.value;
 }
 
-# A parent workflow that starts a child workflow using workflow:run()
-# from inside the workflow function. This tests the implicit activity behavior
-# where workflow:run is automatically routed through a built-in activity
-# for determinism.
+# A slow child workflow used to observe the WorkflowBusyError path: it sleeps long
+# enough that a non-blocking result read right after the start finds it still running.
+#
+# + input - The child workflow input
+# + return - The processed result or error
+@workflow:Workflow
+function slowChildWorkflow(workflow:Context ctx, ChildInput input) returns string|error {
+    check ctx.sleep({seconds: 3});
+    return "slow-child-processed:" + input.value;
+}
+
+# A parent workflow that starts a child workflow with ctx->runChildWorkflow and
+# durably waits for its result with ctx->waitForChildWorkflow. The child is a true
+# Temporal child workflow tied to this parent's lifecycle.
 #
 # + ctx - The workflow context
 # + input - The parent workflow input
 # + return - The result combining parent and child workflow data, or error
 @workflow:Workflow
 function parentWorkflow(workflow:Context ctx, ParentInput input) returns string|error {
-    // Start a child workflow from inside this workflow.
-    // This call will be automatically routed through the __workflow_run
-    // implicit activity for deterministic execution.
-    string childWorkflowId = check workflow:run(childWorkflow, {value: "from-parent-" + input.id});
+    string childWorkflowId = check ctx->runChildWorkflow(childWorkflow,
+        input = {value: "from-parent-" + input.id});
 
-    // Wait for the child workflow to complete and get its raw result value.
-    anydata childResult = check workflow:getWorkflowResult(childWorkflowId, 30);
-    string resultStr = <string> childResult;
+    // Durable wait: suspends the parent (no thread held) until the child completes.
+    string childResult = check ctx->waitForChildWorkflow(childWorkflowId);
 
     // Process the child result through an activity
     string formatted = check ctx->callActivity(formatChildResultActivity,
-        {"childResult": resultStr});
+        {"childResult": childResult});
     return formatted;
 }
 
-# A receiver workflow that waits for data sent via workflow:sendData.
-# Used to test the implicit sendData activity from inside another workflow.
+# A parent workflow that fans out two children with ctx->runChildWorkflow and then
+# gathers both results with ctx->waitForChildWorkflow.
+#
+# + ctx - The workflow context
+# + input - The parent workflow input
+# + return - The combined child results, or error
+@workflow:Workflow
+function fanOutParentWorkflow(workflow:Context ctx, ParentInput input) returns string|error {
+    string firstChildId = check ctx->runChildWorkflow(childWorkflow,
+        input = {value: "first-" + input.id});
+    string secondChildId = check ctx->runChildWorkflow(childWorkflow,
+        input = {value: "second-" + input.id});
+
+    string firstResult = check ctx->waitForChildWorkflow(firstChildId);
+    string secondResult = check ctx->waitForChildWorkflow(secondChildId);
+    return firstResult + "|" + secondResult;
+}
+
+# A parent workflow that starts a slow child and reads its result non-blockingly:
+# the first ctx->getChildWorkflowResult right after the start observes a
+# workflow:WorkflowBusyError (the child is still sleeping), after which the parent
+# switches to the durable wait.
+#
+# + ctx - The workflow context
+# + input - The parent workflow input
+# + return - The child result prefixed with whether the busy state was observed
+@workflow:Workflow
+function busyCheckParentWorkflow(workflow:Context ctx, ParentInput input) returns string|error {
+    string childId = check ctx->runChildWorkflow(slowChildWorkflow,
+        input = {value: input.id});
+
+    string|error early = ctx->getChildWorkflowResult(childId);
+    string busyObserved = early is workflow:WorkflowBusyError ? "busy" : "not-busy";
+
+    string childResult = check ctx->waitForChildWorkflow(childId);
+    return busyObserved + ":" + childResult;
+}
+
+# A parent workflow that starts a child and waits for its result in one fused call
+# using ctx->callWorkflow.
+#
+# + ctx - The workflow context
+# + input - The parent workflow input
+# + return - The child result, or error
+@workflow:Workflow
+function callWorkflowParentWorkflow(workflow:Context ctx, ParentInput input) returns string|error {
+    string childResult = check ctx->callWorkflow(childWorkflow,
+        input = {value: "called-" + input.id});
+    return childResult;
+}
+
+# A receiver workflow that waits for data sent via ctx->sendDataToChildWorkflow.
 #
 # + input - The receiver workflow input
 # + events - The signal futures (notification)
@@ -131,18 +190,16 @@ function receiverWorkflow(workflow:Context ctx, ReceiverInput input, ReceiverEve
     return "received:" + message;
 }
 
-# A sender workflow that sends data to another workflow using workflow:sendData()
-# from inside the workflow function. This tests the implicit activity behavior.
+# A sender workflow that sends data to another workflow instance using
+# ctx->sendDataToChildWorkflow — the in-workflow counterpart of workflow:sendData,
+# implemented as a deterministic external-workflow signal.
 #
 # + ctx - The workflow context
 # + input - The sender workflow input containing the target workflow ID
 # + return - Confirmation message or error
 @workflow:Workflow
 function senderWorkflow(workflow:Context ctx, SenderInput input) returns string|error {
-    // Send data to the receiver workflow from inside this workflow.
-    // This call will be automatically routed through the __workflow_sendData
-    // implicit activity for deterministic execution.
-    check workflow:sendData(receiverWorkflow, input.targetWorkflowId,
+    check ctx->sendDataToChildWorkflow(input.targetWorkflowId,
         "notification", {"message": "hello-from-sender"});
 
     return "sent-to:" + input.targetWorkflowId;

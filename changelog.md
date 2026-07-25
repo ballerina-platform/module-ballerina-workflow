@@ -8,6 +8,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Child workflow composition on the workflow context: `ctx->runChildWorkflow(fn, input)`
+  starts a **true Temporal child workflow** (lifecycle tied to the parent — closing the
+  parent cancels in-flight children) and returns its instance ID;
+  `ctx->getChildWorkflowResult(id)` reads the result without blocking, returning the new
+  `workflow:WorkflowBusyError` while the child is still running;
+  `ctx->waitForChildWorkflow(id)` durably suspends (crash-resumable, no thread held)
+  until the child completes; `ctx->callWorkflow(fn, input)` fuses start + durable wait;
+  and `ctx->sendDataToChildWorkflow(id, dataName, data)` signals a running workflow
+  instance from inside a workflow via a deterministic external-workflow signal.
+- Compile-time validation for the child-workflow methods: `workflow:run` and
+  `workflow:sendData` are now rejected inside a workflow body in favour of the context
+  methods (`WORKFLOW_138`); the first argument of `runChildWorkflow`/`callWorkflow` must
+  be a `@Workflow` function (`WORKFLOW_139`); and the `input` argument is validated
+  against the child workflow's declared input type (`WORKFLOW_140`, `WORKFLOW_141`).
+  Previously `workflow:run`/`sendData` inside a workflow were routed through implicit
+  activities, which started detached top-level workflows with no parent lifecycle.
+
 - Renamed the management "retry task" concept to **review activity**
   ([#8906](https://github.com/ballerina-platform/ballerina-library/issues/8906)): one
   concept for a human reviewing an activity call — after it fails (`ON_FAILURE`, the

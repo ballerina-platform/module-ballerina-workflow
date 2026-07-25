@@ -34,11 +34,14 @@ import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.api.symbols.VariableSymbol;
 import io.ballerina.compiler.syntax.tree.AnnotationNode;
 import io.ballerina.compiler.syntax.tree.ExpressionNode;
+import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.MetadataNode;
 import io.ballerina.compiler.syntax.tree.Node;
 import io.ballerina.compiler.syntax.tree.NodeList;
+import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
+import io.ballerina.tools.diagnostics.Location;
 
 import java.util.List;
 import java.util.Optional;
@@ -528,5 +531,114 @@ public final class WorkflowPluginUtils {
             current = current.parent();
         }
         return false;
+    }
+
+    /**
+     * Receives the outcomes of {@link #validateWorkflowCallInput}. Each caller maps the outcomes
+     * onto its own diagnostic codes and message arguments.
+     */
+    public interface WorkflowCallInputListener {
+
+        /**
+         * The target argument does not resolve to a function carrying the @Workflow annotation.
+         *
+         * @param location the target argument's location
+         */
+        void onNonWorkflowTarget(Location location);
+
+        /**
+         * A non-nil input was passed but the workflow function declares no input parameter.
+         *
+         * @param location     the input argument's location
+         * @param workflowName the target workflow function's name
+         */
+        void onUnexpectedInput(Location location, String workflowName);
+
+        /**
+         * The input's type (or constructor shape) cannot be accepted by the declared input type.
+         *
+         * @param location              the input argument's location
+         * @param workflowName          the target workflow function's name
+         * @param declaredTypeSignature the declared input parameter type's signature
+         * @param actualDescription     the offending input's type signature or shape description
+         */
+        void onInputTypeMismatch(Location location, String workflowName, String declaredTypeSignature,
+                                 String actualDescription);
+    }
+
+    /**
+     * Shared validation for calls that start a workflow function with an input value
+     * ({@code workflow:run} and the child-workflow context methods): the target argument must be
+     * a @Workflow function, and the input argument must fit the target's declared input parameter.
+     * Constructor expressions (mapping/list/table) are typed by their contextually expected type
+     * ({@code anydata} here), so only their shape is validated — member-level conversion is handled
+     * by the runtime. Explicit nil is only valid when the declared input type is nilable; the
+     * subtype check covers that, since nil is a subtype of any nilable type.
+     *
+     * @param arguments       the call's argument list
+     * @param targetParamName the declared name of the workflow-function parameter (for named args)
+     * @param inputParamName  the declared name of the input parameter (for named args)
+     * @param semanticModel   the semantic model
+     * @param listener        receives the validation outcomes to report as diagnostics
+     */
+    public static void validateWorkflowCallInput(SeparatedNodeList<FunctionArgumentNode> arguments,
+                                                 String targetParamName, String inputParamName,
+                                                 SemanticModel semanticModel,
+                                                 WorkflowCallInputListener listener) {
+        if (arguments.isEmpty()) {
+            return;
+        }
+        ExpressionNode targetExpr = WorkflowFunctionCallUtils.getArgumentExpression(
+                arguments, 0, targetParamName);
+        if (targetExpr == null) {
+            return;
+        }
+
+        Optional<FunctionSymbol> workflowFuncOpt = getWorkflowFunctionSymbol(targetExpr, semanticModel);
+        if (workflowFuncOpt.isEmpty()) {
+            listener.onNonWorkflowTarget(targetExpr.location());
+            return;
+        }
+        FunctionSymbol workflowFunc = workflowFuncOpt.get();
+        String workflowName = workflowFunc.getName().orElse("");
+
+        ExpressionNode inputExpr = WorkflowFunctionCallUtils.getArgumentExpression(
+                arguments, 1, inputParamName);
+        if (inputExpr == null) {
+            return;
+        }
+
+        Optional<TypeSymbol> inputTypeOpt = semanticModel.typeOf(inputExpr);
+        if (inputTypeOpt.isEmpty()) {
+            return;
+        }
+        TypeSymbol inputType = inputTypeOpt.get();
+        boolean isNilInput = resolveTypeReference(inputType).typeKind() == TypeDescKind.NIL;
+
+        Optional<ParameterSymbol> inputParamOpt = getInputParameter(workflowFunc);
+        if (inputParamOpt.isEmpty()) {
+            // Explicit nil means "no input" and is fine for a no-input workflow;
+            // any other value has nowhere to go.
+            if (!isNilInput) {
+                listener.onUnexpectedInput(inputExpr.location(), workflowName);
+            }
+            return;
+        }
+        TypeSymbol declaredInputType = inputParamOpt.get().typeDescriptor();
+
+        if (inputExpr.kind() == SyntaxKind.MAPPING_CONSTRUCTOR
+                || inputExpr.kind() == SyntaxKind.LIST_CONSTRUCTOR
+                || inputExpr.kind() == SyntaxKind.TABLE_CONSTRUCTOR) {
+            if (!canAcceptConstructorExpression(declaredInputType, inputExpr.kind())) {
+                listener.onInputTypeMismatch(inputExpr.location(), workflowName,
+                        declaredInputType.signature(), describeConstructorExpression(inputExpr.kind()));
+            }
+            return;
+        }
+
+        if (!inputType.subtypeOf(declaredInputType)) {
+            listener.onInputTypeMismatch(inputExpr.location(), workflowName,
+                    declaredInputType.signature(), inputType.signature());
+        }
     }
 }

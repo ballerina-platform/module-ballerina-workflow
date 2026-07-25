@@ -1035,8 +1035,10 @@ public final class WorkflowContextNative {
             ChildWorkflowStub stub = newChildStub(functionName, childId);
             Object javaInput = input == null ? null : TypesUtil.convertBallerinaToJavaType(input);
             Object raw = stub.execute(Object.class, javaInput);
+            // validateAndConvert (not cloneWithType) so a nil result against a non-nilable T
+            // yields a proper conversion error instead of panicking at the Java-Ballerina boundary.
             Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(raw);
-            return TypesUtil.cloneWithType(ballerinaResult, typedesc.getDescribingType());
+            return TypesUtil.validateAndConvert(ballerinaResult, typedesc.getDescribingType());
         } catch (io.temporal.worker.NonDeterministicException e) {
             throw e;
         } catch (CanceledFailure e) {
@@ -1267,8 +1269,10 @@ public final class WorkflowContextNative {
     private static Object readChildResult(ChildWorkflowHandle handle, BTypedesc typedesc) {
         try {
             Object raw = handle.result().get();
+            // validateAndConvert (not cloneWithType) so a nil result against a non-nilable T
+            // yields a proper conversion error instead of panicking at the Java-Ballerina boundary.
             Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(raw);
-            return TypesUtil.cloneWithType(ballerinaResult, typedesc.getDescribingType());
+            return TypesUtil.validateAndConvert(ballerinaResult, typedesc.getDescribingType());
         } catch (ChildWorkflowFailure e) {
             return ErrorCreator.createError(StringUtils.fromString(childFailureMessage(e)));
         }

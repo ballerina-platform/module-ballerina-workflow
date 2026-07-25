@@ -714,6 +714,11 @@ public class WorkflowCompilerPluginTest {
                 "Expected validation errors for child workflow input mismatches");
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_140);
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_141);
+        // The omitted-input case reports WORKFLOW_140 with '()' as the found type.
+        List<Diagnostic> mismatches = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_140");
+        Assert.assertEquals(mismatches.size(), 2,
+                "Expected the int-input and omitted-input mismatches. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
     }
 
     // ===== workflow:sendData event name and data type validation =====
@@ -920,6 +925,16 @@ public class WorkflowCompilerPluginTest {
         DiagnosticResult diagnosticResult = getDiagnosticResult("valid_durable_agent_object");
         Assert.assertEquals(diagnosticResult.errorCount(), 0,
                 "Expected no errors for a valid object-model durable agent. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "valid")
+    public void testValidDurableAgentExplicitNew() {
+        // The explicit `check new workflow:DurableAgent({...})` constructor form must be
+        // recognized and registered the same as the implicit `check new ({...})` form.
+        DiagnosticResult diagnosticResult = getDiagnosticResult("valid_durable_agent_explicit_new");
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for an explicitly constructed durable agent. Errors: "
                         + getDiagnosticMessages(diagnosticResult));
     }
 

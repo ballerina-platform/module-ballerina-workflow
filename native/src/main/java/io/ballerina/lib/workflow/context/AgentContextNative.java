@@ -27,6 +27,7 @@ import io.ballerina.runtime.api.types.Parameter;
 import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.utils.JsonUtils;
 import io.ballerina.runtime.api.utils.StringUtils;
+import io.ballerina.runtime.api.values.BArray;
 import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BHandle;
 import io.ballerina.runtime.api.values.BMap;
@@ -162,22 +163,42 @@ public final class AgentContextNative {
      * @param requiresApproval when {@code true}, a PRE_RUN review activity gates the tool before it runs
      * @param retryPolicy  the activity tool's failure policy: {@code null} (NoRetry), an AutoRetry {@code BMap}, or
      *                     the {@code "MANUAL_RETRY"} {@code BString}; {@code null} for non-activity tools
+     * @param reviewRoles  role(s) permitted to decide this tool's approval reviews; empty when the tool declares
+     *                     none, in which case the agent-level approval roles apply
      */
     private record ToolMeta(String name, String description, Map<String, Object> schema, String kind,
                             String activityName, Map<String, Object> bindings, boolean requiresApproval,
-                            Object retryPolicy) {
+                            Object retryPolicy, String[] reviewRoles) {
         ToolMeta(String name, String description, Map<String, Object> schema, String kind) {
-            this(name, description, schema, kind, null, null, false, null);
+            this(name, description, schema, kind, null, null, false, null, new String[0]);
         }
 
         ToolMeta(String name, String description, Map<String, Object> schema, String kind,
                  String activityName, Map<String, Object> bindings) {
-            this(name, description, schema, kind, activityName, bindings, false, null);
+            this(name, description, schema, kind, activityName, bindings, false, null, new String[0]);
         }
     }
 
     private record HumanTaskMeta(Object userRoles, String title, String description, BTypedesc resultType,
                                  Object timeout) { }
+
+    /**
+     * Parses a per-tool reviewer-roles value (a BString for one role or a BArray of role strings) into a role
+     * array; returns an empty array when the tool declares no roles so the agent-level approval roles apply.
+     */
+    private static String[] parseReviewRoles(Object userRolesArg) {
+        if (userRolesArg instanceof BString role && !role.getValue().isBlank()) {
+            return new String[]{role.getValue()};
+        }
+        if (userRolesArg instanceof BArray roleArray) {
+            String[] roles = new String[(int) roleArray.size()];
+            for (int i = 0; i < roles.length; i++) {
+                roles[i] = String.valueOf(roleArray.get(i));
+            }
+            return roles;
+        }
+        return new String[0];
+    }
 
     /**
      * Configures the agent's interaction semantics. {@code MULTI_EVENT} makes event waits FIFO-repeatable
@@ -265,9 +286,13 @@ public final class AgentContextNative {
             // For an activity tool, review under the underlying activity's qualified name so the
             // reviewer/inbox sees the real activity; other tools review under the tool name.
             String activityName = name;
+            String[] reviewRoles = info.approvalUserRoles;
             for (ToolMeta tool : info.tools) {
                 if (KIND_ACTIVITY.equals(tool.kind()) && tool.name().equals(name) && tool.activityName() != null) {
                     activityName = tool.activityName();
+                    if (tool.reviewRoles().length > 0) {
+                        reviewRoles = tool.reviewRoles();
+                    }
                     break;
                 }
             }
@@ -281,7 +306,7 @@ public final class AgentContextNative {
             }
 
             Map<String, Object> decision = WorkflowContextNative.startReviewActivity(
-                    "PRE_RUN", qualifiedName, argsMap, "", info.approvalUserRoles, info.approvalTimeoutMillis);
+                    "PRE_RUN", qualifiedName, argsMap, "", reviewRoles, info.approvalTimeoutMillis);
             return StringUtils.fromString(TypesUtil.toJsonString(decision));
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -310,7 +335,7 @@ public final class AgentContextNative {
     @SuppressWarnings("unchecked")
     public static Object recordActivityTool(BHandle handle, BFunctionPointer fn, Object nameArg,
                                             Object descriptionArg, Object bindingsArg,
-                                            boolean requiresApproval, Object retryPolicy) {
+                                            boolean requiresApproval, Object retryPolicy, Object userRolesArg) {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             String activityName = fn.getType().getName();
@@ -332,7 +357,7 @@ public final class AgentContextNative {
             // NoRetry arrives as nil; AutoRetry as a BMap; ManualRetry as the "MANUAL_RETRY" BString.
             Object policy = retryPolicy instanceof BMap || retryPolicy instanceof BString ? retryPolicy : null;
             info.tools.add(new ToolMeta(toolName, description, schema, KIND_ACTIVITY, activityName, bindings,
-                    requiresApproval, policy));
+                    requiresApproval, policy, parseReviewRoles(userRolesArg)));
             return null;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -379,7 +404,7 @@ public final class AgentContextNative {
             schema.put("properties", properties);
             schema.put("required", java.util.List.of("query"));
             info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, kindSpec.getValue(),
-                    null, null, requiresApproval, null));
+                    null, null, requiresApproval, null, new String[0]));
             return null;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -398,7 +423,7 @@ public final class AgentContextNative {
                 schema = parameterSchemaOf(fn);
             }
             info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, KIND_AI_TOOL,
-                    null, null, requiresApproval, null));
+                    null, null, requiresApproval, null, new String[0]));
             WorkflowWorkerNative.putAgentTool(info.workflowType, name.getValue(), fn);
             return null;
         } catch (Exception e) {

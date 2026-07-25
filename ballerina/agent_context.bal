@@ -130,13 +130,16 @@ public client class AgentContext {
     # + retryPolicy - Failure behaviour: `NoAutomaticRetry` (report the failure to the model),
     #              `AutoRetry` (durable backoff retries), or `HumanReview` (create a
     #              review activity on failure so a human decides to rerun or fail)
+    # + userRoles - Role(s) permitted to decide this tool's approval reviews. When
+    #              absent, the agent-level `ApprovalConfig` roles apply
     # + return - An error if the tool cannot be registered, otherwise nil
     isolated function registerActivity(function activity, string? name = (),
             string? description = (), map<anydata|object {}>? bindings = (),
             boolean requiresApproval = false,
-            AutoRetry|HumanReview|NoAutomaticRetry retryPolicy = NoAutomaticRetry) returns error? {
+            AutoRetry|HumanReview|NoAutomaticRetry retryPolicy = NoAutomaticRetry,
+            string|string[]? userRoles = ()) returns error? {
         return recordActivityTool(self.nativeContext, activity, name, description, bindings,
-                requiresApproval, retryPolicy);
+                requiresApproval, retryPolicy, userRoles);
     }
 
     # Registers an AI tool with the agent. Accepts an `ai:ToolConfig` value, a
@@ -309,7 +312,7 @@ type AgentToolDef record {|
 
 isolated function recordActivityTool(handle nativeContext, function tool, string? name,
         string? description, map<anydata|object {}>? bindings, boolean requiresApproval,
-        AutoRetry|HumanReview|NoAutomaticRetry retryPolicy) returns error? = @java:Method {
+        AutoRetry|HumanReview|NoAutomaticRetry retryPolicy, string|string[]? userRoles) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "recordActivityTool"
 } external;

@@ -28,6 +28,7 @@ import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.api.symbols.VariableSymbol;
 import io.ballerina.compiler.syntax.tree.CaptureBindingPatternNode;
 import io.ballerina.compiler.syntax.tree.CheckExpressionNode;
+import io.ballerina.compiler.syntax.tree.ExplicitNewExpressionNode;
 import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
 import io.ballerina.compiler.syntax.tree.ImplicitNewExpressionNode;
@@ -38,6 +39,7 @@ import io.ballerina.compiler.syntax.tree.ModuleVariableDeclarationNode;
 import io.ballerina.compiler.syntax.tree.Node;
 import io.ballerina.compiler.syntax.tree.PositionalArgumentNode;
 import io.ballerina.compiler.syntax.tree.QualifiedNameReferenceNode;
+import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
 import io.ballerina.compiler.syntax.tree.SpecificFieldNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.compiler.syntax.tree.TypeDescriptorNode;
@@ -160,20 +162,26 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
     }
 
     /**
-     * Unwraps {@code check new ({...})} / {@code new ({...})} down to the config mapping.
+     * Unwraps {@code check new ({...})} / {@code new ({...})} / the explicit
+     * {@code new workflow:DurableAgent({...})} form down to the config mapping.
      */
     private Optional<MappingConstructorExpressionNode> findConfigMapping(ExpressionNode initializer) {
         ExpressionNode expr = initializer;
         if (expr instanceof CheckExpressionNode checkExpr) {
             expr = checkExpr.expression();
         }
-        if (!(expr instanceof ImplicitNewExpressionNode newExpr)) {
+        SeparatedNodeList<FunctionArgumentNode> arguments;
+        if (expr instanceof ImplicitNewExpressionNode newExpr) {
+            if (newExpr.parenthesizedArgList().isEmpty()) {
+                return Optional.empty();
+            }
+            arguments = newExpr.parenthesizedArgList().get().arguments();
+        } else if (expr instanceof ExplicitNewExpressionNode explicitNewExpr) {
+            arguments = explicitNewExpr.parenthesizedArgList().arguments();
+        } else {
             return Optional.empty();
         }
-        if (newExpr.parenthesizedArgList().isEmpty()) {
-            return Optional.empty();
-        }
-        for (FunctionArgumentNode arg : newExpr.parenthesizedArgList().get().arguments()) {
+        for (FunctionArgumentNode arg : arguments) {
             if (arg instanceof PositionalArgumentNode positionalArg
                     && positionalArg.expression() instanceof MappingConstructorExpressionNode mapping) {
                 return Optional.of(mapping);

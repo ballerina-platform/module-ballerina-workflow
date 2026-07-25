@@ -119,7 +119,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
 
         // Determine which prefixes the generated function will reference, so we
         // can selectively copy the corresponding imports into the target file.
-        Set<String> requiredPrefixes = collectRequiredImportPrefixes(allProcessInfos);
+        Set<String> requiredPrefixes = collectRequiredImportPrefixes(allProcessInfos, allDurableAgentDecls);
 
         // Transform each document (AST-level activity call rewrites) …
         for (int i = 0; i < entries.size(); i++) {
@@ -408,17 +408,38 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
     }
 
     /**
-     * Scans every collected {@link ProcessFunctionInfo} for activity-call
-     * references that use a qualified module prefix and returns the set of
-     * those prefixes. Only these are copied into the target file later, so we
-     * avoid pulling in unrelated imports and triggering unused-import warnings.
+     * Scans every collected {@link ProcessFunctionInfo} and {@link DurableAgentDeclInfo} for
+     * references that use a qualified module prefix — activity calls, the agent's model and
+     * activity/tool function references, and the event / human-task typedescs the generated
+     * registration re-emits — and returns the set of those prefixes. Only these are copied
+     * into the target file later, so we avoid pulling in unrelated imports and triggering
+     * unused-import warnings. Mapping-literal sources (system prompt, capability metadata)
+     * are not scanned: they carry no bare qualified references the generated function re-emits
+     * outside those literals.
      */
-    private Set<String> collectRequiredImportPrefixes(List<ProcessFunctionInfo> infos) {
+    private Set<String> collectRequiredImportPrefixes(List<ProcessFunctionInfo> infos,
+                                                      List<DurableAgentDeclInfo> agentDecls) {
         Set<String> prefixes = new LinkedHashSet<>();
         for (ProcessFunctionInfo info : infos) {
             for (Map.Entry<String, String> e : info.activityMap().entrySet()) {
                 addPrefixIfQualified(prefixes, e.getKey());
                 addPrefixIfQualified(prefixes, e.getValue());
+            }
+        }
+        for (DurableAgentDeclInfo decl : agentDecls) {
+            addPrefixIfQualified(prefixes, decl.modelSource());
+            for (DurableAgentDeclInfo.ActivityDecl activity : decl.activities()) {
+                addPrefixIfQualified(prefixes, activity.functionRefSource());
+            }
+            for (String toolRef : decl.aiToolRefs()) {
+                addPrefixIfQualified(prefixes, toolRef);
+            }
+            for (DurableAgentDeclInfo.EventDecl event : decl.events()) {
+                addPrefixIfQualified(prefixes, event.requestTypeSource());
+                addPrefixIfQualified(prefixes, event.responseTypeSource());
+            }
+            for (DurableAgentDeclInfo.HumanTaskDecl humanTask : decl.humanTasks()) {
+                addPrefixIfQualified(prefixes, humanTask.resultTypeSource());
             }
         }
         return prefixes;

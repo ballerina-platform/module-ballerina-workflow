@@ -71,7 +71,7 @@ public isolated function getWorkflowInfoForRun(string workflowId, string runId)
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 
-# Gets the latest response produced by a durable agent (`@workflow:DurableAgentFunction`).
+# Gets the latest response produced by a durable agent (a `workflow:DurableAgent`).
 # In a multi-turn conversation this is the answer of the most recent turn; it is
 # available while the agent is still running (e.g. suspended waiting for the next
 # chat event) as well as after it completes.

@@ -46,11 +46,19 @@ def nativeJarExamples = []
 
 // Helper: generate a Ballerina.toml for an example
 def generateExampleToml = { String exampleDirName, String packageName ->
+    // Pin ballerina/ai (a transitive dependency via ballerina/workflow): the offline build
+    // would otherwise pick the newest ai in the shared central cache, whose BIR the pinned
+    // distribution's toolchain may not load.
     def toml = """[package]
 org = "ballerina_examples"
 name = "${packageName}"
 version = "0.1.0"
 distribution = "${ballerinaDistributionVersion}"
+
+[[dependency]]
+org = "ballerina"
+name = "ai"
+version = "${ballerinaAiVersion}"
 
 [build-options]
 observabilityIncluded = true
@@ -106,23 +114,6 @@ task buildExamples {
 
         boolean testsExcluded = gradle.startParameter.excludedTaskNames.any {
             it == 'test' || it.endsWith(':test')
-        }
-
-        // The compiler-plugin tests compile agent test sources that import ballerina/ai
-        // transitively via ballerina/workflow; that online compilation can pull the latest
-        // ai release into the local central cache, and its BIR fails to load under this
-        // distribution's toolchain. The examples resolve ai transitively too, and an offline
-        // build picks the newest cached version — so remove any ai other than the pinned one
-        // to force the examples onto ballerina/ai:${ballerinaAiVersion}.
-        def aiVersion = project.rootProject.findProperty("ballerinaAiVersion")
-        def aiCacheDir = new File("${System.getProperty('user.home')}/.ballerina/repositories/central.ballerina.io/bala/ballerina/ai")
-        if (aiVersion != null && aiCacheDir.exists()) {
-            aiCacheDir.eachDir { verDir ->
-                if (verDir.name != aiVersion) {
-                    logger.lifecycle("Removing non-pinned ballerina/ai:${verDir.name} from the local cache")
-                    verDir.deleteDir()
-                }
-            }
         }
 
         examplesDir.eachDir { exampleDir ->

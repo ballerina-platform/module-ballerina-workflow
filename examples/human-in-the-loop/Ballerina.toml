@@ -4,5 +4,10 @@ name = "human_in_the_loop"
 version = "0.1.0"
 distribution = "2201.13.4"
 
+[[dependency]]
+org = "ballerina"
+name = "ai"
+version = "1.11.2"
+
 [build-options]
 observabilityIncluded = true

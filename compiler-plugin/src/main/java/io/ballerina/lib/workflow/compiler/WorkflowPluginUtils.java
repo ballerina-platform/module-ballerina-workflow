@@ -22,6 +22,7 @@ import io.ballerina.compiler.api.symbols.AnnotationSymbol;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.ModuleSymbol;
 import io.ballerina.compiler.api.symbols.ObjectTypeSymbol;
+import io.ballerina.compiler.api.symbols.ParameterKind;
 import io.ballerina.compiler.api.symbols.ParameterSymbol;
 import io.ballerina.compiler.api.symbols.Qualifiable;
 import io.ballerina.compiler.api.symbols.Qualifier;
@@ -575,15 +576,20 @@ public final class WorkflowPluginUtils {
      * by the runtime. Explicit nil is only valid when the declared input type is nilable; the
      * subtype check covers that, since nil is a subtype of any nilable type.
      *
-     * @param arguments       the call's argument list
-     * @param targetParamName the declared name of the workflow-function parameter (for named args)
-     * @param inputParamName  the declared name of the input parameter (for named args)
-     * @param semanticModel   the semantic model
-     * @param listener        receives the validation outcomes to report as diagnostics
+     * @param arguments                the call's argument list
+     * @param targetParamName          the declared name of the workflow-function parameter (for named args)
+     * @param inputParamName           the declared name of the input parameter (for named args)
+     * @param semanticModel            the semantic model
+     * @param flagOmittedRequiredInput when {@code true}, an omitted input argument is flagged if the
+     *                                 target declares a required input parameter that nil cannot satisfy
+     *                                 (the child-workflow methods; {@code workflow:run} historically
+     *                                 allows omission)
+     * @param listener                 receives the validation outcomes to report as diagnostics
      */
     public static void validateWorkflowCallInput(SeparatedNodeList<FunctionArgumentNode> arguments,
                                                  String targetParamName, String inputParamName,
                                                  SemanticModel semanticModel,
+                                                 boolean flagOmittedRequiredInput,
                                                  WorkflowCallInputListener listener) {
         if (arguments.isEmpty()) {
             return;
@@ -605,6 +611,17 @@ public final class WorkflowPluginUtils {
         ExpressionNode inputExpr = WorkflowFunctionCallUtils.getArgumentExpression(
                 arguments, 1, inputParamName);
         if (inputExpr == null) {
+            // Omitted input reaches the target as nil. Flag it when the target declares a
+            // required input parameter that nil cannot satisfy.
+            Optional<ParameterSymbol> requiredParam = getInputParameter(workflowFunc);
+            if (flagOmittedRequiredInput && requiredParam.isPresent()
+                    && requiredParam.get().paramKind() == ParameterKind.REQUIRED) {
+                TypeSymbol declaredType = requiredParam.get().typeDescriptor();
+                if (!semanticModel.types().NIL.subtypeOf(declaredType)) {
+                    listener.onInputTypeMismatch(targetExpr.location(), workflowFunc.getName().orElse(""),
+                            declaredType.signature(), "()");
+                }
+            }
             return;
         }
 

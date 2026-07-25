@@ -29,7 +29,11 @@ public client class Context {
         self.nativeContext = nativeContext;
     }
 
-    # Executes an activity function. The activity runs exactly once, even if the process crashes and restarts.
+    # Executes an activity function. A completed activity is never re-executed on
+    # workflow replay — its recorded result is reused, even across process crashes
+    # and restarts. A *failed* attempt may run again, however: `AutoRetry` re-executes
+    # the activity automatically and `HumanReview` lets a human rerun it, so make the
+    # activity's side effects idempotent (or deduplicate them) when retries are enabled.
     #
     # ```ballerina
     # PaymentResult result = check ctx->callActivity(processPayment, args = {"orderId": orderId});

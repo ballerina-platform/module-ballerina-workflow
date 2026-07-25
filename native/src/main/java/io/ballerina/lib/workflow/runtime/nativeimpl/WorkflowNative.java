@@ -281,6 +281,12 @@ public final class WorkflowNative {
      */
     public static Object getPendingAgentUpdates(Environment env, BString agentId) {
         String agentIdStr = agentId.getValue();
+        // Inside a workflow the blocking query RPC must run off the workflow thread and be
+        // replay-deterministic, so it is routed through a built-in implicit activity like the
+        // other client verbs (run, sendData, getWorkflowResult, getWorkflowInfo).
+        if (isInsideWorkflow()) {
+            return getPendingAgentUpdatesAsImplicitActivity(agentIdStr);
+        }
         return env.yieldAndRun(() -> {
             CompletableFuture<Object> balFuture = new CompletableFuture<>();
 
@@ -294,29 +300,7 @@ public final class WorkflowNative {
                     }
                     WorkflowStub stub = client.newUntypedWorkflowStub(agentIdStr);
                     Object raw = stub.query(WorkflowWorkerNative.PENDING_AGENT_UPDATES_QUERY, Object.class);
-
-                    RecordType pendingType = (RecordType) ValueCreator.createRecordValue(
-                            ModuleUtils.getModule(), "PendingAgentUpdate").getType();
-                    List<BMap<BString, Object>> records = new ArrayList<>();
-                    if (raw instanceof List<?> entries) {
-                        for (Object entry : entries) {
-                            if (entry instanceof Map<?, ?> pendingEntry) {
-                                BMap<BString, Object> record = ValueCreator.createRecordValue(
-                                        ModuleUtils.getModule(), "PendingAgentUpdate");
-                                record.put(StringUtils.fromString("updateId"), StringUtils.fromString(
-                                        String.valueOf(pendingEntry.get("updateId"))));
-                                record.put(StringUtils.fromString("eventName"), StringUtils.fromString(
-                                        String.valueOf(pendingEntry.get("eventName"))));
-                                records.add(record);
-                            }
-                        }
-                    }
-                    BArray result = ValueCreator.createArrayValue(
-                            TypeCreator.createArrayType(pendingType));
-                    for (BMap<BString, Object> record : records) {
-                        result.append(record);
-                    }
-                    balFuture.complete(result);
+                    balFuture.complete(buildPendingAgentUpdates(raw));
                 } catch (Exception e) {
                     Throwable cause = e.getCause();
                     String message = cause != null && cause.getMessage() != null
@@ -328,6 +312,48 @@ public final class WorkflowNative {
 
             return getResult(balFuture);
         });
+    }
+
+    /**
+     * Converts the raw pending-updates query payload (a list of {@code {updateId, eventName}} maps) into a
+     * Ballerina {@code PendingAgentUpdate[]} value.
+     */
+    private static BArray buildPendingAgentUpdates(Object raw) {
+        RecordType pendingType = (RecordType) ValueCreator.createRecordValue(
+                ModuleUtils.getModule(), "PendingAgentUpdate").getType();
+        BArray result = ValueCreator.createArrayValue(TypeCreator.createArrayType(pendingType));
+        if (raw instanceof List<?> entries) {
+            for (Object entry : entries) {
+                if (entry instanceof Map<?, ?> pendingEntry) {
+                    BMap<BString, Object> record = ValueCreator.createRecordValue(
+                            ModuleUtils.getModule(), "PendingAgentUpdate");
+                    record.put(StringUtils.fromString("updateId"), StringUtils.fromString(
+                            String.valueOf(pendingEntry.get("updateId"))));
+                    record.put(StringUtils.fromString("eventName"), StringUtils.fromString(
+                            String.valueOf(pendingEntry.get("eventName"))));
+                    result.append(record);
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Routes a {@code workflow:getPendingAgentUpdates} call through a built-in implicit activity when invoked
+     * from inside a workflow, keeping the blocking query RPC off the workflow thread and replay-deterministic.
+     */
+    private static Object getPendingAgentUpdatesAsImplicitActivity(String agentId) {
+        try {
+            WorkflowWorkerNative.awaitWhileSuspended();
+            io.temporal.workflow.ActivityStub stub = Workflow.newUntypedActivityStub(
+                    buildImplicitActivityOptions(DEFAULT_IMPLICIT_ACTIVITY_TIMEOUT));
+            List<?> raw = stub.execute(
+                    WorkflowWorkerNative.BallerinaActivityAdapter.BUILTIN_PENDING_AGENT_UPDATES,
+                    List.class, agentId);
+            return buildPendingAgentUpdates(raw);
+        } catch (Exception e) {
+            return handleImplicitActivityError(e, "Failed to list pending updates for agent '" + agentId + "': ");
+        }
     }
 
                 /**

@@ -514,8 +514,13 @@ public isolated function runDurableAgentObject(AgentContext ctx, map<anydata> ru
 }
 
 # Registers one declared activity capability on the runner's context, converting
-# the declaration metadata (description, gating, retry policy) captured at compile
-# time.
+# the declaration metadata (description, gating, reviewer roles, retry policy)
+# captured at compile time.
+#
+# `ActivityDecl.bindings` does not travel this path: the declaration metadata is
+# JSON and bound client objects are not serializable, so bindings are unsupported
+# in the declaration form until activity binding support lands. Use
+# `AgentContext.registerActivity` with `bindings` for bound activities.
 #
 # + ctx - The agent context
 # + activitySpec - The declared activity
@@ -525,6 +530,7 @@ isolated function registerDeclaredActivity(AgentContext ctx, DurableAgentActivit
     string? description = ();
     boolean requiresApproval = false;
     AutoRetry|HumanReview|NoAutomaticRetry retryPolicy = NoAutomaticRetry;
+    string|string[]? userRoles = ();
     json meta = activitySpec.meta;
     if meta is map<json> {
         json descriptionJson = meta["description"];
@@ -543,9 +549,15 @@ isolated function registerDeclaredActivity(AgentContext ctx, DurableAgentActivit
         } else if retryJson is map<json> {
             retryPolicy = check retryJson.cloneWithType(AutoRetry);
         }
+        json rolesJson = meta["userRoles"];
+        if rolesJson is string {
+            userRoles = rolesJson;
+        } else if rolesJson is json[] {
+            userRoles = check rolesJson.cloneWithType();
+        }
     }
     check ctx.registerActivity(activitySpec.activity, activitySpec.toolName, description,
-        (), requiresApproval, retryPolicy);
+        (), requiresApproval, retryPolicy, userRoles);
 }
 
 # Registers one declared peer agent on the runner's context, converting the

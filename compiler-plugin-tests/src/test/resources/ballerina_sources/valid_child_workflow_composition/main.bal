@@ -48,6 +48,8 @@ function parentProcess(workflow:Context ctx, ChildInput input) returns string|er
     string result = check ctx->waitForChildWorkflow(childId);
     string direct = check ctx->callWorkflow(childProcess, input = input);
     string noInput = check ctx->callWorkflow(noInputProcess);
-    check ctx->sendDataToChildWorkflow(childId, "notification", {"message": "hi"});
-    return result + direct + noInput + busyNote;
+    string receiverId = check ctx->runChildWorkflow(receiverProcess, input = {value: "y"});
+    check ctx->sendDataToChildWorkflow(receiverId, "notification", {"message": "hi"});
+    string received = check ctx->waitForChildWorkflow(receiverId);
+    return result + direct + noInput + busyNote + received;
 }

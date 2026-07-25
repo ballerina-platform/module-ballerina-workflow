@@ -60,7 +60,10 @@ public type EventDecl record {|
 # + description - Tool description advertised to the model; defaults to the
 #                 function's doc comment
 # + bindings - Fixed arguments partially applied to the activity (e.g. a
-#              `connection`), hidden from the model
+#              `connection`), hidden from the model. Not yet supported in the
+#              declaration form (bound client objects cannot travel through the
+#              compile-time registration metadata) — register such activities on
+#              the context with `registerActivity(..., bindings = ...)` instead
 # + requiresApproval - When `true`, a `PRE_RUN` review activity gates every call
 # + userRoles - Role(s) permitted to decide reviews of this activity
 # + retryPolicy - Retry behaviour on failure, as for `ctx->callActivity`

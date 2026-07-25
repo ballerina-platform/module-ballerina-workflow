@@ -108,15 +108,27 @@ task pullExternalDependencies {
     doLast {
         def balHome = "${project.projectDir}/build/jballerina-tools-${ballerinaLangVersion}"
         def balExec = Os.isFamily(Os.FAMILY_WINDOWS) ? "${balHome}/bin/bal.bat" : "${balHome}/bin/bal"
-        project.exec {
-            // A no-op when the package is already cached (e.g. incremental local builds);
-            // a genuine resolution failure surfaces later as a "cannot resolve" compile error.
+        def pullOutput = new ByteArrayOutputStream()
+        def result = project.exec {
             ignoreExitValue = true
+            standardOutput = pullOutput
+            errorOutput = pullOutput
+            // Pass the executable and arguments as separate tokens so paths with spaces work.
             if (Os.isFamily(Os.FAMILY_WINDOWS)) {
-                commandLine 'cmd', '/c', "${balExec} pull ballerina/ai:${ballerinaAiVersion}"
+                commandLine 'cmd', '/c', balExec, 'pull', "ballerina/ai:${ballerinaAiVersion}"
             } else {
-                commandLine 'sh', '-c', "${balExec} pull ballerina/ai:${ballerinaAiVersion}"
+                commandLine balExec, 'pull', "ballerina/ai:${ballerinaAiVersion}"
             }
+        }
+        def output = pullOutput.toString()
+        if (output.trim()) {
+            logger.lifecycle(output.trim())
+        }
+        // Only the already-cached case is a benign non-zero exit (e.g. incremental local
+        // builds); any other failure would otherwise surface much later as a confusing
+        // "cannot resolve module" compile error, so fail here with the pull output.
+        if (result.exitValue != 0 && !output.toLowerCase().contains('already exists')) {
+            throw new GradleException("bal pull ballerina/ai:${ballerinaAiVersion} failed:\n${output}")
         }
     }
 }

@@ -75,7 +75,8 @@ public class ChildWorkflowCallValidatorTask implements AnalysisTask<SyntaxNodeAn
     private void validateChildWorkflowCall(RemoteMethodCallActionNode callNode, String methodName,
                                            SyntaxNodeAnalysisContext context) {
         WorkflowPluginUtils.validateWorkflowCallInput(callNode.arguments(), CHILD_WORKFLOW_PARAM_NAME,
-                INPUT_PARAM_NAME, context.semanticModel(), new WorkflowPluginUtils.WorkflowCallInputListener() {
+                INPUT_PARAM_NAME, context.semanticModel(), true,
+                new WorkflowPluginUtils.WorkflowCallInputListener() {
                     @Override
                     public void onNonWorkflowTarget(Location location) {
                         reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_139, location, methodName);

@@ -2236,6 +2236,7 @@ public final class WorkflowWorkerNative {
         public static final String BUILTIN_SEND_DATA = "workflow:sendData";
         public static final String BUILTIN_GET_RESULT = "workflow:getResult";
         public static final String BUILTIN_GET_INFO = "workflow:getInfo";
+        public static final String BUILTIN_PENDING_AGENT_UPDATES = "workflow:pendingAgentUpdates";
         private static final String CALL_CONFIG_MARKER = "__callConfig__";
         private static final String RETRY_ON_ERROR_KEY = "retryOnError";
 
@@ -2259,6 +2260,9 @@ public final class WorkflowWorkerNative {
             }
             if (BUILTIN_GET_INFO.equals(activityName)) {
                 return executeBuiltInGetInfo(args);
+            }
+            if (BUILTIN_PENDING_AGENT_UPDATES.equals(activityName)) {
+                return executeBuiltInPendingAgentUpdates(args);
             }
 
             // Look up the registered Ballerina function for this activity
@@ -2509,6 +2513,20 @@ public final class WorkflowWorkerNative {
             info.put("result", result);
             info.put("errorMessage", errorMessage);
             return info;
+        }
+
+        /**
+         * Executes the built-in pending-agent-updates query off the workflow thread: returns the agent's
+         * accepted-but-unanswered update turns as a list of {@code {updateId, eventName}} maps.
+         */
+        private Object executeBuiltInPendingAgentUpdates(EncodedValues args) {
+            String agentId = args.get(0, String.class);
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                throw new RuntimeException("Workflow client not initialized");
+            }
+            return client.newUntypedWorkflowStub(agentId)
+                    .query(WorkflowWorkerNative.PENDING_AGENT_UPDATES_QUERY, Object.class);
         }
 
         private Object executeBuiltInGetInfo(EncodedValues args) {

@@ -174,19 +174,6 @@ public final class WorkflowContextNative {
         }
     }
 
-    /**
-     * Executes the given activity in a loop, starting a built-in RetryTask child workflow whenever the activity fails,
-     * and repeating based on the human's decision.
-     * <p>
-     * Loop exits when:
-     * <ul>
-     *   <li>The activity succeeds — result is returned.</li>
-     *   <li>The human chooses {@code "fail"} — the original error is returned.</li>
-     * </ul>
-     * Between attempts the human can choose {@code "retry"} (same args) or
-     * {@code "retry-with-input"} (override args map).
-     */
-    @SuppressWarnings("unchecked")
     // Reads the reviewer role(s) from a ManualRetry policy value: a string is one role, a
     // string list is several; the legacy "MANUAL_RETRY" sentinel means any role.
     private static String[] extractManualRetryRoles(Object retryPolicy) {
@@ -204,6 +191,19 @@ public final class WorkflowContextNative {
         return new String[0];
     }
 
+    /**
+     * Executes the given activity in a loop, starting a built-in RetryTask child workflow whenever the activity fails,
+     * and repeating based on the human's decision.
+     * <p>
+     * Loop exits when:
+     * <ul>
+     *   <li>The activity succeeds — result is returned.</li>
+     *   <li>The human chooses {@code "fail"} — the original error is returned.</li>
+     * </ul>
+     * Between attempts the human can choose {@code "retry"} (same args) or
+     * {@code "retry-with-input"} (override args map).
+     */
+    @SuppressWarnings("unchecked")
     private static Object executeWithManualRetry(String fullActivityName, String workflowType,
                                                  Map<String, Object> initialArgs, Map<String, Object> callConfig,
                                                  String[] reviewerRoles, BTypedesc typedesc) {

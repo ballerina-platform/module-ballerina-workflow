@@ -84,11 +84,11 @@ public isolated function registerConnection(string name, object {} connection)
 # `executeAgentTool` activity wrapper can resolve and invoke it on any worker.
 #
 # This is an **internal** function used by the compiler plugin. It is emitted at
-# module init time for every function reference found in a
-# `ctx.registerTools([...])` call inside a `@workflow:DurableAgentFunction` body. The
-# tool's advertised name is derived from its `@ai:AgentTool` annotation (falling
-# back to the function name), matching the runtime normalization performed by
-# `AgentContext.registerTools`.
+# module init time for every function reference found in the `tools: [...]` list
+# of a `final workflow:DurableAgent` declaration. The tool's advertised name is
+# derived from its `@ai:AgentTool` annotation (falling back to the function
+# name), matching the runtime normalization performed by
+# `AgentContext.registerAgentTool`.
 #
 # + agentName - The agent's registered workflow name
 # + tool - The `@ai:AgentTool` function to register

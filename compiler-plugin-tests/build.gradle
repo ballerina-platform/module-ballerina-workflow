@@ -38,7 +38,7 @@ dependencies {
     // The ballerina/ai compiler extension (pulled in by the DurableAgent samples) generates
     // tool schemas through ballerina-to-openapi, whose swagger-core dependency the bal CLI
     // distribution provides but this bare test JVM does not.
-    testRuntimeOnly group: 'io.swagger.core.v3', name: 'swagger-core', version: '2.2.19'
+    testRuntimeOnly group: 'io.swagger.core.v3', name: 'swagger-core', version: "${swaggerCoreVersion}"
 }
 
 tasks.withType(Checkstyle) {

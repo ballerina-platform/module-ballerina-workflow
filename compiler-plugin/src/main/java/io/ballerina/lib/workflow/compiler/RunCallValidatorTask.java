@@ -101,7 +101,8 @@ public class RunCallValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCont
      */
     private void validateRunCall(FunctionCallExpressionNode callNode, SyntaxNodeAnalysisContext context) {
         WorkflowPluginUtils.validateWorkflowCallInput(callNode.arguments(), PROCESS_FUNCTION_PARAM_NAME,
-                INPUT_PARAM_NAME, context.semanticModel(), new WorkflowPluginUtils.WorkflowCallInputListener() {
+                INPUT_PARAM_NAME, context.semanticModel(), false,
+                new WorkflowPluginUtils.WorkflowCallInputListener() {
                     @Override
                     public void onNonWorkflowTarget(Location location) {
                         reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_130, location,

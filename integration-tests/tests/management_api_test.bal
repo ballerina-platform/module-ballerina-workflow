@@ -28,6 +28,7 @@
 //
 // ================================================================================
 
+import ballerina/lang.runtime;
 import ballerina/test;
 import ballerina/workflow;
 import ballerina/workflow.management;
@@ -145,6 +146,63 @@ function testGetExecutionGraph() returns error? {
 
     management:ExecutionGraph graph = check management:getExecutionGraph(workflowId, "");
     test:assertTrue(graph.nodes.length() > 0, "Execution graph should have at least one node");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testActivityTreeReportsReceivedDataEventsAsData() returns error? {
+    // A received data event (workflow:sendData answering a `wait dataEvents.<name>`) must
+    // surface with the Ballerina-level DATA node type, not Temporal's SIGNAL.
+    string testId = uniqueId("tree-data-node");
+    SimpleSignalInput input = {id: testId, message: "data node tree"};
+    string workflowId = check workflow:run(simpleSignalWorkflow, input);
+    runtime:sleep(1);
+    check workflow:sendData(simpleSignalWorkflow, workflowId, "response",
+        <SimpleSignalData>{id: testId, response: "ack"});
+    _ = check workflow:getWorkflowResult(workflowId, 30);
+
+    management:ActivityTreeNode[] nodes = check management:getActivityTree(workflowId, "");
+    management:ActivityTreeNode? dataNode = ();
+    foreach management:ActivityTreeNode node in nodes {
+        if node.name == "response" {
+            dataNode = node;
+        }
+    }
+    test:assertTrue(dataNode is management:ActivityTreeNode,
+        "The received data event should appear as a tree node named after the data event");
+    if dataNode is management:ActivityTreeNode {
+        test:assertEquals(dataNode.'type, management:DATA,
+            "A received data event must be classified as DATA, not SIGNAL");
+        test:assertEquals(dataNode.status, "COMPLETED");
+    }
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testExecutionGraphReportsReceivedDataEventsAsData() returns error? {
+    string testId = uniqueId("graph-data-node");
+    SimpleSignalInput input = {id: testId, message: "data node graph"};
+    string workflowId = check workflow:run(simpleSignalWorkflow, input);
+    runtime:sleep(1);
+    check workflow:sendData(simpleSignalWorkflow, workflowId, "response",
+        <SimpleSignalData>{id: testId, response: "ack"});
+    _ = check workflow:getWorkflowResult(workflowId, 30);
+
+    management:ExecutionGraph graph = check management:getExecutionGraph(workflowId, "");
+    management:GraphNode? dataNode = ();
+    foreach management:GraphNode node in graph.nodes {
+        if node.label == "response" {
+            dataNode = node;
+        }
+    }
+    test:assertTrue(dataNode is management:GraphNode,
+        "The received data event should appear as a graph node labelled after the data event");
+    if dataNode is management:GraphNode {
+        test:assertEquals(dataNode.'type, management:DATA,
+            "A received data event must be classified as DATA, not SIGNAL");
+    }
 }
 
 // ================================================================================

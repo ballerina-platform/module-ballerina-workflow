@@ -314,7 +314,8 @@ public enum ActivityNodeType {
 # + id - Unique node identifier (Temporal scheduledEventId or initiatedEventId as string)
 # + name - Activity, task, or workflow type name
 # + 'type - Node classification
-# + status - Current status: RUNNING | COMPLETED | FAILED | TIMED_OUT | CANCELED
+# + status - Current status: RUNNING | WAITING | COMPLETED | FAILED | TIMED_OUT | CANCELED
+#            (WAITING marks a data event the workflow is currently blocked on)
 # + startTime - ISO-8601 timestamp when this node started, or `()`
 # + endTime - ISO-8601 timestamp when this node ended, or `()` if still running
 # + input - Decoded activity/workflow input, or `()`

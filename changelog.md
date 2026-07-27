@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Data-event waits are now visible: a workflow blocked on `wait dataEvents.<name>`
+  publishes the awaited event names to the execution memo (`wfWaitingEvents`),
+  which lands in the event history and is readable from a describe call. The
+  activity tree and execution graph render such waits as `DATA` nodes with
+  status `WAITING`, completing them in place when the data arrives — so diagrams
+  can show exactly where a halted workflow is waiting.
+
 ### Removed
 
 - The deprecated retry-task management surface: `management:completeRetryTask`,

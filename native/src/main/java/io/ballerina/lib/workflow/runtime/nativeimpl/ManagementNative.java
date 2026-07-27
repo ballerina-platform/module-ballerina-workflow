@@ -759,6 +759,27 @@ public final class ManagementNative {
      * Decodes a string-valued field from a Temporal memo map. Returns {@code defaultValue} if the field is absent or
      * decoding fails.
      */
+    /**
+     * Decodes the {@code wfWaitingEvents} memo payload into the list of awaited data-event names.
+     * Returns an empty list on any decoding failure.
+     */
+    private static List<String> decodeWaitingEventNames(DataConverter dc, Payload payload) {
+        try {
+            List<?> decoded = dc.fromPayload(payload, List.class, List.class);
+            List<String> names = new ArrayList<>();
+            if (decoded != null) {
+                for (Object name : decoded) {
+                    if (name != null) {
+                        names.add(String.valueOf(name));
+                    }
+                }
+            }
+            return names;
+        } catch (Exception e) {
+            return new ArrayList<>();
+        }
+    }
+
     private static String decodeMemoString(DataConverter dc, Map<String, Payload> fields, String key,
                                            String defaultValue) {
         try {
@@ -1811,6 +1832,9 @@ public final class ManagementNative {
             // eventId → mutable node data; insertion order preserved
             LinkedHashMap<Long, LinkedHashMap<String, Object>> nodeByEventId = new LinkedHashMap<>();
             List<Long> nodeOrder = new ArrayList<>();
+            // Data-event waits published via the wfWaitingEvents memo: name → its WAITING node,
+            // completed in place when the matching signal arrives.
+            LinkedHashMap<String, LinkedHashMap<String, Object>> pendingDataNodes = new LinkedHashMap<>();
 
             for (HistoryEvent event : events) {
                 long eid = event.getEventId();
@@ -1977,11 +2001,52 @@ public final class ManagementNative {
                         if (!isInternalSignal(sigName)) {
                             // Ballerina surfaces Temporal signals as data events (workflow:sendData
                             // -> `wait dataEvents.<name>`), so the node type says DATA, not SIGNAL.
-                            var node = newNode(eid, sigName, "DATA", ts);
-                            node.put("status", "COMPLETED");
-                            node.put("endTime", ts);
-                            nodeByEventId.put(eid, node);
-                            nodeOrder.add(eid);
+                            // A wait published for this event completes in place, keeping its
+                            // start time; an unawaited (buffered) event gets its own node.
+                            var pending = pendingDataNodes.remove(sigName);
+                            if (pending != null) {
+                                pending.put("status", "COMPLETED");
+                                pending.put("endTime", ts);
+                            } else {
+                                var node = newNode(eid, sigName, "DATA", ts);
+                                node.put("status", "COMPLETED");
+                                node.put("endTime", ts);
+                                nodeByEventId.put(eid, node);
+                                nodeOrder.add(eid);
+                            }
+                        }
+                    }
+
+                    case EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED -> {
+                        // The workflow publishes the data events it is blocked on via the
+                        // wfWaitingEvents memo (see WaitingEventsTracker). New names become DATA
+                        // nodes with status WAITING so a halted workflow shows where it waits;
+                        // a name removed while still WAITING means the wait was abandoned
+                        // without its event (e.g. cancellation) and reports CANCELED.
+                        var attrs = event.getWorkflowPropertiesModifiedEventAttributes();
+                        Payload waitingPayload = attrs.getUpsertedMemo().getFieldsMap()
+                                .get(io.ballerina.lib.workflow.context.WaitingEventsTracker.WAITING_EVENTS_MEMO_KEY);
+                        if (waitingPayload == null) {
+                            break;
+                        }
+                        List<String> waitingNames = decodeWaitingEventNames(dc, waitingPayload);
+                        for (String waitingName : waitingNames) {
+                            if (!pendingDataNodes.containsKey(waitingName)) {
+                                var node = newNode(eid, waitingName, "DATA", ts);
+                                node.put("status", "WAITING");
+                                pendingDataNodes.put(waitingName, node);
+                                nodeByEventId.put(eid, node);
+                                nodeOrder.add(eid);
+                            }
+                        }
+                        var abandoned = pendingDataNodes.entrySet().iterator();
+                        while (abandoned.hasNext()) {
+                            var entry = abandoned.next();
+                            if (!waitingNames.contains(entry.getKey())) {
+                                entry.getValue().put("status", "CANCELED");
+                                entry.getValue().put("endTime", ts);
+                                abandoned.remove();
+                            }
                         }
                     }
 

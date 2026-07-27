@@ -90,7 +90,7 @@ public final class WorkflowContextNative {
      * <ul>
      *   <li>{@code null} / NoRetry — the error is returned as a Ballerina value; no retry.</li>
      *   <li>AutoRetry BMap — Temporal automatic backoff retry using the configured fields.</li>
-     *   <li>ManualRetry string sentinel — on failure a built-in RetryTask child workflow is
+     *   <li>ManualRetry string sentinel — on failure a built-in review-activity child workflow is
      *       started; execution blocks until a human decides to retry, retry with different
      *       input, or permanently fail the activity. Task name is derived from the activity.</li>
      * </ul>
@@ -131,7 +131,7 @@ public final class WorkflowContextNative {
             callConfig.put(RETRY_ON_ERROR_KEY, isAutoRetry);
 
             if (isManualRetry) {
-                // Manual retry: run activity in a loop; on failure start a RetryTask
+                // Manual retry: run activity in a loop; on failure start a review-activity
                 // child workflow and wait for a human decision.
                 return executeWithManualRetry(fullActivityName, workflowType, namedArgs, callConfig,
                         manualRetryRoles, typedesc);
@@ -192,7 +192,8 @@ public final class WorkflowContextNative {
     }
 
     /**
-     * Executes the given activity in a loop, starting a built-in RetryTask child workflow whenever the activity fails,
+     * Executes the given activity in a loop, starting a built-in review-activity child workflow whenever the
+     * activity fails,
      * and repeating based on the human's decision.
      * <p>
      * Loop exits when:
@@ -234,8 +235,8 @@ public final class WorkflowContextNative {
                 }
             }
 
-            // Activity failed — start a RetryTask child workflow and await the human decision
-            Map<String, Object> decision = callBuiltinRetryTask(fullActivityName, currentArgs, lastErrorMsg,
+            // Activity failed — start a review-activity child workflow and await the human decision
+            Map<String, Object> decision = callBuiltinReviewActivity(fullActivityName, currentArgs, lastErrorMsg,
                                                                 reviewerRoles);
 
             String action = decision.containsKey("action") ? String.valueOf(decision.get("action")) : "reject";
@@ -273,7 +274,7 @@ public final class WorkflowContextNative {
     /**
      * Starts a built-in review-activity child workflow and blocks until a human sends a {@code "taskDecision"}
      * signal. Returns the signal payload map ({@code action}, optionally {@code input}/{@code feedback}).
-     * <p>Used for the on-failure manual-retry path (via {@link #callBuiltinRetryTask}); the pre-run
+     * <p>Used for the on-failure manual-retry path (via {@link #callBuiltinReviewActivity}); the pre-run
      * approval gate (PRE_RUN) shares this starter when gated-activity policies land.
      *
      * @param trigger          {@code "PRE_RUN"} (approval gate) or {@code "ON_FAILURE"} (rerun decision)
@@ -294,7 +295,10 @@ public final class WorkflowContextNative {
         String parentWorkflowId = Workflow.getInfo().getWorkflowId();
         String reviewId = "reviewactivity-" + Workflow.randomUUID();
 
-        WorkflowWorkerNative.ensureRetryTaskRegistered();
+        // Temporal WorkflowType carries the reviewed activity's qualified name (mirroring the
+        // humantask- child types) so the reviewed activity is identifiable from the type alone.
+        String reviewTypeName = WorkflowWorkerNative.REVIEW_ACTIVITY_TYPE_PREFIX + qualifiedTaskName;
+        WorkflowWorkerNative.ensureReviewActivityRegistered(reviewTypeName);
 
         String[] roles = userRoles != null ? userRoles : new String[0];
 
@@ -346,7 +350,7 @@ public final class WorkflowContextNative {
         }
 
         io.temporal.workflow.ChildWorkflowStub childStub = Workflow.newUntypedChildWorkflowStub(
-                WorkflowWorkerNative.RETRYTASK_WORKFLOW_TYPE, optsBuilder.build());
+                reviewTypeName, optsBuilder.build());
 
         try {
             Object rawResult = childStub.execute(Object.class, inputs);
@@ -367,8 +371,9 @@ public final class WorkflowContextNative {
     }
 
     // On-failure manual-retry review (the ManualRetry policy). Delegates to the shared starter.
-    private static Map<String, Object> callBuiltinRetryTask(String fullActivityName, Map<String, Object> activityArgs,
-                                                            String errorMessage, String[] reviewerRoles) {
+    private static Map<String, Object> callBuiltinReviewActivity(String fullActivityName,
+                                                                 Map<String, Object> activityArgs,
+                                                                 String errorMessage, String[] reviewerRoles) {
         return startReviewActivity("ON_FAILURE", fullActivityName, activityArgs, errorMessage,
                 reviewerRoles, null);
     }

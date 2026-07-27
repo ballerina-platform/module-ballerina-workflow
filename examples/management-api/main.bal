@@ -30,7 +30,7 @@
 //
 // Two HTTP services start together:
 //   Application API   — http://localhost:8080/api/   (start + query requests)
-//   Management API    — http://localhost:8234/workflow/ (tasks, retry, dashboards)
+//   Management API    — http://localhost:8234/workflow/ (tasks, reviews, dashboards)
 //
 // Driving the workflow end-to-end:
 //
@@ -48,11 +48,11 @@
 //        -H 'Content-Type: application/json' \
 //        -d '{"result":{"approved":true,"reason":"Approved for Q2 budget"}}'
 //
-//   # 4. List pending retry tasks (email failed)
-//   curl -s 'http://localhost:8234/workflow/retry-tasks?status=PENDING'
+//   # 4. List pending review activities (email failed)
+//   curl -s 'http://localhost:8234/workflow/review-activities?status=PENDING'
 //
-//   # 5. Retry with corrected email (replace RETRY_ID)
-//   curl -s -X POST http://localhost:8234/workflow/retry-tasks/RETRY_ID/retry-with-input \
+//   # 5. Proceed with corrected email (replace REVIEW_ID)
+//   curl -s -X POST http://localhost:8234/workflow/review-activities/REVIEW_ID/proceed-with-input \
 //        -H 'Content-Type: application/json' \
 //        -d '{"input":{"requestId":"REQ-001","toEmail":"procurement@co.com",
 //             "item":"laptop","amount":1500}}'
@@ -154,8 +154,8 @@ function sendProcurementEmail(string requestId, string toEmail, string item, dec
 # and durably pause until a manager submits a decision via the
 # Management API (`POST /workflow/human-tasks/{taskId}/complete`).
 # 3. Sends a procurement email with a human-review retry policy ("OPS") so delivery failures
-# surface as retry tasks in the Management API
-# (`GET /workflow/retry-tasks`) instead of crashing the workflow.
+# surface as review activities in the Management API
+# (`GET /workflow/review-activities`) instead of crashing the workflow.
 # An operator can retry with the original or corrected arguments.
 #
 # + ctx - Workflow execution context
@@ -216,7 +216,7 @@ function processProcurementRequest(workflow:Context ctx, ProcurementRequest inpu
 
 // ── Application HTTP Service (port 8080) ──────────────────────────────────────
 // Exposes only workflow start and result retrieval.
-// All human-task and retry-task management goes through the Management API
+// All human-task and review-activity management goes through the Management API
 // at http://localhost:8234/workflow/
 
 service /api on new http:Listener(8080) {

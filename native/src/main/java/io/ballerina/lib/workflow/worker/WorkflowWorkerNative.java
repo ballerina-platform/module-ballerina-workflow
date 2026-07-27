@@ -150,12 +150,17 @@ public final class WorkflowWorkerNative {
      */
     public static final String PENDING_AGENT_UPDATES_QUERY = "pendingAgentUpdates";
     /**
-     * Temporal workflow type used for all built-in review activity child workflows. Prefixed with
-     * {@code reviewactivity-}
-     * so internal workflows are clearly separated from user-defined ones and can be identified via a simple STARTS_WITH
-     * check.
+     * Temporal workflow type prefix for built-in review-activity child workflows. The full type is the prefix
+     * followed by the reviewed activity's qualified name (e.g. {@code reviewactivity-procurement.sendEmail}),
+     * mirroring the {@code humantask-} child workflow types, so inboxes and diagrams can identify the reviewed
+     * activity from the type alone and internal workflows stay separated from user-defined ones.
      */
-    public static final String RETRYTASK_WORKFLOW_TYPE = "retrytask";
+    public static final String REVIEW_ACTIVITY_TYPE_PREFIX = "reviewactivity-";
+    /**
+     * Pre-rename Temporal workflow type shared by all review-activity children ({@code retrytask}). Only used to
+     * keep replaying/persisted executions from before the rename dispatchable.
+     */
+    public static final String LEGACY_RETRYTASK_WORKFLOW_TYPE = "retrytask";
     /**
      * Marker prefix used to ferry module-level client object references through Temporal's serialization plane. A value
      * like {@code "connection:org/pkg.mod:db"} means "resolve to the registered client identified by that
@@ -227,7 +232,7 @@ public final class WorkflowWorkerNative {
      * Tracks whether the built-in retry task workflow type has been registered. Populated lazily on the first
      * {@code ManualRetry} activity call.
      */
-    private static final Set<String> RETRYTASK_REGISTRY = ConcurrentHashMap.newKeySet();
+    private static final Set<String> REVIEW_ACTIVITY_REGISTRY = ConcurrentHashMap.newKeySet();
     // Module-qualified connection ids registered by the compiler-plugin-emitted
     // `wfInternal:registerConnection("name", name)` calls during module init.
     // The registration routine prefixes the variable name with the caller module
@@ -883,19 +888,22 @@ public final class WorkflowWorkerNative {
     }
 
     /**
-     * Ensures the built-in retry task workflow type is registered exactly once. Called lazily from
-     * {@link io.ballerina.lib.workflow.context.WorkflowContextNative} when a {@code ManualRetry} activity is first
-     * encountered during a workflow execution. Idempotent — safe to call on every retry task creation.
+     * Registers a review-activity child workflow type (the {@code reviewactivity-} prefix followed by the
+     * reviewed activity's qualified name). Called lazily from
+     * {@link io.ballerina.lib.workflow.context.WorkflowContextNative} when a review is started for an activity.
+     * Idempotent — safe to call on every review creation. Dispatch also accepts unseen {@code reviewactivity-*}
+     * types by prefix, so a review child landing on a worker that never started one still executes.
      */
-    public static void ensureRetryTaskRegistered() {
-        RETRYTASK_REGISTRY.add(RETRYTASK_WORKFLOW_TYPE);
+    public static void ensureReviewActivityRegistered(String reviewTypeName) {
+        REVIEW_ACTIVITY_REGISTRY.add(reviewTypeName);
     }
 
     /**
-     * Returns an unmodifiable view of the retry task workflow types registry. Exposed for testing and introspection.
+     * Returns an unmodifiable view of the review-activity workflow types registry. Exposed for testing and
+     * introspection.
      */
-    public static Set<String> getRetryTaskRegistry() {
-        return Collections.unmodifiableSet(RETRYTASK_REGISTRY);
+    public static Set<String> getReviewActivityRegistry() {
+        return Collections.unmodifiableSet(REVIEW_ACTIVITY_REGISTRY);
     }
 
     /**
@@ -1752,9 +1760,13 @@ public final class WorkflowWorkerNative {
                         return executeBuiltinHumanTask(args);
                     }
 
-                    // Route built-in manual retry task workflow type
-                    if (RETRYTASK_REGISTRY.contains(workflowType)) {
-                        return executeBuiltinRetryTask(args);
+                    // Route built-in review-activity workflow types. The prefix check covers review
+                    // children dispatched to a worker that has not itself started a review, and the
+                    // legacy shared type keeps pre-rename persisted executions replayable.
+                    if (REVIEW_ACTIVITY_REGISTRY.contains(workflowType)
+                            || workflowType.startsWith(REVIEW_ACTIVITY_TYPE_PREFIX)
+                            || LEGACY_RETRYTASK_WORKFLOW_TYPE.equals(workflowType)) {
+                        return executeBuiltinReviewActivity(args);
                     }
 
                     String errorMsg = String.format("Workflow '%s' is not registered. " +
@@ -2178,20 +2190,20 @@ public final class WorkflowWorkerNative {
          * </ul>
          *
          * <p>The decision map is returned directly to the parent workflow via the child-workflow
-         * result channel; {@code callBuiltinRetryTask} in
+         * result channel; {@code callBuiltinReviewActivity} in
          * {@link io.ballerina.lib.workflow.context.WorkflowContextNative} unpacks it.
          *
-         * @param args Temporal-encoded input; index 0 is the input map set by callBuiltinRetryTask
+         * @param args Temporal-encoded input; index 0 is the input map set by callBuiltinReviewActivity
          * @return the decision map ({@code {action, input?}})
          */
         @SuppressWarnings("unchecked")
-        private Object executeBuiltinRetryTask(EncodedValues args) {
+        private Object executeBuiltinReviewActivity(EncodedValues args) {
             // Input validation — failure is non-retryable to avoid infinite loops
             try {
                 args.get(0, Map.class);
             } catch (Exception e) {
                 throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
-                        "Invalid retry task input: " + e.getMessage(), "RETRYTASK_INPUT_ERROR");
+                        "Invalid review activity input: " + e.getMessage(), "REVIEW_ACTIVITY_INPUT_ERROR");
             }
 
             // Block indefinitely until the "taskDecision" signal arrives.

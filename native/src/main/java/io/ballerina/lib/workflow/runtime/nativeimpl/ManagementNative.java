@@ -2136,9 +2136,15 @@ public final class ManagementNative {
                 return workflowType;
             }
         }
-        // Retry tasks: workflowType = "retrytask" (single shared type), task name comes from memo.
-        // Callers that have access to the memo (e.g. execution-graph builder) should use
-        // decodeMemoString("taskName") instead of this method for retrytask children.
+        // Review activities: workflowType = "reviewactivity-workflowDefinition.activityName" -> "activityName".
+        // Pre-rename children used the single shared "retrytask" type, whose task name only lives in the
+        // memo — callers with memo access should use decodeMemoString("taskName") for those.
+        if (workflowId.startsWith("reviewactivity-")) {
+            int dot = workflowType.lastIndexOf('.');
+            if (dot >= 0) {
+                return workflowType.substring(dot + 1);
+            }
+        }
         return workflowType;
     }
 

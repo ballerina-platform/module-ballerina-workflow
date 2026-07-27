@@ -1939,7 +1939,9 @@ public final class ManagementNative {
                         var attrs = event.getWorkflowExecutionSignaledEventAttributes();
                         String sigName = attrs.getSignalName();
                         if (!isInternalSignal(sigName)) {
-                            var node = newNode(eid, sigName, "SIGNAL", ts);
+                            // Ballerina surfaces Temporal signals as data events (workflow:sendData
+                            // -> `wait dataEvents.<name>`), so the node type says DATA, not SIGNAL.
+                            var node = newNode(eid, sigName, "DATA", ts);
                             node.put("status", "COMPLETED");
                             node.put("endTime", ts);
                             nodeByEventId.put(eid, node);

@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Removed
+
+- The deprecated retry-task management surface: `management:completeRetryTask`,
+  `listPendingRetryTasks`, `listAllRetryTasks`, `getRetryTaskInfo`, the
+  `RetryDecision`/`RetryTaskSummary`/`RetryTaskInfo`/`RetryTaskPage`/`RetryDecisionInfo`
+  types, and the `/workflow/retry-tasks/...` HTTP routes. Use the review-activity
+  equivalents (`completeReviewActivity`, `listPendingReviewActivities`,
+  `listAllReviewActivities`, `getReviewActivityInfo`, `ReviewDecision`,
+  `ReviewActivity*` types, and `/workflow/review-activities/...`).
+
+### Changed
+
+- Review-activity child workflows now use per-activity Temporal workflow types
+  (`reviewactivity-<workflowDefinition.activityName>`), mirroring the human-task
+  child types; the legacy shared `retrytask` type remains dispatchable for
+  pre-rename persisted executions.
+
 ### Added
 
 - Child workflow composition on the workflow context: `ctx->runChildWorkflow(fn, input)`

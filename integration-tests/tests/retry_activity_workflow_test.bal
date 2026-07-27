@@ -24,7 +24,7 @@ import ballerina/workflow;
 import ballerina/workflow.management;
 import ballerina/lang.runtime;
 
-function waitForPendingRetryTask(string parentWorkflowId, decimal timeoutSecs = 12,
+function waitForPendingReviewActivity(string parentWorkflowId, decimal timeoutSecs = 12,
         string? excludeTaskId = ()) returns management:ReviewActivitySummary|error {
     decimal elapsed = 0.0d;
     while elapsed < timeoutSecs {
@@ -289,11 +289,11 @@ function testManualRetryWithInputRecovery() returns error? {
     RetryActivityInput input = {id: testId, mode: "manual_retry_input"};
     string workflowId = check workflow:run(manualRetryWithInputWorkflow, input);
 
-    management:ReviewActivitySummary retryTask = check waitForPendingRetryTask(workflowId);
-    test:assertTrue(retryTask.taskId.startsWith("reviewactivity-"),
+    management:ReviewActivitySummary reviewTask = check waitForPendingReviewActivity(workflowId);
+    test:assertTrue(reviewTask.taskId.startsWith("reviewactivity-"),
         "Manual retry review ID should use the reviewactivity prefix");
 
-    check management:completeReviewActivity(retryTask.taskId,
+    check management:completeReviewActivity(reviewTask.taskId,
         {action: "proceed-with-input", input: {mode: "ok"}});
 
     anydata result = check workflow:getWorkflowResult(workflowId, 30);
@@ -309,8 +309,8 @@ function testManualRetryFailDecision() returns error? {
     RetryActivityInput input = {id: testId, mode: "manual_retry_fail"};
     string workflowId = check workflow:run(manualRetryFailDecisionWorkflow, input);
 
-    management:ReviewActivitySummary retryTask = check waitForPendingRetryTask(workflowId);
-    check management:completeReviewActivity(retryTask.taskId, {action: "reject"});
+    management:ReviewActivitySummary reviewTask = check waitForPendingReviewActivity(workflowId);
+    check management:completeReviewActivity(reviewTask.taskId, {action: "reject"});
 
     anydata|error rawResult = workflow:getWorkflowResult(workflowId, 30);
     test:assertTrue(rawResult is error,
@@ -325,10 +325,10 @@ function testManualRetrySameInputThenFail() returns error? {
     RetryActivityInput input = {id: testId, mode: "manual_retry_same_input"};
     string workflowId = check workflow:run(manualRetrySameInputWorkflow, input);
 
-    management:ReviewActivitySummary firstTask = check waitForPendingRetryTask(workflowId);
+    management:ReviewActivitySummary firstTask = check waitForPendingReviewActivity(workflowId);
     check management:completeReviewActivity(firstTask.taskId, {action: "proceed"});
 
-    management:ReviewActivitySummary secondTask = check waitForPendingRetryTask(workflowId,
+    management:ReviewActivitySummary secondTask = check waitForPendingReviewActivity(workflowId,
             excludeTaskId = firstTask.taskId);
     test:assertTrue(secondTask.taskId != firstTask.taskId,
         "A new retry task should be created after retry decision");

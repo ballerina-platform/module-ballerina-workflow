@@ -834,12 +834,13 @@ public final class ManagementNative {
      * resolving the manual retry with the supplied decision.
      *
      * @param taskWorkflowId the Temporal workflow ID of the retry task child workflow
-     * @param decision       the {@code RetryDecision} BMap ({@code action} + optional {@code input})
+     * @param decision       the {@code ReviewDecision} BMap ({@code action} + optional {@code input})
      * @param callerRoles    optional caller roles for authorization enforcement
      * @return {@code null} on success, or a Ballerina error
      */
     @SuppressWarnings("unchecked")
-    public static Object completeRetryTask(BString taskWorkflowId, BMap<BString, Object> decision, Object callerRoles,
+    public static Object completeReviewActivity(BString taskWorkflowId, BMap<BString, Object> decision,
+                                                Object callerRoles,
                                            Object userId) {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
@@ -849,7 +850,8 @@ public final class ManagementNative {
 
             // Validate workflowKind and optionally enforce caller roles
             BArray callerRolesArray = (callerRoles instanceof BArray ba) ? ba : null;
-            Object validationError = validateRetryTaskAndRoles(client, taskWorkflowId.getValue(), callerRolesArray);
+            Object validationError = validateReviewActivityAndRoles(client, taskWorkflowId.getValue(),
+                    callerRolesArray);
             if (validationError != null) {
                 return validationError;
             }
@@ -894,7 +896,7 @@ public final class ManagementNative {
      * @return {@code null} if all checks pass, or a Ballerina error
      */
     @SuppressWarnings("unchecked")
-    private static Object validateRetryTaskAndRoles(WorkflowClient client, String taskWorkflowId,
+    private static Object validateReviewActivityAndRoles(WorkflowClient client, String taskWorkflowId,
                                                     BArray callerRolesArray) {
         try {
             DescribeWorkflowExecutionRequest req = DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
@@ -962,14 +964,14 @@ public final class ManagementNative {
 
     /**
      * Scans the parent workflow's event history for child retry task workflows and returns them as
-     * {@code RetryTaskSummary} records sorted alphabetically by task name.
+     * {@code ReviewActivitySummary} records sorted alphabetically by task name.
      * <p>
      * Child workflow ID format: {@code reviewactivity-{parentId}-{taskName}-{uuid}} where UUID is always 36 characters.
      *
      * @param parentWorkflowId the parent workflow ID
-     * @return a Ballerina {@code RetryTaskSummary[]} or an error
+     * @return a Ballerina {@code ReviewActivitySummary[]} or an error
      */
-    public static Object listPendingRetryTasks(BString parentWorkflowId) {
+    public static Object listPendingReviewActivities(BString parentWorkflowId) {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
@@ -1031,7 +1033,7 @@ public final class ManagementNative {
 
             for (Map.Entry<String, List<String>> entry : byTaskName.entrySet()) {
                 for (String childId : entry.getValue()) {
-                    result.append(buildRetryTaskSummaryFromId(client, childId, entry.getKey()));
+                    result.append(buildReviewActivitySummaryFromId(client, childId, entry.getKey()));
                 }
             }
 
@@ -1048,9 +1050,9 @@ public final class ManagementNative {
      * with {@code reviewactivity-}.
      *
      * @param status optional status filter
-     * @return a Ballerina {@code RetryTaskSummary[]} or an error
+     * @return a Ballerina {@code ReviewActivitySummary[]} or an error
      */
-    public static Object listAllRetryTasks(Object status, Object startTimeFrom, Object startTimeTo,
+    public static Object listAllReviewActivities(Object status, Object startTimeFrom, Object startTimeTo,
                                            Object closeTimeFrom, Object closeTimeTo) {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
@@ -1093,7 +1095,7 @@ public final class ManagementNative {
                     if (!isReviewActivityId(wfId)) {
                         continue;
                     }
-                    result.append(toRetryTaskSummaryRecord(client, wfInfo));
+                    result.append(toReviewActivitySummaryRecord(client, wfInfo));
                 }
 
                 pageToken = response.getNextPageToken();
@@ -1110,10 +1112,10 @@ public final class ManagementNative {
      * Returns detailed info for a single retry task by reading its Temporal memo.
      *
      * @param taskId the child workflow ID of the retry task
-     * @return a Ballerina {@code RetryTaskInfo} record or an error
+     * @return a Ballerina {@code ReviewActivityInfo} record or an error
      */
     @SuppressWarnings("unchecked")
-    public static Object getRetryTaskInfo(BString taskId) {
+    public static Object getReviewActivityInfo(BString taskId) {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
@@ -1230,12 +1232,12 @@ public final class ManagementNative {
     }
 
     /**
-     * Builds a minimal {@code RetryTaskSummary} record from a known task ID by calling
+     * Builds a minimal {@code ReviewActivitySummary} record from a known task ID by calling
      * {@code DescribeWorkflowExecution} to read status and timestamps. Reads {@code taskName} and {@code activityName}
      * from memo.
      */
     @SuppressWarnings("unchecked")
-    private static BMap<BString, Object> buildRetryTaskSummaryFromId(WorkflowClient client, String taskId,
+    private static BMap<BString, Object> buildReviewActivitySummaryFromId(WorkflowClient client, String taskId,
                                                                      String fallbackTaskName) {
         try {
             DescribeWorkflowExecutionResponse resp = client.getWorkflowServiceStubs().blockingStub().withDeadlineAfter(
@@ -1245,7 +1247,7 @@ public final class ManagementNative {
                             .setNamespace(client.getOptions().getNamespace())
                             .setExecution(WorkflowExecution.newBuilder().setWorkflowId(taskId).build())
                             .build());
-            return toRetryTaskSummaryRecord(client, resp.getWorkflowExecutionInfo());
+            return toReviewActivitySummaryRecord(client, resp.getWorkflowExecutionInfo());
         } catch (Exception e) {
             // Fallback: minimal record with the info we already have
             BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
@@ -1267,12 +1269,13 @@ public final class ManagementNative {
     }
 
     /**
-     * Converts a {@link io.temporal.api.workflow.v1.WorkflowExecutionInfo} to a Ballerina {@code RetryTaskSummary}
+     * Converts a {@link io.temporal.api.workflow.v1.WorkflowExecutionInfo} to a Ballerina {@code ReviewActivitySummary}
      * record. Reads {@code taskName}, {@code activityName}, and {@code parentWorkflowId} from the execution's Temporal
      * memo.
      */
     @SuppressWarnings("unchecked")
-    private static BMap<BString, Object> toRetryTaskSummaryRecord(WorkflowClient client, WorkflowExecutionInfo wfInfo) {
+    private static BMap<BString, Object> toReviewActivitySummaryRecord(WorkflowClient client,
+                                                                        WorkflowExecutionInfo wfInfo) {
 
         String wfId = wfInfo.getExecution().getWorkflowId();
         Map<String, Payload> memoFields = wfInfo.getMemo().getFieldsMap();
@@ -2138,9 +2141,15 @@ public final class ManagementNative {
                 return workflowType;
             }
         }
-        // Retry tasks: workflowType = "retrytask" (single shared type), task name comes from memo.
-        // Callers that have access to the memo (e.g. execution-graph builder) should use
-        // decodeMemoString("taskName") instead of this method for retrytask children.
+        // Review activities: workflowType = "reviewactivity-workflowDefinition.activityName" -> "activityName".
+        // Pre-rename children used the single shared "retrytask" type, whose task name only lives in the
+        // memo — callers with memo access should use decodeMemoString("taskName") for those.
+        if (workflowId.startsWith("reviewactivity-")) {
+            int dot = workflowType.lastIndexOf('.');
+            if (dot >= 0) {
+                return workflowType.substring(dot + 1);
+            }
+        }
         return workflowType;
     }
 

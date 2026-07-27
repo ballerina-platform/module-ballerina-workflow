@@ -448,9 +448,9 @@ function testGetReviewActivityInfo() returns error? {
     RetryActivityInput input = {id: testId, mode: "manual_retry_fail"};
     string workflowId = check workflow:run(manualRetryFailDecisionWorkflow, input);
 
-    management:ReviewActivitySummary retryTask = check waitForPendingRetryTask(workflowId);
+    management:ReviewActivitySummary reviewTask = check waitForPendingReviewActivity(workflowId);
 
-    management:ReviewActivityInfo info = check management:getReviewActivityInfo(retryTask.taskId);
+    management:ReviewActivityInfo info = check management:getReviewActivityInfo(reviewTask.taskId);
     test:assertFalse(info.taskId == "", "ReviewActivityInfo must have a non-empty taskId");
     test:assertFalse(info.activityName == "", "ReviewActivityInfo must have a non-empty activityName");
     test:assertFalse(info.errorMessage == "", "ReviewActivityInfo should capture the activity error message");
@@ -471,7 +471,7 @@ function testGetReviewActivityInfo() returns error? {
     }
 
     // Clean up — decide fail so the workflow terminates (workflow itself will also error out)
-    check management:completeReviewActivity(retryTask.taskId, {action: "reject"});
+    check management:completeReviewActivity(reviewTask.taskId, {action: "reject"});
     do {
         _ = check workflow:getWorkflowResult(workflowId, 15);
     } on fail {
@@ -490,12 +490,12 @@ function testGetReviewActivityInfoNonExistentReturnsError() returns error? {
 @test:Config {
     groups: ["integration"]
 }
-function testListAllRetryTasksPending() returns error? {
+function testListAllReviewActivitiesPending() returns error? {
     string testId = uniqueId("retry-list");
     RetryActivityInput input = {id: testId, mode: "manual_retry_input"};
     string workflowId = check workflow:run(manualRetryWithInputWorkflow, input);
 
-    management:ReviewActivitySummary expected = check waitForPendingRetryTask(workflowId);
+    management:ReviewActivitySummary expected = check waitForPendingReviewActivity(workflowId);
 
     management:ReviewActivitySummary[] tasks = check management:listAllReviewActivities(status = "PENDING");
     test:assertTrue(tasks.length() > 0, "listAllReviewActivities(PENDING) should find at least one task");
@@ -511,7 +511,7 @@ function testListAllRetryTasksPending() returns error? {
 @test:Config {
     groups: ["integration"]
 }
-function testListAllRetryTasksNoFilter() returns error? {
+function testListAllReviewActivitiesNoFilter() returns error? {
     management:ReviewActivitySummary[]|error result = management:listAllReviewActivities();
     test:assertFalse(result is error, "listAllReviewActivities() with no filters should not return an error");
 }
@@ -565,11 +565,11 @@ function testListPendingHumanTasksNoTasks() returns error? {
 @test:Config {
     groups: ["integration"]
 }
-function testListPendingRetryTasks() returns error? {
+function testListPendingReviewActivities() returns error? {
     string testId = uniqueId("list-pending-rt");
     RetryActivityInput input = {id: testId, mode: "manual_retry_input"};
     string workflowId = check workflow:run(manualRetryWithInputWorkflow, input);
-    management:ReviewActivitySummary expected = check waitForPendingRetryTask(workflowId);
+    management:ReviewActivitySummary expected = check waitForPendingReviewActivity(workflowId);
 
     management:ReviewActivitySummary[] pending = check management:listPendingReviewActivities(workflowId);
     test:assertTrue(pending.length() > 0,
@@ -587,7 +587,7 @@ function testListPendingRetryTasks() returns error? {
 @test:Config {
     groups: ["integration"]
 }
-function testListPendingRetryTasksNoTasks() returns error? {
+function testListPendingReviewActivitiesNoTasks() returns error? {
     // A completed workflow has no pending retry tasks
     string testId = uniqueId("no-pending-rt");
     InfoTestInput input = {id: testId, name: "NoPendingRetry"};
@@ -688,8 +688,8 @@ function testGetReviewActivityInfoAfterDecision() returns error? {
     RetryActivityInput input = {id: testId, mode: "manual_retry_input"};
     string workflowId = check workflow:run(manualRetryWithInputWorkflow, input);
 
-    management:ReviewActivitySummary retryTask = check waitForPendingRetryTask(workflowId);
-    string taskId = retryTask.taskId;
+    management:ReviewActivitySummary reviewTask = check waitForPendingReviewActivity(workflowId);
+    string taskId = reviewTask.taskId;
 
     // Resolve the retry task — workflow retries and completes successfully
     check management:completeReviewActivity(taskId, {action: "proceed-with-input", input: {mode: "ok"}});
@@ -734,7 +734,7 @@ function testListAllHumanTasksStatusAndTimeFilter() returns error? {
 @test:Config {
     groups: ["integration"]
 }
-function testListAllRetryTasksWithTimeFilter() returns error? {
+function testListAllReviewActivitiesWithTimeFilter() returns error? {
     management:ReviewActivitySummary[]|error result =
             management:listAllReviewActivities(startTimeFrom = "2024-01-01T00:00:00Z");
     test:assertFalse(result is error,
@@ -744,7 +744,7 @@ function testListAllRetryTasksWithTimeFilter() returns error? {
 @test:Config {
     groups: ["integration"]
 }
-function testListAllRetryTasksStatusAndTimeFilter() returns error? {
+function testListAllReviewActivitiesStatusAndTimeFilter() returns error? {
     management:ReviewActivitySummary[]|error result =
             management:listAllReviewActivities(status = "PENDING", startTimeFrom = "2024-01-01T00:00:00Z");
     test:assertFalse(result is error,

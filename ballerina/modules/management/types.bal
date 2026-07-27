@@ -243,54 +243,6 @@ public type ReviewActivityInfo record {|
 |};
 
 // ================================================================================
-// DEPRECATED RETRY TASK TYPES
-// ================================================================================
-//
-// "Retry task" was renamed to "review activity" so the same concept covers both a
-// failed activity awaiting a rerun decision (the former retry task, ON_FAILURE) and
-// a gated activity awaiting approval before it runs (PRE_RUN). These shims keep the
-// pre-0.7.0 names compiling; new code should use the ReviewActivity* types.
-
-# Decision submitted by a human to resolve a manual retry task.
-#
-# + action - `"retry"` re-runs the activity with the original arguments;
-#            `"retry-with-input"` re-runs it with the `input` map overriding arguments;
-#            `"fail"` surfaces the original error back to the workflow.
-# + input - New named arguments for the activity. Only relevant when `action` is
-#           `"retry-with-input"`. Keys must match the activity's parameter names.
-# # Deprecated
-# Use `ReviewDecision` with actions `proceed` / `proceed-with-input` / `reject` instead.
-@deprecated
-public type RetryDecision record {|
-    "retry"|"retry-with-input"|"fail" action;
-    map<anydata>? input = ();
-|};
-
-# Summary of a manual retry task instance for list views.
-# # Deprecated
-# Use `ReviewActivitySummary` instead.
-@deprecated
-public type RetryTaskSummary ReviewActivitySummary;
-
-# Detailed info about a manual retry task, including the failure context.
-# # Deprecated
-# Use `ReviewActivityInfo` instead.
-@deprecated
-public type RetryTaskInfo ReviewActivityInfo;
-
-# Paginated list of retry task summaries.
-# # Deprecated
-# Use `ReviewActivityPage` instead.
-@deprecated
-public type RetryTaskPage ReviewActivityPage;
-
-# Audit record returned by retry task decision operations.
-# # Deprecated
-# Use `ReviewDecisionInfo` instead.
-@deprecated
-public type RetryDecisionInfo ReviewDecisionInfo;
-
-// ================================================================================
 // COMPLETION AUDIT
 // ================================================================================
 

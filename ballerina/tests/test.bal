@@ -884,7 +884,7 @@ function workflowWithManualRetryFail(Context ctx, string orderId) returns string
 }
 
 @test:Config {groups: ["unit"]}
-function testManualRetryWorkflowCreatesRetryTask() returns error? {
+function testManualRetryWorkflowCreatesReviewActivity() returns error? {
     // Register the workflow that uses ManualRetry.
     map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
     _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
@@ -954,7 +954,7 @@ function testManualReviewActivityInfoContainsCorrectMetadata() returns error? {
 }
 
 @test:Config {groups: ["unit"]}
-function testCompleteRetryTaskWithRetry() returns error? {
+function testCompleteReviewActivityWithProceed() returns error? {
     // Complete a retry task with action="retry" — the workflow should resume and
     // eventually fail again (because the activity always fails), creating another
     // retry task. We verify the workflow is still running after the first decision.
@@ -991,7 +991,7 @@ function testCompleteRetryTaskWithRetry() returns error? {
 }
 
 @test:Config {groups: ["unit"]}
-function testCompleteRetryTaskWithFail() returns error? {
+function testCompleteReviewActivityWithReject() returns error? {
     // Complete a retry task with action="fail" — the workflow should surface the
     // original error and transition to FAILED.
     map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
@@ -1025,7 +1025,7 @@ function testCompleteRetryTaskWithFail() returns error? {
 }
 
 @test:Config {groups: ["unit"]}
-function testCompleteRetryTaskWithRetryWithInput() returns error? {
+function testCompleteReviewActivityWithProceedWithInput() returns error? {
     // Activity that succeeds only when a specific flag is set in the input.
     // We test the retry-with-input path by substituting input that makes it succeed.
     // (Here the activity always fails so we just verify the signal is accepted.)
@@ -1055,7 +1055,7 @@ function testCompleteRetryTaskWithRetryWithInput() returns error? {
 }
 
 @test:Config {groups: ["unit"]}
-function testCompleteRetryTaskUnauthorizedRole() returns error? {
+function testCompleteReviewActivityUnauthorizedRole() returns error? {
     // Attempt to complete a retry task with a caller role not in the permitted set.
     map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
     _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
@@ -1088,7 +1088,7 @@ function testCompleteRetryTaskUnauthorizedRole() returns error? {
 }
 
 @test:Config {groups: ["unit"]}
-function testListAllRetryTasksReturnsCreatedTask() returns error? {
+function testListAllReviewActivitiesReturnsCreatedTask() returns error? {
     map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
     _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
             "workflow-list-all-retry-test", activities);
@@ -1117,7 +1117,7 @@ function testListAllRetryTasksReturnsCreatedTask() returns error? {
 }
 
 @test:Config {groups: ["unit"]}
-function testListAllRetryTasksStatusFilter() returns error? {
+function testListAllReviewActivitiesStatusFilter() returns error? {
     // Filter by PENDING should only return pending tasks.
     management:ReviewActivitySummary[]|error pendingReviews = management:listAllReviewActivities(status = "PENDING");
     if pendingReviews is error {

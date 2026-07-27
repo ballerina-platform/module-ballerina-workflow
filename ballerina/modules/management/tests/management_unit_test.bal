@@ -172,14 +172,14 @@ function testPaginateHumanTasksOldOffsetTokenRestartsFromBeginning() {
 
 // ── paginateReviewActivities ────────────────────────────────────────────────────────
 
-function mkRetryTask(string taskId, string startTime) returns ReviewActivitySummary =>
+function mkReviewActivity(string taskId, string startTime) returns ReviewActivitySummary =>
     {taskId, taskName: "retryOrder", activityName: "processOrder",
      parentWorkflowId: "parent", trigger: "ON_FAILURE",
      title: "Review failed activity: processOrder", status: "PENDING", startTime, closeTime: (),
      userRoles: []};
 
 @test:Config {groups: ["unit"]}
-function testPaginateRetryTasksEmpty() {
+function testPaginateReviewActivitiesEmpty() {
     ReviewActivityPage page = paginateReviewActivities([], 10, ());
     test:assertEquals(page.items.length(), 0);
     test:assertTrue(page.nextPageToken is ());
@@ -187,11 +187,11 @@ function testPaginateRetryTasksEmpty() {
 }
 
 @test:Config {groups: ["unit"]}
-function testPaginateRetryTasksFirstAndSecondPage() {
+function testPaginateReviewActivitiesFirstAndSecondPage() {
     ReviewActivitySummary[] items = [
-        mkRetryTask("retry-b", "2026-06-01T11:00:00Z"),
-        mkRetryTask("retry-c", "2026-06-01T12:00:00Z"),
-        mkRetryTask("retry-a", "2026-06-01T10:00:00Z")
+        mkReviewActivity("retry-b", "2026-06-01T11:00:00Z"),
+        mkReviewActivity("retry-c", "2026-06-01T12:00:00Z"),
+        mkReviewActivity("retry-a", "2026-06-01T10:00:00Z")
     ];
     ReviewActivityPage page1 = paginateReviewActivities(items, 2, ());
     test:assertEquals(page1.items.length(), 2);
@@ -206,10 +206,10 @@ function testPaginateRetryTasksFirstAndSecondPage() {
 }
 
 @test:Config {groups: ["unit"]}
-function testPaginateRetryTasksTiebreakByTaskId() {
+function testPaginateReviewActivitiesTiebreakByTaskId() {
     ReviewActivitySummary[] items = [
-        mkRetryTask("retry-z", "2026-06-02T10:00:00Z"),
-        mkRetryTask("retry-a", "2026-06-02T10:00:00Z")
+        mkReviewActivity("retry-z", "2026-06-02T10:00:00Z"),
+        mkReviewActivity("retry-a", "2026-06-02T10:00:00Z")
     ];
     ReviewActivityPage page = paginateReviewActivities(items, 10, ());
     test:assertEquals(page.items[0].taskId, "retry-a");
@@ -390,7 +390,7 @@ function testHumanTaskErrorResponseInternalError() {
 // ── reviewActivityErrorResponse ────────────────────────────────────────────────────
 
 @test:Config {groups: ["unit"]}
-function testRetryTaskErrorResponseNotFound() {
+function testReviewActivityErrorResponseNotFound() {
     error err = error("workflow NOT_FOUND");
     http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
             reviewActivityErrorResponse(err);
@@ -398,7 +398,7 @@ function testRetryTaskErrorResponseNotFound() {
 }
 
 @test:Config {groups: ["unit"]}
-function testRetryTaskErrorResponseForbidden() {
+function testReviewActivityErrorResponseForbidden() {
     error err = error("not authorized to complete this task");
     http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
             reviewActivityErrorResponse(err);
@@ -406,7 +406,7 @@ function testRetryTaskErrorResponseForbidden() {
 }
 
 @test:Config {groups: ["unit"]}
-function testRetryTaskErrorResponseConflict() {
+function testReviewActivityErrorResponseConflict() {
     error err = error("task is not running");
     http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
             reviewActivityErrorResponse(err);
@@ -414,7 +414,7 @@ function testRetryTaskErrorResponseConflict() {
 }
 
 @test:Config {groups: ["unit"]}
-function testRetryTaskErrorResponseInternalError() {
+function testReviewActivityErrorResponseInternalError() {
     error err = error("some unexpected failure");
     http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
             reviewActivityErrorResponse(err);

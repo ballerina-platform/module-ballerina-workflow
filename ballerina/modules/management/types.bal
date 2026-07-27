@@ -346,11 +346,12 @@ public type HistoryEvent record {|
     map<json> attributes;
 |};
 
-# Classification of a node in the activity tree or execution graph.
+# Classification of a node in the activity tree or execution graph. `DATA` marks
+# a received data event (`workflow:sendData` answering a `wait dataEvents.<name>`).
 public enum ActivityNodeType {
     ACTIVITY,
     TIMER,
-    SIGNAL,
+    DATA,
     CHILD_WORKFLOW,
     HUMAN_TASK,
     REVIEW_ACTIVITY

@@ -113,8 +113,11 @@ public final class WorkflowContextNative {
 
             Map<String, Object> namedArgs = convertArgsMapWithConnectionMarkers(args);
 
-            // Classify the retry policy
-            boolean isManualRetry = retryPolicy instanceof BString s && "MANUAL_RETRY".equals(s.getValue());
+            // Classify the retry policy: a string or string list is a ManualRetry policy
+            // carrying the reviewer role(s); a mapping is AutoRetry; nil is NoRetry.
+            boolean isManualRetry = retryPolicy instanceof BString
+                    || retryPolicy instanceof io.ballerina.runtime.api.values.BArray;
+            String[] manualRetryRoles = isManualRetry ? extractManualRetryRoles(retryPolicy) : new String[0];
             boolean isAutoRetry = false;
             BMap<BString, Object> retryPolicyMap = null;
             if (!isManualRetry && retryPolicy instanceof BMap<?, ?>) {
@@ -130,7 +133,8 @@ public final class WorkflowContextNative {
             if (isManualRetry) {
                 // Manual retry: run activity in a loop; on failure start a review-activity
                 // child workflow and wait for a human decision.
-                return executeWithManualRetry(fullActivityName, workflowType, namedArgs, callConfig, typedesc);
+                return executeWithManualRetry(fullActivityName, workflowType, namedArgs, callConfig,
+                        manualRetryRoles, typedesc);
             }
 
             // AutoRetry or NoRetry — single Temporal activity invocation
@@ -170,6 +174,23 @@ public final class WorkflowContextNative {
         }
     }
 
+    // Reads the reviewer role(s) from a ManualRetry policy value: a string is one role, a
+    // string list is several; the legacy "MANUAL_RETRY" sentinel means any role.
+    private static String[] extractManualRetryRoles(Object retryPolicy) {
+        if (retryPolicy instanceof BString roleString) {
+            String value = roleString.getValue();
+            return "MANUAL_RETRY".equals(value) ? new String[0] : new String[]{value};
+        }
+        if (retryPolicy instanceof io.ballerina.runtime.api.values.BArray roleArray) {
+            String[] roles = new String[(int) roleArray.size()];
+            for (int i = 0; i < roles.length; i++) {
+                roles[i] = String.valueOf(roleArray.get(i));
+            }
+            return roles;
+        }
+        return new String[0];
+    }
+
     /**
      * Executes the given activity in a loop, starting a built-in review-activity child workflow whenever the
      * activity fails,
@@ -186,7 +207,7 @@ public final class WorkflowContextNative {
     @SuppressWarnings("unchecked")
     private static Object executeWithManualRetry(String fullActivityName, String workflowType,
                                                  Map<String, Object> initialArgs, Map<String, Object> callConfig,
-                                                 BTypedesc typedesc) {
+                                                 String[] reviewerRoles, BTypedesc typedesc) {
 
         io.temporal.activity.ActivityOptions activityOptions =
                 io.temporal.activity.ActivityOptions.newBuilder().setStartToCloseTimeout(
@@ -216,7 +237,7 @@ public final class WorkflowContextNative {
 
             // Activity failed — start a review-activity child workflow and await the human decision
             Map<String, Object> decision = callBuiltinReviewActivity(fullActivityName, currentArgs, lastErrorMsg,
-                                                                workflowType);
+                                                                reviewerRoles);
 
             String action = decision.containsKey("action") ? String.valueOf(decision.get("action")) : "reject";
 
@@ -351,9 +372,10 @@ public final class WorkflowContextNative {
 
     // On-failure manual-retry review (the ManualRetry policy). Delegates to the shared starter.
     private static Map<String, Object> callBuiltinReviewActivity(String fullActivityName,
-                                                                  Map<String, Object> activityArgs,
-                                                            String errorMessage, String workflowType) {
-        return startReviewActivity("ON_FAILURE", fullActivityName, activityArgs, errorMessage, new String[0], null);
+                                                                 Map<String, Object> activityArgs,
+                                                                 String errorMessage, String[] reviewerRoles) {
+        return startReviewActivity("ON_FAILURE", fullActivityName, activityArgs, errorMessage,
+                reviewerRoles, null);
     }
 
     /**
@@ -1018,8 +1040,10 @@ public final class WorkflowContextNative {
             ChildWorkflowStub stub = newChildStub(functionName, childId);
             Object javaInput = input == null ? null : TypesUtil.convertBallerinaToJavaType(input);
             Object raw = stub.execute(Object.class, javaInput);
+            // validateAndConvert (not cloneWithType) so a nil result against a non-nilable T
+            // yields a proper conversion error instead of panicking at the Java-Ballerina boundary.
             Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(raw);
-            return TypesUtil.cloneWithType(ballerinaResult, typedesc.getDescribingType());
+            return TypesUtil.validateAndConvert(ballerinaResult, typedesc.getDescribingType());
         } catch (io.temporal.worker.NonDeterministicException e) {
             throw e;
         } catch (CanceledFailure e) {
@@ -1071,6 +1095,155 @@ public final class WorkflowContextNative {
         }
     }
 
+    // -----------------------------------------------------------------------------------------
+    // Durable agent (object model) child support — used by DurableAgentNative when
+    // DurableAgent.run / result reads execute inside a workflow.
+    // -----------------------------------------------------------------------------------------
+
+    private static final String CHILD_AGENT_ID_PREFIX = "childagent-";
+
+    /**
+     * Starts a durable agent instance as a true Temporal child workflow of the current workflow.
+     * The agent's workflow type is {@code workflow-<agentName>} and the handle is retained so
+     * {@code getResult}/{@code waitForResult} can await the child's result promise by the
+     * returned instance ID.
+     *
+     * @param agentName the agent name (module-level variable name)
+     * @param runInput  the runner input map ({agentName, query, input})
+     * @return the child instance ID as a Ballerina string, or a BError
+     */
+    public static Object startDurableAgentChild(String agentName, Map<String, Object> runInput) {
+        try {
+            WorkflowWorkerNative.awaitWhileSuspended();
+            String childId = CHILD_AGENT_ID_PREFIX + agentName + "-" + Workflow.randomUUID();
+            ChildWorkflowStub stub = newChildStub(agentName, childId);
+            Promise<Object> result = stub.executeAsync(Object.class, runInput);
+            stub.getExecution().get();
+            CHILD_HANDLES.get().put(childId, new ChildWorkflowHandle(stub, result));
+            return StringUtils.fromString(childId);
+        } catch (io.temporal.worker.NonDeterministicException e) {
+            throw e;
+        } catch (CanceledFailure e) {
+            throw e;
+        } catch (ChildWorkflowFailure e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to start durable agent '" + agentName + "': " + childFailureMessage(e)));
+        } catch (io.temporal.failure.TemporalFailure e) {
+            throw e;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to start durable agent '" + agentName + "': " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Reads the result of a durable agent child started with {@code startDurableAgentChild}.
+     * Non-blocking reads return a {@code workflow:AgentBusyError} while the child is running;
+     * blocking reads durably suspend until it completes.
+     *
+     * @param childId  the child instance ID returned by {@code startDurableAgentChild}
+     * @param typedesc the expected result type descriptor
+     * @param blocking whether to durably wait for completion
+     * @return the typed result, an AgentBusyError (non-blocking, still running), or a BError
+     */
+    public static Object readDurableAgentChildResult(String childId, BTypedesc typedesc, boolean blocking) {
+        try {
+            if (blocking) {
+                WorkflowWorkerNative.awaitWhileSuspended();
+            }
+            ChildWorkflowHandle handle = CHILD_HANDLES.get().get(childId);
+            if (handle == null) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Unknown durable agent instance '" + childId + "': result reads inside a workflow "
+                                + "are only available for agents started with run() in this workflow execution"));
+            }
+            if (!blocking && !handle.result().isCompleted()) {
+                return io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative
+                        .createAgentBusyError(childId);
+            }
+            return readChildResult(handle, typedesc);
+        } catch (io.temporal.worker.NonDeterministicException e) {
+            throw e;
+        } catch (io.temporal.failure.TemporalFailure e) {
+            throw e;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to read the result of durable agent instance '" + childId + "': "
+                            + e.getMessage()));
+        }
+    }
+
+    /**
+     * Reads a durable-agent child's result without type binding: the raw final response converted
+     * to its natural Ballerina value. Used by the peer-agent dispatch, whose contract is anydata.
+     *
+     * @param childId  the child instance ID
+     * @param blocking whether to durably wait for completion
+     * @return the child's result as a Ballerina value, an AgentBusyError (non-blocking), or a BError
+     */
+    public static Object readDurableAgentChildRaw(String childId, boolean blocking) {
+        try {
+            if (blocking) {
+                WorkflowWorkerNative.awaitWhileSuspended();
+            }
+            ChildWorkflowHandle handle = CHILD_HANDLES.get().get(childId);
+            if (handle == null) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Unknown peer agent instance '" + childId + "'"));
+            }
+            if (!blocking && !handle.result().isCompleted()) {
+                return io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative
+                        .createAgentBusyError(childId);
+            }
+            try {
+                return TypesUtil.convertJavaToBallerinaType(handle.result().get());
+            } catch (ChildWorkflowFailure e) {
+                return ErrorCreator.createError(StringUtils.fromString(childFailureMessage(e)));
+            }
+        } catch (io.temporal.worker.NonDeterministicException e) {
+            throw e;
+        } catch (io.temporal.failure.TemporalFailure e) {
+            throw e;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to read the result of peer agent instance '" + childId + "': " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Arms the asynchronous peer-callback path: a detached workflow task awaits the peer child's
+     * result and injects it into the calling agent's own callback event channel, as if the event
+     * had arrived externally. The model consumes it later with the channel's wait tool.
+     *
+     * @param ctxHandle       the calling agent's AgentContextInfo handle
+     * @param childId         the peer child instance ID (also the correlation id in the payload)
+     * @param callbackChannel the declared event channel that receives the peer's reply
+     * @return null on success, or a BError when the child handle is unknown
+     */
+    public static Object armPeerAgentCallback(io.ballerina.runtime.api.values.BHandle ctxHandle,
+                                              BString childId, BString callbackChannel) {
+        ChildWorkflowHandle handle = CHILD_HANDLES.get().get(childId.getValue());
+        if (handle == null) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Unknown peer agent instance '" + childId.getValue() + "'"));
+        }
+        io.ballerina.lib.workflow.context.AgentContextNative.AgentContextInfo info =
+                (io.ballerina.lib.workflow.context.AgentContextNative.AgentContextInfo) ctxHandle.getValue();
+        String channel = callbackChannel.getValue();
+        String correlationId = childId.getValue();
+        io.temporal.workflow.Async.procedure(() -> {
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("correlationId", correlationId);
+            try {
+                payload.put("response", handle.result().get());
+            } catch (Exception e) {
+                payload.put("error", e.getMessage() != null ? e.getMessage() : "the peer agent failed");
+            }
+            info.recordEvent(channel, payload);
+        });
+        return null;
+    }
+
     /**
      * Builds an untyped child workflow stub for the given @Workflow function name. The child workflow type uses
      * the same user-workflow prefix as {@code workflow:run}, so it resolves against the worker's process
@@ -1101,8 +1274,10 @@ public final class WorkflowContextNative {
     private static Object readChildResult(ChildWorkflowHandle handle, BTypedesc typedesc) {
         try {
             Object raw = handle.result().get();
+            // validateAndConvert (not cloneWithType) so a nil result against a non-nilable T
+            // yields a proper conversion error instead of panicking at the Java-Ballerina boundary.
             Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(raw);
-            return TypesUtil.cloneWithType(ballerinaResult, typedesc.getDescribingType());
+            return TypesUtil.validateAndConvert(ballerinaResult, typedesc.getDescribingType());
         } catch (ChildWorkflowFailure e) {
             return ErrorCreator.createError(StringUtils.fromString(childFailureMessage(e)));
         }

@@ -63,6 +63,18 @@ public class WorkflowCodeModifier extends CodeModifier {
                 SyntaxKind.MODULE_VAR_DECL
         );
 
+        // Register the analysis task that collects object-model durable agent declarations
+        // (final workflow:DurableAgent x = new ({...})) for module-init registration codegen,
+        // and rejects local/non-final declarations.
+        modifierContext.addSyntaxNodeAnalysisTask(
+                new DurableAgentDeclAnalysisTask(this.userData),
+                SyntaxKind.MODULE_VAR_DECL
+        );
+        modifierContext.addSyntaxNodeAnalysisTask(
+                new DurableAgentDeclAnalysisTask(this.userData),
+                SyntaxKind.LOCAL_VAR_DECL
+        );
+
         // Register the source modifier task that performs the actual transformations
         modifierContext.addSourceModifierTask(new WorkflowSourceModifier(this.modifierContextMap, this.userData));
 

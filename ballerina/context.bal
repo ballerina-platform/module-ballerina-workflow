@@ -29,7 +29,11 @@ public client class Context {
         self.nativeContext = nativeContext;
     }
 
-    # Executes an activity function. The activity runs exactly once, even if the process crashes and restarts.
+    # Executes an activity function. A completed activity is never re-executed on
+    # workflow replay — its recorded result is reused, even across process crashes
+    # and restarts. A *failed* attempt may run again, however: `AutoRetry` re-executes
+    # the activity automatically and `HumanReview` lets a human rerun it, so make the
+    # activity's side effects idempotent (or deduplicate them) when retries are enabled.
     #
     # ```ballerina
     # PaymentResult result = check ctx->callActivity(processPayment, args = {"orderId": orderId});
@@ -44,14 +48,14 @@ public client class Context {
     #          execution boundary.
     # + T - Expected return type (inferred from context)
     # + retryPolicy - Retry behaviour on failure:
-    #   - `()` / `NoRetry` (default) — error is returned as-is, no retry.
+    #   - `()` / `NoAutomaticRetry` (default) — error is returned as-is, no retry.
     #   - `AutoRetry` — automatic backoff retry with configurable attempts and delays.
-    #   - `ManualRetry` — on failure a retry task is created for a human to decide
+    #   - `HumanReview` — on failure a review task is created for a human to decide
     #     whether to retry (optionally with new input) or permanently fail the activity.
     # + return - The activity result as `T`, or an error
     remote isolated function callActivity(function activityFunction,
             map<anydata|object {}> args = {},
-            typedesc<anydata> T = <>, AutoRetry|ManualRetry|NoRetry retryPolicy = NoRetry)
+            typedesc<anydata> T = <>, AutoRetry|HumanReview|NoAutomaticRetry retryPolicy = NoAutomaticRetry)
             returns T|error = @java:Method {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
         name: "callActivity"

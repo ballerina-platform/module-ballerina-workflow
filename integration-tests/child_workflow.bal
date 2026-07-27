@@ -87,6 +87,7 @@ function formatChildResultActivity(string childResult) returns string|error {
 # A simple child workflow that processes a value and returns a result.
 # This is the target workflow that will be started by the parent workflow.
 #
+# + ctx - The workflow context
 # + input - The child workflow input
 # + return - The processed result or error
 @workflow:Workflow
@@ -179,6 +180,7 @@ function callWorkflowParentWorkflow(workflow:Context ctx, ParentInput input) ret
 
 # A receiver workflow that waits for data sent via ctx->sendDataToChildWorkflow.
 #
+# + ctx - The workflow context
 # + input - The receiver workflow input
 # + events - The signal futures (notification)
 # + return - The received data or error

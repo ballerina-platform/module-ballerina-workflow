@@ -36,5 +36,7 @@ function parentProcess(workflow:Context ctx, ChildInput input) returns string|er
     string first = check ctx->runChildWorkflow(childProcess, input = 42);
     // ERROR: noInputProcess declares no input parameter
     string second = check ctx->callWorkflow(noInputProcess, input = {value: "x"});
-    return first + second;
+    // ERROR: childProcess requires a ChildInput input, but none is passed
+    string third = check ctx->callWorkflow(childProcess);
+    return first + second + third;
 }

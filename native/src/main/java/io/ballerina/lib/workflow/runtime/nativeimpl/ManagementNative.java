@@ -161,6 +161,39 @@ public final class ManagementNative {
     }
 
     /**
+     * Returns the latest response recorded by a durable agent, or {@code null} when none is available yet. Prefers
+     * the in-JVM {@code AgentResponseStore} (always current in the worker process), falling back to the
+     * {@code agentResponse} workflow memo upserted by the agent loop — which works from any process.
+     *
+     * @param agentId the agent's workflow ID
+     * @return the latest response text (BString), {@code null}, or a Ballerina error
+     */
+    public static Object getAgentResponse(BString agentId) {
+        Object stored = io.ballerina.lib.workflow.context.AgentResponseStore.getFinalResponse(agentId);
+        if (stored != null) {
+            return stored;
+        }
+        try {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+            DescribeWorkflowExecutionRequest req = DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
+                    client.getOptions().getNamespace()).setExecution(
+                    WorkflowExecution.newBuilder().setWorkflowId(agentId.getValue()).build()).build();
+            DescribeWorkflowExecutionResponse resp = client.getWorkflowServiceStubs().blockingStub().withDeadlineAfter(
+                    GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS).describeWorkflowExecution(req);
+            Map<String, Payload> memoFields = resp.getWorkflowExecutionInfo().getMemo().getFieldsMap();
+            DataConverter dc = client.getOptions().getDataConverter();
+            String response = decodeMemoString(dc, memoFields, "agentResponse", null);
+            return response == null ? null : StringUtils.fromString(response);
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to read agent response for '" + agentId.getValue() + "': " + e.getMessage()));
+        }
+    }
+
+    /**
      * Lists registered workflow types, for use in the workflow launcher UI. Returns one entry per registered workflow
      * function. The {@code inputSchema} field is {@code null} until the compiler plugin generates JSON Schema at build
      * time.

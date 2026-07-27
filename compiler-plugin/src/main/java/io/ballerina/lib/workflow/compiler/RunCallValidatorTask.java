@@ -20,16 +20,9 @@ package io.ballerina.lib.workflow.compiler;
 
 import io.ballerina.compiler.api.SemanticModel;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
-import io.ballerina.compiler.api.symbols.ParameterSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
-import io.ballerina.compiler.api.symbols.TypeDescKind;
-import io.ballerina.compiler.api.symbols.TypeSymbol;
-import io.ballerina.compiler.syntax.tree.ExpressionNode;
-import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
 import io.ballerina.compiler.syntax.tree.FunctionCallExpressionNode;
-import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
-import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.projects.plugins.AnalysisTask;
 import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
 import io.ballerina.tools.diagnostics.DiagnosticFactory;
@@ -107,77 +100,27 @@ public class RunCallValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCont
      * Validates a {@code workflow:run(processFunction, input)} call.
      */
     private void validateRunCall(FunctionCallExpressionNode callNode, SyntaxNodeAnalysisContext context) {
-        SemanticModel semanticModel = context.semanticModel();
-        SeparatedNodeList<FunctionArgumentNode> arguments = callNode.arguments();
-        if (arguments.isEmpty()) {
-            return;
-        }
+        WorkflowPluginUtils.validateWorkflowCallInput(callNode.arguments(), PROCESS_FUNCTION_PARAM_NAME,
+                INPUT_PARAM_NAME, context.semanticModel(), false,
+                new WorkflowPluginUtils.WorkflowCallInputListener() {
+                    @Override
+                    public void onNonWorkflowTarget(Location location) {
+                        reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_130, location,
+                                WorkflowConstants.RUN_FUNCTION);
+                    }
 
-        // Resolve the processFunction argument (first positional or named).
-        ExpressionNode processFuncExpr = WorkflowFunctionCallUtils.getArgumentExpression(
-                arguments, 0, PROCESS_FUNCTION_PARAM_NAME);
-        if (processFuncExpr == null) {
-            return;
-        }
+                    @Override
+                    public void onUnexpectedInput(Location location, String workflowName) {
+                        reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_132, location, workflowName);
+                    }
 
-        Optional<FunctionSymbol> workflowFuncOpt =
-                WorkflowPluginUtils.getWorkflowFunctionSymbol(processFuncExpr, semanticModel);
-        if (workflowFuncOpt.isEmpty()) {
-            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_130, processFuncExpr.location(),
-                    WorkflowConstants.RUN_FUNCTION);
-            return;
-        }
-        FunctionSymbol workflowFunc = workflowFuncOpt.get();
-        String workflowName = workflowFunc.getName().orElse("");
-
-        // Resolve the input argument (second positional or named `input`).
-        ExpressionNode inputExpr = WorkflowFunctionCallUtils.getArgumentExpression(
-                arguments, 1, INPUT_PARAM_NAME);
-        if (inputExpr == null) {
-            return;
-        }
-
-        Optional<TypeSymbol> inputTypeOpt = semanticModel.typeOf(inputExpr);
-        if (inputTypeOpt.isEmpty()) {
-            return;
-        }
-        TypeSymbol inputType = inputTypeOpt.get();
-        boolean isNilInput = WorkflowPluginUtils.resolveTypeReference(inputType).typeKind() == TypeDescKind.NIL;
-
-        Optional<ParameterSymbol> inputParamOpt = WorkflowPluginUtils.getInputParameter(workflowFunc);
-        if (inputParamOpt.isEmpty()) {
-            // Explicit nil means "no input" and is fine for a no-input workflow;
-            // any other value has nowhere to go.
-            if (!isNilInput) {
-                reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_132, inputExpr.location(),
-                        workflowName);
-            }
-            return;
-        }
-        TypeSymbol declaredInputType = inputParamOpt.get().typeDescriptor();
-
-        // Constructor expressions (mapping/list/table) are typed by their contextually
-        // expected type (`anydata` here), so their static type cannot be compared with
-        // subtypeOf without false positives. Validate the shape only: the declared input
-        // type must be able to accept a value of the constructor's kind. Member-level
-        // conversion is handled by the runtime.
-        if (inputExpr.kind() == SyntaxKind.MAPPING_CONSTRUCTOR
-                || inputExpr.kind() == SyntaxKind.LIST_CONSTRUCTOR
-                || inputExpr.kind() == SyntaxKind.TABLE_CONSTRUCTOR) {
-            if (!WorkflowPluginUtils.canAcceptConstructorExpression(declaredInputType, inputExpr.kind())) {
-                reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_131, inputExpr.location(),
-                        workflowName, declaredInputType.signature(),
-                        WorkflowPluginUtils.describeConstructorExpression(inputExpr.kind()));
-            }
-            return;
-        }
-
-        // Explicit nil is only valid when the declared input type is nilable; the
-        // subtype check below covers that (nil is a subtype of any nilable type).
-        if (!inputType.subtypeOf(declaredInputType)) {
-            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_131, inputExpr.location(),
-                    workflowName, declaredInputType.signature(), inputType.signature());
-        }
+                    @Override
+                    public void onInputTypeMismatch(Location location, String workflowName,
+                                                    String declaredTypeSignature, String actualDescription) {
+                        reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_131, location,
+                                workflowName, declaredTypeSignature, actualDescription);
+                    }
+                });
     }
 
     private void reportDiagnostic(SyntaxNodeAnalysisContext context, WorkflowDiagnostic diagnostic,

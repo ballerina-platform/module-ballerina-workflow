@@ -31,22 +31,50 @@ def examplePackageNames = [
     'forward-recovery'   : 'forward_recovery',
     'order-processing'   : 'order_processing',
     'order-with-payment' : 'order_with_payment',
-    'management-api'     : 'management_api'
+    'management-api'     : 'management_api',
+    'agent-order-processing': 'agent_order_processing',
+    'agent-human-approval'  : 'agent_human_approval'
 ]
 
 def ballerinaDistributionVersion = project.rootProject.findProperty("ballerinaLangVersion") ?: "2201.13.2"
 
+// Examples that bind external functions to the workflow-native jar (e.g. a mock
+// ai:ModelProvider whose dependently-typed `generate` uses TestNatives). Interop
+// bindings are validated against the current package's own platform dependencies,
+// so these examples must declare the jar themselves.
+def nativeJarExamples = []
+
 // Helper: generate a Ballerina.toml for an example
-def generateExampleToml = { String packageName ->
-    return """[package]
+def generateExampleToml = { String exampleDirName, String packageName ->
+    // Pin ballerina/ai (a transitive dependency via ballerina/workflow): the offline build
+    // would otherwise pick the newest ai in the shared central cache, whose BIR the pinned
+    // distribution's toolchain may not load.
+    def toml = """[package]
 org = "ballerina_examples"
 name = "${packageName}"
 version = "0.1.0"
 distribution = "${ballerinaDistributionVersion}"
 
+[[dependency]]
+org = "ballerina"
+name = "ai"
+version = "${ballerinaAiVersion}"
+
 [build-options]
 observabilityIncluded = true
 """
+    if (nativeJarExamples.contains(exampleDirName)) {
+        def nativeVersion = project.version.toString()
+        def tomlVersion = nativeVersion.replace("-SNAPSHOT", "")
+        toml += """
+[[platform.java21.dependency]]
+groupId = "io.ballerina.lib"
+artifactId = "workflow-native"
+version = "${tomlVersion}"
+path = "../../native/build/libs/workflow-native-${nativeVersion}.jar"
+"""
+    }
+    return toml
 }
 
 // Coverage parameters used when running bal test for each example.
@@ -58,6 +86,8 @@ def testCoverageParam = "--code-coverage --coverage-format=xml --includes=io.bal
 // These are run with `bal run` as a smoke test to verify that the
 // compiler-plugin-generated __registerWorkflowsAndStart() function
 // works correctly at runtime — not just during `bal test`.
+// Note: agent-order-processing is build-verified only — running it requires
+// WSO2 model-provider credentials in a locally generated Config.toml.
 def runnableExamples = [
     'get-started'
 ]
@@ -86,6 +116,31 @@ task buildExamples {
             it == 'test' || it.endsWith(':test')
         }
 
+        // Resolve the examples against an isolated Ballerina home: other builds (e.g. the
+        // compiler-plugin tests' online compilation) can pull newer ballerina/ai releases
+        // into the shared user-level cache, and offline resolution prefers the newest cached
+        // version over the manifest pin — whose BIR this distribution's toolchain may not
+        // load. Seeding a task-scoped home with the pinned ai release keeps example
+        // resolution deterministic without mutating any shared global state.
+        def examplesBalHome = new File(project.buildDir, "bal-home")
+        def pullOutput = new ByteArrayOutputStream()
+        def pullResult = exec {
+            ignoreExitValue = true
+            standardOutput = pullOutput
+            errorOutput = pullOutput
+            environment "BALLERINA_HOME_DIR", examplesBalHome.absolutePath
+            if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+                commandLine 'cmd', '/c', "${distributionBinPath}/bal.bat", 'pull',
+                        "ballerina/ai:${ballerinaAiVersion}"
+            } else {
+                commandLine "${distributionBinPath}/bal", 'pull', "ballerina/ai:${ballerinaAiVersion}"
+            }
+        }
+        if (pullResult.exitValue != 0 && !pullOutput.toString().toLowerCase().contains('already exists')) {
+            throw new GradleException(
+                    "bal pull ballerina/ai:${ballerinaAiVersion} into the examples home failed:\n${pullOutput}")
+        }
+
         examplesDir.eachDir { exampleDir ->
             def packageName = examplePackageNames[exampleDir.name]
             if (packageName == null) {
@@ -97,7 +152,7 @@ task buildExamples {
 
             // Update Ballerina.toml
             def tomlFile = new File(exampleDir, "Ballerina.toml")
-            tomlFile.text = generateExampleToml(packageName)
+            tomlFile.text = generateExampleToml(exampleDir.name, packageName)
 
             // Delete stale Dependencies.toml so it gets regenerated
             def depsToml = new File(exampleDir, "Dependencies.toml")
@@ -109,10 +164,16 @@ task buildExamples {
 
             // Respect Gradle -x test: build examples without running bal tests.
             // When tests run, enable coverage so reports can be uploaded to codecov.
-            def balCommand = testsExcluded ? 'build' : "test ${testCoverageParam}"
+            // Build offline: everything the examples need is already local — the workflow
+            // module is staged into the runtime repo and ballerina/ai is pulled into the
+            // cache by :workflow-ballerina:pullExternalDependencies. Offline keeps resolution
+            // pinned to that ai version instead of drifting to a newer Central release whose
+            // BIR the pinned distribution's toolchain cannot load.
+            def balCommand = testsExcluded ? 'build --offline' : "test --offline ${testCoverageParam}"
             exec {
                 workingDir exampleDir
                 environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
+                environment "BALLERINA_HOME_DIR", examplesBalHome.absolutePath
                 if (Os.isFamily(Os.FAMILY_WINDOWS)) {
                     commandLine 'cmd', '/c', "${distributionBinPath}/bal.bat ${balCommand}"
                 } else {
@@ -146,6 +207,8 @@ task runExamples {
     doLast {
         def ballerinaDist = "${project.rootDir}/target/ballerina-runtime"
         def distributionBinPath = "${ballerinaDist}/bin"
+        // Same isolated Ballerina home as buildExamples (which seeds it with the pinned ai).
+        def examplesBalHome = new File(project.buildDir, "bal-home")
 
         runnableExamples.each { exampleName ->
             def exampleDir = new File(project.projectDir, exampleName)
@@ -158,10 +221,11 @@ task runExamples {
             exec {
                 workingDir exampleDir
                 environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
+                environment "BALLERINA_HOME_DIR", examplesBalHome.absolutePath
                 if (Os.isFamily(Os.FAMILY_WINDOWS)) {
-                    commandLine 'cmd', '/c', "${distributionBinPath}/bal.bat run"
+                    commandLine 'cmd', '/c', "${distributionBinPath}/bal.bat run --offline"
                 } else {
-                    commandLine 'sh', '-c', "${distributionBinPath}/bal run"
+                    commandLine 'sh', '-c', "${distributionBinPath}/bal run --offline"
                 }
             }
 

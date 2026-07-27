@@ -191,6 +191,19 @@ public enum WorkflowDiagnostic {
     WORKFLOW_141("WORKFLOW_141",
             "Workflow function '%s' does not declare an input parameter, but an input argument "
                     + "was provided to '%s'",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_148("WORKFLOW_148",
+            "Direct AI calls are not allowed inside a workflow: LLM responses are non-deterministic and "
+                    + "break workflow replay. Wrap the call in an @workflow:Activity function and invoke it "
+                    + "via 'ctx->callActivity' (or register it on the agent via 'registerActivity')",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_149("WORKFLOW_149",
+            "A 'workflow:DurableAgent' must be declared as a module-level 'final' variable: the compiler "
+                    + "generates its Temporal registration at module init from the declaration",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_150("WORKFLOW_150",
+            "Duplicate capability name '%s' in durable agent '%s': events, tools, activities, human "
+                    + "tasks, and peers share one flat namespace",
             DiagnosticSeverity.ERROR);
 
     private final String code;

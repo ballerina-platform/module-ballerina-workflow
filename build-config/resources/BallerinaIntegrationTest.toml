@@ -19,3 +19,9 @@ path = "./libs/greenmail-1.5.11.jar"
 
 [[platform.java21.dependency]]
 path = "./libs/javax.mail-1.6.2.jar"
+
+# Workflow native jar (version-stable name) staged by prepareIntegrationTestLibs.
+# Needed so agent integration tests can bind mock ai:ModelProvider.generate and
+# the agent final-response probe to its classes.
+[[platform.java21.dependency]]
+path = "./libs/workflow-native-tests.jar"

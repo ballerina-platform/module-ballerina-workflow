@@ -22,7 +22,13 @@ import io.temporal.workflow.CompletablePromise;
 import io.temporal.workflow.Workflow;
 import org.slf4j.Logger;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -57,6 +63,16 @@ public final class SignalAwaitWrapper {
 
     // Map of signal name to its data (for completed signals, used during replay)
     private final Map<String, SignalData> completedSignals = new ConcurrentHashMap<>();
+
+    // FIFO consume-once channel per signal name (used by durable agents' repeatable event
+    // waits). Signals not yet consumed queue up in pendingSignals; waiters registered before
+    // a signal arrives queue up in signalWaiters. recordSignal feeds this channel in addition
+    // to the legacy one-shot path above, which stays unchanged for events-record futures and
+    // the built-in human/retry task waits. Both recording (Temporal event-history order) and
+    // taking (workflow-thread program order) are deterministic, so this is replay-safe.
+    private final Map<String, Deque<SignalData>> pendingSignals = new ConcurrentHashMap<>();
+    private final Map<String, Deque<CompletablePromise<SignalData>>> signalWaiters =
+            new ConcurrentHashMap<>();
 
     /**
      * Default constructor for per-workflow instance.
@@ -97,13 +113,29 @@ public final class SignalAwaitWrapper {
      * @param data       the signal data (expected to be a Map with "id" field)
      */
     public void recordSignal(String signalName, Object data) {
-        // Extract the id from the data if it's a Map
-        String id = extractId(data);
-        SignalData signalData = new SignalData(signalName, id, data);
+        recordSignalData(new SignalData(signalName, extractId(data), data, null));
+    }
+
+    /**
+     * Records an update (request-response) delivery: like {@link #recordSignal}, but the stored signal carries a
+     * responder promise that the consumer completes with the response for this request (durable agents complete it
+     * with the answer of the turn that consumed the message).
+     *
+     * @param signalName the event name the update targets
+     * @param data       the update payload
+     * @param responder  the promise the update handler is blocked on
+     */
+    public void recordUpdate(String signalName, Object data, CompletablePromise<Object> responder) {
+        recordSignalData(new SignalData(signalName, extractId(data), data, responder));
+    }
+
+    private void recordSignalData(SignalData signalData) {
+        String signalName = signalData.signalName();
 
         // Store in completed signals (for replay scenarios)
         completedSignals.put(signalName, signalData);
-        LOGGER.debug("[SignalAwaitWrapper] Signal '{}' (id={}) recorded in completed signals", signalName, id);
+        LOGGER.debug("[SignalAwaitWrapper] Signal '{}' (id={}) recorded in completed signals",
+                signalName, signalData.id());
 
         // Complete the promise if one exists
         CompletablePromise<SignalData> promise = signalPromises.get(signalName);
@@ -111,6 +143,84 @@ public final class SignalAwaitWrapper {
             promise.complete(signalData);
             LOGGER.debug("[SignalAwaitWrapper] Promise for signal '{}' completed", signalName);
         }
+
+        // Feed the FIFO consume-once channel: hand the signal to the oldest live
+        // waiter, or queue it until someone takes it.
+        Deque<CompletablePromise<SignalData>> waiters = signalWaiters.get(signalName);
+        if (waiters != null) {
+            CompletablePromise<SignalData> waiter;
+            while ((waiter = waiters.pollFirst()) != null) {
+                if (!waiter.isCompleted()) {
+                    waiter.complete(signalData);
+                    LOGGER.debug("[SignalAwaitWrapper] FIFO waiter for signal '{}' completed", signalName);
+                    return;
+                }
+            }
+        }
+        pendingSignals.computeIfAbsent(signalName, k -> new ArrayDeque<>()).addLast(signalData);
+        LOGGER.debug("[SignalAwaitWrapper] Signal '{}' queued for FIFO consumption", signalName);
+    }
+
+    /**
+     * Takes the next undelivered signal of the given name: returns a completed promise when one is queued, otherwise
+     * registers and returns a waiter promise that the next {@link #recordSignal} completes. Unlike
+     * {@link #getSignalFuture}, each returned promise consumes exactly one signal, so repeated waits observe
+     * successive signals (FIFO) — the basis of durable agents' multi-turn event waits.
+     *
+     * @param signalName the name of the signal
+     * @return a CompletablePromise that will contain the next signal data
+     */
+    public CompletablePromise<SignalData> takeSignalFuture(String signalName) {
+        Deque<SignalData> pending = pendingSignals.get(signalName);
+        if (pending != null) {
+            SignalData next = pending.pollFirst();
+            if (next != null) {
+                CompletablePromise<SignalData> completed = Workflow.newPromise();
+                completed.complete(next);
+                LOGGER.debug("[SignalAwaitWrapper] FIFO take of signal '{}' served from queue", signalName);
+                return completed;
+            }
+        }
+        CompletablePromise<SignalData> waiter = Workflow.newPromise();
+        signalWaiters.computeIfAbsent(signalName, k -> new ArrayDeque<>()).addLast(waiter);
+        LOGGER.debug("[SignalAwaitWrapper] FIFO waiter registered for signal '{}'", signalName);
+        return waiter;
+    }
+
+    /**
+     * Cancels a FIFO waiter previously returned by {@link #takeSignalFuture} (e.g. on wait timeout), so a later
+     * signal is not silently consumed by an abandoned promise.
+     *
+     * @param signalName the signal name the waiter was registered for
+     * @param waiter     the waiter promise to remove
+     */
+    public void cancelWaiter(String signalName, CompletablePromise<SignalData> waiter) {
+        Deque<CompletablePromise<SignalData>> waiters = signalWaiters.get(signalName);
+        if (waiters != null) {
+            waiters.remove(waiter);
+        }
+    }
+
+    /**
+     * Removes and returns the responder promises of all queued update deliveries that were never consumed. Called
+     * when a durable agent finishes, so accepted-but-unconsumed updates are answered (with the agent's final
+     * response, or its failure) instead of failing with "workflow completed before the update completed".
+     *
+     * @return the responders of unconsumed updates, oldest first
+     */
+    public List<CompletablePromise<Object>> drainPendingResponders() {
+        List<CompletablePromise<Object>> responders = new ArrayList<>();
+        for (Deque<SignalData> queue : pendingSignals.values()) {
+            Iterator<SignalData> iterator = queue.iterator();
+            while (iterator.hasNext()) {
+                SignalData signalData = iterator.next();
+                if (signalData.responder() != null) {
+                    responders.add(signalData.responder());
+                    iterator.remove();
+                }
+            }
+        }
+        return responders;
     }
 
     /**
@@ -137,13 +247,26 @@ public final class SignalAwaitWrapper {
      * @param signalName the signal name
      * @param id         the correlation id (from "id" field in data)
      * @param data       the full signal data
+     * @param responder  non-null when this delivery is a request-response update: the promise the update handler is
+     *                   blocked on, to be completed with the response for this request
      */
-    public record SignalData(String signalName, String id, Object data) {
+    public record SignalData(String signalName, String id, Object data, CompletablePromise<Object> responder) {
         /**
          * Creates a new SignalData.
          */
         public SignalData {
-            java.util.Objects.requireNonNull(signalName, "signalName must not be null");
+            Objects.requireNonNull(signalName, "signalName must not be null");
+        }
+
+        /**
+         * Creates a plain (one-way) signal data without a responder.
+         *
+         * @param signalName the signal name
+         * @param id         the correlation id
+         * @param data       the full signal data
+         */
+        public SignalData(String signalName, String id, Object data) {
+            this(signalName, id, data, null);
         }
 
         /**
@@ -158,7 +281,8 @@ public final class SignalAwaitWrapper {
 
         @Override
         public String toString() {
-            return "SignalData{signalName='" + signalName + "', id='" + id + "', data=" + data + "}";
+            return "SignalData{signalName='" + signalName + "', id='" + id + "', data=" + data
+                    + "', hasResponder=" + (responder != null) + "}";
         }
     }
 }

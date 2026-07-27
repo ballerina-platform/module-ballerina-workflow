@@ -48,7 +48,7 @@ type ReviewActivitySummaryRes record {
     string status;
 };
 
-type RetryTaskPage record {
+type ReviewActivityPage record {
     ReviewActivitySummaryRes[] items;
     string? nextPageToken;
     boolean hasMore;
@@ -90,14 +90,14 @@ function waitForPendingHumanTask(http:Client mgmt, string workflowId, decimal ti
     return error(string `Timed out waiting for pending human task (workflow: ${workflowId})`);
 }
 
-// Polls the Management API until at least one pending retry task appears for
+// Polls the Management API until at least one pending review activity appears for
 // the given workflow, or the timeout elapses.
-function waitForPendingRetryTask(http:Client mgmt, string workflowId, decimal timeoutSecs = 15)
+function waitForPendingReviewActivity(http:Client mgmt, string workflowId, decimal timeoutSecs = 15)
         returns ReviewActivitySummaryRes|error {
     decimal elapsed = 0.0d;
     while elapsed < timeoutSecs {
-        RetryTaskPage page = check mgmt->get(
-                string `/retry-tasks?status=PENDING&parentWorkflowId=${workflowId}`,
+        ReviewActivityPage page = check mgmt->get(
+                string `/review-activities?status=PENDING&parentWorkflowId=${workflowId}`,
                 headers = MGMT_HEADERS);
         if page.items.length() > 0 {
             return page.items[0];
@@ -105,7 +105,7 @@ function waitForPendingRetryTask(http:Client mgmt, string workflowId, decimal ti
         runtime:sleep(0.3d);
         elapsed += 0.3d;
     }
-    return error(string `Timed out waiting for pending retry task (workflow: ${workflowId})`);
+    return error(string `Timed out waiting for pending review activity (workflow: ${workflowId})`);
 }
 
 // Polls the application API until the workflow reaches a terminal status, or the timeout elapses.
@@ -134,7 +134,7 @@ type WorkflowResponse record {
 };
 
 // ── Test 1: Low-value request ─────────────────────────────────────────────────
-// Amount is below $500 → auto-approved. Email address is valid → no retry task.
+// Amount is below $500 → auto-approved. Email address is valid → no review activity.
 // The workflow completes fully without any human interaction.
 @test:Config {}
 function testLowValueAutoApproved() returns error? {
@@ -158,11 +158,11 @@ function testLowValueAutoApproved() returns error? {
             headers = MGMT_HEADERS);
     test:assertEquals(tasks.items.length(), 0, "Low-value request must not create a human task");
 
-    // No retry task should appear
-    RetryTaskPage retries = check mgmt->get(
-            string `/retry-tasks?status=PENDING&parentWorkflowId=${wfId}`,
+    // No review activity should appear
+    ReviewActivityPage retries = check mgmt->get(
+            string `/review-activities?status=PENDING&parentWorkflowId=${wfId}`,
             headers = MGMT_HEADERS);
-    test:assertEquals(retries.items.length(), 0, "Valid email must not create a retry task");
+    test:assertEquals(retries.items.length(), 0, "Valid email must not create a review activity");
 
     // Workflow should complete successfully
     WorkflowResponse response = check waitForWorkflowCompleted(app, wfId);
@@ -172,7 +172,7 @@ function testLowValueAutoApproved() returns error? {
 
 // ── Test 2: High-value request — approved, then email retried via Management API
 // Amount exceeds $500 → human approval required.
-// notifyEmail contains "bad" → email activity fails → manual retry task.
+// notifyEmail contains "bad" → email activity fails → a review activity is created.
 // The test drives both tasks through the Management API to completion.
 @test:Config {}
 function testHighValueApprovedWithEmailRetry() returns error? {
@@ -185,7 +185,7 @@ function testHighValueApprovedWithEmailRetry() returns error? {
         item:           "developer laptop",
         amount:         1499.99,
         requesterEmail: "bob@example.com",
-        notifyEmail:    "bad@example.com"   // triggers email failure → retry task
+        notifyEmail:    "bad@example.com"   // triggers email failure → review activity
     });
     string wfId = started.workflowId;
     test:assertNotEquals(wfId, "", "Workflow ID must not be empty");
@@ -208,17 +208,17 @@ function testHighValueApprovedWithEmailRetry() returns error? {
             }, headers = MGMT_HEADERS);
     test:assertTrue(completeResp.success, "Human task completion must succeed");
 
-    // ── Step 2: Retry task for failed email ───────────────────────────────────
+    // ── Step 2: Review activity for failed email ──────────────────────────────
     // After approval the workflow calls sendProcurementEmail with "bad@example.com",
-    // which fails. A ManualRetry task surfaces in the Management API.
-    ReviewActivitySummaryRes retryTask = check waitForPendingRetryTask(mgmt, wfId);
-    test:assertTrue(retryTask.taskName.includes("sendProcurementEmail"),
-            "Retry task name should include activity function name 'sendProcurementEmail'");
-    test:assertEquals(retryTask.parentWorkflowId, wfId);
+    // which fails. A review activity surfaces in the Management API.
+    ReviewActivitySummaryRes reviewTask = check waitForPendingReviewActivity(mgmt, wfId);
+    test:assertTrue(reviewTask.taskName.includes("sendProcurementEmail"),
+            "Review activity name should include activity function name 'sendProcurementEmail'");
+    test:assertEquals(reviewTask.parentWorkflowId, wfId);
 
-    // Retry with corrected email via Management API
-    record {|boolean success; string decision; string decidedBy; string decidedAt;|} retryResp =
-            check mgmt->post(string `/retry-tasks/${retryTask.taskId}/retry-with-input`, {
+    // Proceed with corrected email via Management API
+    record {|boolean success; string decision; string decidedBy; string decidedAt;|} reviewResp =
+            check mgmt->post(string `/review-activities/${reviewTask.taskId}/proceed-with-input`, {
                 "input": {
                     "requestId": "REQ-HIGH-001",
                     "toEmail":   "procurement@example.com",  // corrected address
@@ -226,8 +226,8 @@ function testHighValueApprovedWithEmailRetry() returns error? {
                     "amount":    1499.99
                 }
             }, headers = MGMT_HEADERS);
-    test:assertTrue(retryResp.success, "Retry decision must succeed");
-    test:assertEquals(retryResp.decision, "retry-with-input");
+    test:assertTrue(reviewResp.success, "Review decision must succeed");
+    test:assertEquals(reviewResp.decision, "proceed-with-input");
 
     // ── Step 3: Workflow completes ────────────────────────────────────────────
     WorkflowResponse response = check waitForWorkflowCompleted(app, wfId);
@@ -264,13 +264,13 @@ function testHighValueRejected() returns error? {
             }, headers = MGMT_HEADERS);
     test:assertTrue(completeResp.success, "Human task rejection completion must succeed");
 
-    // Workflow ends REJECTED — no retry task should appear
+    // Workflow ends REJECTED — no review activity should appear
     runtime:sleep(0.5d);
-    RetryTaskPage retries = check mgmt->get(
-            string `/retry-tasks?status=PENDING&parentWorkflowId=${wfId}`,
+    ReviewActivityPage retries = check mgmt->get(
+            string `/review-activities?status=PENDING&parentWorkflowId=${wfId}`,
             headers = MGMT_HEADERS);
     test:assertEquals(retries.items.length(), 0,
-            "Rejected workflow must not produce a retry task");
+            "Rejected workflow must not produce a review activity");
 
     WorkflowResponse response = check waitForWorkflowCompleted(app, wfId);
     test:assertEquals(response.result.status, "REJECTED");

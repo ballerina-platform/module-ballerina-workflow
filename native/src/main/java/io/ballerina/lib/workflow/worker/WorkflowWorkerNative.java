@@ -1879,10 +1879,10 @@ public final class WorkflowWorkerNative {
          * </ul>
          *
          * <p>The decision map is returned directly to the parent workflow via the child-workflow
-         * result channel; {@code callBuiltinRetryTask} in
+         * result channel; {@code callBuiltinReviewActivity} in
          * {@link io.ballerina.lib.workflow.context.WorkflowContextNative} unpacks it.
          *
-         * @param args Temporal-encoded input; index 0 is the input map set by callBuiltinRetryTask
+         * @param args Temporal-encoded input; index 0 is the input map set by callBuiltinReviewActivity
          * @return the decision map ({@code {action, input?}})
          */
         @SuppressWarnings("unchecked")
@@ -1892,7 +1892,7 @@ public final class WorkflowWorkerNative {
                 args.get(0, Map.class);
             } catch (Exception e) {
                 throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
-                        "Invalid retry task input: " + e.getMessage(), "RETRYTASK_INPUT_ERROR");
+                        "Invalid review activity input: " + e.getMessage(), "REVIEW_ACTIVITY_INPUT_ERROR");
             }
 
             // Block indefinitely until the "taskDecision" signal arrives.

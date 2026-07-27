@@ -19,12 +19,12 @@
 package io.ballerina.lib.workflow.context;
 
 import io.temporal.workflow.Workflow;
+import io.temporal.workflow.WorkflowLocal;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Makes data-event waits visible: a {@code wait dataEvents.<name>} blocks via {@code Workflow.await()},
@@ -37,8 +37,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * builders turn into a {@code DATA} node with status {@code WAITING}), and it keeps the live wait set
  * readable from a cheap {@code DescribeWorkflowExecution} without fetching history.
  * <p>
- * State is keyed by run ID: during replay the same waits re-register in the same deterministic order, so
- * the recomputed memo values match the recorded commands.
+ * The wait set lives in a {@link WorkflowLocal}, so it is scoped to the cached workflow instance: it is
+ * discarded with the instance on sticky-cache eviction and rebuilt from scratch during replay — on the
+ * same worker or any other worker in the cluster — re-issuing the same deterministic upsert commands the
+ * history recorded. JVM-global state would survive eviction and make the replayed code skip commands,
+ * tripping Temporal's non-determinism detection.
  *
  * @since 1.0.0
  */
@@ -49,7 +52,8 @@ public final class WaitingEventsTracker {
      */
     public static final String WAITING_EVENTS_MEMO_KEY = "wfWaitingEvents";
 
-    private static final Map<String, LinkedHashSet<String>> WAITING_BY_RUN = new ConcurrentHashMap<>();
+    private static final WorkflowLocal<LinkedHashSet<String>> WAITING =
+            WorkflowLocal.withCachedInitial(LinkedHashSet::new);
 
     private WaitingEventsTracker() {
     }
@@ -61,8 +65,7 @@ public final class WaitingEventsTracker {
      * @param eventName the data event (signal) name about to be awaited
      */
     public static void beginWait(String eventName) {
-        String runId = Workflow.getInfo().getRunId();
-        LinkedHashSet<String> waiting = WAITING_BY_RUN.computeIfAbsent(runId, k -> new LinkedHashSet<>());
+        LinkedHashSet<String> waiting = WAITING.get();
         if (waiting.add(eventName)) {
             upsert(waiting);
         }
@@ -76,15 +79,11 @@ public final class WaitingEventsTracker {
      * @param eventName the data event (signal) name that is no longer awaited
      */
     public static void endWait(String eventName) {
-        String runId = Workflow.getInfo().getRunId();
-        LinkedHashSet<String> waiting = WAITING_BY_RUN.get(runId);
-        if (waiting == null || !waiting.remove(eventName)) {
+        LinkedHashSet<String> waiting = WAITING.get();
+        if (!waiting.remove(eventName)) {
             return;
         }
         upsert(waiting);
-        if (waiting.isEmpty()) {
-            WAITING_BY_RUN.remove(runId);
-        }
     }
 
     private static void upsert(LinkedHashSet<String> waiting) {

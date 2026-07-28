@@ -703,7 +703,7 @@ public final class WorkflowContextNative {
             // Display name stored in memo (user-facing, e.g. "procurementApproval.approveRequest")
             String qualifiedTaskName = workflowDefinitionName + "." + taskName;
             // Temporal WorkflowType: prefixed so internal tasks are separate from user workflows
-            String humanTaskTypeName = "humantask-" + qualifiedTaskName;
+            String humanTaskTypeName = WorkflowWorkerNative.HUMANTASK_TYPE_PREFIX + qualifiedTaskName;
 
             // --- Ensure the human task workflow type is registered ------------------
             // Lazy registration covers ad-hoc / test usage without compiler-plugin support.

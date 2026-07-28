@@ -355,7 +355,17 @@ public final class DurableAgentNative {
             activities.put(builtin.getKey(), builtin.getValue());
         }
         for (ActivityDecl activity : decl.activities().values()) {
-            activities.put(StringUtils.fromString(activity.toolName()), activity.function());
+            BString toolName = StringUtils.fromString(activity.toolName());
+            // A declared activity must not shadow a built-in agent activity
+            // (llmChat/generate/executeAgentTool) — overwriting the entry would make the
+            // loop's internal calls invoke the user function instead.
+            if (activities.containsKey(toolName)) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Agent '" + agentName.getValue() + "' declares an activity named '"
+                                + activity.toolName() + "', which collides with a built-in agent activity."
+                                + " Rename the function or give the activity a different tool name."));
+            }
+            activities.put(toolName, activity.function());
         }
         return WorkflowWorkerNative.registerAgentWorkflow(env, runner, agentName, activities);
     }

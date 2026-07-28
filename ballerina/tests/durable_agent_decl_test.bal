@@ -68,6 +68,25 @@ function testDurableAgentDeclRegistration() returns error? {
 }
 
 @test:Config {}
+function testDurableAgentBuiltinActivityNameCollision() returns error? {
+    // A declared activity must not shadow a built-in agent activity: the runner
+    // registration rejects the collision instead of silently overwriting the
+    // built-in entry (which would make the loop's llmChat calls invoke the user
+    // function).
+    _ = check wfInternal:registerDurableAgentDecl("builtinCollisionAgent", declTestModel,
+        {role: "Test assistant", instructions: "Assist with tests."}, 8);
+    _ = check wfInternal:registerDurableAgentActivity("builtinCollisionAgent", "llmChat",
+        declTestActivity);
+    boolean|error collision = wfInternal:registerDurableAgentRunner("builtinCollisionAgent");
+    test:assertTrue(collision is error,
+        "A declared activity named after a built-in agent activity should be rejected");
+    if collision is error {
+        test:assertTrue(collision.message().includes("built-in"),
+            "The collision error should name the built-in conflict: " + collision.message());
+    }
+}
+
+@test:Config {}
 function testDurableAgentDriverStubs() {
     // run() requires the plugin-generated name binding, which does not run for the
     // module's own tests — an unbound object reports a descriptive error.

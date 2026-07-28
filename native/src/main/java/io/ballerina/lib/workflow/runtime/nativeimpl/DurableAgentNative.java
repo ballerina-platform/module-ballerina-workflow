@@ -307,8 +307,8 @@ public final class DurableAgentNative {
      * Registers the shared object-model runner as the agent's workflow: the agent gets its own
      * workflow type ({@code workflow-<agentName>}), whose activities are the agent's declared
      * activity functions plus the built-in agent activities (llmChat/generate/executeAgentTool).
-     * This reuses the whole function-based agent substrate — adapter dispatch, model/tool
-     * registries, and management views key on the same workflow type.
+     * Adapter dispatch, model/tool registries, and management views key on the same workflow
+     * type; the type is flagged so the adapter injects the native agent context handle.
      *
      * @param env               the Ballerina runtime environment
      * @param agentName         the agent name
@@ -329,13 +329,13 @@ public final class DurableAgentNative {
         for (ActivityDecl activity : decl.activities().values()) {
             activities.put(StringUtils.fromString(activity.toolName()), activity.function());
         }
-        return WorkflowWorkerNative.registerWorkflow(env, runner, agentName, activities);
+        return WorkflowWorkerNative.registerAgentWorkflow(env, runner, agentName, activities);
     }
 
     /**
      * Returns the run spec of a declared agent as a {@code DurableAgentRunSpec} record: everything
-     * the object-model runner needs to register capabilities on its AgentContext and start the
-     * ReAct loop.
+     * the object-model runner needs to register capabilities on the native agent context and
+     * start the ReAct loop.
      *
      * @param agentName the agent name
      * @return the DurableAgentRunSpec record, or a BError when the agent is unknown

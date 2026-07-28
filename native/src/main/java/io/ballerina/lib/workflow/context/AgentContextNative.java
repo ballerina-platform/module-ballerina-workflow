@@ -52,9 +52,11 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Native implementations backing the {@code workflow:AgentContext} client class and the durable agent loop.
+ * Native implementations backing the durable agent context and the durable agent loop. The context travels
+ * through Ballerina as a raw handle injected into the object-model runner workflow; there is no user-facing
+ * agent context API.
  * <p>
- * The imperative agent body registers capabilities on the context — workflow activities
+ * The runner registers the agent's declared capabilities on the context — workflow activities
  * ({@link #recordActivityTool}), AI tools ({@link #recordAiTool}), and human tasks
  * ({@link #recordHumanTaskTool}). The loop advertises them (plus one wait-tool per declared signature event) to the
  * model via {@link #getToolDefs} and dispatches invocations durably: activities and AI tools as Temporal activities

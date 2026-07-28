@@ -289,8 +289,8 @@ public isolated class DurableAgent {
 // Object-model runner spec (internal)
 // ---------------------------------------------------------------------------
 // Built natively from the agent declaration registry; consumed by the shared
-// runner workflow (runDurableAgentObject) to register capabilities on its
-// AgentContext and start the ReAct loop.
+// runner workflow (runDurableAgentObject) to register capabilities on the
+// native agent context and start the ReAct loop.
 
 type DurableAgentActivitySpec record {|
     string toolName;

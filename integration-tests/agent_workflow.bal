@@ -15,8 +15,9 @@
 // under the License.
 
 // ============================================================================
-// Durable AI agent workflows (imperative AgentContext API) — exercised through
-// the REAL compiler-plugin codegen path against the shared Temporal dev server.
+// Durable AI agent workflows (object-model workflow:DurableAgent declarations) —
+// exercised through the REAL compiler-plugin codegen path against the shared
+// Temporal dev server.
 // The model is a scripted mock ai:ModelProvider so no credentials are needed.
 // ============================================================================
 

@@ -235,6 +235,16 @@ function startManagementService() returns error? {
     if !enableManagementApi {
         return;
     }
+    check startManagementListener();
+}
+
+# Creates, attaches, starts, and registers the management listener — the lifecycle that
+# `startManagementService` gates behind `enableManagementApi`. Factored out so the
+# module's tests can exercise the lifecycle directly while the test configuration keeps
+# the API disabled (no port reserved at module init).
+#
+# + return - An error if creating, attaching, or starting the listener fails
+function startManagementListener() returns error? {
     http:Listener httpListener = check new (port, buildMgmtListenerConfig());
     mgmtListener = httpListener;
     check httpListener.attach(mgmtService, "/workflow");
@@ -257,6 +267,9 @@ function stopManagementService() returns error? {
     if httpListener is () {
         return;
     }
+    // Clear the reference first so a second invocation (e.g. the graceful-stop handler
+    // firing after a test already stopped the listener) is a clean no-op.
+    mgmtListener = ();
     runtime:deregisterListener(httpListener);
     check httpListener.gracefulStop();
 }

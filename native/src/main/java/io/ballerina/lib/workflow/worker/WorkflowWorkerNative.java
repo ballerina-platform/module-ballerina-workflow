@@ -132,7 +132,7 @@ public final class WorkflowWorkerNative {
     public static final String AGENT_UPDATE_NAME = "agentUpdate";
     /**
      * Internal signal carrying an event turn from a WORKFLOW caller to a durable agent
-     * (DurableAgent.sendEvent inside a workflow). Envelope: {token, eventName, data, replyTo}.
+     * (DurableAgent.sendData inside a workflow). Envelope: {token, eventName, data, replyTo}.
      * The agent answers by signalling {@link #AGENT_EVENT_REPLY_SIGNAL_NAME} back to {@code replyTo}
      * — the reply-signal correlation of the object-model A2A design (updates cannot be issued
      * from inside a workflow; signals in both directions are deterministic and replay-safe).
@@ -1490,8 +1490,8 @@ public final class WorkflowWorkerNative {
 
                         // Framework-owned A2A signals (object-model durable agents).
                         // A reply for an event turn this workflow sent to an agent: record it in the
-                        // per-execution correlation store keyed by token; DurableAgent.getEventResult /
-                        // waitForEventResult read it from there.
+                        // per-execution correlation store keyed by token; DurableAgent.getDataResult /
+                        // waitForDataResult read it from there.
                         if (AGENT_EVENT_REPLY_SIGNAL_NAME.equals(signalName)) {
                             try {
                                 Object envelope = encodedArgs.get(0, Object.class);

@@ -154,9 +154,9 @@ public type DurableAgentConfig record {|
     int maxIter = 16;
 |};
 
-# Returned by the non-blocking `getResult`/`getEventResult` reads when the agent
+# Returned by the non-blocking `getResult`/`getDataResult` reads when the agent
 # instance (or the specific turn) is still in progress — e.g. suspended on a human
-# task. Check back later, or use the blocking `waitForResult`/`waitForEventResult`
+# task. Check back later, or use the blocking `waitForResult`/`waitForDataResult`
 # forms, which durably wait and are resumable across crashes.
 public type AgentBusyError distinct error;
 
@@ -221,12 +221,12 @@ public isolated class DurableAgent {
     # + instanceId - The agent instance ID returned by `run`
     # + eventName - A channel declared in the agent's `events`
     # + data - The payload; must match the channel's declared `request` type
-    # + return - A correlation token for `getEventResult`/`waitForEventResult`,
+    # + return - A correlation token for `getDataResult`/`waitForDataResult`,
     #            or an error
-    public isolated function sendEvent(string instanceId, string eventName, anydata data)
+    public isolated function sendData(string instanceId, string eventName, anydata data)
             returns string|error = @java:Method {
         'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
-        name: "sendEvent"
+        name: "sendData"
     } external;
 
     # Returns the final result of an instance if it has finished, without waiting.
@@ -243,18 +243,18 @@ public isolated class DurableAgent {
         name: "getResult"
     } external;
 
-    # Returns the response for a specific `sendEvent` turn if it is ready, without
+    # Returns the response for a specific `sendData` turn if it is ready, without
     # waiting. While the turn is unanswered a `workflow:AgentBusyError` is returned.
     #
     # + instanceId - The agent instance ID returned by `run`
-    # + token - The correlation token returned by `sendEvent`
+    # + token - The correlation token returned by `sendData`
     # + T - Expected response type (inferred from context)
     # + return - The turn's response as `T`, a `workflow:AgentBusyError` while
     #            unanswered, or an error
-    public isolated function getEventResult(string instanceId, string token,
+    public isolated function getDataResult(string instanceId, string token,
             typedesc<anydata> T = <>) returns T|error = @java:Method {
         'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
-        name: "getEventResult"
+        name: "getDataResult"
     } external;
 
     # Waits until the instance finishes and returns its result. Inside a workflow
@@ -271,17 +271,17 @@ public isolated class DurableAgent {
         name: "waitForResult"
     } external;
 
-    # Waits for a specific `sendEvent` turn's response (same durability guarantees
+    # Waits for a specific `sendData` turn's response (same durability guarantees
     # as `waitForResult`).
     #
     # + instanceId - The agent instance ID returned by `run`
-    # + token - The correlation token returned by `sendEvent`
+    # + token - The correlation token returned by `sendData`
     # + T - Expected response type (inferred from context)
     # + return - The turn's response as `T`, or an error
-    public isolated function waitForEventResult(string instanceId, string token,
+    public isolated function waitForDataResult(string instanceId, string token,
             typedesc<anydata> T = <>) returns T|error = @java:Method {
         'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
-        name: "waitForEventResult"
+        name: "waitForDataResult"
     } external;
 }
 

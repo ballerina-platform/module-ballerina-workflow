@@ -85,13 +85,13 @@ service /orders on new http:Listener(8085, timeout = 0) {
     # Sends a chat message to the agent and returns its reply for that turn
     # (a token-correlated event turn over a Temporal Update). Blocks while the
     # agent waits on the manager's approval; the token is crash-recoverable via
-    # workflow:getPendingAgentUpdates.
+    # workflow:getPendingAgentEvents.
     # + agentId - The agent ID
     # + message - The user's chat message
     # + return - The agent's reply
     resource function post [string agentId]/chat(@http:Payload string message) returns string|error {
-        string token = check orderAgent.sendEvent(agentId, "chat", message);
-        return orderAgent.waitForEventResult(agentId, token);
+        string token = check orderAgent.sendData(agentId, "chat", message);
+        return orderAgent.waitForDataResult(agentId, token);
     }
 
     # Lists the agent's pending human tasks (the manager's inbox).

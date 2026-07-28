@@ -42,7 +42,7 @@ public class WorkflowCodeAnalyzer extends CodeAnalyzer {
         analysisContext.addSyntaxNodeAnalysisTask(new WorkflowValidatorTask(), SyntaxKind.FUNCTION_DEFINITION);
         
         // Add syntax node analysis task for function calls to validate sendData usage
-        analysisContext.addSyntaxNodeAnalysisTask(new SendEventValidatorTask(), SyntaxKind.FUNCTION_CALL);
+        analysisContext.addSyntaxNodeAnalysisTask(new SendDataValidatorTask(), SyntaxKind.FUNCTION_CALL);
 
         // Add syntax node analysis task for function calls to validate workflow:run usage
         // and to reject direct calls to @Workflow functions

@@ -12,14 +12,14 @@ worker crashes and, on replay, re-loads its previous reasoning from the workflow
 instead of re-querying the model.
 
 The client starts a run with `orderAgent.run(...)` and drives the conversation with
-**`sendEvent` / `waitForEventResult`** — each `sendEvent` delivers the user's message and
-returns a correlation token, and `waitForEventResult` returns the agent's answer for that
+**`sendData` / `waitForDataResult`** — each `sendData` delivers the user's message and
+returns a correlation token, and `waitForDataResult` returns the agent's answer for that
 turn (a Temporal Update under the hood). Between turns the agent suspends durably —
 it can wait hours or days for the next message without holding a thread.
 
 ```ballerina
-string turn = check orderAgent.sendEvent(agentId, "chat", "Is the laptop available?");
-string reply = check orderAgent.waitForEventResult(agentId, turn);
+string turn = check orderAgent.sendData(agentId, "chat", "Is the laptop available?");
+string reply = check orderAgent.waitForDataResult(agentId, turn);
 ```
 
 ## Prerequisites — configure the model provider

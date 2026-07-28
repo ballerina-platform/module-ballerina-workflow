@@ -63,7 +63,8 @@ import java.util.Set;
  * {@code final workflow:DurableAgent x = new ({...})}.
  * <p>
  * Enforces placement (module-level and {@code final} — {@code WORKFLOW_149}), a statically readable
- * declaration shape (named variable + inline {@code new ({...})} — {@code WORKFLOW_151}), and
+ * declaration shape — a named variable initialized inline with either constructor form,
+ * {@code new ({...})} or {@code new workflow:DurableAgent({...})} ({@code WORKFLOW_151}) — and
  * capability name uniqueness across events/tools/activities/human tasks/peers
  * ({@code WORKFLOW_150}), and extracts
  * the constructor config into a {@link DurableAgentDeclInfo} so {@link WorkflowSourceModifier}
@@ -380,10 +381,8 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                         name = stringLiteralValue(fieldValue);
                         nameLocation = fieldValue.location();
                     }
-                    // The result typedesc travels separately (it is not json); the timeout stays
-                    // out of the metadata until task timeouts land on the runner.
+                    // The result typedesc travels separately (it is not json).
                     case "resultType" -> resultTypeSource = fieldValue.toSourceCode().strip();
-                    case "timeout" -> { }
                     default -> appendMetaField(meta, key, fieldValue.toSourceCode().strip());
                 }
             }

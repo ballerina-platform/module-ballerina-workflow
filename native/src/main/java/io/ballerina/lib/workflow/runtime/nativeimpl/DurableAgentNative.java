@@ -591,17 +591,17 @@ public final class DurableAgentNative {
     }
 
     /**
-     * Non-blocking event-turn read ({@code DurableAgent.getEventResult}): the turn's response if
+     * Non-blocking event-turn read ({@code DurableAgent.getDataResult}): the turn's response if
      * it is ready, or a {@code workflow:AgentBusyError} while unanswered.
      *
      * @param env        the Ballerina runtime environment
      * @param self       the DurableAgent object
      * @param instanceId the agent instance ID
-     * @param token      the sendEvent correlation token
+     * @param token      the sendData correlation token
      * @param typedesc   the expected response type descriptor
      * @return the typed response, an AgentBusyError, or a BError
      */
-    public static Object getEventResult(Environment env, BObject self, BString instanceId, BString token,
+    public static Object getDataResult(Environment env, BObject self, BString instanceId, BString token,
                                         BTypedesc typedesc) {
         if (isInsideWorkflow()) {
             return readEventReplyInWorkflow(instanceId.getValue(), token.getValue(), typedesc, false);
@@ -610,18 +610,18 @@ public final class DurableAgentNative {
     }
 
     /**
-     * Blocking event-turn read ({@code DurableAgent.waitForEventResult}): waits until the turn is
+     * Blocking event-turn read ({@code DurableAgent.waitForDataResult}): waits until the turn is
      * answered. Inside a workflow this durably suspends on the reply signal; from a service it
      * blocks on the update result, which lives in history and is re-fetchable after a crash.
      *
      * @param env        the Ballerina runtime environment
      * @param self       the DurableAgent object
      * @param instanceId the agent instance ID
-     * @param token      the sendEvent correlation token
+     * @param token      the sendData correlation token
      * @param typedesc   the expected response type descriptor
      * @return the typed response, or a BError
      */
-    public static Object waitForEventResult(Environment env, BObject self, BString instanceId, BString token,
+    public static Object waitForDataResult(Environment env, BObject self, BString instanceId, BString token,
                                             BTypedesc typedesc) {
         if (isInsideWorkflow()) {
             return readEventReplyInWorkflow(instanceId.getValue(), token.getValue(), typedesc, true);
@@ -681,7 +681,7 @@ public final class DurableAgentNative {
     }
 
     // -----------------------------------------------------------------------------------------
-    // Event turns (sendEvent / getEventResult / waitForEventResult)
+    // Event turns (sendData / getDataResult / waitForDataResult)
     // -----------------------------------------------------------------------------------------
 
     /**
@@ -705,7 +705,7 @@ public final class DurableAgentNative {
     }
 
     /**
-     * Sends an event turn to a running agent instance ({@code DurableAgent.sendEvent}) and
+     * Sends an event turn to a running agent instance ({@code DurableAgent.sendData}) and
      * returns a correlation token. From a service the turn rides a Temporal Update (the token is
      * the update ID — durable, crash-recoverable via the pending-updates query). From inside a
      * workflow updates are unavailable, so the turn is delivered as a deterministic external
@@ -719,7 +719,7 @@ public final class DurableAgentNative {
      * @param data       the payload
      * @return the correlation token as a Ballerina string, or a BError
      */
-    public static Object sendEvent(Environment env, BObject self, BString instanceId, BString eventName,
+    public static Object sendData(Environment env, BObject self, BString instanceId, BString eventName,
                                    Object data) {
         Object javaData = data == null ? null : TypesUtil.convertBallerinaToJavaType(data);
         String instance = instanceId.getValue();

@@ -54,7 +54,7 @@ function testDurableAgentDeclRegistration() returns error? {
     _ = check wfInternal:registerDurableAgentEvent("declTestAgent", "chat", string, string,
         "MULTI_EVENT");
     _ = check wfInternal:registerDurableAgentHumanTask("declTestAgent", "signoff",
-        {roles: "manager"});
+        {roles: "manager", timeout: {minutes: 5}});
 
     // Registering the same agent name twice is an error.
     boolean|error duplicate = wfInternal:registerDurableAgentDecl("declTestAgent", declTestModel,
@@ -99,27 +99,27 @@ function testDurableAgentDriverStubs() {
     // The event-turn methods are live but need a running instance: without one (or
     // without a workflow client in this unit-test context) each reports the failing
     // instance/turn in its error.
-    string|error sendResult = declTestAgent.sendEvent("wf-1", "chat", "hi");
-    test:assertTrue(sendResult is error, "sendEvent to a missing instance should fail");
+    string|error sendResult = declTestAgent.sendData("wf-1", "chat", "hi");
+    test:assertTrue(sendResult is error, "sendData to a missing instance should fail");
     if sendResult is error {
         test:assertTrue(sendResult.message().includes("agent instance 'wf-1'")
                 || sendResult.message().includes("Workflow client not initialized"),
-            "sendEvent error should name the missing instance: " + sendResult.message());
+            "sendData error should name the missing instance: " + sendResult.message());
     }
 
-    string|error eventResult = declTestAgent.getEventResult("wf-1", "token-1");
-    test:assertTrue(eventResult is error, "getEventResult for a missing instance should fail");
+    string|error eventResult = declTestAgent.getDataResult("wf-1", "token-1");
+    test:assertTrue(eventResult is error, "getDataResult for a missing instance should fail");
     if eventResult is error {
         test:assertTrue(eventResult.message().includes("agent instance 'wf-1'")
                 || eventResult.message().includes("Workflow client not initialized"),
-            "getEventResult error should name the missing instance: " + eventResult.message());
+            "getDataResult error should name the missing instance: " + eventResult.message());
     }
 
-    string|error waitEventResult = declTestAgent.waitForEventResult("wf-1", "token-1");
-    test:assertTrue(waitEventResult is error, "waitForEventResult for a missing instance should fail");
+    string|error waitEventResult = declTestAgent.waitForDataResult("wf-1", "token-1");
+    test:assertTrue(waitEventResult is error, "waitForDataResult for a missing instance should fail");
     if waitEventResult is error {
         test:assertTrue(waitEventResult.message().includes("agent instance 'wf-1'")
                 || waitEventResult.message().includes("Workflow client not initialized"),
-            "waitForEventResult error should name the missing instance: " + waitEventResult.message());
+            "waitForDataResult error should name the missing instance: " + waitEventResult.message());
     }
 }

@@ -968,6 +968,13 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "invalid")
+    public void testInvalidDurableAgentWildcardBinding() {
+        // A wildcard binding has no stable variable name to register the agent under.
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_wildcard_binding");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_151);
+    }
+
+    @Test(groups = "invalid")
     public void testInvalidDurableAgentAliasNotFinal() {
         // Detection is semantic: a DurableAgent declared through a type alias is still
         // subject to the placement rules and cannot silently escape them.

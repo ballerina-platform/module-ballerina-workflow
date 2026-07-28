@@ -774,18 +774,32 @@ public final class AgentContextNative {
                 ? info.signalWrapper.takeSignalFuture(eventName)
                 : info.signalWrapper.getSignalFuture(eventName);
 
-        if (info.eventTimeoutMillis != null) {
-            boolean arrived = Workflow.await(Duration.ofMillis(info.eventTimeoutMillis),
-                    future::isCompleted);
-            if (!arrived) {
-                // Remove the abandoned FIFO waiter so a later signal is not consumed silently.
-                if (info.multiEvent) {
-                    info.signalWrapper.cancelWaiter(eventName, future);
+        // Publish the wait to the execution memo/history (as for workflow data-event waits in
+        // TemporalFutureValue) so diagrams can render where the agent is halted; cleared as soon
+        // as the wait unblocks. A buffered event that completes the wait instantly is skipped —
+        // the agent never actually blocked.
+        boolean tracked = !future.isCompleted();
+        if (tracked) {
+            WaitingEventsTracker.beginWait(eventName);
+        }
+        try {
+            if (info.eventTimeoutMillis != null) {
+                boolean arrived = Workflow.await(Duration.ofMillis(info.eventTimeoutMillis),
+                        future::isCompleted);
+                if (!arrived) {
+                    // Remove the abandoned FIFO waiter so a later signal is not consumed silently.
+                    if (info.multiEvent) {
+                        info.signalWrapper.cancelWaiter(eventName, future);
+                    }
+                    return TimedOut.INSTANCE;
                 }
-                return TimedOut.INSTANCE;
+            } else {
+                Workflow.await(future::isCompleted);
             }
-        } else {
-            Workflow.await(future::isCompleted);
+        } finally {
+            if (tracked) {
+                WaitingEventsTracker.endWait(eventName);
+            }
         }
 
         SignalAwaitWrapper.SignalData signalData = future.get();

@@ -207,9 +207,10 @@ public enum WorkflowDiagnostic {
             DiagnosticSeverity.ERROR),
     WORKFLOW_151("WORKFLOW_151",
             "A 'workflow:DurableAgent' must be assigned to a named variable and initialized inline "
-                    + "with 'new ({...})': the compiler reads the declaration to generate its Temporal "
-                    + "registration at module init, so factory calls, variable references, conditional "
-                    + "expressions, and named constructor arguments cannot be registered",
+                    + "with 'new ({...})' or 'new workflow:DurableAgent({...})': the compiler reads the "
+                    + "declaration to generate its Temporal registration at module init, so factory "
+                    + "calls, variable references, conditional expressions, and named constructor "
+                    + "arguments cannot be registered",
             DiagnosticSeverity.ERROR);
 
     private final String code;

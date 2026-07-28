@@ -2017,6 +2017,40 @@ public final class ManagementNative {
                         }
                     }
 
+                    case EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED -> {
+                        // A durable agent's data events can also arrive as Temporal updates
+                        // (DurableAgent.sendData -> the agentUpdate dynamic update handler).
+                        // Mirror the SIGNALED handling: a published wait for the event channel
+                        // completes in place; an unawaited (buffered) event gets its own node.
+                        var attrs = event.getWorkflowExecutionUpdateAcceptedEventAttributes();
+                        var input = attrs.getAcceptedRequest().getInput();
+                        if (!WorkflowWorkerNative.AGENT_UPDATE_NAME.equals(input.getName())
+                                || input.getArgs().getPayloadsCount() == 0) {
+                            break;
+                        }
+                        String updEventName;
+                        try {
+                            updEventName = dc.fromPayload(input.getArgs().getPayloads(0),
+                                    String.class, String.class);
+                        } catch (Exception e) {
+                            break;
+                        }
+                        if (updEventName == null) {
+                            break;
+                        }
+                        var pending = pendingDataNodes.remove(updEventName);
+                        if (pending != null) {
+                            pending.put("status", "COMPLETED");
+                            pending.put("endTime", ts);
+                        } else {
+                            var node = newNode(eid, updEventName, "DATA", ts);
+                            node.put("status", "COMPLETED");
+                            node.put("endTime", ts);
+                            nodeByEventId.put(eid, node);
+                            nodeOrder.add(eid);
+                        }
+                    }
+
                     case EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED -> {
                         // The workflow publishes the data events it is blocked on via the
                         // wfWaitingEvents memo (see WaitingEventsTracker). New names become DATA

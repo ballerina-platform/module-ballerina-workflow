@@ -575,7 +575,7 @@ isolated function recordToolConfig(handle agentCtx, ai:ToolConfig config) return
             parameters is () ? () : parameters.toJsonString(), false);
 }
 
-# Declares a named two-way event channel for the agent. `DurableAgent.sendEvent`
+# Declares a named two-way data-event channel for the agent. `DurableAgent.sendData`
 # sends a request on the channel and blocks until the agent answers the turn
 # that consumed it. Inside the ReAct loop the channel also appears as a durable
 # wait: a channel named `chat` drives the conversation itself.
@@ -584,9 +584,9 @@ isolated function recordToolConfig(handle agentCtx, ai:ToolConfig config) return
 # + name - The event channel name (e.g. `"chat"`)
 # + requestType - The request payload type; validated when a request arrives
 # + responseType - The expected response type; when provided, the turn answer
-#                  is validated against it before completing the update
+#                  is validated against it before completing the event turn
 # + return - An error if the channel cannot be registered, otherwise nil
-isolated function registerUpdateEvents(handle agentCtx, string name, typedesc<anydata> requestType,
+isolated function registerAgentEvent(handle agentCtx, string name, typedesc<anydata> requestType,
         typedesc<anydata>? responseType = ()) returns error? {
     return registerAgentUpdateEvent(agentCtx, name, requestType, responseType);
 }
@@ -795,7 +795,7 @@ isolated function runDurableAgentObject(handle agentCtx, map<anydata> runInput)
     }
     boolean multiEvent = false;
     foreach DurableAgentEventSpec eventSpec in spec.events {
-        check registerUpdateEvents(agentCtx, eventSpec.name, eventSpec.request, eventSpec.response);
+        check registerAgentEvent(agentCtx, eventSpec.name, eventSpec.request, eventSpec.response);
         if eventSpec.cardinality == "MULTI_EVENT" {
             multiEvent = true;
         }
@@ -916,6 +916,7 @@ isolated function registerDeclaredHumanTask(handle agentCtx, DurableAgentHumanTa
     string|string[] roles = "manager";
     string? title = ();
     string? description = ();
+    time:Duration? timeout = ();
     json meta = taskSpec.meta;
     if meta is map<json> {
         json rolesJson = meta["roles"];
@@ -932,8 +933,12 @@ isolated function registerDeclaredHumanTask(handle agentCtx, DurableAgentHumanTa
         if descriptionJson is string {
             description = descriptionJson;
         }
+        json timeoutJson = meta["timeout"];
+        if timeoutJson is map<json> {
+            timeout = check timeoutJson.cloneWithType();
+        }
     }
-    check registerHumanTask(agentCtx, taskSpec.name, roles, taskSpec.resultType, title, description, ());
+    check registerHumanTask(agentCtx, taskSpec.name, roles, taskSpec.resultType, title, description, timeout);
 }
 
 # Dispatches one model-requested peer delegation. The peer runs as a true Temporal

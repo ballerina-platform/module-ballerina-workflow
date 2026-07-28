@@ -77,7 +77,7 @@ isolated client class MockModelProvider {
 
 final MockModelProvider mockAgentModel = new;
 
-// Turn driver for the object-model event API: sendEvent/waitForEventResult key on the
+// Turn driver for the object-model event API: sendData/waitForDataResult key on the
 // instance id, so one driver object exercises turns against any agent instance. Replaces
 // the removed workflow:updateAgent in these loop tests.
 final DurableAgent agentTurnDriver = check new ({
@@ -87,8 +87,8 @@ final DurableAgent agentTurnDriver = check new ({
 
 isolated function updateAgentTurn(string agentId, string eventName, anydata data)
         returns string|error {
-    string token = check agentTurnDriver.sendEvent(agentId, eventName, data);
-    return agentTurnDriver.waitForEventResult(agentId, token);
+    string token = check agentTurnDriver.sendData(agentId, eventName, data);
+    return agentTurnDriver.waitForDataResult(agentId, token);
 }
 
 isolated client class LoopingMockModelProvider {
@@ -167,7 +167,7 @@ function stockAgent(handle ctx, AgentOrderInput input) returns error? {
 
 function chatStockAgent(handle ctx, AgentOrderInput input) returns error? {
     check registerActivity(ctx, checkStock);
-    check registerUpdateEvents(ctx, "chat", string);
+    check registerAgentEvent(ctx, "chat", string);
     // No initial prompt: the agent waits for one chat event.
     check buildAndRun(ctx, systemPrompt = {role: "", instructions: "You are an inventory assistant."},
             model = mockAgentModel);
@@ -303,7 +303,7 @@ final EventToolMockModelProvider eventToolAgentModel = new;
 
 function eventWaitingAgent(handle ctx, AgentOrderInput input) returns error? {
     check registerActivity(ctx, checkStock);
-    check registerUpdateEvents(ctx, "approval", string);
+    check registerAgentEvent(ctx, "approval", string);
     check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "You wait for events."},
             model = eventToolAgentModel);
@@ -362,7 +362,7 @@ isolated client class ConversationMockModelProvider {
 final ConversationMockModelProvider conversationAgentModel = new;
 
 function conversationAgent(handle ctx, AgentOrderInput input) returns error? {
-    check registerUpdateEvents(ctx, "chat", string);
+    check registerAgentEvent(ctx, "chat", string);
     check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "Chat with the user until they say bye."},
             model = conversationAgentModel, interaction = MULTI_EVENT, eventTimeout = {seconds: 60});
@@ -370,7 +370,7 @@ function conversationAgent(handle ctx, AgentOrderInput input) returns error? {
 
 // MULTI_EVENT without the mandatory eventTimeout — must fail at registration.
 function unsafeConversationAgent(handle ctx, AgentOrderInput input) returns error? {
-    check registerUpdateEvents(ctx, "chat", string);
+    check registerAgentEvent(ctx, "chat", string);
     check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "unsafe"},
             model = conversationAgentModel, interaction = MULTI_EVENT);
@@ -378,7 +378,7 @@ function unsafeConversationAgent(handle ctx, AgentOrderInput input) returns erro
 
 // Model that always waits — exercises the maxEventWaits safety cap.
 function cappedConversationAgent(handle ctx, AgentOrderInput input) returns error? {
-    check registerUpdateEvents(ctx, "chat", string);
+    check registerAgentEvent(ctx, "chat", string);
     check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "Chat forever."},
             model = conversationAgentModel, interaction = MULTI_EVENT, eventTimeout = {seconds: 60}, maxEventWaits = 2);
@@ -414,7 +414,7 @@ isolated client class TimeoutMockModelProvider {
 final TimeoutMockModelProvider timeoutAgentModel = new;
 
 function timeoutAgent(handle ctx, AgentOrderInput input) returns error? {
-    check registerUpdateEvents(ctx, "approval", string);
+    check registerAgentEvent(ctx, "approval", string);
     check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "Wait for approval."},
             model = timeoutAgentModel, interaction = SINGLE_EVENT, eventTimeout = {seconds: 2});
@@ -553,14 +553,14 @@ isolated client class AutoChatMockModelProvider {
 final AutoChatMockModelProvider autoChatModel = new;
 
 function autoConversationAgent(handle ctx, AgentOrderInput input) returns error? {
-    check registerUpdateEvents(ctx, "chat", string);
+    check registerAgentEvent(ctx, "chat", string);
     check buildAndRun(ctx, systemPrompt = {role: "", instructions: "Answer briefly."}, model = autoChatModel, interaction = MULTI_EVENT, eventTimeout = {seconds: 60});
 }
 
 // Same behaviour with a short timeout: with no follow-up message the
 // conversation must end gracefully on its own.
 function shortTimeoutConversationAgent(handle ctx, AgentOrderInput input) returns error? {
-    check registerUpdateEvents(ctx, "chat", string);
+    check registerAgentEvent(ctx, "chat", string);
     check buildAndRun(ctx, systemPrompt = {role: "", instructions: "Answer briefly."}, model = autoChatModel, interaction = MULTI_EVENT, eventTimeout = {seconds: 2});
 }
 
@@ -589,7 +589,7 @@ isolated client class EndAfterFirstChatMockModelProvider {
 final EndAfterFirstChatMockModelProvider endAfterFirstChatModel = new;
 
 function endingAgent(handle ctx, AgentOrderInput input) returns error? {
-    check registerUpdateEvents(ctx, "chat", string);
+    check registerAgentEvent(ctx, "chat", string);
     check buildAndRun(ctx, systemPrompt = {role: "", instructions: "End after the first reply."},
             model = endAfterFirstChatModel, interaction = MULTI_EVENT, eventTimeout = {seconds: 60});
 }

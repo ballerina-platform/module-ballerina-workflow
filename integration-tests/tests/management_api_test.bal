@@ -205,6 +205,61 @@ function testExecutionGraphReportsReceivedDataEventsAsData() returns error? {
     }
 }
 
+@test:Config {
+    groups: ["integration"]
+}
+function testActivityTreeShowsWaitingDataEvent() returns error? {
+    // A workflow blocked on `wait dataEvents.response` publishes the wait, so the tree
+    // shows WHERE the workflow is halted — a WAITING DATA node — before any data is sent,
+    // and the same node completes in place when the data arrives.
+    string testId = uniqueId("tree-waiting-data");
+    SimpleSignalInput input = {id: testId, message: "waiting node"};
+    string workflowId = check workflow:run(simpleSignalWorkflow, input);
+
+    management:ActivityTreeNode? waitingNode = ();
+    decimal elapsed = 0.0d;
+    while elapsed < 10.0d {
+        management:ActivityTreeNode[] nodes = check management:getActivityTree(workflowId, "");
+        foreach management:ActivityTreeNode node in nodes {
+            if node.name == "response" {
+                waitingNode = node;
+            }
+        }
+        if waitingNode is management:ActivityTreeNode {
+            break;
+        }
+        runtime:sleep(0.3d);
+        elapsed += 0.3d;
+    }
+    test:assertTrue(waitingNode is management:ActivityTreeNode,
+        "The awaited data event should appear as a tree node while the workflow is halted");
+    if waitingNode is management:ActivityTreeNode {
+        test:assertEquals(waitingNode.'type, management:DATA);
+        test:assertEquals(waitingNode.status, "WAITING",
+            "An unanswered data-event wait must report WAITING");
+    }
+
+    check workflow:sendData(simpleSignalWorkflow, workflowId, "response",
+        <SimpleSignalData>{id: testId, response: "ack"});
+    _ = check workflow:getWorkflowResult(workflowId, 30);
+
+    management:ActivityTreeNode? dataNode = ();
+    int dataNodeCount = 0;
+    management:ActivityTreeNode[] nodes = check management:getActivityTree(workflowId, "");
+    foreach management:ActivityTreeNode node in nodes {
+        if node.name == "response" {
+            dataNode = node;
+            dataNodeCount += 1;
+        }
+    }
+    test:assertEquals(dataNodeCount, 1, "The wait and its data must merge into a single node");
+    if dataNode is management:ActivityTreeNode {
+        test:assertEquals(dataNode.status, "COMPLETED",
+            "The waiting node completes in place when the data arrives");
+        test:assertTrue(dataNode.endTime is string, "The completed wait should carry an end time");
+    }
+}
+
 // ================================================================================
 // listWorkflowInstances — filter variants
 // ================================================================================

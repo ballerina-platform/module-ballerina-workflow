@@ -236,7 +236,14 @@ public class TemporalFutureValue extends FutureValue {
             return;
         }
         LOGGER.debug("[TemporalFutureValue] Waiting for any sibling signal (this='{}')", signalName);
-        Workflow.await(this::anySiblingDone);
+        // Publish the wait to the execution memo/history so diagrams can render where the
+        // workflow is halted; cleared as soon as the wait unblocks.
+        WaitingEventsTracker.beginWait(signalName);
+        try {
+            Workflow.await(this::anySiblingDone);
+        } finally {
+            WaitingEventsTracker.endWait(signalName);
+        }
         LOGGER.debug("[TemporalFutureValue] A sibling signal is ready (this='{}')", signalName);
     }
 
@@ -247,7 +254,12 @@ public class TemporalFutureValue extends FutureValue {
     private void ensureThisReady() {
         if (!this.completableFuture.isDone()) {
             LOGGER.debug("[TemporalFutureValue] Waiting for signal '{}' using Temporal await", signalName);
-            Workflow.await(this.completableFuture::isDone);
+            WaitingEventsTracker.beginWait(signalName);
+            try {
+                Workflow.await(this.completableFuture::isDone);
+            } finally {
+                WaitingEventsTracker.endWait(signalName);
+            }
             LOGGER.debug("[TemporalFutureValue] Signal '{}' is ready", signalName);
         }
     }
@@ -295,7 +307,12 @@ public class TemporalFutureValue extends FutureValue {
         @Override
         public Object get() throws InterruptedException, ExecutionException {
             if (!isDone()) {
-                Workflow.await(this::isDone);
+                WaitingEventsTracker.beginWait(signalName);
+                try {
+                    Workflow.await(this::isDone);
+                } finally {
+                    WaitingEventsTracker.endWait(signalName);
+                }
             }
             return super.get();
         }

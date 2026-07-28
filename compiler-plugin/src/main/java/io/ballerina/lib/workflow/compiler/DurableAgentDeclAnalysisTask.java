@@ -326,7 +326,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             String name = null;
             String requestSource = null;
             String responseSource = null;
-            String cardinality = "SINGLE_EVENT";
+            String cardinality = "MULTI_EVENT";
             Location nameLocation = eventMapping.location();
             for (MappingFieldNode eventField : eventMapping.fields()) {
                 if (!(eventField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {

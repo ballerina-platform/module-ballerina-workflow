@@ -207,10 +207,18 @@ public enum WorkflowDiagnostic {
             DiagnosticSeverity.ERROR),
     WORKFLOW_151("WORKFLOW_151",
             "A 'workflow:DurableAgent' must be assigned to a named variable and initialized inline "
-                    + "with 'new ({...})' or 'new workflow:DurableAgent({...})': the compiler reads the "
-                    + "declaration to generate its Temporal registration at module init, so factory "
-                    + "calls, variable references, conditional expressions, and named constructor "
-                    + "arguments cannot be registered",
+                    + "with 'new ({...})' or 'new workflow:DurableAgent({...})': the agent and its "
+                    + "capabilities (activities, tools, events, and human tasks) are registered from "
+                    + "this declaration at startup, and every worker replica must derive the same "
+                    + "registration deterministically",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_152("WORKFLOW_152",
+            "Durable agent '%s' declares no data-event channel named '%s'",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_153("WORKFLOW_153",
+            "Data-event channel '%s' of durable agent '%s' is one-way (no 'response' type is "
+                    + "declared), so the send produces no readable turn result: discard the "
+                    + "correlation token with '_ = ...' or declare a 'response' type on the channel",
             DiagnosticSeverity.ERROR);
 
     private final String code;

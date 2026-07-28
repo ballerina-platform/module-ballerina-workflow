@@ -983,6 +983,19 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "invalid")
+    public void testInvalidDurableAgentSendDataChannels() {
+        // sendData call sites are validated against the agent's declared channels:
+        // an undeclared channel is WORKFLOW_152; keeping the correlation token of a
+        // one-way channel (no response type) is WORKFLOW_153.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_durable_agent_send_data");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_152);
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_153);
+        Assert.assertEquals(diagnosticResult.errorCount(), 2,
+                "Only the undeclared channel and the kept one-way token should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
     public void testInvalidDurableAgentDuplicateNames() {
         // "approval" is used by an activity, an event, and a human task — one flat namespace,
         // so the second and third uses are each flagged.

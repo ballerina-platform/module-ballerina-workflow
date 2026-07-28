@@ -78,7 +78,9 @@ final workflow:DurableAgent chatDrivenStockAgent = check new ({
     model: agentMockModel,
     activities: [agentCheckStock],
     events: [
-        {name: "chat", request: string, response: string}
+        // Explicit SINGLE_EVENT: this agent takes exactly one chat message per run and
+        // completes after answering it (channels default to MULTI_EVENT).
+        {name: "chat", request: string, response: string, cardinality: workflow:SINGLE_EVENT}
     ]
 });
 

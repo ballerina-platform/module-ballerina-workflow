@@ -86,6 +86,44 @@ function testDurableAgentBuiltinActivityNameCollision() returns error? {
     }
 }
 
+final DurableAgent runnerCoverageAgent = check new ({
+    systemPrompt: {role: "", instructions: "You are an inventory assistant."},
+    model: declTestModel,
+    activities: [checkStock],
+    events: [
+        {name: "status", request: string, response: string, cardinality: SINGLE_EVENT}
+    ],
+    humanTasks: [
+        {name: "signoffCoverage", roles: "manager", timeout: {minutes: 5}}
+    ]
+});
+
+@test:Config {groups: ["unit"]}
+function testObjectModelRunnerEndToEnd() returns error? {
+    // Mirror the plugin-generated module-init registration for a runnable agent, then
+    // drive the whole object-model path: DurableAgent.run resolves the declaration,
+    // the shared runner registers every declared capability on the native context, and
+    // the ReAct loop completes with the mock model's answer as the workflow result.
+    _ = check wfInternal:registerDurableAgentDecl("runnerCoverageAgent", declTestModel,
+        {role: "", instructions: "You are an inventory assistant."}, 16);
+    _ = check wfInternal:registerDurableAgentActivity("runnerCoverageAgent", "checkStock",
+        checkStock, {description: "Checks the stock of an item", requiresApproval: false});
+    _ = check wfInternal:registerDurableAgentEvent("runnerCoverageAgent", "status", string, string,
+        "SINGLE_EVENT");
+    _ = check wfInternal:registerDurableAgentHumanTask("runnerCoverageAgent", "signoffCoverage",
+        {roles: "manager", title: "Sign off", description: "Sign off the order",
+            timeout: {minutes: 5}});
+    _ = check wfInternal:registerDurableAgentPeer("runnerCoverageAgent", "askDriver",
+        "agentTurnDriver", {description: "Delegates to the turn driver", "wait": true});
+    _ = check wfInternal:registerDurableAgentRunner("runnerCoverageAgent");
+    runnerCoverageAgent.bindAgentName("runnerCoverageAgent");
+
+    string agentId = check runnerCoverageAgent.run("Is the laptop in stock?");
+    string result = check runnerCoverageAgent.waitForResult(agentId);
+    test:assertEquals(result, "Stock check result: laptop is in stock",
+        "The object-model runner should resolve the declaration and drive the ReAct loop");
+}
+
 @test:Config {}
 function testDurableAgentDriverStubs() {
     // run() requires the plugin-generated name binding, which does not run for the

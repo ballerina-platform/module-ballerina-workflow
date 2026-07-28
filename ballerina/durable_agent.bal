@@ -30,26 +30,32 @@ import ballerina/time;
 
 # How a declared event channel consumes its requests.
 public enum EventCardinality {
-    # The channel is consumed once per run (default)
+    # The channel is consumed exactly once per run. Declare this only when the
+    # channel receives a single event per agent instance — a later event on the
+    # channel is never consumed
     SINGLE_EVENT,
-    # The channel re-arms after every turn: the agent may wait on it repeatedly, each
-    # wait consuming the next queued payload (conversational agents)
+    # The channel re-arms after every turn: the agent may wait on it repeatedly,
+    # each wait consuming the next queued payload (default — events can originate
+    # from multiple senders, which a once-only channel cannot guarantee)
     MULTI_EVENT
 }
 
 # A named event channel of a durable agent. `request`/`response` capture both
-# sides' types; a nil `response` declares a one-way channel (no result read).
+# sides' types and the channel's duplexity: a `response` type declares a duplex
+# (request-response) channel whose turn answers are read with
+# `getDataResult`/`waitForDataResult`; a nil `response` declares a one-way
+# channel — data flows in, no result is read back.
 #
 # + name - The channel name (unique across all of the agent's capabilities)
 # + request - Type of the payload sent to the agent on this channel
 # + response - Type of the agent's reply for this channel; `()` for one-way channels
-# + cardinality - Business cardinality of the channel: consumed once (`SINGLE_EVENT`)
-#                 or re-armed per turn (`MULTI_EVENT`)
+# + cardinality - Business cardinality of the channel: re-armed per turn
+#                 (`MULTI_EVENT`, the default) or consumed once (`SINGLE_EVENT`)
 public type EventDecl record {|
     string name;
     typedesc<anydata> request;
     typedesc<anydata>? response = ();
-    EventCardinality cardinality = SINGLE_EVENT;
+    EventCardinality cardinality = MULTI_EVENT;
 |};
 
 # An activity capability of a durable agent, with optional gating and retry config.
@@ -307,7 +313,7 @@ type DurableAgentEventSpec record {|
     string name;
     typedesc<anydata> request;
     typedesc<anydata>? response = ();
-    string cardinality = "SINGLE_EVENT";
+    string cardinality = "MULTI_EVENT";
 |};
 
 type DurableAgentHumanTaskSpec record {|

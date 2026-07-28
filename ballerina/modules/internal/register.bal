@@ -155,11 +155,11 @@ public isolated function registerDurableAgentActivity(string agentName, string t
 # + eventName - The channel name
 # + request - The channel's request type
 # + response - The channel's response type; `()` for one-way channels
-# + cardinality - `"SINGLE_EVENT"` or `"MULTI_EVENT"`
+# + cardinality - `"MULTI_EVENT"` (default) or `"SINGLE_EVENT"`
 # + return - `true` on success, or an error for an unknown agent
 public isolated function registerDurableAgentEvent(string agentName, string eventName,
         typedesc<anydata> request, typedesc<anydata>? response = (),
-        string cardinality = "SINGLE_EVENT") returns boolean|error = @java:Method {
+        string cardinality = "MULTI_EVENT") returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
     name: "registerDurableAgentEvent"
 } external;

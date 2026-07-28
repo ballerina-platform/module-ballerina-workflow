@@ -44,6 +44,10 @@ public class WorkflowCodeAnalyzer extends CodeAnalyzer {
         // Add syntax node analysis task for function calls to validate sendData usage
         analysisContext.addSyntaxNodeAnalysisTask(new SendDataValidatorTask(), SyntaxKind.FUNCTION_CALL);
 
+        // Validates DurableAgent.sendData call sites against the target agent's declared
+        // data-event channels (undeclared channel / one-way channel token misuse).
+        analysisContext.addCompilationAnalysisTask(new DurableAgentDataCallValidatorTask());
+
         // Add syntax node analysis task for function calls to validate workflow:run usage
         // and to reject direct calls to @Workflow functions
         analysisContext.addSyntaxNodeAnalysisTask(new RunCallValidatorTask(), SyntaxKind.FUNCTION_CALL);

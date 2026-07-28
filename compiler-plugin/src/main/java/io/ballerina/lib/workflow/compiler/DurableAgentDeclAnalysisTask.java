@@ -62,8 +62,10 @@ import java.util.Set;
  * Analysis task for object-model durable agent declarations:
  * {@code final workflow:DurableAgent x = new ({...})}.
  * <p>
- * Enforces placement (module-level and {@code final} — {@code WORKFLOW_149}) and capability name
- * uniqueness across events/tools/activities/human tasks/peers ({@code WORKFLOW_150}), and extracts
+ * Enforces placement (module-level and {@code final} — {@code WORKFLOW_149}), a statically readable
+ * declaration shape (named variable + inline {@code new ({...})} — {@code WORKFLOW_151}), and
+ * capability name uniqueness across events/tools/activities/human tasks/peers
+ * ({@code WORKFLOW_150}), and extracts
  * the constructor config into a {@link DurableAgentDeclInfo} so {@link WorkflowSourceModifier}
  * can generate the module-init registration.
  *
@@ -107,6 +109,8 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
 
         if (!(varDecl.typedBindingPattern().bindingPattern()
                 instanceof CaptureBindingPatternNode capturePattern)) {
+            // A wildcard/destructuring binding has no stable name to register the agent under.
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_151, varDecl.location());
             return;
         }
         String agentName = capturePattern.variableName().text();
@@ -114,6 +118,11 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         Optional<MappingConstructorExpressionNode> configOpt =
                 findConfigMapping(varDecl.initializer().orElse(null));
         if (configOpt.isEmpty()) {
+            // The initializer is not an inline `new ({...})` (factory call, variable reference,
+            // conditional, named constructor arguments, ...) — the config cannot be read at
+            // compile time, so no module-init registration can be generated. Without this
+            // error the agent would compile cleanly and fail at runtime on its first run().
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_151, varDecl.location());
             return;
         }
 
@@ -126,10 +135,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
      * {@code DurableAgent} class.
      */
     private boolean isDurableAgentVariable(TypeDescriptorNode typeDesc, SemanticModel semanticModel) {
-        String typeName = typeDesc instanceof QualifiedNameReferenceNode qualifiedName
-                ? qualifiedName.identifier().text()
-                : typeDesc.kind() == SyntaxKind.SIMPLE_NAME_REFERENCE ? typeDesc.toSourceCode().strip() : null;
-        if (!DURABLE_AGENT_CLASS.equals(typeName)) {
+        // Only name references can denote the DurableAgent class (directly or via a type
+        // alias); resolution is semantic so aliases don't silently escape the validation.
+        if (!(typeDesc instanceof QualifiedNameReferenceNode)
+                && typeDesc.kind() != SyntaxKind.SIMPLE_NAME_REFERENCE) {
             return false;
         }
         Optional<Symbol> symbolOpt = semanticModel.symbol(typeDesc);
@@ -145,7 +154,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         } else if (symbol instanceof VariableSymbol variableSymbol) {
             typeSymbol = variableSymbol.typeDescriptor();
         }
-        if (typeSymbol instanceof TypeReferenceTypeSymbol typeRef) {
+        while (typeSymbol instanceof TypeReferenceTypeSymbol typeRef) {
             typeSymbol = typeRef.typeDescriptor();
         }
         if (!(typeSymbol instanceof ClassSymbol classSymbol)) {

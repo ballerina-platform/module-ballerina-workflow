@@ -204,6 +204,12 @@ public enum WorkflowDiagnostic {
     WORKFLOW_150("WORKFLOW_150",
             "Duplicate capability name '%s' in durable agent '%s': events, tools, activities, human "
                     + "tasks, and peers share one flat namespace",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_151("WORKFLOW_151",
+            "A 'workflow:DurableAgent' must be assigned to a named variable and initialized inline "
+                    + "with 'new ({...})': the compiler reads the declaration to generate its Temporal "
+                    + "registration at module init, so factory calls, variable references, conditional "
+                    + "expressions, and named constructor arguments cannot be registered",
             DiagnosticSeverity.ERROR);
 
     private final String code;

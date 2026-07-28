@@ -951,6 +951,31 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "invalid")
+    public void testInvalidDurableAgentFactoryInit() {
+        // A factory-call initializer hides the config from the compiler: without the
+        // WORKFLOW_151 error the agent would compile cleanly, never be registered at
+        // module init, and fail at runtime on its first run().
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_factory_init");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_151);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentNamedArgs() {
+        // Named constructor arguments are legal Ballerina against init(*DurableAgentConfig)
+        // but are not the inline mapping form the registration generator reads.
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_named_args");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_151);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentAliasNotFinal() {
+        // Detection is semantic: a DurableAgent declared through a type alias is still
+        // subject to the placement rules and cannot silently escape them.
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_alias_not_final");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_149);
+    }
+
+    @Test(groups = "invalid")
     public void testInvalidDurableAgentDuplicateNames() {
         // "approval" is used by an activity, an event, and a human task — one flat namespace,
         // so the second and third uses are each flagged.

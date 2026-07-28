@@ -35,9 +35,9 @@ import ballerina/time;
 //   basicAuthPassword    = "s3cret!"
 
 # Master switch for the management HTTP API.
-# When `false` (the default), the listener starts and reserves the port but
-# returns `503 Service Unavailable` for every request. Workflow execution runs
-# independently of this flag.
+# When `false` (the default), no listener is created and the port is not
+# reserved — importing this module purely for its programmatic helpers opens
+# no port. Workflow execution runs independently of this flag.
 # Set to `true` in Config.toml to activate the API.
 public configurable boolean enableManagementApi = false;
 
@@ -213,44 +213,52 @@ isolated function buildMgmtListenerConfig() returns http:ListenerConfiguration {
     return cfg;
 }
 
-// Deliberately a plain `final` variable, NOT a module-level `listener` declaration.
+// Deliberately a plain module-level variable, NOT a `listener` declaration.
 // A `listener` declaration would put the listener under the runtime's module-listener
 // lifecycle in addition to the dynamic registration performed below, effectively
-// registering the service twice. This module owns the full lifecycle instead:
-// attach + start + (conditional) dynamic registration in startManagementService(),
-// deregistration + graceful stop in stopManagementService().
-final http:Listener mgmtListener = check new (port, buildMgmtListenerConfig());
+// registering the service twice — and it would always reserve the port. This module
+// owns the full lifecycle instead: the listener exists only while the management API
+// is enabled (create + attach + start + dynamic registration in
+// startManagementService(), deregistration + graceful stop in stopManagementService()).
+http:Listener? mgmtListener = ();
 
-# Attaches the management service to the listener and starts it. Called from the module
-# `init()`. The listener always starts (reserving the port) so that a disabled management
-# API still answers every request with `503` via the gateway interceptor. Only when
-# `enableManagementApi = true` is the listener additionally registered as a dynamic
-# listener with the runtime — this keeps a `main`-function program alive after `main`
-# returns so the management API stays available.
+# Creates the management listener, attaches the service, and starts it — only when
+# `enableManagementApi = true`. Called from the module `init()`. When the API is
+# disabled this is a no-op: no listener is created and the port stays free, so a
+# program that imports this module purely for its programmatic helpers opens no
+# port. The started listener is registered as a dynamic listener with the runtime,
+# which keeps a `main`-function program alive after `main` returns so the
+# management API stays available.
 #
-# + return - An error if attaching or starting the listener fails
+# + return - An error if creating, attaching, or starting the listener fails
 function startManagementService() returns error? {
-    check mgmtListener.attach(mgmtService, "/workflow");
-    check mgmtListener.'start();
+    if !enableManagementApi {
+        return;
+    }
+    http:Listener httpListener = check new (port, buildMgmtListenerConfig());
+    mgmtListener = httpListener;
+    check httpListener.attach(mgmtService, "/workflow");
+    check httpListener.'start();
     // Always stop the listener on shutdown. With a programmatically started listener the
     // runtime no longer does this automatically (it only manages `listener` declarations);
     // an un-stopped listener would hold the port past program end (e.g. across `bal test`
     // module executions).
     runtime:onGracefulStop(stopManagementService);
-    if enableManagementApi {
-        runtime:registerListener(mgmtListener);
-    }
+    runtime:registerListener(httpListener);
 }
 
-# Deregisters the management listener from the runtime (when it was registered) and stops
-# it gracefully so that shutdown is not blocked and the port is released.
+# Deregisters the management listener from the runtime and stops it gracefully so that
+# shutdown is not blocked and the port is released. A no-op when the management API is
+# disabled (no listener was created).
 #
 # + return - An error if stopping the listener fails
 function stopManagementService() returns error? {
-    if enableManagementApi {
-        runtime:deregisterListener(mgmtListener);
+    http:Listener? httpListener = mgmtListener;
+    if httpListener is () {
+        return;
     }
-    check mgmtListener.gracefulStop();
+    runtime:deregisterListener(httpListener);
+    check httpListener.gracefulStop();
 }
 
 // ── Service-level auth configuration ─────────────────────────────────────────────
@@ -312,30 +320,23 @@ isolated function buildAuthConfigs() returns http:ListenerAuthConfig[]? {
     return configs.length() > 0 ? configs : ();
 }
 
-# Request interceptor that enforces the management API master switch and
-# API key authentication (which has no built-in Ballerina HTTP handler).
-# Registered via createInterceptors on the `http:InterceptableService`.
+# Request interceptor that enforces API key authentication (which has no
+# built-in Ballerina HTTP handler). Registered via createInterceptors on the
+# `http:InterceptableService`. The management API master switch needs no gate
+# here: when `enableManagementApi = false` the listener is never created, so
+# no request can reach this service.
 #
-# 1. **Master switch** — returns `503` when `enableManagementApi = false`.
-# 2. **API key** — validates the configured header when `enableApiKey = true`;
-#    returns `401` only when API key is the sole auth type and validation fails.
-#    When other auth types are also enabled, a failed key falls through so that
-#    `@http:ServiceConfig { auth: ... }` can still admit the request.
+# **API key** — validates the configured header when `enableApiKey = true`;
+# returns `401` only when API key is the sole auth type and validation fails.
+# When other auth types are also enabled, a failed key falls through so that
+# `@http:ServiceConfig { auth: ... }` can still admit the request.
 service class ManagementGatewayInterceptor {
     *http:RequestInterceptor;
 
     resource function 'default [string... path](
             http:RequestContext ctx,
             http:Request req)
-            returns http:ServiceUnavailable|http:Unauthorized|http:NextService|error? {
-
-        // Master switch
-        if !enableManagementApi {
-            return <http:ServiceUnavailable>{
-                body: {"error": {"message": "Management API is disabled. " +
-                    "Set enableManagementApi = true in Config.toml to enable."}}
-            };
-        }
+            returns http:Unauthorized|http:NextService|error? {
 
         // API key auth (no built-in Ballerina HTTP handler)
         if enableApiKey {

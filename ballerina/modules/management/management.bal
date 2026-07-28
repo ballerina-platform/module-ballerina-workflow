@@ -19,14 +19,17 @@ import ballerina/jballerina.java;
 // Captures this submodule's reference so native code can create records in this module,
 // validates the management API configuration so any misconfiguration causes a
 // descriptive error at startup rather than a silent runtime failure, and then starts
-// the management HTTP service programmatically (see service.bal).
+// the management HTTP service programmatically (see service.bal) when
+// enableManagementApi = true. When the API is disabled, no listener is created and
+// no port is reserved — importing this module purely for its programmatic helpers
+// stays port-free.
 //
 // The service is attached and started from here — not via a module-level `listener`
-// declaration — so this module fully owns the listener lifecycle. When the management
-// API is enabled, the listener is registered as a dynamic listener with the runtime,
-// which keeps the program alive after a `main` function returns so programs that use
-// an entry point other than services can still serve the management API. The listener
-// is deregistered and stopped on graceful shutdown so signal-driven termination
+// declaration — so this module fully owns the listener lifecycle. The started
+// listener is registered as a dynamic listener with the runtime, which keeps the
+// program alive after a `main` function returns so programs that use an entry point
+// other than services can still serve the management API. The listener is
+// deregistered and stopped on graceful shutdown so signal-driven termination
 // (SIGINT/SIGTERM) is not blocked.
 #
 # + return - An error if the management service cannot be started
@@ -468,11 +471,12 @@ public isolated function getExecutionGraph(string workflowId, string runId)
 // HTTP SERVICE
 // ================================================================================
 // The management HTTP service is started programmatically from this module's
-// init() (see startManagementService() in service.bal; port 8234 by default).
-// Configure it in Config.toml:
+// init() (see startManagementService() in service.bal) — and only when
+// enableManagementApi = true: a disabled API creates no listener and reserves
+// no port. Configure it in Config.toml:
 //
-//   management_service_port = 8234
-//   enableTls = false
-//   enableBasicAuth = false
+//   [ballerina.workflow.management]
+//   enableManagementApi = true
+//   port = 8234
 //
 // See service.bal for the full list of configurable variables.

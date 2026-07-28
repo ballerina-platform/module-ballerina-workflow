@@ -2019,12 +2019,12 @@ public final class ManagementNative {
 
                     case EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED -> {
                         // A durable agent's data events can also arrive as Temporal updates
-                        // (DurableAgent.sendData -> the agentUpdate dynamic update handler).
+                        // (DurableAgent.sendData -> the agentSendData dynamic update handler).
                         // Mirror the SIGNALED handling: a published wait for the event channel
                         // completes in place; an unawaited (buffered) event gets its own node.
                         var attrs = event.getWorkflowExecutionUpdateAcceptedEventAttributes();
                         var input = attrs.getAcceptedRequest().getInput();
-                        if (!WorkflowWorkerNative.AGENT_UPDATE_NAME.equals(input.getName())
+                        if (!WorkflowWorkerNative.AGENT_SEND_DATA_UPDATE.equals(input.getName())
                                 || input.getArgs().getPayloadsCount() == 0) {
                             break;
                         }

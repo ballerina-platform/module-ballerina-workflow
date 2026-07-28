@@ -760,8 +760,23 @@ public final class DurableAgentNative {
                     return ErrorCreator.createError(StringUtils.fromString("Workflow client not initialized"));
                 }
                 WorkflowStub stub = client.newUntypedWorkflowStub(instance);
+                // Reject non-agent targets before sending: the update handler's validator also
+                // rejects them, but the embedded test server can report acceptance-stage
+                // rejections only at result-read time, which would surface as a confusing
+                // "update not found" much later.
+                try {
+                    String targetType = stub.describe().getWorkflowType();
+                    if (WorkflowWorkerNative.isRegisteredWorkflowType(targetType)
+                            && !WorkflowWorkerNative.isAgentWorkflowType(targetType)) {
+                        return ErrorCreator.createError(StringUtils.fromString(
+                                "sendData turns are only supported for workflow:DurableAgent instances; '"
+                                        + instance + "' is a regular workflow — use workflow:sendData instead"));
+                    }
+                } catch (Exception ignore) {
+                    // The target may live on another worker; the handler-side validator decides.
+                }
                 UpdateOptions<Object> options = UpdateOptions.newBuilder(Object.class)
-                        .setUpdateName(WorkflowWorkerNative.AGENT_UPDATE_NAME)
+                        .setUpdateName(WorkflowWorkerNative.AGENT_SEND_DATA_UPDATE)
                         .setWaitForStage(WorkflowUpdateStage.ACCEPTED)
                         .build();
                 WorkflowUpdateHandle<Object> handle = stub.startUpdate(options, event, javaData);

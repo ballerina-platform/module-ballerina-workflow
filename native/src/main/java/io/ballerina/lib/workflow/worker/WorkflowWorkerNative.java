@@ -129,7 +129,7 @@ public final class WorkflowWorkerNative {
      * Temporal update name used by {@code workflow:updateAgent} for request-response interactions with durable
      * agents. Args layout: eventName (String), payload (Object); the update result is the agent's turn response.
      */
-    public static final String AGENT_UPDATE_NAME = "agentUpdate";
+    public static final String AGENT_SEND_DATA_UPDATE = "agentSendData";
     /**
      * Internal signal carrying an event turn from a WORKFLOW caller to a durable agent
      * (DurableAgent.sendData inside a workflow). Envelope: {token, eventName, data, replyTo}.
@@ -148,7 +148,7 @@ public final class WorkflowWorkerNative {
      * Query returning the agent updates that were accepted but whose turn has not completed yet
      * ({@code [{updateId, eventName}, ...]}). Lets clients rediscover in-flight requests after a crash.
      */
-    public static final String PENDING_AGENT_UPDATES_QUERY = "pendingAgentUpdates";
+    public static final String PENDING_AGENT_EVENTS_QUERY = "pendingAgentDataEvents";
     /**
      * Temporal workflow type prefix for built-in review-activity child workflows. The full type is the prefix
      * followed by the reviewed activity's qualified name (e.g. {@code reviewactivity-procurement.sendEmail}),
@@ -694,6 +694,28 @@ public final class WorkflowWorkerNative {
             AGENT_WORKFLOW_TYPES.add(WORKFLOW_TYPE_PREFIX + workflowName.getValue());
         }
         return result;
+    }
+
+    /**
+     * Returns whether the given (already {@code workflow-}-prefixed) type is registered on this
+     * worker as a durable agent workflow.
+     *
+     * @param workflowType the full workflow type
+     * @return {@code true} when the type was registered via {@link #registerAgentWorkflow}
+     */
+    public static boolean isAgentWorkflowType(String workflowType) {
+        return AGENT_WORKFLOW_TYPES.contains(workflowType);
+    }
+
+    /**
+     * Returns whether the given (already {@code workflow-}-prefixed) type is registered on this
+     * worker at all.
+     *
+     * @param workflowType the full workflow type
+     * @return {@code true} when a process function is registered under the type
+     */
+    public static boolean isRegisteredWorkflowType(String workflowType) {
+        return PROCESS_REGISTRY.containsKey(workflowType);
     }
 
     /**
@@ -1451,10 +1473,10 @@ public final class WorkflowWorkerNative {
         // The agent's native context state; set when the agent context handle is created. Used by the
         // update handler's closing fast-path and the failure backstop that settles updates.
         private AgentContextNative.AgentContextInfo agentContextInfo = null;
-        // Accepted-but-unanswered agent updates (updateId -> eventName). Workflow code is
+        // Accepted-but-unanswered agent data-event turns (Temporal update id -> eventName). Workflow code is
         // single-threaded, so no synchronization is needed; insertion order is preserved for
         // stable client-side listings.
-        private final Map<String, String> pendingAgentUpdates = new java.util.LinkedHashMap<>();
+        private final Map<String, String> pendingAgentDataEvents = new java.util.LinkedHashMap<>();
         // Per-workflow-instance service object (created fresh for each workflow execution including replays)
         // This ensures isolation between workflow instances and proper state management
         private BObject serviceObject;
@@ -1631,23 +1653,35 @@ public final class WorkflowWorkerNative {
             // agents: normal workflows bind incoming data imperatively, so there is no
             // framework-owned response to correlate.
             Workflow.registerListener(
-                    (io.temporal.workflow.DynamicUpdateHandler) (updateName, encodedArgs) -> {
-                        if (!AGENT_UPDATE_NAME.equals(updateName)) {
-                            throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
-                                    "Unknown update '" + updateName + "'", "error");
+                    new io.temporal.workflow.DynamicUpdateHandler() {
+                        @Override
+                        public void handleValidate(String updateName,
+                                io.temporal.common.converter.EncodedValues encodedArgs) {
+                            // Rejecting in the validator fails the update at the ACCEPTED stage,
+                            // so the sender's sendData call errors immediately with this message
+                            // instead of a failed result read later.
+                            if (!AGENT_SEND_DATA_UPDATE.equals(updateName)) {
+                                throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
+                                        "Unknown update '" + updateName + "'", "error");
+                            }
+                            if (!BallerinaWorkflowAdapter.this.agentWorkflow) {
+                                throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
+                                        "sendData turns are only supported for workflow:DurableAgent instances; "
+                                                + "use workflow:sendData for regular workflows",
+                                        "error");
+                            }
                         }
-                        if (!this.agentWorkflow) {
-                            throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
-                                    "updateAgent is only supported for @workflow:DurableAgent workflows",
-                                    "error");
-                        }
+
+                        @Override
+                        public Object handleExecute(String updateName,
+                                io.temporal.common.converter.EncodedValues encodedArgs) {
                         String eventName = encodedArgs.get(0, String.class);
                         Object payload = encodedArgs.get(1, Object.class);
                         LOGGER.debug("[JWorkflowAdapter] Agent update received for event '{}'", eventName);
 
                         // Closing fast-path: the agent is finishing, so nobody would consume
                         // an enqueued message — answer immediately from the final state.
-                        AgentContextNative.AgentContextInfo info = this.agentContextInfo;
+                        AgentContextNative.AgentContextInfo info = BallerinaWorkflowAdapter.this.agentContextInfo;
                         if (info != null && info.isClosing()) {
                             String failure = info.closingFailure();
                             if (failure != null) {
@@ -1660,7 +1694,7 @@ public final class WorkflowWorkerNative {
                         String updateId = Workflow.getCurrentUpdateInfo()
                                 .map(io.temporal.workflow.UpdateInfo::getUpdateId).orElse("");
                         if (!updateId.isEmpty()) {
-                            this.pendingAgentUpdates.put(updateId, eventName);
+                            BallerinaWorkflowAdapter.this.pendingAgentDataEvents.put(updateId, eventName);
                         }
                         try {
                             io.temporal.workflow.CompletablePromise<Object> responder = Workflow.newPromise();
@@ -1669,11 +1703,11 @@ public final class WorkflowWorkerNative {
                             return responder.get();
                         } finally {
                             if (!updateId.isEmpty()) {
-                                this.pendingAgentUpdates.remove(updateId);
+                                BallerinaWorkflowAdapter.this.pendingAgentDataEvents.remove(updateId);
                             }
                         }
-                    }
-                                     );
+                        }
+                    });
             LOGGER.debug("[JWorkflowAdapter] Dynamic update handler registered");
 
             // Register a dynamic query handler that routes to service methods
@@ -1682,10 +1716,10 @@ public final class WorkflowWorkerNative {
                         LOGGER.debug("[JWorkflowAdapter] Query received: {}", queryName);
 
                         // Framework-owned query: in-flight agent updates for crash-recovery check-back.
-                        if (PENDING_AGENT_UPDATES_QUERY.equals(queryName)) {
+                        if (PENDING_AGENT_EVENTS_QUERY.equals(queryName)) {
                             List<Map<String, String>> pending = new ArrayList<>();
-                            this.pendingAgentUpdates.forEach((id, event) ->
-                                    pending.add(Map.of("updateId", id, "eventName", event)));
+                            this.pendingAgentDataEvents.forEach((id, event) ->
+                                    pending.add(Map.of("token", id, "eventName", event)));
                             return pending;
                         }
 
@@ -2254,7 +2288,7 @@ public final class WorkflowWorkerNative {
         public static final String BUILTIN_SEND_DATA = "workflow:sendData";
         public static final String BUILTIN_GET_RESULT = "workflow:getResult";
         public static final String BUILTIN_GET_INFO = "workflow:getInfo";
-        public static final String BUILTIN_PENDING_AGENT_UPDATES = "workflow:pendingAgentUpdates";
+        public static final String BUILTIN_PENDING_AGENT_EVENTS = "workflow:pendingAgentDataEvents";
         private static final String CALL_CONFIG_MARKER = "__callConfig__";
         private static final String RETRY_ON_ERROR_KEY = "retryOnError";
 
@@ -2279,7 +2313,7 @@ public final class WorkflowWorkerNative {
             if (BUILTIN_GET_INFO.equals(activityName)) {
                 return executeBuiltInGetInfo(args);
             }
-            if (BUILTIN_PENDING_AGENT_UPDATES.equals(activityName)) {
+            if (BUILTIN_PENDING_AGENT_EVENTS.equals(activityName)) {
                 return executeBuiltInPendingAgentUpdates(args);
             }
 
@@ -2544,7 +2578,7 @@ public final class WorkflowWorkerNative {
                 throw new RuntimeException("Workflow client not initialized");
             }
             return client.newUntypedWorkflowStub(agentId)
-                    .query(WorkflowWorkerNative.PENDING_AGENT_UPDATES_QUERY, Object.class);
+                    .query(WorkflowWorkerNative.PENDING_AGENT_EVENTS_QUERY, Object.class);
         }
 
         private Object executeBuiltInGetInfo(EncodedValues args) {

@@ -288,6 +288,11 @@ isolated function dispatchAgentTool(handle ctxHandle, string agentName, AgentFun
     } else if kind.startsWith("event:") {
         // Suspends the agent durably until the data event arrives.
         result = awaitAgentEvent(ctxHandle, kind.substring(6));
+        // The max-event-waits safety cap is an infrastructure failure that must end the
+        // agent — never feed it back to the model as tool output.
+        if result is error && result.message().startsWith("Agent exceeded the maximum number of event waits") {
+            return result;
+        }
     } else if kind.startsWith("peeragent:") {
         // Delegates to a peer durable agent running as a true Temporal child workflow.
         result = dispatchPeerAgent(ctxHandle, kind.substring(10), args);
@@ -316,7 +321,14 @@ isolated function dispatchAgentTool(handle ctxHandle, string agentName, AgentFun
 isolated function executeAgentTool(string agentName, string toolName, json arguments)
         returns anydata|error {
     ai:FunctionTool fn = check getAgentToolFunction(agentName, toolName);
-    map<json> args = arguments is map<json> ? arguments : {};
+    // Normalize the payload-decoded arguments: after the Temporal round trip the value's
+    // inherent type may be a plain anydata map, which fails an `is map<json>` test and
+    // would silently drop every argument.
+    map<json> args = {};
+    json normalizedArgs = arguments.toJson();
+    if normalizedArgs is map<json> {
+        args = normalizedArgs;
+    }
     ai:ToolExecutionResult execution = ai:executeTool(fn, args);
     any|error result = execution.result;
     if result is error {

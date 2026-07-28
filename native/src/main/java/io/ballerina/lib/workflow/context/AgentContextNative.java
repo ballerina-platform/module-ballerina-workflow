@@ -28,6 +28,7 @@ import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.utils.JsonUtils;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BArray;
+import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BHandle;
 import io.ballerina.runtime.api.values.BMap;
@@ -707,6 +708,9 @@ public final class AgentContextNative {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Timed out waiting for the initial 'chat' event"));
             }
+            if (data instanceof BError) {
+                return data;
+            }
             Object ballerina = TypesUtil.convertJavaToBallerinaType(data);
             if (ballerina instanceof BString bStr) {
                 return bStr;
@@ -743,6 +747,9 @@ public final class AgentContextNative {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Timed out waiting for event '" + name + "'"));
             }
+            if (data instanceof BError) {
+                return data;
+            }
             return TypesUtil.convertJavaToBallerinaType(data);
         } catch (NonDeterministicException | TemporalFailure e) {
             throw e;
@@ -765,9 +772,11 @@ public final class AgentContextNative {
     private static Object awaitSignal(AgentContextInfo info, String eventName) throws Exception {
         info.eventWaitCount++;
         if (info.eventWaitCount > info.maxEventWaits) {
-            throw ApplicationFailure.newNonRetryableFailure(
-                    "Agent exceeded the maximum number of event waits (" + info.maxEventWaits
-                            + "). Configure ctx.setInteraction(...) to raise the limit.", "AGENT_EVENT_WAIT_LIMIT");
+            // Returned as a Ballerina error (not thrown): a Java failure crossing the
+            // Ballerina boundary loses its message. The loop recognizes this message
+            // prefix and fails the agent instead of feeding it to the model.
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Agent exceeded the maximum number of event waits (" + info.maxEventWaits + ")."));
         }
 
         CompletablePromise<SignalAwaitWrapper.SignalData> future = info.multiEvent

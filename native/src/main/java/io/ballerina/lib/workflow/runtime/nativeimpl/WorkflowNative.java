@@ -299,7 +299,7 @@ public final class WorkflowNative {
                         return;
                     }
                     WorkflowStub stub = client.newUntypedWorkflowStub(agentIdStr);
-                    Object raw = stub.query(WorkflowWorkerNative.PENDING_AGENT_UPDATES_QUERY, Object.class);
+                    Object raw = stub.query(WorkflowWorkerNative.PENDING_AGENT_EVENTS_QUERY, Object.class);
                     balFuture.complete(buildPendingAgentEvents(raw));
                 } catch (Exception e) {
                     Throwable cause = e.getCause();
@@ -329,7 +329,7 @@ public final class WorkflowNative {
                     BMap<BString, Object> record = ValueCreator.createRecordValue(
                             ModuleUtils.getModule(), "PendingAgentEvent");
                     record.put(StringUtils.fromString("token"), StringUtils.fromString(
-                            String.valueOf(pendingEntry.get("updateId"))));
+                            String.valueOf(pendingEntry.get("token"))));
                     record.put(StringUtils.fromString("eventName"), StringUtils.fromString(
                             String.valueOf(pendingEntry.get("eventName"))));
                     result.append(record);
@@ -349,7 +349,7 @@ public final class WorkflowNative {
             io.temporal.workflow.ActivityStub stub = Workflow.newUntypedActivityStub(
                     buildImplicitActivityOptions(DEFAULT_IMPLICIT_ACTIVITY_TIMEOUT));
             List<?> raw = stub.execute(
-                    WorkflowWorkerNative.BallerinaActivityAdapter.BUILTIN_PENDING_AGENT_UPDATES,
+                    WorkflowWorkerNative.BallerinaActivityAdapter.BUILTIN_PENDING_AGENT_EVENTS,
                     List.class, agentId);
             return buildPendingAgentEvents(raw);
         } catch (Exception e) {

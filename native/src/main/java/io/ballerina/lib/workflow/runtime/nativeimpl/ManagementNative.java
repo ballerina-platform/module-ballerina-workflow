@@ -187,11 +187,22 @@ public final class ManagementNative {
                     GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS).describeWorkflowExecution(req);
             Map<String, Payload> memoFields = resp.getWorkflowExecutionInfo().getMemo().getFieldsMap();
             DataConverter dc = client.getOptions().getDataConverter();
-            String response = decodeMemoString(dc, memoFields, "agentResponse", null);
-            if (response != null) {
-                return StringUtils.fromString(response);
+            Payload responsePayload = memoFields.get("agentResponse");
+            if (responsePayload == null || responsePayload.getData().isEmpty()) {
+                // No memo yet (e.g. the agent has not answered a turn): the in-JVM store may
+                // still know a response recorded in this process.
+                return io.ballerina.lib.workflow.context.AgentResponseStore.getFinalResponse(agentId);
             }
-            return io.ballerina.lib.workflow.context.AgentResponseStore.getFinalResponse(agentId);
+            // The memo exists, so it is authoritative — a decode failure is an error, never a
+            // reason to fall back to worker-local data that may be stale on this worker.
+            try {
+                String response = dc.fromPayload(responsePayload, String.class, String.class);
+                return response == null ? null : StringUtils.fromString(response);
+            } catch (Exception e) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Failed to decode the agentResponse memo for '" + agentId.getValue() + "': "
+                                + e.getMessage()));
+            }
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
                     "Failed to read agent response for '" + agentId.getValue() + "': " + e.getMessage()));

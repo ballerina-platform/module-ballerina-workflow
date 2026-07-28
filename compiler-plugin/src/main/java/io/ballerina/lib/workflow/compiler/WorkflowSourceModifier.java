@@ -356,19 +356,11 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         // Register the shared object-model runner as this agent's workflow (the agent's own
         // workflow type + its activity map incl. the built-in agent activities), and bind the
         // agent's identity to the object so its driver methods (run/getResult/...) resolve it.
-        String prefix = decl.workflowPrefix();
-        if (prefix != null) {
-            body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerDurableAgentRunner(").append(agentNameLiteral)
-                    .append(", ").append(prefix).append(":runDurableAgentObject, {")
-                    .append("\"").append(WorkflowConstants.LLM_CHAT_ACTIVITY).append("\": ")
-                    .append(prefix).append(":").append(WorkflowConstants.LLM_CHAT_ACTIVITY)
-                    .append(", \"").append(WorkflowConstants.GENERATE_ACTIVITY).append("\": ")
-                    .append(prefix).append(":").append(WorkflowConstants.GENERATE_ACTIVITY)
-                    .append(", \"").append(WorkflowConstants.EXECUTE_AGENT_TOOL_ACTIVITY).append("\": ")
-                    .append(prefix).append(":").append(WorkflowConstants.EXECUTE_AGENT_TOOL_ACTIVITY)
-                    .append("});").append(System.lineSeparator());
-        }
+        // The runner function and the built-in agent activities are captured natively at
+        // workflow-module init, so the generated code references only the agent name.
+        body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                .append(":registerDurableAgentRunner(").append(agentNameLiteral)
+                .append(");").append(System.lineSeparator());
         body.append("    ").append(decl.agentName()).append(".bindAgentName(")
                 .append(agentNameLiteral).append(");").append(System.lineSeparator());
     }

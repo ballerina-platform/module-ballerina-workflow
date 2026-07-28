@@ -28,24 +28,24 @@ import ballerina/time;
 // and converted to `ai:` types inside the `llmChat` activity.
 // ============================================================================
 
-# System message in an agent conversation.
-public type AgentSystemMessage record {|
+// System message in an agent conversation.
+type AgentSystemMessage record {|
     # Role of the message
     "system" role = "system";
     # Content of the message
     string content;
 |};
 
-# User message in an agent conversation.
-public type AgentUserMessage record {|
+// User message in an agent conversation.
+type AgentUserMessage record {|
     # Role of the message
     "user" role = "user";
     # Content of the message
     string content;
 |};
 
-# A tool invocation requested by the model.
-public type AgentFunctionCall record {|
+// A tool invocation requested by the model.
+type AgentFunctionCall record {|
     # Name of the tool function
     string name;
     # Arguments to pass to the tool, keyed by parameter name
@@ -54,8 +54,8 @@ public type AgentFunctionCall record {|
     string id?;
 |};
 
-# Assistant (model) message in an agent conversation.
-public type AgentAssistantMessage record {|
+// Assistant (model) message in an agent conversation.
+type AgentAssistantMessage record {|
     # Role of the message
     "assistant" role = "assistant";
     # Text content; nil when the model requested tool calls instead
@@ -66,8 +66,8 @@ public type AgentAssistantMessage record {|
     AgentFunctionCall[]? toolCalls = ();
 |};
 
-# Tool result message in an agent conversation.
-public type AgentFunctionMessage record {|
+// Tool result message in an agent conversation.
+type AgentFunctionMessage record {|
     # Role of the message
     "function" role = "function";
     # Name of the tool that produced this result
@@ -78,8 +78,8 @@ public type AgentFunctionMessage record {|
     string id?;
 |};
 
-# Any message in an agent conversation.
-public type AgentChatMessage AgentSystemMessage|AgentUserMessage|AgentAssistantMessage|AgentFunctionMessage;
+// Any message in an agent conversation.
+type AgentChatMessage AgentSystemMessage|AgentUserMessage|AgentAssistantMessage|AgentFunctionMessage;
 
 # Runs the durable agent ReAct loop. Called from `buildAndRun`;
 # not intended to be called directly.
@@ -313,7 +313,7 @@ isolated function dispatchAgentTool(handle ctxHandle, string agentName, AgentFun
 # + arguments - Tool arguments keyed by parameter name
 # + return - The tool result, or an error
 @Activity
-public isolated function executeAgentTool(string agentName, string toolName, json arguments)
+isolated function executeAgentTool(string agentName, string toolName, json arguments)
         returns anydata|error {
     ai:FunctionTool fn = check getAgentToolFunction(agentName, toolName);
     map<json> args = arguments is map<json> ? arguments : {};
@@ -346,7 +346,7 @@ isolated function getAgentToolFunction(string agentName, string toolName)
 # + tools - Tool definitions as JSON (`ai:ChatCompletionFunctions[]`)
 # + return - The assistant's reply, or an error
 @Activity
-public isolated function llmChat(string agentName, json messages, json tools)
+isolated function llmChat(string agentName, json messages, json tools)
         returns AgentAssistantMessage|error {
     ai:ModelProvider model = check getAgentModel(agentName);
     AgentChatMessage[] history = check messages.cloneWithType();
@@ -370,7 +370,7 @@ public isolated function llmChat(string agentName, json messages, json tools)
 # + return - The generated value as `anydata` (coerced to the caller's type by
 #            the dependent-typing path), or an error
 @Activity
-public isolated function generate(string agentName, string query) returns anydata|error {
+isolated function generate(string agentName, string query) returns anydata|error {
     ai:ModelProvider model = check getAgentModel(agentName);
     ai:Prompt prompt = `${query}`;
     anydata result = check model->generate(prompt);
@@ -770,13 +770,15 @@ isolated function readAgentContextFinalResponse(handle contextHandle) returns st
 # response as the workflow result (so `getResult`/`waitForResult` read it from
 # the instance).
 #
-# This is an **internal** function referenced by generated code; do not call it
-# directly.
+# This is an internal function: it is handed to the native runtime once at
+# workflow-module init (see `registerDurableAgentRunnerNatives` in module.bal),
+# and `wfInternal:registerDurableAgentRunner(agentName)` wires it up per agent —
+# generated user code never references it.
 #
 # + agentCtx - The native agent context handle (injected by the workflow adapter)
 # + runInput - The run request: `{agentName, query, input}`
 # + return - The agent's final response, or an error
-public isolated function runDurableAgentObject(handle agentCtx, map<anydata> runInput)
+isolated function runDurableAgentObject(handle agentCtx, map<anydata> runInput)
         returns anydata|error {
     string agentName = check runInput["agentName"].ensureType();
     string query = check runInput["query"].ensureType();
@@ -977,4 +979,18 @@ isolated function armPeerAgentCallback(handle ctxHandle, string childId, string 
         returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
     name: "armPeerAgentCallback"
+} external;
+
+// Hands the object-model runner and the built-in agent activities to the native
+// agent registry once, at workflow-module init. Generated user code then wires an
+// agent with wfInternal:registerDurableAgentRunner(agentName) alone — none of the
+// runner machinery appears in this module's public API.
+function registerDurableAgentRunnerNatives() {
+    setDurableAgentObjectRunner(runDurableAgentObject,
+        {"llmChat": llmChat, "generate": generate, "executeAgentTool": executeAgentTool});
+}
+
+isolated function setDurableAgentObjectRunner(function runner, map<function> builtinActivities) = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "setObjectRunner"
 } external;

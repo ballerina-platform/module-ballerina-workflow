@@ -201,14 +201,14 @@ isolated function registerDurableAgentToolNative(string agentName, string toolNa
 
 # Registers the shared object-model runner as an agent's workflow: the agent gets
 # its own workflow type (`workflow-<agentName>`) whose activities are the agent's
-# declared activity functions plus the built-in agent activities.
+# declared activity functions plus the built-in agent activities. The runner and
+# the built-ins are captured natively at workflow-module init, so callers pass
+# only the agent name — no runner machinery leaks into any public API.
 #
 # + agentName - The agent's name (its module-level variable name)
-# + runner - The shared runner function (`workflow:runDurableAgentObject`)
-# + builtinActivities - The built-in agent activities keyed by activity name
 # + return - `true` on success, or an error
-public isolated function registerDurableAgentRunner(string agentName, function runner,
-        map<function> builtinActivities) returns boolean|error = @java:Method {
+public isolated function registerDurableAgentRunner(string agentName)
+        returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
     name: "registerDurableAgentRunner"
 } external;

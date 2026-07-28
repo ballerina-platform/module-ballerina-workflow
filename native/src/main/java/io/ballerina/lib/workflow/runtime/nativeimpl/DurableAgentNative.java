@@ -43,6 +43,7 @@ import io.temporal.client.WorkflowUpdateStage;
 import io.temporal.workflow.Workflow;
 import io.temporal.workflow.WorkflowLocal;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -303,27 +304,54 @@ public final class DurableAgentNative {
         return true;
     }
 
+    // The shared object-model runner and the built-in agent activities, handed over once at
+    // workflow-module init (setObjectRunner). Captured natively so that generated user code
+    // wires an agent by name alone and no runner machinery appears in the public API.
+    private static volatile BFunctionPointer objectRunner;
+    private static volatile Map<BString, Object> builtinAgentActivities;
+
+    /**
+     * Captures the shared object-model runner function and the built-in agent activities
+     * (llmChat/generate/executeAgentTool). Called exactly once from the workflow module's own
+     * {@code init()}, which always runs before any user-module registration.
+     *
+     * @param runner            the shared runner function
+     * @param builtinActivities the built-in agent activities keyed by activity name
+     */
+    public static void setObjectRunner(BFunctionPointer runner, BMap<BString, Object> builtinActivities) {
+        Map<BString, Object> builtins = new LinkedHashMap<>();
+        for (Map.Entry<BString, Object> builtin : builtinActivities.entrySet()) {
+            builtins.put(builtin.getKey(), builtin.getValue());
+        }
+        objectRunner = runner;
+        builtinAgentActivities = Collections.unmodifiableMap(builtins);
+    }
+
     /**
      * Registers the shared object-model runner as the agent's workflow: the agent gets its own
      * workflow type ({@code workflow-<agentName>}), whose activities are the agent's declared
      * activity functions plus the built-in agent activities (llmChat/generate/executeAgentTool).
      * Adapter dispatch, model/tool registries, and management views key on the same workflow
-     * type; the type is flagged so the adapter injects the native agent context handle.
+     * type; the type is flagged so the adapter injects the native agent context handle. The
+     * runner and built-ins were captured at workflow-module init ({@link #setObjectRunner}).
      *
-     * @param env               the Ballerina runtime environment
-     * @param agentName         the agent name
-     * @param runner            the shared runner function (workflow:runDurableAgentObject)
-     * @param builtinActivities the built-in agent activities keyed by activity name
+     * @param env       the Ballerina runtime environment
+     * @param agentName the agent name
      * @return true on success, or a BError
      */
-    public static Object registerDurableAgentRunner(Environment env, BString agentName, BFunctionPointer runner,
-                                                    BMap<BString, Object> builtinActivities) {
+    public static Object registerDurableAgentRunner(Environment env, BString agentName) {
         AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName.getValue());
         if (decl == null) {
             return unknownAgentError(agentName.getValue());
         }
+        BFunctionPointer runner = objectRunner;
+        Map<BString, Object> builtins = builtinAgentActivities;
+        if (runner == null || builtins == null) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "The durable agent runner is not initialized. The workflow module failed to initialize."));
+        }
         BMap<BString, Object> activities = ValueCreator.createMapValue();
-        for (Map.Entry<BString, Object> builtin : builtinActivities.entrySet()) {
+        for (Map.Entry<BString, Object> builtin : builtins.entrySet()) {
             activities.put(builtin.getKey(), builtin.getValue());
         }
         for (ActivityDecl activity : decl.activities().values()) {

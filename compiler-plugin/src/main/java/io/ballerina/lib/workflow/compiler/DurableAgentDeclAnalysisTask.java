@@ -110,8 +110,6 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             return;
         }
         String agentName = capturePattern.variableName().text();
-        String workflowPrefix = typeDesc instanceof QualifiedNameReferenceNode qualifiedName
-                ? qualifiedName.modulePrefix().text() : null;
 
         Optional<MappingConstructorExpressionNode> configOpt =
                 findConfigMapping(varDecl.initializer().orElse(null));
@@ -119,8 +117,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             return;
         }
 
-        DurableAgentDeclInfo declInfo = extractDeclInfo(agentName, workflowPrefix, configOpt.get(),
-                context);
+        DurableAgentDeclInfo declInfo = extractDeclInfo(agentName, configOpt.get(), context);
         storeDeclInfo(context.documentId(), declInfo);
     }
 
@@ -194,7 +191,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
      * Extracts the declaration info from the constructor config mapping and checks capability
      * name uniqueness across the flat namespace.
      */
-    private DurableAgentDeclInfo extractDeclInfo(String agentName, String workflowPrefix,
+    private DurableAgentDeclInfo extractDeclInfo(String agentName,
                                                  MappingConstructorExpressionNode config,
                                                  SyntaxNodeAnalysisContext context) {
         String modelSource = null;
@@ -230,7 +227,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             }
         }
 
-        return new DurableAgentDeclInfo(agentName, workflowPrefix, modelSource, systemPromptSource,
+        return new DurableAgentDeclInfo(agentName, modelSource, systemPromptSource,
                 maxIterSource, activities, aiToolRefs, events, humanTasks, peers);
     }
 

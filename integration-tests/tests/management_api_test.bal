@@ -387,6 +387,58 @@ function testStartWorkflowByType() returns error? {
     _ = check workflow:getWorkflowResult(wfHandle.workflowId, 30);
 }
 
+@test:Config {
+    groups: ["integration"]
+}
+function testStartAgentByTypeUnified() returns error? {
+    // A durable agent starts through the same management API as a workflow. With the
+    // default `string` inputType, the posted input is the query text.
+    management:WorkflowHandle agentHandle = check management:startWorkflowByType(
+            "stockCheckAgent", "Is the laptop in stock?");
+
+    test:assertFalse(agentHandle.workflowId == "", "Agent start must return a non-empty workflowId");
+    string result = check stockCheckAgent.waitForResult(agentHandle.workflowId);
+    test:assertEquals(result, "Stock check result: laptop is in stock",
+            "A management-started agent should run the same ReAct loop as agent.run");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testDefinitionsListWorkflowsAndAgentsUnified() returns error? {
+    // Workflows and durable agents list as one set of startable definitions,
+    // distinguished by `kind`, each with its own input schema.
+    management:WorkflowDefinition[] defs = check management:listWorkflowDefinitions();
+
+    management:WorkflowDefinition? agentDef = ();
+    management:WorkflowDefinition? workflowDef = ();
+    foreach management:WorkflowDefinition def in defs {
+        if def.workflowType == "stockCheckAgent" {
+            agentDef = def;
+        }
+        if def.workflowType == "infoTestWorkflow" {
+            workflowDef = def;
+        }
+    }
+
+    test:assertTrue(agentDef is management:WorkflowDefinition,
+            "The durable agent should appear in the unified definitions list");
+    if agentDef is management:WorkflowDefinition {
+        test:assertEquals(agentDef.kind, "AGENT", "Agent definitions carry kind AGENT");
+        string? schema = agentDef.inputSchema;
+        test:assertTrue(schema is string && schema.includes("string"),
+                "The default string inputType should produce a string input schema");
+    }
+
+    test:assertTrue(workflowDef is management:WorkflowDefinition,
+            "Workflow functions should appear in the unified definitions list");
+    if workflowDef is management:WorkflowDefinition {
+        test:assertEquals(workflowDef.kind, "WORKFLOW", "Workflow definitions carry kind WORKFLOW");
+        test:assertTrue(workflowDef.inputSchema is string,
+                "A workflow's input schema derives from its function signature");
+    }
+}
+
 // ================================================================================
 // HUMAN TASK — getHumanTaskInfo / listAllHumanTasks / failHumanTask
 // ================================================================================

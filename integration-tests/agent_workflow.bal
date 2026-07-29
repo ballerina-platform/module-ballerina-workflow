@@ -15,8 +15,9 @@
 // under the License.
 
 // ============================================================================
-// Durable AI agent workflows (imperative AgentContext API) — exercised through
-// the REAL compiler-plugin codegen path against the shared Temporal dev server.
+// Durable AI agent workflows (object-model workflow:DurableAgent declarations) —
+// exercised through the REAL compiler-plugin codegen path against the shared
+// Temporal dev server.
 // The model is a scripted mock ai:ModelProvider so no credentials are needed.
 // ============================================================================
 
@@ -77,7 +78,9 @@ final workflow:DurableAgent chatDrivenStockAgent = check new ({
     model: agentMockModel,
     activities: [agentCheckStock],
     events: [
-        {name: "chat", request: string, response: string}
+        // Explicit SINGLE_EVENT: this agent takes exactly one chat message per run and
+        // completes after answering it (channels default to MULTI_EVENT).
+        {name: "chat", request: string, response: string, cardinality: workflow:SINGLE_EVENT}
     ]
 });
 

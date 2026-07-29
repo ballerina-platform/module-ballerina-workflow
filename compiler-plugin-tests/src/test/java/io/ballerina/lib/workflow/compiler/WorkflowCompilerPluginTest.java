@@ -951,6 +951,80 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "invalid")
+    public void testInvalidDurableAgentFactoryInit() {
+        // A factory-call initializer hides the config from the compiler: without the
+        // WORKFLOW_151 error the agent would compile cleanly, never be registered at
+        // module init, and fail at runtime on its first run().
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_factory_init");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_151);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentNamedArgs() {
+        // Named constructor arguments are legal Ballerina against init(*DurableAgentConfig)
+        // but are not the inline mapping form the registration generator reads.
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_named_args");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_151);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentWildcardBinding() {
+        // A wildcard binding has no stable variable name to register the agent under.
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_wildcard_binding");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_151);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentAliasNotFinal() {
+        // Detection is semantic: a DurableAgent declared through a type alias is still
+        // subject to the placement rules and cannot silently escape them.
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_alias_not_final");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_149);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentSendDataChannels() {
+        // sendData call sites are validated against the agent's declared channels:
+        // an undeclared channel is WORKFLOW_152; keeping the correlation token of a
+        // one-way channel (no response type) is WORKFLOW_153.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_durable_agent_send_data");
+        // Two undeclared channels (positional + named-argument form) and two kept one-way
+        // tokens (direct + through a type alias); the discarded sends stay clean.
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_152").size(), 2,
+                "Both undeclared-channel sends should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_153").size(), 2,
+                "Both kept one-way tokens should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        Assert.assertEquals(diagnosticResult.errorCount(), 4,
+                "Exactly the four misuses should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "valid")
+    public void testValidDurableAgentRunInput() {
+        // Query-only runs, matching typed payloads (positional and named), inline
+        // constructors (runtime-checked), and explicit nil all compile clean.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("valid_durable_agent_run_input");
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for valid run inputs. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentRunInput() {
+        // A payload with the default string inputType (the query IS the input), a payload
+        // for a no-input agent, a mistyped payload, and a mistyped named argument.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_durable_agent_run_input");
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_154").size(), 4,
+                "All four run-input misuses should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        Assert.assertEquals(diagnosticResult.errorCount(), 4,
+                "Exactly the four misuses should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
     public void testInvalidDurableAgentDuplicateNames() {
         // "approval" is used by an activity, an event, and a human task — one flat namespace,
         // so the second and third uses are each flagged.

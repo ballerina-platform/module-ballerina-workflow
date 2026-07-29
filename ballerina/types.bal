@@ -135,15 +135,15 @@ public type HumanTaskTimeoutDetail record {|
 # Catch with `on fail workflow:HumanTaskTimeoutError e` to run compensation logic.
 public type HumanTaskTimeoutError distinct error<HumanTaskTimeoutDetail>;
 
-# A turn a durable agent has accepted but not yet answered. Returned by
-# `getPendingAgentUpdates` so callers can rediscover in-flight event turns after
-# a crash and fetch their answers via `DurableAgent.getEventResult` /
-# `waitForEventResult` (the update ID is the turn's correlation token).
+# A data-event turn a durable agent has accepted but not yet answered. Returned
+# by `getPendingAgentEvents` so callers can rediscover in-flight event turns
+# after a crash and fetch their answers via `DurableAgent.getDataResult` /
+# `waitForDataResult`.
 #
-# + updateId - The turn's correlation token
+# + token - The turn's correlation token (as returned by `DurableAgent.sendData`)
 # + eventName - The event channel the turn was sent on
-public type PendingAgentUpdate record {|
-    string updateId;
+public type PendingAgentEvent record {|
+    string token;
     string eventName;
 |};
 

@@ -62,8 +62,11 @@ import java.util.Set;
  * Analysis task for object-model durable agent declarations:
  * {@code final workflow:DurableAgent x = new ({...})}.
  * <p>
- * Enforces placement (module-level and {@code final} — {@code WORKFLOW_149}) and capability name
- * uniqueness across events/tools/activities/human tasks/peers ({@code WORKFLOW_150}), and extracts
+ * Enforces placement (module-level and {@code final} — {@code WORKFLOW_149}), a statically readable
+ * declaration shape — a named variable initialized inline with either constructor form,
+ * {@code new ({...})} or {@code new workflow:DurableAgent({...})} ({@code WORKFLOW_151}) — and
+ * capability name uniqueness across events/tools/activities/human tasks/peers
+ * ({@code WORKFLOW_150}), and extracts
  * the constructor config into a {@link DurableAgentDeclInfo} so {@link WorkflowSourceModifier}
  * can generate the module-init registration.
  *
@@ -107,20 +110,24 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
 
         if (!(varDecl.typedBindingPattern().bindingPattern()
                 instanceof CaptureBindingPatternNode capturePattern)) {
+            // A wildcard/destructuring binding has no stable name to register the agent under.
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_151, varDecl.location());
             return;
         }
         String agentName = capturePattern.variableName().text();
-        String workflowPrefix = typeDesc instanceof QualifiedNameReferenceNode qualifiedName
-                ? qualifiedName.modulePrefix().text() : null;
 
         Optional<MappingConstructorExpressionNode> configOpt =
                 findConfigMapping(varDecl.initializer().orElse(null));
         if (configOpt.isEmpty()) {
+            // The initializer is not an inline `new ({...})` (factory call, variable reference,
+            // conditional, named constructor arguments, ...) — the config cannot be read at
+            // compile time, so no module-init registration can be generated. Without this
+            // error the agent would compile cleanly and fail at runtime on its first run().
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_151, varDecl.location());
             return;
         }
 
-        DurableAgentDeclInfo declInfo = extractDeclInfo(agentName, workflowPrefix, configOpt.get(),
-                context);
+        DurableAgentDeclInfo declInfo = extractDeclInfo(agentName, configOpt.get(), context);
         storeDeclInfo(context.documentId(), declInfo);
     }
 
@@ -129,17 +136,27 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
      * {@code DurableAgent} class.
      */
     private boolean isDurableAgentVariable(TypeDescriptorNode typeDesc, SemanticModel semanticModel) {
-        String typeName = typeDesc instanceof QualifiedNameReferenceNode qualifiedName
-                ? qualifiedName.identifier().text()
-                : typeDesc.kind() == SyntaxKind.SIMPLE_NAME_REFERENCE ? typeDesc.toSourceCode().strip() : null;
-        if (!DURABLE_AGENT_CLASS.equals(typeName)) {
+        // Only name references can denote the DurableAgent class (directly or via a type
+        // alias); resolution is semantic so aliases don't silently escape the validation.
+        if (!(typeDesc instanceof QualifiedNameReferenceNode)
+                && typeDesc.kind() != SyntaxKind.SIMPLE_NAME_REFERENCE) {
             return false;
         }
-        Optional<Symbol> symbolOpt = semanticModel.symbol(typeDesc);
-        if (symbolOpt.isEmpty()) {
+        return isDurableAgentSymbol(semanticModel.symbol(typeDesc).orElse(null));
+    }
+
+    /**
+     * Returns {@code true} when the given symbol (a type reference, the class itself, or a
+     * variable) resolves — through any chain of type aliases — to the workflow module's
+     * {@code DurableAgent} class. Shared with {@link DurableAgentDataCallValidatorTask}.
+     *
+     * @param symbol the resolved symbol, or {@code null}
+     * @return whether the symbol denotes a {@code workflow:DurableAgent}
+     */
+    static boolean isDurableAgentSymbol(Symbol symbol) {
+        if (symbol == null) {
             return false;
         }
-        Symbol symbol = symbolOpt.get();
         TypeSymbol typeSymbol = null;
         if (symbol.kind() == SymbolKind.TYPE && symbol instanceof TypeSymbol ts) {
             typeSymbol = ts;
@@ -148,7 +165,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         } else if (symbol instanceof VariableSymbol variableSymbol) {
             typeSymbol = variableSymbol.typeDescriptor();
         }
-        if (typeSymbol instanceof TypeReferenceTypeSymbol typeRef) {
+        while (typeSymbol instanceof TypeReferenceTypeSymbol typeRef) {
             typeSymbol = typeRef.typeDescriptor();
         }
         if (!(typeSymbol instanceof ClassSymbol classSymbol)) {
@@ -194,12 +211,13 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
      * Extracts the declaration info from the constructor config mapping and checks capability
      * name uniqueness across the flat namespace.
      */
-    private DurableAgentDeclInfo extractDeclInfo(String agentName, String workflowPrefix,
+    private DurableAgentDeclInfo extractDeclInfo(String agentName,
                                                  MappingConstructorExpressionNode config,
                                                  SyntaxNodeAnalysisContext context) {
         String modelSource = null;
         String systemPromptSource = null;
         String maxIterSource = null;
+        String inputTypeSource = null;
         List<DurableAgentDeclInfo.ActivityDecl> activities = new ArrayList<>();
         List<String> aiToolRefs = new ArrayList<>();
         List<DurableAgentDeclInfo.EventDecl> events = new ArrayList<>();
@@ -219,6 +237,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 case "model" -> modelSource = value.toSourceCode().strip();
                 case "systemPrompt" -> systemPromptSource = value.toSourceCode().strip();
                 case "maxIter" -> maxIterSource = value.toSourceCode().strip();
+                case "inputType" -> inputTypeSource = value.toSourceCode().strip();
                 case "activities" -> extractActivities(value, activities, seenNames, agentName, context);
                 case "tools" -> extractTools(value, aiToolRefs, seenNames, agentName, context);
                 case "events" -> extractEvents(value, events, seenNames, agentName, context);
@@ -230,8 +249,8 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             }
         }
 
-        return new DurableAgentDeclInfo(agentName, workflowPrefix, modelSource, systemPromptSource,
-                maxIterSource, activities, aiToolRefs, events, humanTasks, peers);
+        return new DurableAgentDeclInfo(agentName, modelSource, systemPromptSource,
+                maxIterSource, inputTypeSource, activities, aiToolRefs, events, humanTasks, peers);
     }
 
     private void extractActivities(ExpressionNode value, List<DurableAgentDeclInfo.ActivityDecl> activities,
@@ -319,7 +338,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             String name = null;
             String requestSource = null;
             String responseSource = null;
-            String cardinality = "SINGLE_EVENT";
+            String cardinality = "MULTI_EVENT";
             Location nameLocation = eventMapping.location();
             for (MappingFieldNode eventField : eventMapping.fields()) {
                 if (!(eventField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
@@ -374,10 +393,8 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                         name = stringLiteralValue(fieldValue);
                         nameLocation = fieldValue.location();
                     }
-                    // The result typedesc travels separately (it is not json); the timeout stays
-                    // out of the metadata until task timeouts land on the runner.
+                    // The result typedesc travels separately (it is not json).
                     case "resultType" -> resultTypeSource = fieldValue.toSourceCode().strip();
-                    case "timeout" -> { }
                     default -> appendMetaField(meta, key, fieldValue.toSourceCode().strip());
                 }
             }

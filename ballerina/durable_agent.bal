@@ -30,26 +30,32 @@ import ballerina/time;
 
 # How a declared event channel consumes its requests.
 public enum EventCardinality {
-    # The channel is consumed once per run (default)
+    # The channel is consumed exactly once per run. Declare this only when the
+    # channel receives a single event per agent instance — a later event on the
+    # channel is never consumed
     SINGLE_EVENT,
-    # The channel re-arms after every turn: the agent may wait on it repeatedly, each
-    # wait consuming the next queued payload (conversational agents)
+    # The channel re-arms after every turn: the agent may wait on it repeatedly,
+    # each wait consuming the next queued payload (default — events can originate
+    # from multiple senders, which a once-only channel cannot guarantee)
     MULTI_EVENT
 }
 
 # A named event channel of a durable agent. `request`/`response` capture both
-# sides' types; a nil `response` declares a one-way channel (no result read).
+# sides' types and the channel's duplexity: a `response` type declares a duplex
+# (request-response) channel whose turn answers are read with
+# `getDataResult`/`waitForDataResult`; a nil `response` declares a one-way
+# channel — data flows in, no result is read back.
 #
 # + name - The channel name (unique across all of the agent's capabilities)
 # + request - Type of the payload sent to the agent on this channel
 # + response - Type of the agent's reply for this channel; `()` for one-way channels
-# + cardinality - Business cardinality of the channel: consumed once (`SINGLE_EVENT`)
-#                 or re-armed per turn (`MULTI_EVENT`)
+# + cardinality - Business cardinality of the channel: re-armed per turn
+#                 (`MULTI_EVENT`, the default) or consumed once (`SINGLE_EVENT`)
 public type EventDecl record {|
     string name;
     typedesc<anydata> request;
     typedesc<anydata>? response = ();
-    EventCardinality cardinality = SINGLE_EVENT;
+    EventCardinality cardinality = MULTI_EVENT;
 |};
 
 # An activity capability of a durable agent, with optional gating and retry config.
@@ -143,9 +149,15 @@ public type PeerDecl record {|
 # + humanTasks - Human task capabilities
 # + peers - Peer durable agents advertised as delegable tools
 # + maxIter - Hard cap on reasoning iterations per turn
+# + inputType - The agent's workflow input type, used by `run` and the management
+#               API start. `string` (the default) means the query text itself is
+#               the input; a data type declares a structured `run` input payload
+#               validated against it; `()` declares a no-input agent (started
+#               empty, typically driven by its event channels)
 public type DurableAgentConfig record {|
     ai:SystemPrompt systemPrompt;
     ai:ModelProvider model;
+    typedesc<anydata>? inputType = string;
     (ActivityDecl|function)[] activities = [];
     (ToolDecl|ai:ToolConfig|ai:BaseToolKit|function)[] tools = [];
     EventDecl[] events = [];
@@ -154,9 +166,9 @@ public type DurableAgentConfig record {|
     int maxIter = 16;
 |};
 
-# Returned by the non-blocking `getResult`/`getEventResult` reads when the agent
+# Returned by the non-blocking `getResult`/`getDataResult` reads when the agent
 # instance (or the specific turn) is still in progress — e.g. suspended on a human
-# task. Check back later, or use the blocking `waitForResult`/`waitForEventResult`
+# task. Check back later, or use the blocking `waitForResult`/`waitForDataResult`
 # forms, which durably wait and are resumable across crashes.
 public type AgentBusyError distinct error;
 
@@ -221,12 +233,12 @@ public isolated class DurableAgent {
     # + instanceId - The agent instance ID returned by `run`
     # + eventName - A channel declared in the agent's `events`
     # + data - The payload; must match the channel's declared `request` type
-    # + return - A correlation token for `getEventResult`/`waitForEventResult`,
+    # + return - A correlation token for `getDataResult`/`waitForDataResult`,
     #            or an error
-    public isolated function sendEvent(string instanceId, string eventName, anydata data)
+    public isolated function sendData(string instanceId, string eventName, anydata data)
             returns string|error = @java:Method {
         'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
-        name: "sendEvent"
+        name: "sendData"
     } external;
 
     # Returns the final result of an instance if it has finished, without waiting.
@@ -243,18 +255,18 @@ public isolated class DurableAgent {
         name: "getResult"
     } external;
 
-    # Returns the response for a specific `sendEvent` turn if it is ready, without
+    # Returns the response for a specific `sendData` turn if it is ready, without
     # waiting. While the turn is unanswered a `workflow:AgentBusyError` is returned.
     #
     # + instanceId - The agent instance ID returned by `run`
-    # + token - The correlation token returned by `sendEvent`
+    # + token - The correlation token returned by `sendData`
     # + T - Expected response type (inferred from context)
     # + return - The turn's response as `T`, a `workflow:AgentBusyError` while
     #            unanswered, or an error
-    public isolated function getEventResult(string instanceId, string token,
+    public isolated function getDataResult(string instanceId, string token,
             typedesc<anydata> T = <>) returns T|error = @java:Method {
         'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
-        name: "getEventResult"
+        name: "getDataResult"
     } external;
 
     # Waits until the instance finishes and returns its result. Inside a workflow
@@ -271,17 +283,17 @@ public isolated class DurableAgent {
         name: "waitForResult"
     } external;
 
-    # Waits for a specific `sendEvent` turn's response (same durability guarantees
+    # Waits for a specific `sendData` turn's response (same durability guarantees
     # as `waitForResult`).
     #
     # + instanceId - The agent instance ID returned by `run`
-    # + token - The correlation token returned by `sendEvent`
+    # + token - The correlation token returned by `sendData`
     # + T - Expected response type (inferred from context)
     # + return - The turn's response as `T`, or an error
-    public isolated function waitForEventResult(string instanceId, string token,
+    public isolated function waitForDataResult(string instanceId, string token,
             typedesc<anydata> T = <>) returns T|error = @java:Method {
         'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
-        name: "waitForEventResult"
+        name: "waitForDataResult"
     } external;
 }
 
@@ -289,8 +301,8 @@ public isolated class DurableAgent {
 // Object-model runner spec (internal)
 // ---------------------------------------------------------------------------
 // Built natively from the agent declaration registry; consumed by the shared
-// runner workflow (runDurableAgentObject) to register capabilities on its
-// AgentContext and start the ReAct loop.
+// runner workflow (runDurableAgentObject) to register capabilities on the
+// native agent context and start the ReAct loop.
 
 type DurableAgentActivitySpec record {|
     string toolName;
@@ -307,7 +319,7 @@ type DurableAgentEventSpec record {|
     string name;
     typedesc<anydata> request;
     typedesc<anydata>? response = ();
-    string cardinality = "SINGLE_EVENT";
+    string cardinality = "MULTI_EVENT";
 |};
 
 type DurableAgentHumanTaskSpec record {|

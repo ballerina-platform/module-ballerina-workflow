@@ -27,10 +27,10 @@ import java.util.List;
  * re-references the same symbols (model variable, activity/tool functions, types).
  *
  * @param agentName          the module-level variable name — the agent's stable identity
- * @param workflowPrefix     the import prefix of the workflow module in the declaring document
  * @param modelSource        source text of the {@code model} config expression
  * @param systemPromptSource source text of the {@code systemPrompt} config expression
  * @param maxIterSource      source text of the {@code maxIter} config expression, or null for default
+ * @param inputTypeSource    source text of the {@code inputType} config expression, or null for default
  * @param activities         declared activity capabilities
  * @param aiToolRefs         source refs of {@code @ai:AgentTool} function tools
  * @param events             declared event channels
@@ -40,10 +40,10 @@ import java.util.List;
  * @since 0.9.0
  */
 public record DurableAgentDeclInfo(String agentName,
-                                   String workflowPrefix,
                                    String modelSource,
                                    String systemPromptSource,
                                    String maxIterSource,
+                                   String inputTypeSource,
                                    List<ActivityDecl> activities,
                                    List<String> aiToolRefs,
                                    List<EventDecl> events,

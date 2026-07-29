@@ -58,7 +58,7 @@ import java.util.TreeSet;
  *
  * @since 0.1.0
  */
-public class SendEventValidatorTask implements AnalysisTask<SyntaxNodeAnalysisContext> {
+public class SendDataValidatorTask implements AnalysisTask<SyntaxNodeAnalysisContext> {
 
     private static final String WORKFLOW_PARAM_NAME = "workflow";
     private static final String DATA_NAME_PARAM_NAME = "dataName";

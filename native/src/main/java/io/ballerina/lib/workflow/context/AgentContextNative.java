@@ -28,6 +28,7 @@ import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.utils.JsonUtils;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BArray;
+import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BHandle;
 import io.ballerina.runtime.api.values.BMap;
@@ -52,9 +53,11 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Native implementations backing the {@code workflow:AgentContext} client class and the durable agent loop.
+ * Native implementations backing the durable agent context and the durable agent loop. The context travels
+ * through Ballerina as a raw handle injected into the object-model runner workflow; there is no user-facing
+ * agent context API.
  * <p>
- * The imperative agent body registers capabilities on the context — workflow activities
+ * The runner registers the agent's declared capabilities on the context — workflow activities
  * ({@link #recordActivityTool}), AI tools ({@link #recordAiTool}), and human tasks
  * ({@link #recordHumanTaskTool}). The loop advertises them (plus one wait-tool per declared signature event) to the
  * model via {@link #getToolDefs} and dispatches invocations durably: activities and AI tools as Temporal activities
@@ -705,6 +708,9 @@ public final class AgentContextNative {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Timed out waiting for the initial 'chat' event"));
             }
+            if (data instanceof BError) {
+                return data;
+            }
             Object ballerina = TypesUtil.convertJavaToBallerinaType(data);
             if (ballerina instanceof BString bStr) {
                 return bStr;
@@ -741,6 +747,9 @@ public final class AgentContextNative {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Timed out waiting for event '" + name + "'"));
             }
+            if (data instanceof BError) {
+                return data;
+            }
             return TypesUtil.convertJavaToBallerinaType(data);
         } catch (NonDeterministicException | TemporalFailure e) {
             throw e;
@@ -763,27 +772,43 @@ public final class AgentContextNative {
     private static Object awaitSignal(AgentContextInfo info, String eventName) throws Exception {
         info.eventWaitCount++;
         if (info.eventWaitCount > info.maxEventWaits) {
-            throw ApplicationFailure.newNonRetryableFailure(
-                    "Agent exceeded the maximum number of event waits (" + info.maxEventWaits
-                            + "). Configure ctx.setInteraction(...) to raise the limit.", "AGENT_EVENT_WAIT_LIMIT");
+            // Returned as a Ballerina error (not thrown): a Java failure crossing the
+            // Ballerina boundary loses its message. The loop recognizes this message
+            // prefix and fails the agent instead of feeding it to the model.
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Agent exceeded the maximum number of event waits (" + info.maxEventWaits + ")."));
         }
 
         CompletablePromise<SignalAwaitWrapper.SignalData> future = info.multiEvent
                 ? info.signalWrapper.takeSignalFuture(eventName)
                 : info.signalWrapper.getSignalFuture(eventName);
 
-        if (info.eventTimeoutMillis != null) {
-            boolean arrived = Workflow.await(Duration.ofMillis(info.eventTimeoutMillis),
-                    future::isCompleted);
-            if (!arrived) {
-                // Remove the abandoned FIFO waiter so a later signal is not consumed silently.
-                if (info.multiEvent) {
-                    info.signalWrapper.cancelWaiter(eventName, future);
+        // Publish the wait to the execution memo/history (as for workflow data-event waits in
+        // TemporalFutureValue) so diagrams can render where the agent is halted; cleared as soon
+        // as the wait unblocks. A buffered event that completes the wait instantly is skipped —
+        // the agent never actually blocked.
+        boolean tracked = !future.isCompleted();
+        if (tracked) {
+            WaitingEventsTracker.beginWait(eventName);
+        }
+        try {
+            if (info.eventTimeoutMillis != null) {
+                boolean arrived = Workflow.await(Duration.ofMillis(info.eventTimeoutMillis),
+                        future::isCompleted);
+                if (!arrived) {
+                    // Remove the abandoned FIFO waiter so a later signal is not consumed silently.
+                    if (info.multiEvent) {
+                        info.signalWrapper.cancelWaiter(eventName, future);
+                    }
+                    return TimedOut.INSTANCE;
                 }
-                return TimedOut.INSTANCE;
+            } else {
+                Workflow.await(future::isCompleted);
             }
-        } else {
-            Workflow.await(future::isCompleted);
+        } finally {
+            if (tracked) {
+                WaitingEventsTracker.endWait(eventName);
+            }
         }
 
         SignalAwaitWrapper.SignalData signalData = future.get();

@@ -19,39 +19,17 @@ import ballerina/workflow;
 
 final ai:Wso2ModelProvider chatModel = check new ("http://localhost:9099", "test-token");
 
-type EscalationReq record {|
-    string reason;
-|};
-
 @workflow:Activity
 function checkInventory(string item) returns boolean|error {
     return item.length() > 0;
 }
 
-@workflow:Activity
-function reserveStock(string item, int quantity) returns string|error {
-    return item + ":" + quantity.toString();
-}
+type OrderAgent workflow:DurableAgent;
 
-@ai:AgentTool
-isolated function priceLookup(string item) returns decimal|error {
-    return 10.5d;
-}
-
-final workflow:DurableAgent orderAgent = check new ({
-    systemPrompt: {role: "Order assistant", instructions: "Help the user place and track orders."},
+// ERROR: the declaration is detected through the type alias (semantic resolution) and
+// must still be a module-level `final` variable.
+OrderAgent orderAgent = check new ({
+    systemPrompt: {role: "Order assistant", instructions: "Help the user."},
     model: chatModel,
-    activities: [
-        checkInventory,
-        {activity: reserveStock, name: "reserve", requiresApproval: true}
-    ],
-    tools: [priceLookup],
-    events: [
-        {name: "chat", request: string, response: string, cardinality: workflow:MULTI_EVENT},
-        {name: "escalate", request: EscalationReq}
-    ],
-    humanTasks: [
-        {name: "approval", roles: "manager", title: "Approve the order", timeout: {minutes: 30}}
-    ],
-    maxIter: 8
+    activities: [checkInventory]
 });

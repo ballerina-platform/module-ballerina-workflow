@@ -21,12 +21,17 @@
 # Describes a registered workflow type for use by the workflow launcher UI.
 #
 # + workflowType - Registered workflow function name (Temporal workflow type)
-# + inputSchema - JSON Schema of the workflow's input type for form rendering.
-#                 `()` until the compiler plugin generates this at build time.
+# + kind - What the definition starts: a `@workflow:Workflow` function (`WORKFLOW`)
+#          or a `workflow:DurableAgent` declaration (`AGENT`). Both start through the
+#          same endpoint and list as one set of definitions
+# + inputSchema - JSON Schema of the start input for form rendering: a workflow's
+#                 input parameters, or an agent's declared `inputType`. `()` when the
+#                 schema is unavailable or the agent declares no input
 # + isActive - Whether this workflow type has an active registered worker
 # + workerCount - Number of workers currently registered for this workflow type
 public type WorkflowDefinition record {|
     string workflowType;
+    string kind = "WORKFLOW";
     string? inputSchema;
     boolean isActive;
     int workerCount;

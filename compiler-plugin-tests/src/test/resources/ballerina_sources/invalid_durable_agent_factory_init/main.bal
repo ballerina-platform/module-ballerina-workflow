@@ -19,39 +19,20 @@ import ballerina/workflow;
 
 final ai:Wso2ModelProvider chatModel = check new ("http://localhost:9099", "test-token");
 
-type EscalationReq record {|
-    string reason;
-|};
-
 @workflow:Activity
 function checkInventory(string item) returns boolean|error {
     return item.length() > 0;
 }
 
-@workflow:Activity
-function reserveStock(string item, int quantity) returns string|error {
-    return item + ":" + quantity.toString();
+function createOrderAgent() returns workflow:DurableAgent|error {
+    return new ({
+        systemPrompt: {role: "Order assistant", instructions: "Help the user."},
+        model: chatModel,
+        activities: [checkInventory]
+    });
 }
 
-@ai:AgentTool
-isolated function priceLookup(string item) returns decimal|error {
-    return 10.5d;
-}
-
-final workflow:DurableAgent orderAgent = check new ({
-    systemPrompt: {role: "Order assistant", instructions: "Help the user place and track orders."},
-    model: chatModel,
-    activities: [
-        checkInventory,
-        {activity: reserveStock, name: "reserve", requiresApproval: true}
-    ],
-    tools: [priceLookup],
-    events: [
-        {name: "chat", request: string, response: string, cardinality: workflow:MULTI_EVENT},
-        {name: "escalate", request: EscalationReq}
-    ],
-    humanTasks: [
-        {name: "approval", roles: "manager", title: "Approve the order", timeout: {minutes: 30}}
-    ],
-    maxIter: 8
-});
+// ERROR: the initializer is a factory call, so the compiler cannot read the agent's
+// configuration to generate its module-init registration — the agent would compile
+// cleanly and fail at runtime on its first run().
+final workflow:DurableAgent orderAgent = check createOrderAgent();

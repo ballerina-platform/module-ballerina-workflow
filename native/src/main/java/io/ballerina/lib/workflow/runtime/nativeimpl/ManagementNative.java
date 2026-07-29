@@ -224,14 +224,21 @@ public final class ManagementNative {
 
             for (String workflowType : WorkflowWorkerNative.getProcessRegistry().keySet()) {
                 BFunctionPointer processFn = WorkflowWorkerNative.getProcessRegistry().get(workflowType);
-                String inputSchema = deriveWorkflowInputSchema(processFn);
-
-                BMap<BString, Object> def = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
-                                                                           "WorkflowDefinition");
                 String displayType = workflowType.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX) ?
                                      workflowType.substring(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length()) :
                                      workflowType;
+                // Workflows and durable agents list as one set of startable definitions: an
+                // agent's input schema comes from its declared inputType (the shared runner's
+                // signature is an internal envelope), everything else is identical.
+                boolean agentType = WorkflowWorkerNative.isAgentWorkflowType(workflowType);
+                String inputSchema = agentType
+                        ? DurableAgentNative.startInputSchema(displayType)
+                        : deriveWorkflowInputSchema(processFn);
+
+                BMap<BString, Object> def = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
+                                                                           "WorkflowDefinition");
                 def.put(StringUtils.fromString("workflowType"), StringUtils.fromString(displayType));
+                def.put(StringUtils.fromString("kind"), StringUtils.fromString(agentType ? "AGENT" : "WORKFLOW"));
                 def.put(StringUtils.fromString("inputSchema"),
                         inputSchema != null ? StringUtils.fromString(inputSchema) : null);
                 // All registered workflow types have an active worker (this worker)
@@ -1494,7 +1501,19 @@ public final class ManagementNative {
             }
 
             WorkflowStub stub = client.newUntypedWorkflowStub(type, optBuilder.build());
-            Object javaInput = input != null ? TypesUtil.convertBallerinaToJavaType(input) : null;
+            Object javaInput;
+            if (WorkflowWorkerNative.isAgentWorkflowType(type)) {
+                // Starting a durable agent goes through the same endpoint as a workflow: the
+                // posted input is mapped onto the agent's declared inputType and wrapped in
+                // the runner envelope the shared runner workflow expects.
+                Object envelope = DurableAgentNative.buildStartRunInput(workflowType.getValue(), input);
+                if (envelope instanceof BError inputError) {
+                    return inputError;
+                }
+                javaInput = envelope;
+            } else {
+                javaInput = input != null ? TypesUtil.convertBallerinaToJavaType(input) : null;
+            }
             WorkflowExecution execution = stub.start(javaInput);
 
             BMap<BString, Object> handle = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
@@ -2014,6 +2033,19 @@ public final class ManagementNative {
                     case EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED -> {
                         var attrs = event.getWorkflowExecutionSignaledEventAttributes();
                         String sigName = attrs.getSignalName();
+                        // A workflow-to-agent sendData travels as the __agent_event transport
+                        // signal whose envelope carries the actual channel name — decode it so
+                        // the channel's WAITING node completes under its own name instead of a
+                        // bogus node named after the transport signal.
+                        if (WorkflowWorkerNative.AGENT_EVENT_SIGNAL_NAME.equals(sigName)) {
+                            Object envelope = decodeFirstPayload(attrs.getInput(), dc);
+                            if (envelope instanceof Map<?, ?> eventMap
+                                    && eventMap.get("eventName") != null) {
+                                sigName = String.valueOf(eventMap.get("eventName"));
+                            } else {
+                                break;
+                            }
+                        }
                         if (!isInternalSignal(sigName)) {
                             // Ballerina surfaces Temporal signals as data events (workflow:sendData
                             // -> `wait dataEvents.<name>`), so the node type says DATA, not SIGNAL.
@@ -2030,6 +2062,40 @@ public final class ManagementNative {
                                 nodeByEventId.put(eid, node);
                                 nodeOrder.add(eid);
                             }
+                        }
+                    }
+
+                    case EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED -> {
+                        // A durable agent's data events can also arrive as Temporal updates
+                        // (DurableAgent.sendData -> the agentSendData dynamic update handler).
+                        // Mirror the SIGNALED handling: a published wait for the event channel
+                        // completes in place; an unawaited (buffered) event gets its own node.
+                        var attrs = event.getWorkflowExecutionUpdateAcceptedEventAttributes();
+                        var input = attrs.getAcceptedRequest().getInput();
+                        if (!WorkflowWorkerNative.AGENT_SEND_DATA_UPDATE.equals(input.getName())
+                                || input.getArgs().getPayloadsCount() == 0) {
+                            break;
+                        }
+                        String updEventName;
+                        try {
+                            updEventName = dc.fromPayload(input.getArgs().getPayloads(0),
+                                    String.class, String.class);
+                        } catch (Exception e) {
+                            break;
+                        }
+                        if (updEventName == null) {
+                            break;
+                        }
+                        var pending = pendingDataNodes.remove(updEventName);
+                        if (pending != null) {
+                            pending.put("status", "COMPLETED");
+                            pending.put("endTime", ts);
+                        } else {
+                            var node = newNode(eid, updEventName, "DATA", ts);
+                            node.put("status", "COMPLETED");
+                            node.put("endTime", ts);
+                            nodeByEventId.put(eid, node);
+                            nodeOrder.add(eid);
                         }
                     }
 

@@ -41,13 +41,6 @@ public final class WorkflowConstants {
     public static final String PROCESS_ANNOTATION = "Workflow";
     public static final String ACTIVITY_ANNOTATION = "Activity";
 
-    // Agent support
-    /** Name of the built-in LLM chat activity in ballerina/workflow; reserved as an agent activity key. */
-    public static final String LLM_CHAT_ACTIVITY = "llmChat";
-    /** Name of the built-in structured-generation activity in ballerina/workflow. */
-    public static final String GENERATE_ACTIVITY = "generate";
-    /** Name of the built-in AI tool activity wrapper in ballerina/workflow. */
-    public static final String EXECUTE_AGENT_TOOL_ACTIVITY = "executeAgentTool";
     /** The ai module providing the ModelProvider type used by agents. */
     public static final String AI_PACKAGE_ORG = "ballerina";
     public static final String AI_PACKAGE_NAME = "ai";

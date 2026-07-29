@@ -314,6 +314,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                 .append(", ").append(decl.modelSource())
                 .append(", ").append(decl.systemPromptSource())
                 .append(", ").append(decl.maxIterSource() != null ? decl.maxIterSource() : "16")
+                .append(", ").append(decl.inputTypeSource() != null ? decl.inputTypeSource() : "string")
                 .append(");").append(System.lineSeparator());
         for (DurableAgentDeclInfo.ActivityDecl activity : decl.activities()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)

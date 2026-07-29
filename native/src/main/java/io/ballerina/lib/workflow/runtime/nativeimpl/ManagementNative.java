@@ -208,14 +208,21 @@ public final class ManagementNative {
 
             for (String workflowType : WorkflowWorkerNative.getProcessRegistry().keySet()) {
                 BFunctionPointer processFn = WorkflowWorkerNative.getProcessRegistry().get(workflowType);
-                String inputSchema = deriveWorkflowInputSchema(processFn);
-
-                BMap<BString, Object> def = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
-                                                                           "WorkflowDefinition");
                 String displayType = workflowType.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX) ?
                                      workflowType.substring(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length()) :
                                      workflowType;
+                // Workflows and durable agents list as one set of startable definitions: an
+                // agent's input schema comes from its declared inputType (the shared runner's
+                // signature is an internal envelope), everything else is identical.
+                boolean agentType = WorkflowWorkerNative.isAgentWorkflowType(workflowType);
+                String inputSchema = agentType
+                        ? DurableAgentNative.startInputSchema(displayType)
+                        : deriveWorkflowInputSchema(processFn);
+
+                BMap<BString, Object> def = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
+                                                                           "WorkflowDefinition");
                 def.put(StringUtils.fromString("workflowType"), StringUtils.fromString(displayType));
+                def.put(StringUtils.fromString("kind"), StringUtils.fromString(agentType ? "AGENT" : "WORKFLOW"));
                 def.put(StringUtils.fromString("inputSchema"),
                         inputSchema != null ? StringUtils.fromString(inputSchema) : null);
                 // All registered workflow types have an active worker (this worker)
@@ -1478,7 +1485,19 @@ public final class ManagementNative {
             }
 
             WorkflowStub stub = client.newUntypedWorkflowStub(type, optBuilder.build());
-            Object javaInput = input != null ? TypesUtil.convertBallerinaToJavaType(input) : null;
+            Object javaInput;
+            if (WorkflowWorkerNative.isAgentWorkflowType(type)) {
+                // Starting a durable agent goes through the same endpoint as a workflow: the
+                // posted input is mapped onto the agent's declared inputType and wrapped in
+                // the runner envelope the shared runner workflow expects.
+                Object envelope = DurableAgentNative.buildStartRunInput(workflowType.getValue(), input);
+                if (envelope instanceof BError inputError) {
+                    return inputError;
+                }
+                javaInput = envelope;
+            } else {
+                javaInput = input != null ? TypesUtil.convertBallerinaToJavaType(input) : null;
+            }
             WorkflowExecution execution = stub.start(javaInput);
 
             BMap<BString, Object> handle = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),

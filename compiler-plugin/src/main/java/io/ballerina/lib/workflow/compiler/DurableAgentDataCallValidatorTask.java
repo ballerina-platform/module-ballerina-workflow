@@ -19,6 +19,9 @@
 package io.ballerina.lib.workflow.compiler;
 
 import io.ballerina.compiler.api.SemanticModel;
+import io.ballerina.compiler.api.symbols.Symbol;
+import io.ballerina.compiler.api.symbols.TypeDefinitionSymbol;
+import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.syntax.tree.AssignmentStatementNode;
 import io.ballerina.compiler.syntax.tree.BasicLiteralNode;
 import io.ballerina.compiler.syntax.tree.CheckExpressionNode;
@@ -68,6 +71,7 @@ import java.util.Map;
 public class DurableAgentDataCallValidatorTask implements AnalysisTask<CompilationAnalysisContext> {
 
     private static final String SEND_DATA_METHOD = "sendData";
+    private static final String RUN_METHOD = "run";
 
     /**
      * A declared channel.
@@ -77,31 +81,52 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
      */
     private record ChannelDecl(String name, boolean duplex) { }
 
+    /** How the agent's declared {@code inputType} constrains the {@code run} input payload. */
+    private enum InputKind {
+        /** {@code inputType: ()} — the agent takes no input payload. */
+        NONE,
+        /** {@code inputType: string} (the default) — the query text is the input. */
+        QUERY,
+        /** A data {@code inputType} — the payload must be a subtype of it. */
+        TYPED
+    }
+
+    /**
+     * The statically collected declaration of one module-level agent.
+     *
+     * @param channels        declared event channels by name
+     * @param inputKind       how the declared input type constrains run's payload
+     * @param inputType       the declared payload type symbol (TYPED only, best effort)
+     * @param inputTypeSource the declared input type's source text, for diagnostics
+     */
+    private record AgentSummary(Map<String, ChannelDecl> channels, InputKind inputKind,
+                                TypeSymbol inputType, String inputTypeSource) { }
+
     @Override
     public void perform(CompilationAnalysisContext context) {
         for (Module module : context.currentPackage().modules()) {
             SemanticModel semanticModel = context.compilation().getSemanticModel(module.moduleId());
-            Map<String, Map<String, ChannelDecl>> agentChannels = new HashMap<>();
+            Map<String, AgentSummary> agents = new HashMap<>();
             for (DocumentId documentId : module.documentIds()) {
-                collectAgentChannels(module.document(documentId), semanticModel, agentChannels);
+                collectAgentDecl(module.document(documentId), semanticModel, agents);
             }
-            if (agentChannels.isEmpty()) {
+            if (agents.isEmpty()) {
                 continue;
             }
             for (DocumentId documentId : module.documentIds()) {
                 Document document = module.document(documentId);
                 ((ModulePartNode) document.syntaxTree().rootNode())
-                        .accept(new SendDataCallVisitor(context, semanticModel, agentChannels));
+                        .accept(new AgentCallVisitor(context, semanticModel, agents));
             }
         }
     }
 
     /**
-     * Collects the declared event channels of every module-level {@code workflow:DurableAgent}
-     * declaration in the document: agent variable name → channel name → declaration.
+     * Collects every module-level {@code workflow:DurableAgent} declaration in the document:
+     * agent variable name → its declared event channels and input type.
      */
-    private void collectAgentChannels(Document document, SemanticModel semanticModel,
-                                      Map<String, Map<String, ChannelDecl>> out) {
+    private void collectAgentDecl(Document document, SemanticModel semanticModel,
+                                  Map<String, AgentSummary> out) {
         ModulePartNode root = (ModulePartNode) document.syntaxTree().rootNode();
         for (Node member : root.members()) {
             if (!(member instanceof ModuleVariableDeclarationNode varDecl)
@@ -120,9 +145,27 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                 continue;
             }
             Map<String, ChannelDecl> channels = new HashMap<>();
+            InputKind inputKind = InputKind.QUERY;
+            TypeSymbol inputType = null;
+            String inputTypeSource = "string";
             for (MappingFieldNode field : config.fields()) {
-                if (!(field instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()
-                        || !"events".equals(sf.fieldName().toSourceCode().strip())) {
+                if (!(field instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
+                    continue;
+                }
+                if ("inputType".equals(sf.fieldName().toSourceCode().strip())) {
+                    ExpressionNode inputTypeExpr = sf.valueExpr().get();
+                    inputTypeSource = inputTypeExpr.toSourceCode().strip();
+                    if ("()".equals(inputTypeSource)) {
+                        inputKind = InputKind.NONE;
+                    } else if ("string".equals(inputTypeSource)) {
+                        inputKind = InputKind.QUERY;
+                    } else {
+                        inputKind = InputKind.TYPED;
+                        inputType = resolveTypeSymbol(semanticModel, inputTypeExpr);
+                    }
+                    continue;
+                }
+                if (!"events".equals(sf.fieldName().toSourceCode().strip())) {
                     continue;
                 }
                 if (!(sf.valueExpr().get() instanceof ListConstructorExpressionNode list)) {
@@ -150,8 +193,24 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                     }
                 }
             }
-            out.put(capture.variableName().text(), channels);
+            out.put(capture.variableName().text(),
+                    new AgentSummary(channels, inputKind, inputType, inputTypeSource));
         }
+    }
+
+    /**
+     * Resolves the type denoted by a typedesc-valued config expression (a type name used in
+     * value position), unwrapping type-definition symbols to their described type.
+     */
+    private static TypeSymbol resolveTypeSymbol(SemanticModel semanticModel, ExpressionNode expr) {
+        Symbol symbol = semanticModel.symbol(expr).orElse(null);
+        if (symbol instanceof TypeDefinitionSymbol typeDefinition) {
+            return typeDefinition.typeDescriptor();
+        }
+        if (symbol instanceof TypeSymbol typeSymbol) {
+            return typeSymbol;
+        }
+        return null;
     }
 
     private MappingConstructorExpressionNode findConfigMapping(ExpressionNode initializer) {
@@ -188,28 +247,33 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
         return null;
     }
 
-    /** Visits sendData method calls on known agent variables and applies the two rules. */
-    private static final class SendDataCallVisitor extends NodeVisitor {
+    /** Visits run/sendData method calls on known agent variables and applies the rules. */
+    private static final class AgentCallVisitor extends NodeVisitor {
         private final CompilationAnalysisContext context;
         private final SemanticModel semanticModel;
-        private final Map<String, Map<String, ChannelDecl>> agentChannels;
+        private final Map<String, AgentSummary> agents;
 
-        SendDataCallVisitor(CompilationAnalysisContext context, SemanticModel semanticModel,
-                            Map<String, Map<String, ChannelDecl>> agentChannels) {
+        AgentCallVisitor(CompilationAnalysisContext context, SemanticModel semanticModel,
+                         Map<String, AgentSummary> agents) {
             this.context = context;
             this.semanticModel = semanticModel;
-            this.agentChannels = agentChannels;
+            this.agents = agents;
         }
 
         @Override
         public void visit(MethodCallExpressionNode methodCall) {
             super.visit(methodCall);
-            if (!(methodCall.expression() instanceof SimpleNameReferenceNode receiver)
-                    || !SEND_DATA_METHOD.equals(methodCall.methodName().toSourceCode().strip())) {
+            if (!(methodCall.expression() instanceof SimpleNameReferenceNode receiver)) {
                 return;
             }
-            Map<String, ChannelDecl> channels = agentChannels.get(receiver.name().text());
-            if (channels == null) {
+            String method = methodCall.methodName().toSourceCode().strip();
+            boolean sendData = SEND_DATA_METHOD.equals(method);
+            boolean run = RUN_METHOD.equals(method);
+            if (!sendData && !run) {
+                return;
+            }
+            AgentSummary agent = agents.get(receiver.name().text());
+            if (agent == null) {
                 return; // Not a known module-level agent.
             }
             // The receiver must actually resolve to a workflow:DurableAgent — a local or
@@ -218,6 +282,11 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                     semanticModel.symbol(receiver).orElse(null))) {
                 return;
             }
+            if (run) {
+                validateRunInput(methodCall, receiver.name().text(), agent);
+                return;
+            }
+            Map<String, ChannelDecl> channels = agent.channels();
             // sendData(instanceId, eventName, data): the channel is the second positional
             // argument, or an explicit `eventName = ...` named argument.
             String eventName = null;
@@ -245,6 +314,58 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
             if (!channel.duplex() && !isTokenDiscarded(methodCall)) {
                 report(WorkflowDiagnostic.WORKFLOW_153, methodCall.location(),
                         eventName, receiver.name().text());
+            }
+        }
+
+        /**
+         * Validates the {@code input} argument of {@code run(query, input)} against the
+         * agent's declared {@code inputType} (WORKFLOW_154). Omitting the argument (or
+         * passing an explicit nil) always starts the run on the query alone.
+         */
+        private void validateRunInput(MethodCallExpressionNode methodCall, String agentName,
+                                      AgentSummary agent) {
+            // run(query, input): the payload is the second positional argument, or an
+            // explicit `input = ...` named argument.
+            ExpressionNode inputArg = null;
+            int positional = 0;
+            for (FunctionArgumentNode arg : methodCall.arguments()) {
+                if (arg instanceof PositionalArgumentNode positionalArg) {
+                    positional++;
+                    if (positional == 2) {
+                        inputArg = positionalArg.expression();
+                    }
+                } else if (arg instanceof NamedArgumentNode namedArg
+                        && "input".equals(namedArg.argumentName().name().text())) {
+                    inputArg = namedArg.expression();
+                }
+            }
+            if (inputArg == null || inputArg.kind() == SyntaxKind.NIL_LITERAL) {
+                return;
+            }
+            switch (agent.inputKind()) {
+                case NONE -> report(WorkflowDiagnostic.WORKFLOW_154, inputArg.location(), agentName,
+                        "the agent declares no input (inputType is '()'), so no payload can be passed");
+                case QUERY -> report(WorkflowDiagnostic.WORKFLOW_154, inputArg.location(), agentName,
+                        "the agent's inputType is 'string', so the query text itself is the input — "
+                                + "declare a data inputType to pass a structured payload");
+                case TYPED -> {
+                    // Constructor expressions ({...}, [...]) are contextually typed against the
+                    // anydata parameter, so their inferred type is broader than what the value
+                    // satisfies — those are shape-checked at runtime instead.
+                    if (inputArg.kind() == SyntaxKind.MAPPING_CONSTRUCTOR
+                            || inputArg.kind() == SyntaxKind.LIST_CONSTRUCTOR) {
+                        return;
+                    }
+                    TypeSymbol declared = agent.inputType();
+                    TypeSymbol actual = semanticModel.typeOf(inputArg).orElse(null);
+                    if (declared != null && actual != null && !actual.subtypeOf(declared)) {
+                        report(WorkflowDiagnostic.WORKFLOW_154, inputArg.location(), agentName,
+                                "the payload type '" + actual.signature()
+                                        + "' is not a subtype of the declared inputType '"
+                                        + agent.inputTypeSource() + "'");
+                    }
+                }
+                default -> { }
             }
         }
 

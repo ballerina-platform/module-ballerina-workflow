@@ -149,9 +149,15 @@ public type PeerDecl record {|
 # + humanTasks - Human task capabilities
 # + peers - Peer durable agents advertised as delegable tools
 # + maxIter - Hard cap on reasoning iterations per turn
+# + inputType - The agent's workflow input type, used by `run` and the management
+#               API start. `string` (the default) means the query text itself is
+#               the input; a data type declares a structured `run` input payload
+#               validated against it; `()` declares a no-input agent (started
+#               empty, typically driven by its event channels)
 public type DurableAgentConfig record {|
     ai:SystemPrompt systemPrompt;
     ai:ModelProvider model;
+    typedesc<anydata>? inputType = string;
     (ActivityDecl|function)[] activities = [];
     (ToolDecl|ai:ToolConfig|ai:BaseToolKit|function)[] tools = [];
     EventDecl[] events = [];

@@ -24,6 +24,7 @@
 
 import ballerina/test;
 import ballerina/workflow.internal as wfInternal;
+import ballerina/workflow.management;
 
 final MockModelProvider declTestModel = new;
 
@@ -122,6 +123,80 @@ function testObjectModelRunnerEndToEnd() returns error? {
     string result = check runnerCoverageAgent.waitForResult(agentId);
     test:assertEquals(result, "Stock check result: laptop is in stock",
         "The object-model runner should resolve the declaration and drive the ReAct loop");
+}
+
+type CoverageOrder record {|
+    string id;
+    int qty;
+|};
+
+final DurableAgent typedInputAgent = check new ({
+    systemPrompt: {role: "", instructions: "You are an inventory assistant."},
+    model: declTestModel,
+    inputType: CoverageOrder,
+    activities: [checkStock]
+});
+
+@test:Config {groups: ["unit"], dependsOn: [testObjectModelRunnerEndToEnd]}
+function testManagementStartAndListUnified() returns error? {
+    // Mirror the plugin-generated registration for an agent with a typed input.
+    _ = check wfInternal:registerDurableAgentDecl("typedInputAgent", declTestModel,
+        {role: "", instructions: "You are an inventory assistant."}, 16, CoverageOrder);
+    _ = check wfInternal:registerDurableAgentActivity("typedInputAgent", "checkStock", checkStock);
+    _ = check wfInternal:registerDurableAgentRunner("typedInputAgent");
+    typedInputAgent.bindAgentName("typedInputAgent");
+
+    // Workflows and agents list as one set of definitions: the agent entries carry
+    // kind AGENT and a schema derived from the declared inputType.
+    management:WorkflowDefinition[] defs = check management:listWorkflowDefinitions();
+    management:WorkflowDefinition? queryAgentDef = ();
+    management:WorkflowDefinition? typedAgentDef = ();
+    foreach management:WorkflowDefinition def in defs {
+        if def.workflowType == "runnerCoverageAgent" {
+            queryAgentDef = def;
+        }
+        if def.workflowType == "typedInputAgent" {
+            typedAgentDef = def;
+        }
+    }
+    test:assertTrue(queryAgentDef is management:WorkflowDefinition
+            && typedAgentDef is management:WorkflowDefinition,
+        "Both agents should appear in the unified definitions list");
+    if queryAgentDef is management:WorkflowDefinition {
+        test:assertEquals(queryAgentDef.kind, "AGENT");
+        string? schema = queryAgentDef.inputSchema;
+        test:assertTrue(schema is string && schema.includes("string"),
+            "The default string inputType should produce a string schema");
+    }
+    if typedAgentDef is management:WorkflowDefinition {
+        string? schema = typedAgentDef.inputSchema;
+        test:assertTrue(schema is string && schema.includes("qty"),
+            "A typed inputType should produce its record schema: " + (schema ?: "()"));
+    }
+
+    // Starting through the same management API as workflows: the string inputType makes
+    // the posted input the query; a typed inputType validates and passes the payload.
+    management:WorkflowHandle stringStart = check management:startWorkflowByType(
+        "runnerCoverageAgent", "Is the laptop in stock?");
+    string stringResult = check runnerCoverageAgent.waitForResult(stringStart.workflowId);
+    test:assertEquals(stringResult, "Stock check result: laptop is in stock",
+        "A management-started string-input agent should treat the input as the query");
+
+    management:WorkflowHandle typedStart = check management:startWorkflowByType(
+        "typedInputAgent", {id: "ORD-9", qty: 2});
+    string typedResult = check typedInputAgent.waitForResult(typedStart.workflowId);
+    test:assertEquals(typedResult, "Stock check result: laptop is in stock",
+        "A management-started typed-input agent should receive the validated payload");
+
+    // A payload that does not match the declared inputType is rejected at start.
+    management:WorkflowHandle|error mismatch = management:startWorkflowByType(
+        "typedInputAgent", "not an order");
+    test:assertTrue(mismatch is error, "A mismatched input must be rejected at start");
+
+    // agent.run validates dynamically too: a typed agent rejects a wrong payload.
+    anydata wrongPayload = "still not an order";
+    string|error runMismatch = typedInputAgent.run("Place this order", wrongPayload);
+    test:assertTrue(runMismatch is error, "run must reject a payload that violates inputType");
 }
 
 @test:Config {}

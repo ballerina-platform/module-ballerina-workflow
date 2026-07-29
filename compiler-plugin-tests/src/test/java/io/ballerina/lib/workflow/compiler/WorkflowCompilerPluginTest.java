@@ -1001,6 +1001,29 @@ public class WorkflowCompilerPluginTest {
                         + getDiagnosticMessages(diagnosticResult));
     }
 
+    @Test(groups = "valid")
+    public void testValidDurableAgentRunInput() {
+        // Query-only runs, matching typed payloads (positional and named), inline
+        // constructors (runtime-checked), and explicit nil all compile clean.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("valid_durable_agent_run_input");
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for valid run inputs. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentRunInput() {
+        // A payload with the default string inputType (the query IS the input), a payload
+        // for a no-input agent, a mistyped payload, and a mistyped named argument.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_durable_agent_run_input");
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_154").size(), 4,
+                "All four run-input misuses should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        Assert.assertEquals(diagnosticResult.errorCount(), 4,
+                "Exactly the four misuses should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
     @Test(groups = "invalid")
     public void testInvalidDurableAgentDuplicateNames() {
         // "approval" is used by an activity, an event, and a human task — one flat namespace,

@@ -219,6 +219,9 @@ public enum WorkflowDiagnostic {
             "Data-event channel '%s' of durable agent '%s' is one-way (no 'response' type is "
                     + "declared), so the send produces no readable turn result: discard the "
                     + "correlation token with '_ = ...' or declare a 'response' type on the channel",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_154("WORKFLOW_154",
+            "The 'input' argument of 'run' does not match durable agent '%s': %s",
             DiagnosticSeverity.ERROR);
 
     private final String code;

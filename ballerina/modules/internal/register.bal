@@ -129,9 +129,12 @@ public isolated function registerHumanTask(string taskName) returns boolean|erro
 # + model - The agent's `ai:ModelProvider`
 # + systemPrompt - The agent's system prompt (`role` + `instructions`)
 # + maxIter - Per-turn reasoning iteration cap
+# + inputType - The agent's workflow input type: `string` (query text), a data
+#               type for a structured `run` input, or `()` for a no-input agent
 # + return - `true` on success, or an error for a duplicate agent name
 public isolated function registerDurableAgentDecl(string agentName, ai:ModelProvider model,
-        json systemPrompt, int maxIter) returns boolean|error = @java:Method {
+        json systemPrompt, int maxIter, typedesc<anydata>? inputType = string)
+        returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
     name: "registerDurableAgentDecl"
 } external;

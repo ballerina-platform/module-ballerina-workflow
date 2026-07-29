@@ -162,21 +162,23 @@ public final class ManagementNative {
 
     /**
      * Returns the latest response recorded by a durable agent, or {@code null} when none is available yet. Prefers
-     * the in-JVM {@code AgentResponseStore} (always current in the worker process), falling back to the
-     * {@code agentResponse} workflow memo upserted by the agent loop — which works from any process.
+     * the {@code agentResponse} workflow memo upserted by the agent loop (authoritative from any
+     * process in the cluster), falling back to the in-JVM {@code AgentResponseStore} when the memo
+     * has no entry yet or no workflow client is available (e.g. direct test bindings).
      *
      * @param agentId the agent's workflow ID
      * @return the latest response text (BString), {@code null}, or a Ballerina error
      */
     public static Object getAgentResponse(BString agentId) {
-        Object stored = io.ballerina.lib.workflow.context.AgentResponseStore.getFinalResponse(agentId);
-        if (stored != null) {
-            return stored;
-        }
+        // The agentResponse memo is the authoritative, cluster-wide source: the agent's turns may
+        // have run on another worker, making this JVM's AgentResponseStore entry stale. The in-JVM
+        // store only answers when no workflow client is available (e.g. direct test bindings).
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
-                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+                Object stored = io.ballerina.lib.workflow.context.AgentResponseStore.getFinalResponse(agentId);
+                return stored != null ? stored
+                        : ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
             }
             DescribeWorkflowExecutionRequest req = DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
                     client.getOptions().getNamespace()).setExecution(
@@ -185,8 +187,22 @@ public final class ManagementNative {
                     GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS).describeWorkflowExecution(req);
             Map<String, Payload> memoFields = resp.getWorkflowExecutionInfo().getMemo().getFieldsMap();
             DataConverter dc = client.getOptions().getDataConverter();
-            String response = decodeMemoString(dc, memoFields, "agentResponse", null);
-            return response == null ? null : StringUtils.fromString(response);
+            Payload responsePayload = memoFields.get("agentResponse");
+            if (responsePayload == null || responsePayload.getData().isEmpty()) {
+                // No memo yet (e.g. the agent has not answered a turn): the in-JVM store may
+                // still know a response recorded in this process.
+                return io.ballerina.lib.workflow.context.AgentResponseStore.getFinalResponse(agentId);
+            }
+            // The memo exists, so it is authoritative — a decode failure is an error, never a
+            // reason to fall back to worker-local data that may be stale on this worker.
+            try {
+                String response = dc.fromPayload(responsePayload, String.class, String.class);
+                return response == null ? null : StringUtils.fromString(response);
+            } catch (Exception e) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Failed to decode the agentResponse memo for '" + agentId.getValue() + "': "
+                                + e.getMessage()));
+            }
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
                     "Failed to read agent response for '" + agentId.getValue() + "': " + e.getMessage()));

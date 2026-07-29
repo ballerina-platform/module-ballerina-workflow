@@ -198,6 +198,11 @@ public final class WorkflowWorkerNative {
      * {@link #registerHumanTask(BString)} at module init time.
      */
     private static final Set<String> HUMANTASK_REGISTRY = ConcurrentHashMap.newKeySet();
+    /**
+     * Temporal workflow type prefix for built-in human-task child workflows
+     * ({@code humantask-<workflowDefinition.taskName>}).
+     */
+    public static final String HUMANTASK_TYPE_PREFIX = "humantask-";
 
     /**
      * Per-workflow-execution suspended flag, set by the {@code __wf_suspend}/{@code __wf_resume} signal handlers.
@@ -934,6 +939,13 @@ public final class WorkflowWorkerNative {
      *
      * @param humanTaskType the human task workflow type (e.g. {@code humantask-order.approve})
      * @return the expected result type, or {@code null}
+     */
+    /**
+     * Returns the expected result type registered for a human task type, or {@code null} when unknown.
+     * The type is registered lazily by the worker that executed {@code awaitHumanTask}, so in a
+     * multi-worker deployment another worker may not have it — callers treat a {@code null} as
+     * "skip the pre-validation"; the authoritative type check still happens when the completion
+     * payload crosses into the waiting workflow (ballerina-library#8866).
      */
     public static Type getHumanTaskResultType(String humanTaskType) {
         return humanTaskType == null ? null : HUMANTASK_RESULT_TYPES.get(humanTaskType);
@@ -1805,8 +1817,11 @@ public final class WorkflowWorkerNative {
                 BObject templateService = SERVICE_REGISTRY.get(workflowType);
 
                 if (processFunction == null && templateService == null) {
-                    // Route human task workflow types before reporting "not registered"
-                    if (HUMANTASK_REGISTRY.contains(workflowType)) {
+                    // Route human task workflow types before reporting "not registered". Declared
+                    // tasks are registered at module init on every worker; the prefix check covers
+                    // dynamically named tasks whose lazy registration happened on another worker.
+                    if (HUMANTASK_REGISTRY.contains(workflowType)
+                            || workflowType.startsWith(HUMANTASK_TYPE_PREFIX)) {
                         return executeBuiltinHumanTask(args);
                     }
 

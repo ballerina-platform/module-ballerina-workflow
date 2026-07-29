@@ -988,10 +988,14 @@ public class WorkflowCompilerPluginTest {
         // an undeclared channel is WORKFLOW_152; keeping the correlation token of a
         // one-way channel (no response type) is WORKFLOW_153.
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_durable_agent_send_data");
-        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_152);
-        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_153);
         // Two undeclared channels (positional + named-argument form) and two kept one-way
         // tokens (direct + through a type alias); the discarded sends stay clean.
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_152").size(), 2,
+                "Both undeclared-channel sends should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_153").size(), 2,
+                "Both kept one-way tokens should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
         Assert.assertEquals(diagnosticResult.errorCount(), 4,
                 "Exactly the four misuses should be flagged. Errors: "
                         + getDiagnosticMessages(diagnosticResult));

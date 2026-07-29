@@ -1468,8 +1468,6 @@ public final class WorkflowWorkerNative {
         private final SignalAwaitWrapper signalWrapper = new SignalAwaitWrapper();
         // Set on the workflow thread by execute() when the registered function is a durable
         // agent; read by the dynamic update handler (also on the workflow thread) to reject
-        // updateAgent calls targeting non-agent workflows.
-        private boolean agentWorkflow = false;
         // The agent's native context state; set when the agent context handle is created. Used by the
         // update handler's closing fast-path and the failure backstop that settles updates.
         private AgentContextNative.AgentContextInfo agentContextInfo = null;
@@ -1536,7 +1534,7 @@ public final class WorkflowWorkerNative {
                         // reply back to the caller. The wait+reply runs as a detached workflow task so
                         // signal delivery is never blocked.
                         if (AGENT_EVENT_SIGNAL_NAME.equals(signalName)) {
-                            // NOTE: do not gate on this.agentWorkflow here — the signal can arrive
+                            // NOTE: do not gate on the agent-workflow registry here — the signal can arrive
                             // in the first workflow task, before execute() has inspected the
                             // function and set the flag. Enqueueing is safe regardless: the signal
                             // wrapper exists from construction, and only an agent loop consumes
@@ -1664,7 +1662,12 @@ public final class WorkflowWorkerNative {
                                 throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
                                         "Unknown update '" + updateName + "'", "error");
                             }
-                            if (!BallerinaWorkflowAdapter.this.agentWorkflow) {
+                            // Derived from the static registration registry rather than the
+                            // adapter's agentWorkflow field, which execute() assigns only after
+                            // argument extraction — an update racing the first workflow task
+                            // would otherwise see it unset and wrongly reject a legitimate
+                            // agent turn.
+                            if (!AGENT_WORKFLOW_TYPES.contains(Workflow.getInfo().getWorkflowType())) {
                                 throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
                                         "sendData turns are only supported for workflow:DurableAgent instances; "
                                                 + "use workflow:sendData for regular workflows",
@@ -1843,7 +1846,6 @@ public final class WorkflowWorkerNative {
                 // may declare a leading workflow:Context parameter.
                 boolean hasAgentContext = AGENT_WORKFLOW_TYPES.contains(workflowType);
                 boolean hasContext = !hasAgentContext && EventExtractor.hasContextParameter(processFunction);
-                this.agentWorkflow = hasAgentContext;
                 boolean hasFirstCtxParam = hasContext || hasAgentContext;
 
                 // Convert workflow arguments to match expected parameter types.

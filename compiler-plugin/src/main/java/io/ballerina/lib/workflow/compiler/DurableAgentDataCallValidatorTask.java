@@ -18,6 +18,7 @@
 
 package io.ballerina.lib.workflow.compiler;
 
+import io.ballerina.compiler.api.SemanticModel;
 import io.ballerina.compiler.syntax.tree.AssignmentStatementNode;
 import io.ballerina.compiler.syntax.tree.BasicLiteralNode;
 import io.ballerina.compiler.syntax.tree.CheckExpressionNode;
@@ -29,6 +30,7 @@ import io.ballerina.compiler.syntax.tree.MappingFieldNode;
 import io.ballerina.compiler.syntax.tree.MethodCallExpressionNode;
 import io.ballerina.compiler.syntax.tree.ModulePartNode;
 import io.ballerina.compiler.syntax.tree.ModuleVariableDeclarationNode;
+import io.ballerina.compiler.syntax.tree.NamedArgumentNode;
 import io.ballerina.compiler.syntax.tree.Node;
 import io.ballerina.compiler.syntax.tree.NodeVisitor;
 import io.ballerina.compiler.syntax.tree.PositionalArgumentNode;
@@ -78,9 +80,10 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
     @Override
     public void perform(CompilationAnalysisContext context) {
         for (Module module : context.currentPackage().modules()) {
+            SemanticModel semanticModel = context.compilation().getSemanticModel(module.moduleId());
             Map<String, Map<String, ChannelDecl>> agentChannels = new HashMap<>();
             for (DocumentId documentId : module.documentIds()) {
-                collectAgentChannels(module.document(documentId), agentChannels);
+                collectAgentChannels(module.document(documentId), semanticModel, agentChannels);
             }
             if (agentChannels.isEmpty()) {
                 continue;
@@ -88,7 +91,7 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
             for (DocumentId documentId : module.documentIds()) {
                 Document document = module.document(documentId);
                 ((ModulePartNode) document.syntaxTree().rootNode())
-                        .accept(new SendDataCallVisitor(context, agentChannels));
+                        .accept(new SendDataCallVisitor(context, semanticModel, agentChannels));
             }
         }
     }
@@ -97,7 +100,8 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
      * Collects the declared event channels of every module-level {@code workflow:DurableAgent}
      * declaration in the document: agent variable name → channel name → declaration.
      */
-    private void collectAgentChannels(Document document, Map<String, Map<String, ChannelDecl>> out) {
+    private void collectAgentChannels(Document document, SemanticModel semanticModel,
+                                      Map<String, Map<String, ChannelDecl>> out) {
         ModulePartNode root = (ModulePartNode) document.syntaxTree().rootNode();
         for (Node member : root.members()) {
             if (!(member instanceof ModuleVariableDeclarationNode varDecl)
@@ -105,8 +109,10 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                             instanceof io.ballerina.compiler.syntax.tree.CaptureBindingPatternNode capture)) {
                 continue;
             }
-            String typeSource = varDecl.typedBindingPattern().typeDescriptor().toSourceCode().strip();
-            if (!typeSource.endsWith("DurableAgent")) {
+            // Semantic resolution (shared with the declaration analysis) so type aliases are
+            // recognized and unrelated types whose names merely end with "DurableAgent" are not.
+            if (!DurableAgentDeclAnalysisTask.isDurableAgentSymbol(
+                    semanticModel.symbol(varDecl.typedBindingPattern().typeDescriptor()).orElse(null))) {
                 continue;
             }
             MappingConstructorExpressionNode config = findConfigMapping(varDecl.initializer().orElse(null));
@@ -185,11 +191,13 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
     /** Visits sendData method calls on known agent variables and applies the two rules. */
     private static final class SendDataCallVisitor extends NodeVisitor {
         private final CompilationAnalysisContext context;
+        private final SemanticModel semanticModel;
         private final Map<String, Map<String, ChannelDecl>> agentChannels;
 
-        SendDataCallVisitor(CompilationAnalysisContext context,
+        SendDataCallVisitor(CompilationAnalysisContext context, SemanticModel semanticModel,
                             Map<String, Map<String, ChannelDecl>> agentChannels) {
             this.context = context;
+            this.semanticModel = semanticModel;
             this.agentChannels = agentChannels;
         }
 
@@ -202,9 +210,16 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
             }
             Map<String, ChannelDecl> channels = agentChannels.get(receiver.name().text());
             if (channels == null) {
-                return; // Not a known module-level agent (locals/shadowing resolve elsewhere).
+                return; // Not a known module-level agent.
             }
-            // sendData(instanceId, eventName, data): the channel is the second positional arg.
+            // The receiver must actually resolve to a workflow:DurableAgent — a local or
+            // parameter that merely shares the module-level agent's name must not match.
+            if (!DurableAgentDeclAnalysisTask.isDurableAgentSymbol(
+                    semanticModel.symbol(receiver).orElse(null))) {
+                return;
+            }
+            // sendData(instanceId, eventName, data): the channel is the second positional
+            // argument, or an explicit `eventName = ...` named argument.
             String eventName = null;
             int positional = 0;
             for (FunctionArgumentNode arg : methodCall.arguments()) {
@@ -213,6 +228,9 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                     if (positional == 2) {
                         eventName = stringLiteralValue(positionalArg.expression());
                     }
+                } else if (arg instanceof NamedArgumentNode namedArg
+                        && "eventName".equals(namedArg.argumentName().name().text())) {
+                    eventName = stringLiteralValue(namedArg.expression());
                 }
             }
             if (eventName == null) {

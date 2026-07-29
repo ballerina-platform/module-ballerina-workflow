@@ -142,11 +142,21 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 && typeDesc.kind() != SyntaxKind.SIMPLE_NAME_REFERENCE) {
             return false;
         }
-        Optional<Symbol> symbolOpt = semanticModel.symbol(typeDesc);
-        if (symbolOpt.isEmpty()) {
+        return isDurableAgentSymbol(semanticModel.symbol(typeDesc).orElse(null));
+    }
+
+    /**
+     * Returns {@code true} when the given symbol (a type reference, the class itself, or a
+     * variable) resolves — through any chain of type aliases — to the workflow module's
+     * {@code DurableAgent} class. Shared with {@link DurableAgentDataCallValidatorTask}.
+     *
+     * @param symbol the resolved symbol, or {@code null}
+     * @return whether the symbol denotes a {@code workflow:DurableAgent}
+     */
+    static boolean isDurableAgentSymbol(Symbol symbol) {
+        if (symbol == null) {
             return false;
         }
-        Symbol symbol = symbolOpt.get();
         TypeSymbol typeSymbol = null;
         if (symbol.kind() == SymbolKind.TYPE && symbol instanceof TypeSymbol ts) {
             typeSymbol = ts;

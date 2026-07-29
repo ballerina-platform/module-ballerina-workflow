@@ -50,6 +50,26 @@ public function main() returns error? {
     // ERROR (WORKFLOW_152): the agent declares no channel named "nosuch".
     _ = check orderAgent.sendData(id, "nosuch", "x");
 
+    // ERROR (WORKFLOW_152): named-argument form is validated too.
+    _ = check orderAgent.sendData(id, eventName = "alsoNosuch", data = "x");
+
+    // ERROR (WORKFLOW_153): the alias-typed agent's one-way channel token is kept.
+    string aliasId = check aliasAgent.run("hi");
+    string keptPing = check aliasAgent.sendData(aliasId, "ping", "x");
+
     _ = answer;
     _ = notifyTurn;
+    _ = keptPing;
 }
+
+type AliasAgent workflow:DurableAgent;
+
+// The declaration is recognized through the type alias (semantic resolution).
+final AliasAgent aliasAgent = check new ({
+    systemPrompt: {role: "Alias assistant", instructions: "Help."},
+    model: chatModel,
+    activities: [checkInventory],
+    events: [
+        {name: "ping", request: string}
+    ]
+});

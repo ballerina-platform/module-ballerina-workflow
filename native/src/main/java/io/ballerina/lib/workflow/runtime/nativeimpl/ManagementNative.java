@@ -2033,6 +2033,19 @@ public final class ManagementNative {
                     case EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED -> {
                         var attrs = event.getWorkflowExecutionSignaledEventAttributes();
                         String sigName = attrs.getSignalName();
+                        // A workflow-to-agent sendData travels as the __agent_event transport
+                        // signal whose envelope carries the actual channel name — decode it so
+                        // the channel's WAITING node completes under its own name instead of a
+                        // bogus node named after the transport signal.
+                        if (WorkflowWorkerNative.AGENT_EVENT_SIGNAL_NAME.equals(sigName)) {
+                            Object envelope = decodeFirstPayload(attrs.getInput(), dc);
+                            if (envelope instanceof Map<?, ?> eventMap
+                                    && eventMap.get("eventName") != null) {
+                                sigName = String.valueOf(eventMap.get("eventName"));
+                            } else {
+                                break;
+                            }
+                        }
                         if (!isInternalSignal(sigName)) {
                             // Ballerina surfaces Temporal signals as data events (workflow:sendData
                             // -> `wait dataEvents.<name>`), so the node type says DATA, not SIGNAL.

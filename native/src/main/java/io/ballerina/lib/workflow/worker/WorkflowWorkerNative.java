@@ -1582,12 +1582,19 @@ public final class WorkflowWorkerNative {
                                     io.temporal.workflow.CompletablePromise<Object> responder =
                                             Workflow.newPromise();
                                     signalWrapper.recordUpdate(eventName, payload, responder);
-                                    Workflow.await(responder::isCompleted);
+                                    // Track the in-flight turn under its envelope token, exactly like
+                                    // update-backed turns, so the pending-events query reports it.
+                                    this.pendingAgentDataEvents.put(token, eventName);
                                     try {
-                                        reply.put("response", responder.get());
-                                    } catch (Exception e) {
-                                        reply.put("error", e.getMessage() != null ? e.getMessage()
-                                                : "the agent turn failed");
+                                        Workflow.await(responder::isCompleted);
+                                        try {
+                                            reply.put("response", responder.get());
+                                        } catch (Exception e) {
+                                            reply.put("error", e.getMessage() != null ? e.getMessage()
+                                                    : "the agent turn failed");
+                                        }
+                                    } finally {
+                                        this.pendingAgentDataEvents.remove(token);
                                     }
                                 }
                                 Workflow.newUntypedExternalWorkflowStub(replyTo)

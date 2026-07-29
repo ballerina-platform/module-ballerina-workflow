@@ -504,15 +504,16 @@ public final class DurableAgentNative {
         if (decl == null) {
             return unknownAgentError(agentName);
         }
-        Object inputError = validateRunInput(decl, input);
-        if (inputError != null) {
-            return inputError;
+        Object validatedInput = validateRunInput(decl, input);
+        if (validatedInput instanceof BError) {
+            return validatedInput;
         }
         String workflowType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + agentName;
         Map<String, Object> runInput = new HashMap<>();
         runInput.put("agentName", agentName);
         runInput.put("query", query.getValue());
-        runInput.put("input", input == null ? null : TypesUtil.convertBallerinaToJavaType(input));
+        runInput.put("input", validatedInput == null ? null
+                : TypesUtil.convertBallerinaToJavaType(validatedInput));
 
         if (isInsideWorkflow()) {
             return WorkflowContextNative.startDurableAgentChild(agentName, runInput);
@@ -538,12 +539,15 @@ public final class DurableAgentNative {
     }
 
     /**
-     * Validates the {@code run} input payload against the agent's declared {@code inputType}.
-     * The compiler plugin rejects statically decidable mismatches; this covers dynamic values.
+     * Validates the {@code run} input payload against the agent's declared {@code inputType} and
+     * returns the converted value, so declared record defaults are filled exactly as on the
+     * management-API start path. The compiler plugin rejects statically decidable mismatches;
+     * this covers dynamic values.
      *
      * @param decl  the agent declaration
      * @param input the run input payload (a Ballerina value, or null)
-     * @return a BError describing the mismatch, or {@code null} when the input is acceptable
+     * @return the input converted to the declared type ({@code null} when omitted), or a BError
+     *         describing the mismatch
      */
     private static Object validateRunInput(AgentDecl decl, Object input) {
         BTypedesc inputType = decl.inputType();
@@ -563,13 +567,12 @@ public final class DurableAgentNative {
                             + "text is the input — declare a data inputType to pass a structured payload"));
         }
         try {
-            io.ballerina.runtime.api.utils.ValueUtils.convert(input, describing);
+            return io.ballerina.runtime.api.utils.ValueUtils.convert(input, describing);
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
                     "The 'input' argument does not match durable agent '" + decl.agentName()
                             + "'s declared inputType: " + e.getMessage()));
         }
-        return null;
     }
 
     /**

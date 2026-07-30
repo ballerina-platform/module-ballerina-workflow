@@ -348,13 +348,33 @@ function testBuildReviewDecisionResponseNoUserId() {
 // ── humanTaskErrorResponse ────────────────────────────────────────────────────
 
 // Full response union produced by humanTaskErrorResponse (includes 422 for invalid payloads).
-type HumanTaskErrorResp http:NotFound|http:Forbidden|http:Conflict|http:UnprocessableEntity|http:InternalServerError;
+type HumanTaskErrorResp http:NotFound|http:Unauthorized|http:Forbidden|http:Conflict|http:UnprocessableEntity
+        |http:InternalServerError;
 
 @test:Config {groups: ["unit"]}
 function testHumanTaskErrorResponseNotFound() {
     error err = error("workflow not found in Temporal");
     HumanTaskErrorResp resp = humanTaskErrorResponse(err);
     test:assertTrue(resp is http:NotFound, "NOT_FOUND message should produce 404");
+}
+
+@test:Config {groups: ["unit"]}
+function testHumanTaskErrorResponseUnauthorizedQueue() {
+    error err = error("Unauthorized: human task 'humantask-x' belongs to task queue 'other-q', " +
+        "which is served by a different integration");
+    HumanTaskErrorResp resp = humanTaskErrorResponse(err);
+    test:assertTrue(resp is http:Unauthorized,
+        "A task served by a different integration should produce 401");
+}
+
+@test:Config {groups: ["unit"]}
+function testReviewErrorResponseUnauthorizedQueue() {
+    error err = error("Unauthorized: review activity 'reviewactivity-x' belongs to task queue 'other-q', " +
+        "which is served by a different integration");
+    http:NotFound|http:Unauthorized|http:Forbidden|http:Conflict|http:InternalServerError resp =
+            reviewActivityErrorResponse(err);
+    test:assertTrue(resp is http:Unauthorized,
+        "A review activity served by a different integration should produce 401");
 }
 
 @test:Config {groups: ["unit"]}
@@ -392,7 +412,7 @@ function testHumanTaskErrorResponseInternalError() {
 @test:Config {groups: ["unit"]}
 function testReviewActivityErrorResponseNotFound() {
     error err = error("workflow NOT_FOUND");
-    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
+    http:NotFound|http:Unauthorized|http:Forbidden|http:Conflict|http:InternalServerError resp =
             reviewActivityErrorResponse(err);
     test:assertTrue(resp is http:NotFound, "NOT_FOUND message should produce 404");
 }
@@ -400,7 +420,7 @@ function testReviewActivityErrorResponseNotFound() {
 @test:Config {groups: ["unit"]}
 function testReviewActivityErrorResponseForbidden() {
     error err = error("not authorized to complete this task");
-    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
+    http:NotFound|http:Unauthorized|http:Forbidden|http:Conflict|http:InternalServerError resp =
             reviewActivityErrorResponse(err);
     test:assertTrue(resp is http:Forbidden, "not-authorized message should produce 403");
 }
@@ -408,7 +428,7 @@ function testReviewActivityErrorResponseForbidden() {
 @test:Config {groups: ["unit"]}
 function testReviewActivityErrorResponseConflict() {
     error err = error("task is not running");
-    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
+    http:NotFound|http:Unauthorized|http:Forbidden|http:Conflict|http:InternalServerError resp =
             reviewActivityErrorResponse(err);
     test:assertTrue(resp is http:Conflict, "not-running message should produce 409");
 }
@@ -416,7 +436,7 @@ function testReviewActivityErrorResponseConflict() {
 @test:Config {groups: ["unit"]}
 function testReviewActivityErrorResponseInternalError() {
     error err = error("some unexpected failure");
-    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
+    http:NotFound|http:Unauthorized|http:Forbidden|http:Conflict|http:InternalServerError resp =
             reviewActivityErrorResponse(err);
     test:assertTrue(resp is http:InternalServerError, "Unknown error should produce 500");
 }

@@ -201,10 +201,13 @@ public isolated function listPendingHumanTasks(string parentWorkflowId) returns 
 # + startTimeTo - Optional ISO-8601 upper bound on task start time (inclusive)
 # + closeTimeFrom - Optional ISO-8601 lower bound on task close time (inclusive)
 # + closeTimeTo - Optional ISO-8601 upper bound on task close time (inclusive)
+# + taskQueue - Optional task queue filter: only tasks served by that integration.
+#               Omitted, all task queues in the configured namespace are returned
 # + return - Array of human task summaries, or an error
 public isolated function listAllHumanTasks(string? status = (),
         string? startTimeFrom = (), string? startTimeTo = (),
-        string? closeTimeFrom = (), string? closeTimeTo = ()) returns HumanTaskSummary[]|error = @java:Method {
+        string? closeTimeFrom = (), string? closeTimeTo = (),
+        string? taskQueue = ()) returns HumanTaskSummary[]|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 
@@ -339,7 +342,8 @@ public isolated function listPendingReviewActivities(string parentWorkflowId)
 # + return - Array of review activity summaries, or an error
 public isolated function listAllReviewActivities(string? status = (),
         string? startTimeFrom = (), string? startTimeTo = (),
-        string? closeTimeFrom = (), string? closeTimeTo = ()) returns ReviewActivitySummary[]|error = @java:Method {
+        string? closeTimeFrom = (), string? closeTimeTo = (),
+        string? taskQueue = ()) returns ReviewActivitySummary[]|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative",
     name: "listAllReviewActivities"
 } external;
@@ -423,7 +427,8 @@ public isolated function startWorkflowByType(string workflowType, json? input,
 public isolated function listWorkflowInstances(string? status = (), string? workflowType = (),
     string? workflowId = (), string? startedBy = (), int 'limit = 20, string? pageToken = (),
         string? startTimeFrom = (), string? startTimeTo = (),
-        string? closeTimeFrom = (), string? closeTimeTo = ())
+        string? closeTimeFrom = (), string? closeTimeTo = (),
+        string? taskQueue = ())
         returns WorkflowInstancePage|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;

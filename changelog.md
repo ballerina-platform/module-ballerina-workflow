@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Management API task-queue scoping for namespaces shared by multiple integrations
+  (a project): human-task, review-activity, and workflow-instance listings (and the
+  pending count) accept an optional `taskQueue` filter, every list/detail result
+  carries `namespace` and `taskQueue` identifying its owning integration, and task
+  mutations (complete/fail/decide) are rejected with 401 when the task is served by
+  a different integration's task queue.
+
 - Data-event waits are now visible: a workflow blocked on `wait dataEvents.<name>`
   publishes the awaited event names to the execution memo (`wfWaitingEvents`),
   which lands in the event history and is readable from a describe call. The

@@ -38,6 +38,50 @@ import java.util.Map;
  */
 public final class TestNatives {
 
+    /**
+     * Test-only: starts an untyped workflow shaped like a human task on an ARBITRARY task
+     * queue (no worker serves it, so it stays RUNNING). Lets one test process simulate a
+     * second integration sharing the namespace, to validate task-queue scoping.
+     *
+     * @param workflowId the workflow ID (use a {@code humantask-} prefix for task listings)
+     * @param taskQueue  the foreign task queue name
+     * @param taskName   the task name recorded in the memo
+     * @param userRoles  the roles recorded in the memo
+     * @return null on success, or a BError
+     */
+    public static Object startForeignQueueHumanTask(io.ballerina.runtime.api.values.BString workflowId,
+            io.ballerina.runtime.api.values.BString taskQueue,
+            io.ballerina.runtime.api.values.BString taskName,
+            io.ballerina.runtime.api.values.BArray userRoles) {
+        try {
+            io.temporal.client.WorkflowClient client =
+                    io.ballerina.lib.workflow.worker.WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return io.ballerina.runtime.api.creators.ErrorCreator.createError(
+                        io.ballerina.runtime.api.utils.StringUtils.fromString("Workflow client not initialized"));
+            }
+            java.util.Map<String, Object> memo = new java.util.HashMap<>();
+            memo.put("workflowKind", "HUMAN_TASK");
+            memo.put("taskName", taskName.getValue());
+            memo.put("parentWorkflowId", "test-foreign-parent");
+            memo.put("userRoles", userRoles.getStringArray());
+            io.temporal.client.WorkflowOptions options = io.temporal.client.WorkflowOptions.newBuilder()
+                    .setWorkflowId(workflowId.getValue())
+                    .setTaskQueue(taskQueue.getValue())
+                    .setMemo(memo)
+                    .build();
+            io.temporal.client.WorkflowStub stub =
+                    client.newUntypedWorkflowStub("humantask-" + taskName.getValue(), options);
+            stub.start(java.util.Map.of());
+            return null;
+        } catch (Exception e) {
+            return io.ballerina.runtime.api.creators.ErrorCreator.createError(
+                    io.ballerina.runtime.api.utils.StringUtils.fromString(
+                            "Failed to start foreign-queue task: " + e.getMessage()));
+        }
+    }
+
+
     private TestNatives() {
         // Utility class, prevent instantiation
     }

@@ -69,7 +69,7 @@ public client class Context {
     #
     # + duration - The duration to sleep
     # + return - An error if the sleep fails, otherwise nil
-    public isolated function sleep(time:Duration duration) returns error? {
+    public isolated function sleep(Duration duration) returns error? {
         decimal totalSeconds = <decimal>duration.hours * 3600 +
                                <decimal>duration.minutes * 60 +
                                duration.seconds;
@@ -136,7 +136,7 @@ public client class Context {
     # + return - Positional tuple of values (`nil` for an incomplete position), or an error
     remote isolated function await(future<anydata>[] futures,
             int:Unsigned32 minCount = <int:Unsigned32>futures.length(),
-            time:Duration? timeout = (),
+            Duration? timeout = (),
             typedesc<anydata|error|(anydata|error)[]> T = <>) returns T = @java:Method {
         'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WaitUtils",
         name: "awaitFutures"
@@ -172,7 +172,7 @@ public client class Context {
             map<json> payload = {},
             string? title = (),
             string? description = (),
-            time:Duration? timeout = (),
+            Duration? timeout = (),
             typedesc<anydata> T = <>)
             returns T|HumanTaskTimeoutError = @java:Method {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",

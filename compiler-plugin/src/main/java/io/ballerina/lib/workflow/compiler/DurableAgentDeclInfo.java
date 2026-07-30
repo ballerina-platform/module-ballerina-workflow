@@ -70,13 +70,14 @@ public record DurableAgentDeclInfo(String agentName,
     public record ActivityDecl(String toolName, String functionRefSource, String metaSource) { }
 
     /**
-     * A declared AI tool: the tool reference and the optional ToolDecl gating arguments
-     * ({@code requiresApproval}/{@code userRoles}) as named-argument source, or {@code null}.
+     * A declared AI tool: the tool reference and the optional ToolDecl gating expressions,
+     * kept as separate sources so import-prefix collection can inspect each one.
      *
-     * @param refSource       the tool reference source (function/config/toolkit variable)
-     * @param extraArgsSource extra named arguments appended to the registration call, or null
+     * @param refSource      the tool reference source (function/config/toolkit variable)
+     * @param approvalSource the {@code requiresApproval} expression source, or null
+     * @param rolesSource    the {@code userRoles} expression source, or null
      */
-    public record ToolRef(String refSource, String extraArgsSource) { }
+    public record ToolRef(String refSource, String approvalSource, String rolesSource) { }
 
     /**
      * A declared event channel.

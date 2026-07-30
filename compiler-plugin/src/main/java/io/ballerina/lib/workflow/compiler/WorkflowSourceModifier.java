@@ -328,8 +328,11 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
                     .append(":registerDurableAgentTool(").append(agentNameLiteral)
                     .append(", ").append(toolRef.refSource());
-            if (toolRef.extraArgsSource() != null) {
-                body.append(", ").append(toolRef.extraArgsSource());
+            if (toolRef.approvalSource() != null) {
+                body.append(", requiresApproval = ").append(toolRef.approvalSource());
+            }
+            if (toolRef.rolesSource() != null) {
+                body.append(", userRoles = ").append(toolRef.rolesSource());
             }
             body.append(");").append(System.lineSeparator());
         }
@@ -431,6 +434,8 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             }
             for (DurableAgentDeclInfo.ToolRef toolRef : decl.aiToolRefs()) {
                 addPrefixIfQualified(prefixes, toolRef.refSource());
+                addPrefixIfQualified(prefixes, toolRef.approvalSource());
+                addPrefixIfQualified(prefixes, toolRef.rolesSource());
             }
             for (DurableAgentDeclInfo.EventDecl event : decl.events()) {
                 addPrefixIfQualified(prefixes, event.requestTypeSource());

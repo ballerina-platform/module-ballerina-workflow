@@ -16,7 +16,6 @@
 
 import ballerina/ai;
 import ballerina/jballerina.java;
-import ballerina/time;
 
 // ============================================================================
 // anydata mirrors of the ballerina/ai chat message types.
@@ -486,7 +485,7 @@ type AgentRunConfig record {|
 
     # Maximum wait per event. On timeout the model is told the wait timed
     # out so it can wrap up gracefully. Required for `MULTI_EVENT`
-    time:Duration? eventTimeout = ();
+    Duration? eventTimeout = ();
 
     # Hard cap on the total number of event waits per run; exceeding it fails
     # the agent (backstop for open-ended conversations)
@@ -505,7 +504,7 @@ type AgentRunConfig record {|
 #             the review timed out so it can wrap up. Omit to wait indefinitely
 type ApprovalConfig record {|
     string|string[] userRoles = "manager";
-    time:Duration? timeout = ();
+    Duration? timeout = ();
 |};
 
 // Internal shape of a registered tool: the LLM-facing definition plus the
@@ -625,7 +624,7 @@ isolated function registerAgentEvent(handle agentCtx, string name, typedesc<anyd
 # + return - An error if the task cannot be registered, otherwise nil
 isolated function registerHumanTask(handle agentCtx, string taskName, string|string[] userRoles,
         typedesc<anydata> resultType = anydata, string? title = (), string? description = (),
-        time:Duration? timeout = ()) returns error? {
+        Duration? timeout = ()) returns error? {
     return recordHumanTaskTool(agentCtx, taskName, userRoles, resultType, title, description,
             timeout);
 }
@@ -711,14 +710,14 @@ isolated function awaitAgentToolReview(handle nativeContext, string toolName, st
     name: "awaitToolReview"
 } external;
 
-isolated function setAgentApproval(handle nativeContext, string|string[] userRoles, time:Duration? timeout)
+isolated function setAgentApproval(handle nativeContext, string|string[] userRoles, Duration? timeout)
         returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "setAgentApproval"
 } external;
 
 isolated function recordHumanTaskTool(handle nativeContext, string taskName, string|string[] userRoles,
-        typedesc<anydata> resultType, string? title, string? description, time:Duration? timeout)
+        typedesc<anydata> resultType, string? title, string? description, Duration? timeout)
         returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "recordHumanTaskTool"
@@ -730,7 +729,7 @@ isolated function registerAgentUpdateEvent(handle nativeContext, string name, ty
     name: "registerUpdateEvent"
 } external;
 
-isolated function setAgentInteraction(handle nativeContext, string pattern, time:Duration? eventTimeout,
+isolated function setAgentInteraction(handle nativeContext, string pattern, Duration? eventTimeout,
         int maxEventWaits) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "setInteraction"
@@ -972,7 +971,7 @@ isolated function registerDeclaredHumanTask(handle agentCtx, DurableAgentHumanTa
     string|string[] roles = "manager";
     string? title = ();
     string? description = ();
-    time:Duration? timeout = ();
+    Duration? timeout = ();
     json meta = taskSpec.meta;
     if meta is map<json> {
         json rolesJson = meta["roles"];

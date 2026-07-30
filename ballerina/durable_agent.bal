@@ -16,7 +16,6 @@
 
 import ballerina/ai;
 import ballerina/jballerina.java;
-import ballerina/time;
 
 // ---------------------------------------------------------------------------
 // Durable agent (object model) — declaration surface
@@ -110,7 +109,7 @@ public type HumanTaskDecl record {|
     typedesc<anydata> resultType = anydata;
     string title?;
     string description?;
-    time:Duration timeout?;
+    Duration timeout?;
 |};
 
 # A peer durable agent advertised to this agent's model as a delegable tool.

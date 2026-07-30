@@ -318,7 +318,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     || member.kind() == SyntaxKind.QUALIFIED_NAME_REFERENCE) {
                 String refSource = member.toSourceCode().strip();
                 checkUnique(simpleName(refSource), seenNames, agentName, member.location(), context);
-                aiToolRefs.add(new DurableAgentDeclInfo.ToolRef(refSource, null));
+                aiToolRefs.add(new DurableAgentDeclInfo.ToolRef(refSource, null, null));
             } else if (member instanceof MappingConstructorExpressionNode toolDecl) {
                 // A ToolDecl entry: {tool: <ref>, requiresApproval: ..., userRoles: ...}. The
                 // gating fields pass through to the registration call as named arguments.
@@ -344,18 +344,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     continue;
                 }
                 checkUnique(simpleName(toolRef), seenNames, agentName, member.location(), context);
-                StringBuilder extraArgs = new StringBuilder();
-                if (approvalSource != null) {
-                    extraArgs.append("requiresApproval = ").append(approvalSource);
-                }
-                if (rolesSource != null) {
-                    if (extraArgs.length() > 0) {
-                        extraArgs.append(", ");
-                    }
-                    extraArgs.append("userRoles = ").append(rolesSource);
-                }
-                aiToolRefs.add(new DurableAgentDeclInfo.ToolRef(toolRef,
-                        extraArgs.length() == 0 ? null : extraArgs.toString()));
+                aiToolRefs.add(new DurableAgentDeclInfo.ToolRef(toolRef, approvalSource, rolesSource));
             }
             // ai:ToolConfig / toolkit constructor expressions carry their functions by value and
             // need no module-init registration; their names are not statically resolvable here.

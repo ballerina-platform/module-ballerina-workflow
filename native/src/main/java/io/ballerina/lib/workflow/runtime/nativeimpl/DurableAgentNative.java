@@ -95,7 +95,7 @@ public final class DurableAgentNative {
         private final BTypedesc inputType;
         private final BTypedesc resultType;
         private final Map<String, ActivityDecl> activities = new LinkedHashMap<>();
-        private final Map<String, BFunctionPointer> tools = new LinkedHashMap<>();
+        private final Map<String, ToolDeclEntry> tools = new LinkedHashMap<>();
         private final Map<String, EventDecl> events = new LinkedHashMap<>();
         private final Map<String, Object> humanTasks = new LinkedHashMap<>();
         private final Map<String, PeerDecl> peers = new LinkedHashMap<>();
@@ -143,7 +143,7 @@ public final class DurableAgentNative {
             return activities;
         }
 
-        public Map<String, BFunctionPointer> tools() {
+        public Map<String, ToolDeclEntry> tools() {
             return tools;
         }
 
@@ -178,6 +178,16 @@ public final class DurableAgentNative {
      *                 a Ballerina value
      */
     public record ActivityDecl(String toolName, BFunctionPointer function, Object meta) { }
+
+    /**
+     * A declared AI tool of a durable agent.
+     *
+     * @param toolName the tool name advertised to the model
+     * @param tool     the tool function
+     * @param meta     the declaration metadata (description, parameters schema, gating) as a
+     *                 json value, decoded by the runner
+     */
+    public record ToolDeclEntry(String toolName, BFunctionPointer tool, Object meta) { }
 
     /**
      * A declared event channel.
@@ -318,14 +328,17 @@ public final class DurableAgentNative {
      * @param tool      the tool function
      * @return true on success, or a BError when the agent is unknown
      */
-    public static Object registerDurableAgentTool(BString agentName, BString toolName, BFunctionPointer tool) {
+    public static Object registerDurableAgentTool(BString agentName, BString toolName, BFunctionPointer tool,
+                                                  Object meta) {
         AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName.getValue());
         if (decl == null) {
             return unknownAgentError(agentName.getValue());
         }
-        decl.tools().put(toolName.getValue(), tool);
+        decl.tools().put(toolName.getValue(), new ToolDeclEntry(toolName.getValue(), tool, meta));
+        boolean mcpTool = meta instanceof io.ballerina.runtime.api.values.BMap<?, ?> metaMap
+                && Boolean.TRUE.equals(metaMap.get(io.ballerina.runtime.api.utils.StringUtils.fromString("isMcp")));
         WorkflowWorkerNative.putAgentTool(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + agentName.getValue(),
-                toolName.getValue(), tool);
+                toolName.getValue(), tool, mcpTool);
         return true;
     }
 
@@ -425,10 +438,11 @@ public final class DurableAgentNative {
             BMap<BString, Object> toolProbe = ValueCreator.createRecordValue(
                     ModuleUtils.getModule(), TOOL_SPEC_RECORD);
             BArray tools = ValueCreator.createArrayValue(TypeCreator.createArrayType(toolProbe.getType()));
-            for (Map.Entry<String, BFunctionPointer> tool : decl.tools().entrySet()) {
+            for (Map.Entry<String, ToolDeclEntry> tool : decl.tools().entrySet()) {
                 Map<String, Object> fields = new HashMap<>();
                 fields.put("toolName", StringUtils.fromString(tool.getKey()));
-                fields.put("tool", tool.getValue());
+                fields.put("tool", tool.getValue().tool());
+                fields.put("meta", tool.getValue().meta());
                 tools.append(ValueCreator.createRecordValue(
                         ModuleUtils.getModule(), TOOL_SPEC_RECORD, fields));
             }

@@ -180,7 +180,9 @@ function testRetryExhaustFallback() returns error? {
     RetryActivityInput input = {id: testId, mode: "exhaust_fallback"};
     string workflowId = check workflow:run(retryExhaustFallbackWorkflow, input);
 
-    anydata result = check workflow:getWorkflowResult(workflowId, 60);
+    // The exhaust-then-fallback path runs the full retry backoff schedule first; on a
+    // loaded CI runner that can exceed 60s (observed on the post-release main build).
+    anydata result = check workflow:getWorkflowResult(workflowId, 120);
     test:assertTrue((<string>result).startsWith("Fallback:"),
         "Result should indicate the fallback path was taken");
 }

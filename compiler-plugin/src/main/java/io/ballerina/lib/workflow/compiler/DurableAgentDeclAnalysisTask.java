@@ -221,7 +221,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         String resultTypeSource = null;
         List<String> typeRefPrefixes = new ArrayList<>();
         List<DurableAgentDeclInfo.ActivityDecl> activities = new ArrayList<>();
-        List<String> aiToolRefs = new ArrayList<>();
+        List<DurableAgentDeclInfo.ToolRef> aiToolRefs = new ArrayList<>();
         List<DurableAgentDeclInfo.EventDecl> events = new ArrayList<>();
         List<DurableAgentDeclInfo.HumanTaskDecl> humanTasks = new ArrayList<>();
         List<DurableAgentDeclInfo.PeerDecl> peers = new ArrayList<>();
@@ -335,8 +335,8 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         }
     }
 
-    private void extractTools(ExpressionNode value, List<String> aiToolRefs, Set<String> seenNames,
-                              String agentName, SyntaxNodeAnalysisContext context) {
+    private void extractTools(ExpressionNode value, List<DurableAgentDeclInfo.ToolRef> aiToolRefs,
+                              Set<String> seenNames, String agentName, SyntaxNodeAnalysisContext context) {
         if (!(value instanceof ListConstructorExpressionNode list)) {
             return;
         }
@@ -345,7 +345,33 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     || member.kind() == SyntaxKind.QUALIFIED_NAME_REFERENCE) {
                 String refSource = member.toSourceCode().strip();
                 checkUnique(simpleName(refSource), seenNames, agentName, member.location(), context);
-                aiToolRefs.add(refSource);
+                aiToolRefs.add(new DurableAgentDeclInfo.ToolRef(refSource, null, null));
+            } else if (member instanceof MappingConstructorExpressionNode toolDecl) {
+                // A ToolDecl entry: {tool: <ref>, requiresApproval: ..., userRoles: ...}. The
+                // gating fields pass through to the registration call as named arguments.
+                String toolRef = null;
+                String approvalSource = null;
+                String rolesSource = null;
+                for (MappingFieldNode field : toolDecl.fields()) {
+                    if (!(field instanceof SpecificFieldNode specificField)
+                            || specificField.valueExpr().isEmpty()) {
+                        continue;
+                    }
+                    String fieldName = specificField.fieldName().toSourceCode().strip();
+                    String valueSource = specificField.valueExpr().get().toSourceCode().strip();
+                    switch (fieldName) {
+                        case "tool" -> toolRef = valueSource;
+                        case "requiresApproval" -> approvalSource = valueSource;
+                        case "userRoles" -> rolesSource = valueSource;
+                        default -> {
+                        }
+                    }
+                }
+                if (toolRef == null) {
+                    continue;
+                }
+                checkUnique(simpleName(toolRef), seenNames, agentName, member.location(), context);
+                aiToolRefs.add(new DurableAgentDeclInfo.ToolRef(toolRef, approvalSource, rolesSource));
             }
             // ai:ToolConfig / toolkit constructor expressions carry their functions by value and
             // need no module-init registration; their names are not statically resolvable here.

@@ -129,7 +129,7 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "http"
-version = "2.16.4"
+version = "2.16.6"
 dependencies = [
 	{org = "ballerina", name = "auth"},
 	{org = "ballerina", name = "cache"},
@@ -307,6 +307,9 @@ dependencies = [
 	{org = "ballerina", name = "jballerina.java"},
 	{org = "ballerina", name = "uuid"}
 ]
+modules = [
+	{org = "ballerina", packageName = "mcp", moduleName = "mcp"}
+]
 
 [[package]]
 org = "ballerina"
@@ -435,7 +438,7 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "workflow"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
 	{org = "ballerina", name = "ai"},
 	{org = "ballerina", name = "email"},
@@ -458,7 +461,7 @@ modules = [
 [[package]]
 org = "ballerina"
 name = "workflow_tests"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
 	{org = "ballerina", name = "ai"},
 	{org = "ballerina", name = "email"},
@@ -467,6 +470,7 @@ dependencies = [
 	{org = "ballerina", name = "jballerina.java"},
 	{org = "ballerina", name = "lang.regexp"},
 	{org = "ballerina", name = "lang.runtime"},
+	{org = "ballerina", name = "mcp"},
 	{org = "ballerina", name = "soap"},
 	{org = "ballerina", name = "test"},
 	{org = "ballerina", name = "time"},

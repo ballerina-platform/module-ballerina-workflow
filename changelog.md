@@ -8,6 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `ToolDecl` gating is honored end to end for durable agent tools: the compiler plugin
+  forwards `{tool: x, requiresApproval: true, userRoles: ...}` entries to the registration,
+  every tool shape (`@ai:AgentTool` function, `ai:ToolConfig`, `ai:BaseToolKit`) is accepted
+  on the declaration, and AI-tool approval reviews use the declared reviewer roles.
+
+### Changed
+
+- Timeout fields across the module (`sleep`, human tasks, approval config, event timeouts)
+  now use a module-owned `workflow:Duration` record, structurally identical to
+  `time:Duration` (existing values remain assignable).
+
+## [0.8.0] - 2026-07-24
+
+### Added
+
 - Data-event waits are now visible: a workflow blocked on `wait dataEvents.<name>`
   publishes the awaited event names to the execution memo (`wfWaitingEvents`),
   which lands in the event history and is readable from a describe call. The
@@ -49,12 +64,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Durable agent drivers: `agent.run(query, input)` starts an instance durably and
   always returns the instance ID (a top-level start from services; a **true Temporal
   child workflow** from inside a `@workflow:Workflow`, so sub-agents' lifecycles are
-  tied to the caller). Non-blocking reads (`getResult`/`getEventResult`) return the
+  tied to the caller). Non-blocking reads (`getResult`/`getDataResult`) return the
   value or a `workflow:AgentBusyError` while the agent is still working; blocking
-  reads (`waitForResult`/`waitForEventResult`) suspend durably inside workflows and
-  are crash-resumable from services. `sendEvent(instanceId, eventName, data)` sends
+  reads (`waitForResult`/`waitForDataResult`) suspend durably inside workflows and
+  are crash-resumable from services. `sendData(instanceId, eventName, data)` sends
   one turn and returns a correlation token — a Temporal Update from services
-  (rediscoverable via `getPendingAgentUpdates`), a deterministic reply-correlated
+  (rediscoverable via `getPendingAgentEvents`), a deterministic reply-correlated
   signal from inside workflows. Model-driven peer delegations run the peer agent as
   a child workflow, synchronously or asynchronously with the reply delivered on a
   declared callback event channel; peers honor `requiresApproval` via `PRE_RUN`
@@ -184,6 +199,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Generated JSON schemas no longer list optional record fields (declared with `?`) as
   `required`.
 
+
+### Fixed
+
+- The management listener is initialized only when the management API is enabled
+  (`enableManagementApi`); previously the port was opened unconditionally.
+- Starting and listing workflows and durable agents is unified in the management API:
+  agents carry `kind: "AGENT"` and a `startInputSchema`, and both start through the
+  same endpoint.
 
 ## [0.5.0] - 2026-06-18
 
@@ -371,7 +394,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - `isReplaying()` for replay detection
   - `getWorkflowId()` and `getWorkflowType()` for workflow metadata
 - `createInstance()` function to start workflow instances
-- `sendEvent()` function for signal-based communication
+- `sendData()` function for signal-based communication
 - `registerProcess()` function for singleton worker registration
 - Compiler plugin with validator and code modifier:
   - Validates `@Activity` functions are called via `ctx->callActivity()`

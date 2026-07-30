@@ -929,6 +929,17 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "valid")
+    public void testValidDurableAgentToolDecls() {
+        // The `tools` capability accepts every declared shape: a bare @ai:AgentTool function,
+        // ToolDecl mappings gating a function or an ai:ToolConfig (requiresApproval/userRoles
+        // forwarded as named registration arguments), and toolkit/config variable references.
+        DiagnosticResult diagnosticResult = getDiagnosticResult("valid_durable_agent_tool_decls");
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for declared agent tools in all shapes. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "valid")
     public void testValidDurableAgentExplicitNew() {
         // The explicit `check new workflow:DurableAgent({...})` constructor form must be
         // recognized and registered the same as the implicit `check new ({...})` form.

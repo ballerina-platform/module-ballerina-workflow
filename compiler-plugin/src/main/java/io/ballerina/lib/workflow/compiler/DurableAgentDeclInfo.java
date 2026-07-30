@@ -32,7 +32,7 @@ import java.util.List;
  * @param maxIterSource      source text of the {@code maxIter} config expression, or null for default
  * @param inputTypeSource    source text of the {@code inputType} config expression, or null for default
  * @param activities         declared activity capabilities
- * @param aiToolRefs         source refs of {@code @ai:AgentTool} function tools
+ * @param aiToolRefs         declared AI tools: the tool ref plus optional ToolDecl gating args
  * @param events             declared event channels
  * @param humanTasks         declared human tasks
  * @param peers              declared peer agents (model-driven delegation)
@@ -45,7 +45,7 @@ public record DurableAgentDeclInfo(String agentName,
                                    String maxIterSource,
                                    String inputTypeSource,
                                    List<ActivityDecl> activities,
-                                   List<String> aiToolRefs,
+                                   List<ToolRef> aiToolRefs,
                                    List<EventDecl> events,
                                    List<HumanTaskDecl> humanTasks,
                                    List<PeerDecl> peers) {
@@ -68,6 +68,16 @@ public record DurableAgentDeclInfo(String agentName,
      *                          retry policy), or null when there is none
      */
     public record ActivityDecl(String toolName, String functionRefSource, String metaSource) { }
+
+    /**
+     * A declared AI tool: the tool reference and the optional ToolDecl gating expressions,
+     * kept as separate sources so import-prefix collection can inspect each one.
+     *
+     * @param refSource      the tool reference source (function/config/toolkit variable)
+     * @param approvalSource the {@code requiresApproval} expression source, or null
+     * @param rolesSource    the {@code userRoles} expression source, or null
+     */
+    public record ToolRef(String refSource, String approvalSource, String rolesSource) { }
 
     /**
      * A declared event channel.

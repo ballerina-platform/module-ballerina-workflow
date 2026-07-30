@@ -291,13 +291,18 @@ public final class AgentContextNative {
             String activityName = name;
             String[] reviewRoles = info.approvalUserRoles;
             for (ToolMeta tool : info.tools) {
-                if (KIND_ACTIVITY.equals(tool.kind()) && tool.name().equals(name) && tool.activityName() != null) {
-                    activityName = tool.activityName();
-                    if (tool.reviewRoles().length > 0) {
-                        reviewRoles = tool.reviewRoles();
-                    }
-                    break;
+                if (!tool.name().equals(name)) {
+                    continue;
                 }
+                if (KIND_ACTIVITY.equals(tool.kind()) && tool.activityName() != null) {
+                    activityName = tool.activityName();
+                }
+                // Declared per-tool roles (activities and AI tools alike) override the
+                // agent-level approval roles.
+                if (tool.reviewRoles().length > 0) {
+                    reviewRoles = tool.reviewRoles();
+                }
+                break;
             }
             String qualifiedName = Workflow.getInfo().getWorkflowType() + "." + activityName;
 
@@ -416,7 +421,8 @@ public final class AgentContextNative {
     }
 
     public static Object recordAiTool(BHandle handle, BFunctionPointer fn, BString name, BString description,
-                                      Object parametersJson, boolean requiresApproval) {
+                                      Object parametersJson, boolean requiresApproval, Object userRolesArg,
+                                      boolean mcpTool) {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             Map<String, Object> schema;
@@ -426,8 +432,8 @@ public final class AgentContextNative {
                 schema = parameterSchemaOf(fn);
             }
             info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, KIND_AI_TOOL,
-                    null, null, requiresApproval, null, new String[0]));
-            WorkflowWorkerNative.putAgentTool(info.workflowType, name.getValue(), fn);
+                    null, null, requiresApproval, null, parseReviewRoles(userRolesArg)));
+            WorkflowWorkerNative.putAgentTool(info.workflowType, name.getValue(), fn, mcpTool);
             return null;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(

@@ -156,3 +156,23 @@ public type PendingAgentEvent record {|
 # use the blocking `ctx->waitForChildWorkflow` form, which durably suspends until
 # the child completes.
 public type WorkflowBusyError distinct error;
+
+# A time duration, structurally identical to `time:Duration`. Declared in this module so
+# timeout fields render as first-class workflow forms without a cross-module type reference;
+# `time:Duration` values remain assignable.
+public type Duration record {|
+    # The duration in years
+    int years = 0;
+    # The duration in months
+    int months = 0;
+    # The duration in weeks
+    int weeks = 0;
+    # The duration in days
+    int days = 0;
+    # The duration in hours
+    int hours = 0;
+    # The duration in minutes
+    int minutes = 0;
+    # The duration in seconds
+    decimal seconds = 0.0;
+|};

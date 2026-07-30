@@ -193,6 +193,7 @@ public isolated function registerDurableAgentTool(string agentName,
         ai:BaseToolKit|ai:ToolConfig|ai:FunctionTool tool, boolean requiresApproval = false,
         string|string[]? userRoles = ()) returns boolean|error {
     ai:ToolConfig[] configs;
+    boolean isMcp = tool is ai:McpBaseToolKit;
     if tool is ai:BaseToolKit {
         configs = tool.getTools();
     } else if tool is ai:ToolConfig {
@@ -210,7 +211,8 @@ public isolated function registerDurableAgentTool(string agentName,
             description: config.description,
             parameters: parameters is () ? () : parameters.toJsonString(),
             requiresApproval,
-            userRoles
+            userRoles,
+            isMcp
         };
         boolean registered =
             check registerDurableAgentToolNative(agentName, config.name, config.caller, meta);

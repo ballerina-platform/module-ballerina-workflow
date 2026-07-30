@@ -327,8 +327,10 @@ public final class DurableAgentNative {
             return unknownAgentError(agentName.getValue());
         }
         decl.tools().put(toolName.getValue(), new ToolDeclEntry(toolName.getValue(), tool, meta));
+        boolean mcpTool = meta instanceof io.ballerina.runtime.api.values.BMap<?, ?> metaMap
+                && Boolean.TRUE.equals(metaMap.get(io.ballerina.runtime.api.utils.StringUtils.fromString("isMcp")));
         WorkflowWorkerNative.putAgentTool(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + agentName.getValue(),
-                toolName.getValue(), tool);
+                toolName.getValue(), tool, mcpTool);
         return true;
     }
 

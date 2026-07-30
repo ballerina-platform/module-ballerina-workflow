@@ -421,7 +421,8 @@ public final class AgentContextNative {
     }
 
     public static Object recordAiTool(BHandle handle, BFunctionPointer fn, BString name, BString description,
-                                      Object parametersJson, boolean requiresApproval, Object userRolesArg) {
+                                      Object parametersJson, boolean requiresApproval, Object userRolesArg,
+                                      boolean mcpTool) {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             Map<String, Object> schema;
@@ -432,7 +433,7 @@ public final class AgentContextNative {
             }
             info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, KIND_AI_TOOL,
                     null, null, requiresApproval, null, parseReviewRoles(userRolesArg)));
-            WorkflowWorkerNative.putAgentTool(info.workflowType, name.getValue(), fn);
+            WorkflowWorkerNative.putAgentTool(info.workflowType, name.getValue(), fn, mcpTool);
             return null;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(

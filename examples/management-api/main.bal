@@ -49,7 +49,7 @@
 //   #     /workflows and /human-tasks/pending-count and /review-activities):
 //   curl -s 'http://localhost:8234/workflow/human-tasks?taskQueue=MY_QUEUE'
 //   #     Mutations (complete/fail/decide) of a task served by a DIFFERENT integration
-//   #     return 401 - route them to that integration's management API.
+//   #     return 403 - route them to that integration's management API.
 //
 //   # 3. Approve the request (replace TASK_ID with the taskId from step 2)
 //   curl -s -X POST http://localhost:8234/workflow/human-tasks/TASK_ID/complete \

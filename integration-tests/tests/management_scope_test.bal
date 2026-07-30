@@ -37,16 +37,28 @@ isolated function startForeignQueueHumanTask(string workflowId, string taskQueue
     'class: "io.ballerina.lib.workflow.test.TestNatives"
 } external;
 
+const string IDENTITY_TASK_ID = "humantask-identity-check";
+
 @test:Config {}
 function testHumanTaskRowsCarryQueueIdentity() returns error? {
-    // Ensure at least one local human task exists (the human-task integration tests
-    // run in the same suite), then assert every row identifies its integration.
+    // Create a known fixture so the assertions cannot pass vacuously, then assert it
+    // is returned with the right attribution and every row identifies its integration.
+    check startForeignQueueHumanTask(IDENTITY_TASK_ID, FOREIGN_QUEUE, "identityCheckTask", ["OTHER_ROLE"]);
+
     management:HumanTaskSummary[] tasks = check management:listAllHumanTasks();
+    test:assertTrue(tasks.length() > 0, "The listing must contain at least the created fixture");
+    boolean fixtureSeen = false;
     foreach management:HumanTaskSummary t in tasks {
         test:assertEquals(t?.namespace, "default", "Rows must carry the namespace");
         test:assertTrue(t?.taskQueue is string && t?.taskQueue != "",
             "Rows must carry the owning task queue");
+        if t.taskId == IDENTITY_TASK_ID {
+            fixtureSeen = true;
+            test:assertEquals(t?.taskQueue, FOREIGN_QUEUE,
+                "The fixture must be attributed to the queue it was started on");
+        }
     }
+    test:assertTrue(fixtureSeen, "The created fixture must be returned by the listing");
 }
 
 @test:Config {}

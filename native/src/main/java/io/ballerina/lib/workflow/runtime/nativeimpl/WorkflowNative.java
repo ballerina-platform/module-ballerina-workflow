@@ -932,7 +932,13 @@ public final class WorkflowNative {
             // namespace-wide so a shared project console can still list everything.
             String owningQueue = resp.getExecutionConfig().getTaskQueue().getName();
             String localQueue = io.ballerina.lib.workflow.worker.WorkflowWorkerNative.getTaskQueue();
-            if (localQueue != null && !localQueue.equals(owningQueue)) {
+            if (localQueue == null || localQueue.isBlank()) {
+                // Fail closed: without a configured local queue, ownership cannot be verified.
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Unauthorized: the local task queue is not configured; cannot verify that human task '"
+                                + taskWorkflowId + "' belongs to this integration"));
+            }
+            if (!localQueue.equals(owningQueue)) {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Unauthorized: human task '" + taskWorkflowId + "' belongs to task queue '"
                                 + owningQueue + "', which is served by a different integration"));

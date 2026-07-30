@@ -74,6 +74,10 @@ public final class TestNatives {
                     client.newUntypedWorkflowStub("humantask-" + taskName.getValue(), options);
             stub.start(java.util.Map.of());
             return null;
+        } catch (io.temporal.client.WorkflowExecutionAlreadyStarted e) {
+            // A previous test run already created the fixture; it is still pending
+            // (no worker serves the foreign queue), which is exactly what tests need.
+            return null;
         } catch (Exception e) {
             return io.ballerina.runtime.api.creators.ErrorCreator.createError(
                     io.ballerina.runtime.api.utils.StringUtils.fromString(

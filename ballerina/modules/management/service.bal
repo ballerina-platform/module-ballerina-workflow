@@ -959,8 +959,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
             @http:Payload map<json> body)
-            returns json|http:NotFound|http:Unauthorized|http:Forbidden|http:Conflict|http:UnprocessableEntity
-            |http:InternalServerError {
+            returns json|http:NotFound|http:Forbidden|http:Conflict|http:UnprocessableEntity|http:InternalServerError {
         [string, string...]? callerRoles = parseRolesHeader(userRoles);
         if callerRoles is () {
             return <http:Forbidden>{body: errorBody("Unauthorized: x-user-roles header is required")};
@@ -983,8 +982,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
             @http:Payload map<json> body)
-            returns json|http:BadRequest|http:NotFound|http:Unauthorized|http:Forbidden|http:Conflict
-            |http:UnprocessableEntity
+            returns json|http:BadRequest|http:NotFound|http:Forbidden|http:Conflict|http:UnprocessableEntity
                     |http:InternalServerError {
         if body["reason"] is () {
             return <http:BadRequest>{body: errorBody("reason is required")};
@@ -1088,7 +1086,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
     resource isolated function post review\-activities/[string taskId]/'proceed(
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:Unauthorized|http:Forbidden|http:Conflict|http:InternalServerError {
+            returns json|http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
         [string, string...]? callerRoles = parseRolesHeader(userRoles);
         http:Forbidden? roleErr = reviewDecisionRoleError(callerRoles);
         if roleErr is http:Forbidden { return roleErr; }
@@ -1107,8 +1105,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
             @http:Payload map<json> body)
-            returns json|http:BadRequest|http:NotFound|http:Unauthorized|http:Forbidden|http:Conflict
-            |http:InternalServerError {
+            returns json|http:BadRequest|http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
         if body["input"] !is map<json> {
             return <http:BadRequest>{body: errorBody("input must be a JSON object")};
         }
@@ -1133,7 +1130,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
             @http:Payload map<json> body = {})
-            returns json|http:NotFound|http:Unauthorized|http:Forbidden|http:Conflict|http:InternalServerError {
+            returns json|http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
         [string, string...]? callerRoles = parseRolesHeader(userRoles);
         http:Forbidden? roleErr = reviewDecisionRoleError(callerRoles);
         if roleErr is http:Forbidden { return roleErr; }
@@ -1299,16 +1296,10 @@ isolated function decodeCursorToken(string token) returns [string, string] {
 }
 
 isolated function humanTaskErrorResponse(error err)
-        returns http:NotFound|http:Unauthorized|http:Forbidden|http:Conflict|http:UnprocessableEntity
-        |http:InternalServerError {
+        returns http:NotFound|http:Forbidden|http:Conflict|http:UnprocessableEntity|http:InternalServerError {
     string msg = err.message();
     if msg.includes("not found") || msg.includes("NOT_FOUND") {
         return <http:NotFound>{body: errorBody(msg)};
-    }
-    // A task served by a different integration: the caller must authenticate against
-    // that integration's management API (its roles are not known here) -> 401.
-    if msg.includes("served by a different integration") {
-        return <http:Unauthorized>{body: errorBody(msg)};
     }
     if msg.includes("Unauthorized") || msg.includes("not authorized") {
         return <http:Forbidden>{body: errorBody(msg)};
@@ -1325,15 +1316,10 @@ isolated function humanTaskErrorResponse(error err)
 }
 
 isolated function reviewActivityErrorResponse(error err)
-        returns http:NotFound|http:Unauthorized|http:Forbidden|http:Conflict|http:InternalServerError {
+        returns http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
     string msg = err.message();
     if msg.includes("not found") || msg.includes("NOT_FOUND") {
         return <http:NotFound>{body: errorBody(msg)};
-    }
-    // A task served by a different integration: the caller must authenticate against
-    // that integration's management API (its roles are not known here) -> 401.
-    if msg.includes("served by a different integration") {
-        return <http:Unauthorized>{body: errorBody(msg)};
     }
     if msg.includes("Unauthorized") || msg.includes("not authorized") {
         return <http:Forbidden>{body: errorBody(msg)};

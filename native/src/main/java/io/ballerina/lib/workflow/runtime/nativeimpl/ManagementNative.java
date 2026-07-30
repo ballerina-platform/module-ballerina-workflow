@@ -999,7 +999,13 @@ public final class ManagementNative {
             // roles and forms are configured there, not here. Reads stay namespace-wide.
             String owningQueue = resp.getExecutionConfig().getTaskQueue().getName();
             String localQueue = WorkflowWorkerNative.getTaskQueue();
-            if (localQueue != null && !localQueue.equals(owningQueue)) {
+            if (localQueue == null || localQueue.isBlank()) {
+                // Fail closed: without a configured local queue, ownership cannot be verified.
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Unauthorized: the local task queue is not configured; cannot verify that review "
+                                + "activity '" + taskWorkflowId + "' belongs to this integration"));
+            }
+            if (!localQueue.equals(owningQueue)) {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Unauthorized: review activity '" + taskWorkflowId + "' belongs to task queue '"
                                 + owningQueue + "', which is served by a different integration"));

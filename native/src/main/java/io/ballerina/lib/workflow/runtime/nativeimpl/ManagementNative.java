@@ -330,6 +330,27 @@ public final class ManagementNative {
      * @param workflowId the workflow ID to suspend
      * @return {@code null} on success, or a Ballerina error
      */
+    /**
+     * Wakes a durable agent instance out of its built-in sleep tool by sending the
+     * {@code __agent_wake} signal. Harmless when the instance is not sleeping.
+     *
+     * @param workflowId the agent instance ID
+     * @return null on success, or a BError when the instance is not found
+     */
+    public static Object wakeAgent(BString workflowId) {
+        try {
+            boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(workflowId.getValue(),
+                    io.ballerina.lib.workflow.worker.WorkflowWorkerNative.AGENT_WAKE_SIGNAL_NAME, null);
+            if (!delivered) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Failed to wake agent: workflow not found: " + workflowId.getValue()));
+            }
+            return null;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString("Failed to wake agent: " + e.getMessage()));
+        }
+    }
+
     public static Object suspendWorkflow(BString workflowId) {
         try {
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(workflowId.getValue(),

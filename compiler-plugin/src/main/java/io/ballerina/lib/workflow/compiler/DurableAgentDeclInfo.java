@@ -31,6 +31,9 @@ import java.util.List;
  * @param systemPromptSource source text of the {@code systemPrompt} config expression
  * @param maxIterSource      source text of the {@code maxIter} config expression, or null for default
  * @param inputTypeSource    source text of the {@code inputType} config expression, or null for default
+ * @param resultTypeSource   source text of the {@code resultType} config expression, or null for default
+ * @param typeRefPrefixes    module prefixes of qualified references inside the input/result type
+ *                           expressions, collected from the parsed nodes at analysis time
  * @param activities         declared activity capabilities
  * @param aiToolRefs         declared AI tools: the tool ref plus optional ToolDecl gating args
  * @param events             declared event channels
@@ -44,6 +47,8 @@ public record DurableAgentDeclInfo(String agentName,
                                    String systemPromptSource,
                                    String maxIterSource,
                                    String inputTypeSource,
+                                   String resultTypeSource,
+                                   List<String> typeRefPrefixes,
                                    List<ActivityDecl> activities,
                                    List<ToolRef> aiToolRefs,
                                    List<EventDecl> events,
@@ -53,6 +58,7 @@ public record DurableAgentDeclInfo(String agentName,
     public DurableAgentDeclInfo {
         activities = List.copyOf(activities);
         aiToolRefs = List.copyOf(aiToolRefs);
+        typeRefPrefixes = List.copyOf(typeRefPrefixes);
         events = List.copyOf(events);
         humanTasks = List.copyOf(humanTasks);
         peers = List.copyOf(peers);

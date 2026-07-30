@@ -110,6 +110,12 @@ public final class WorkflowWorkerNative {
      * blocks on, so the workflow stops making progress at the next durable operation (ballerina-library#8903).
      */
     public static final String SUSPEND_SIGNAL_NAME = "__wf_suspend";
+
+    /**
+     * Framework-owned signal that wakes a durable agent out of its built-in sleep tool early
+     * (sent by the management API). Harmless when the agent is not sleeping.
+     */
+    public static final String AGENT_WAKE_SIGNAL_NAME = "__agent_wake";
     /**
      * Internal signal that clears the suspended flag set by {@link #SUSPEND_SIGNAL_NAME} and wakes the workflow.
      */
@@ -211,6 +217,29 @@ public final class WorkflowWorkerNative {
      */
     private static final io.temporal.workflow.WorkflowLocal<Boolean> SUSPENDED =
             io.temporal.workflow.WorkflowLocal.withCachedInitial(() -> Boolean.FALSE);
+
+    /**
+     * Set by the {@code __agent_wake} signal; the built-in agent sleep awaits on it and clears
+     * it, so a wake interrupts exactly one sleep.
+     */
+    private static final io.temporal.workflow.WorkflowLocal<Boolean> WAKE_REQUESTED =
+            io.temporal.workflow.WorkflowLocal.withCachedInitial(() -> Boolean.FALSE);
+
+    /**
+     * Whether a wake was requested for the current workflow execution.
+     *
+     * @return true when a wake signal arrived and has not been consumed yet
+     */
+    public static boolean isWakeRequested() {
+        return WAKE_REQUESTED.get();
+    }
+
+    /**
+     * Clears the wake request after a sleep consumed (or checked) it.
+     */
+    public static void clearWakeRequest() {
+        WAKE_REQUESTED.set(Boolean.FALSE);
+    }
 
     /**
      * Blocks the calling workflow thread while the execution is suspended via the management API. Called at the
@@ -1549,6 +1578,12 @@ public final class WorkflowWorkerNative {
                                 LOGGER.warn("[JWorkflowAdapter] Could not upsert {} memo: {}",
                                             SUSPENDED_MEMO_KEY, e.getMessage());
                             }
+                            return;
+                        }
+
+                        // Framework-owned wake signal: interrupts the built-in agent sleep tool.
+                        if (AGENT_WAKE_SIGNAL_NAME.equals(signalName)) {
+                            WAKE_REQUESTED.set(Boolean.TRUE);
                             return;
                         }
 

@@ -518,6 +518,26 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
         return {success: true};
     }
 
+    # Wakes a durable agent out of its built-in sleep tool (ends the sleep early).
+    # Harmless when the instance is not sleeping.
+    # + workflowId - The agent instance ID.
+    # + userId - Optional caller identity from the `x-user-id` header.
+    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
+    # + return - `{success: true}` on success, a not-found error, or an internal server error.
+    resource isolated function post workflows/[string workflowId]/wake(
+            @http:Header {name: "x-user-id"} string? userId,
+            @http:Header {name: "x-user-roles"} string? userRoles)
+            returns json|http:NotFound|http:InternalServerError {
+        error? result = wakeAgent(workflowId);
+        if result is error {
+            string msg = result.message();
+            return msg.includes("not found")
+                ? <http:NotFound>{body: errorBody(msg)}
+                : <http:InternalServerError>{body: errorBody(msg)};
+        }
+        return {success: true};
+    }
+
     # Resumes the latest suspended run of a workflow.
     # + workflowId - The workflow instance ID.
     # + userId - Optional caller identity from the `x-user-id` header.

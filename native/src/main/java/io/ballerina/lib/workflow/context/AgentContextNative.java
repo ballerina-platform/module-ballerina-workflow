@@ -78,8 +78,19 @@ public final class AgentContextNative {
     private static final String KIND_HUMAN_TASK = "humantask";
     private static final String KIND_EVENT_PREFIX = "event:";
     private static final String KIND_END = "end";
+    private static final String KIND_SLEEP = "sleep";
+    private static final String SLEEP_TOOL = "sleep";
     private static final String EVENT_TOOL_PREFIX = "awaitEvent_";
     private static final String END_CONVERSATION_TOOL = "endConversation";
+    // Names of built-in tools published by getAgentToolDefs; user registrations must not
+    // shadow them, or the model would see duplicate definitions with diverging dispatch.
+    private static final java.util.Set<String> RESERVED_TOOL_NAMES =
+            java.util.Set.of(SLEEP_TOOL, END_CONVERSATION_TOOL);
+
+    private static BError reservedToolNameError(String name) {
+        return ErrorCreator.createError(StringUtils.fromString(
+                "The tool name '" + name + "' is reserved for a built-in agent tool"));
+    }
 
     // Interaction patterns (mirrors workflow:AgentInteractionPattern).
     private static final String MULTI_EVENT = "MULTI_EVENT";
@@ -364,6 +375,9 @@ public final class AgentContextNative {
             Map<String, Object> schema = parameterSchemaOf(fn, boundNames, activityName);
             // NoRetry arrives as nil; AutoRetry as a BMap; ManualRetry as the "MANUAL_RETRY" BString.
             Object policy = retryPolicy instanceof BMap || retryPolicy instanceof BString ? retryPolicy : null;
+            if (RESERVED_TOOL_NAMES.contains(toolName)) {
+                return reservedToolNameError(toolName);
+            }
             info.tools.add(new ToolMeta(toolName, description, schema, KIND_ACTIVITY, activityName, bindings,
                     requiresApproval, policy, parseReviewRoles(userRolesArg)));
             return null;
@@ -411,12 +425,41 @@ public final class AgentContextNative {
             properties.put("query", query);
             schema.put("properties", properties);
             schema.put("required", java.util.List.of("query"));
+            if (RESERVED_TOOL_NAMES.contains(name.getValue())) {
+                return reservedToolNameError(name.getValue());
+            }
             info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, kindSpec.getValue(),
                     null, null, requiresApproval, null, new String[0]));
             return null;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
                     "Failed to register peer agent tool: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Durable, interruptible sleep for the built-in agent sleep tool: a workflow-side timer
+     * that ends early when the {@code __agent_wake} signal arrives (sent by the management
+     * API). The wake request is consumed so it interrupts exactly one sleep.
+     *
+     * @param handle the agent context handle (unused; the current workflow sleeps)
+     * @param millis how long to sleep
+     * @return true when the timer ran to completion, false when a wake interrupted it,
+     *         or a BError on failure
+     */
+    public static Object agentInterruptibleSleep(BHandle handle, long millis) {
+        try {
+            io.ballerina.lib.workflow.worker.WorkflowWorkerNative.awaitWhileSuspended();
+            boolean woken = Workflow.await(java.time.Duration.ofMillis(millis),
+                    io.ballerina.lib.workflow.worker.WorkflowWorkerNative::isWakeRequested);
+            if (woken) {
+                io.ballerina.lib.workflow.worker.WorkflowWorkerNative.clearWakeRequest();
+            }
+            return !woken;
+        } catch (io.temporal.worker.NonDeterministicException | io.temporal.failure.TemporalFailure e) {
+            throw e;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString("Agent sleep failed: " + e.getMessage()));
         }
     }
 
@@ -430,6 +473,9 @@ public final class AgentContextNative {
                 schema = parseSchema(schemaJson.getValue());
             } else {
                 schema = parameterSchemaOf(fn);
+            }
+            if (RESERVED_TOOL_NAMES.contains(name.getValue())) {
+                return reservedToolNameError(name.getValue());
             }
             info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, KIND_AI_TOOL,
                     null, null, requiresApproval, null, parseReviewRoles(userRolesArg)));
@@ -472,6 +518,9 @@ public final class AgentContextNative {
             Map<String, Object> schema = new LinkedHashMap<>();
             schema.put("type", "object");
             schema.put("additionalProperties", Boolean.TRUE);
+            if (RESERVED_TOOL_NAMES.contains(name)) {
+                return reservedToolNameError(name);
+            }
             info.tools.add(new ToolMeta(name, descriptionStr, schema, KIND_HUMAN_TASK));
             info.humanTasks.put(name, new HumanTaskMeta(userRoles, titleStr, descriptionStr, resultType,
                     timeout instanceof BMap ? timeout : null));
@@ -522,6 +571,23 @@ public final class AgentContextNative {
                             + "end the conversation.",
                     schema, KIND_END));
         }
+        // Durable sleep is always available: the timer is a workflow-side operation
+        // (never an activity), so the agent survives restarts while sleeping.
+        Map<String, Object> sleepSchema = new LinkedHashMap<>();
+        sleepSchema.put("type", "object");
+        Map<String, Object> sleepProperties = new LinkedHashMap<>();
+        Map<String, Object> secondsProperty = new LinkedHashMap<>();
+        secondsProperty.put("type", "integer");
+        secondsProperty.put("description", "How long to sleep, in seconds");
+        secondsProperty.put("minimum", 1);
+        sleepProperties.put("seconds", secondsProperty);
+        sleepSchema.put("properties", sleepProperties);
+        sleepSchema.put("required", java.util.List.of("seconds"));
+        defs.add(toolDef(SLEEP_TOOL,
+                "Pauses this agent durably for the given number of seconds. The agent survives worker "
+                        + "restarts while sleeping and resumes exactly where it left off; a wake signal "
+                        + "from the management API ends the sleep early.",
+                sleepSchema, KIND_SLEEP));
         return StringUtils.fromString(TypesUtil.toJsonString(defs));
     }
 

@@ -927,6 +927,23 @@ public final class WorkflowNative {
 
             WorkflowExecutionInfo execInfo = resp.getWorkflowExecutionInfo();
 
+            // Completions must go to the integration serving the task's queue: the user
+            // roles and form schemas are configured there, not here. Reads stay
+            // namespace-wide so a shared project console can still list everything.
+            String owningQueue = resp.getExecutionConfig().getTaskQueue().getName();
+            String localQueue = io.ballerina.lib.workflow.worker.WorkflowWorkerNative.getTaskQueue();
+            if (localQueue == null || localQueue.isBlank()) {
+                // Fail closed: without a configured local queue, ownership cannot be verified.
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Unauthorized: the local task queue is not configured; cannot verify that human task '"
+                                + taskWorkflowId + "' belongs to this integration"));
+            }
+            if (!localQueue.equals(owningQueue)) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Unauthorized: human task '" + taskWorkflowId + "' belongs to task queue '"
+                                + owningQueue + "', which is served by a different integration"));
+            }
+
             // 0. Status check — reject tasks that are no longer running
             WorkflowExecutionStatus execStatus = execInfo.getStatus();
             if (execStatus != WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING) {

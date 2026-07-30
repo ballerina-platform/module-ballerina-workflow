@@ -446,7 +446,7 @@ public final class ManagementNative {
      * @return a Ballerina {@code HumanTaskSummary[]} or an error
      */
     public static Object listAllHumanTasks(Object status, Object startTimeFrom, Object startTimeTo,
-                                           Object closeTimeFrom, Object closeTimeTo) {
+                                           Object closeTimeFrom, Object closeTimeTo, Object taskQueue) {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
@@ -461,6 +461,7 @@ public final class ManagementNative {
             addTimeClause(clauses, startTimeTo, "StartTime", "<=");
             addTimeClause(clauses, closeTimeFrom, "CloseTime", ">=");
             addTimeClause(clauses, closeTimeTo, "CloseTime", "<=");
+            addTaskQueueClause(clauses, taskQueue);
             String query = String.join(" AND ", clauses);
 
             RecordType summaryType = (RecordType) ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
@@ -584,6 +585,10 @@ public final class ManagementNative {
                                                                           "HumanTaskInfo");
             record.put(StringUtils.fromString("taskId"), StringUtils.fromString(taskIdStr));
             record.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+            record.put(StringUtils.fromString("namespace"),
+                       StringUtils.fromString(client.getOptions().getNamespace()));
+            record.put(StringUtils.fromString("taskQueue"),
+                       StringUtils.fromString(response.getExecutionConfig().getTaskQueue().getName()));
             record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentId));
             record.put(StringUtils.fromString("status"), StringUtils.fromString(statusStr));
             record.put(StringUtils.fromString("startTime"), StringUtils.fromString(startTime));
@@ -771,6 +776,11 @@ public final class ManagementNative {
                                                                       "HumanTaskSummary");
         record.put(StringUtils.fromString("taskId"), StringUtils.fromString(wfId));
         record.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+        // Identify the owning integration: callers in a shared namespace (project) route
+        // follow-up operations to the integration serving this task queue.
+        record.put(StringUtils.fromString("namespace"),
+                   StringUtils.fromString(client.getOptions().getNamespace()));
+        record.put(StringUtils.fromString("taskQueue"), StringUtils.fromString(wfInfo.getTaskQueue()));
         record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentId));
         record.put(StringUtils.fromString("parentWorkflowType"),
                    parentWorkflowType != null ? StringUtils.fromString(parentWorkflowType) : null);
@@ -1006,6 +1016,22 @@ public final class ManagementNative {
 
             WorkflowExecutionInfo execInfo = resp.getWorkflowExecutionInfo();
 
+            // Decisions must go to the integration serving the task's queue: the reviewer
+            // roles and forms are configured there, not here. Reads stay namespace-wide.
+            String owningQueue = resp.getExecutionConfig().getTaskQueue().getName();
+            String localQueue = WorkflowWorkerNative.getTaskQueue();
+            if (localQueue == null || localQueue.isBlank()) {
+                // Fail closed: without a configured local queue, ownership cannot be verified.
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Unauthorized: the local task queue is not configured; cannot verify that review "
+                                + "activity '" + taskWorkflowId + "' belongs to this integration"));
+            }
+            if (!localQueue.equals(owningQueue)) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Unauthorized: review activity '" + taskWorkflowId + "' belongs to task queue '"
+                                + owningQueue + "', which is served by a different integration"));
+            }
+
             WorkflowExecutionStatus execStatus = execInfo.getStatus();
             if (execStatus != WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING) {
                 return ErrorCreator.createError(StringUtils.fromString(
@@ -1151,7 +1177,7 @@ public final class ManagementNative {
      * @return a Ballerina {@code ReviewActivitySummary[]} or an error
      */
     public static Object listAllReviewActivities(Object status, Object startTimeFrom, Object startTimeTo,
-                                           Object closeTimeFrom, Object closeTimeTo) {
+                                           Object closeTimeFrom, Object closeTimeTo, Object taskQueue) {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
@@ -1165,6 +1191,7 @@ public final class ManagementNative {
             addTimeClause(clauses, startTimeTo, "StartTime", "<=");
             addTimeClause(clauses, closeTimeFrom, "CloseTime", ">=");
             addTimeClause(clauses, closeTimeTo, "CloseTime", "<=");
+            addTaskQueueClause(clauses, taskQueue);
             String query = String.join(" AND ", clauses);
 
             RecordType summaryType = (RecordType) ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
@@ -1291,6 +1318,10 @@ public final class ManagementNative {
                                                                           "ReviewActivityInfo");
             record.put(StringUtils.fromString("taskId"), StringUtils.fromString(taskIdStr));
             record.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+            record.put(StringUtils.fromString("namespace"),
+                       StringUtils.fromString(client.getOptions().getNamespace()));
+            record.put(StringUtils.fromString("taskQueue"),
+                       StringUtils.fromString(response.getExecutionConfig().getTaskQueue().getName()));
             record.put(StringUtils.fromString("activityName"), StringUtils.fromString(activityName));
             record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentId));
             record.put(StringUtils.fromString("trigger"), StringUtils.fromString(trigger));
@@ -1399,6 +1430,9 @@ public final class ManagementNative {
                                                                       "ReviewActivitySummary");
         record.put(StringUtils.fromString("taskId"), StringUtils.fromString(wfId));
         record.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+        record.put(StringUtils.fromString("namespace"),
+                   StringUtils.fromString(client.getOptions().getNamespace()));
+        record.put(StringUtils.fromString("taskQueue"), StringUtils.fromString(wfInfo.getTaskQueue()));
         record.put(StringUtils.fromString("activityName"), StringUtils.fromString(activityName));
         record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentId));
         record.put(StringUtils.fromString("trigger"), StringUtils.fromString(trigger));
@@ -1562,7 +1596,8 @@ public final class ManagementNative {
     @SuppressWarnings("unchecked")
     public static Object listWorkflowInstances(Object status, Object workflowType, Object workflowId, Object startedBy,
                                                long limit, Object pageToken, Object startTimeFrom, Object startTimeTo,
-                                               Object closeTimeFrom, Object closeTimeTo) {
+                                               Object closeTimeFrom, Object closeTimeTo,
+                                               Object taskQueue) {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
@@ -1602,6 +1637,7 @@ public final class ManagementNative {
             addTimeClause(clauses, startTimeTo, "StartTime", "<=");
             addTimeClause(clauses, closeTimeFrom, "CloseTime", ">=");
             addTimeClause(clauses, closeTimeTo, "CloseTime", "<=");
+            addTaskQueueClause(clauses, taskQueue);
 
             String query = String.join(" AND ", clauses);
             int pageSize = (int) Math.min(limit, 100);
@@ -1676,6 +1712,10 @@ public final class ManagementNative {
                                          rawType.substring(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length()) :
                                          rawType;
                     summary.put(StringUtils.fromString("workflowType"), StringUtils.fromString(displayType));
+                    summary.put(StringUtils.fromString("namespace"),
+                                StringUtils.fromString(client.getOptions().getNamespace()));
+                    summary.put(StringUtils.fromString("taskQueue"),
+                                StringUtils.fromString(wfInfo.getTaskQueue()));
                     summary.put(StringUtils.fromString("status"), StringUtils.fromString(displayStatus));
 
                     Timestamp st = wfInfo.getStartTime();
@@ -2433,6 +2473,14 @@ public final class ManagementNative {
      * {@code <field> <op> "<iso8601>"}  (e.g. {@code StartTime >= "2026-06-01T00:00:00Z"}). The value is stripped of
      * any embedded double-quotes to prevent query injection.
      */
+    // Scopes a visibility query to one integration's task queue. Callers within the same
+    // namespace (project) share visibility; the TaskQueue attribute separates integrations.
+    private static void addTaskQueueClause(List<String> clauses, Object taskQueue) {
+        if (taskQueue instanceof BString queue && !queue.getValue().isBlank()) {
+            clauses.add("TaskQueue = '" + queue.getValue().replace("'", "''") + "'");
+        }
+    }
+
     private static void addTimeClause(List<String> clauses, Object param, String field, String op) {
         if (param instanceof BString bs && !bs.getValue().isBlank()) {
             String value = bs.getValue().replace("\\", "\\\\").replace("\"", "");

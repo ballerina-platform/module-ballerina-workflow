@@ -99,6 +99,10 @@ public type HumanTaskGroup record {|
 public type HumanTaskSummary record {|
     string taskId;
     string taskName;
+    # The Temporal namespace the task lives in (the project scope)
+    string namespace?;
+    # The task queue of the integration serving this task; route mutations there
+    string taskQueue?;
     string parentWorkflowId;
     string? parentWorkflowType;
     string status;
@@ -130,6 +134,10 @@ public type HumanTaskSummary record {|
 # + completedAt - ISO-8601 timestamp when the task was completed, or `()` if pending
 # + result - The value submitted when completing the task, or `()` if not yet completed
 public type HumanTaskInfo record {|
+    # The Temporal namespace the task lives in (the project scope)
+    string namespace?;
+    # The task queue of the integration serving this task; route mutations there
+    string taskQueue?;
     string taskId;
     string taskName;
     string parentWorkflowId;
@@ -189,6 +197,10 @@ public type ReviewDecision record {|
 public type ReviewActivitySummary record {|
     string taskId;
     string taskName;
+    # The Temporal namespace the task lives in (the project scope)
+    string namespace?;
+    # The task queue of the integration serving this task; route mutations there
+    string taskQueue?;
     string activityName;
     string parentWorkflowId;
     string trigger;
@@ -228,6 +240,10 @@ public type ReviewActivitySummary record {|
 # + decidedBy - User ID of the person who submitted the decision, or `()` if pending
 # + decidedAt - ISO-8601 timestamp when the decision was submitted, or `()` if pending
 public type ReviewActivityInfo record {|
+    # The Temporal namespace the task lives in (the project scope)
+    string namespace?;
+    # The task queue of the integration serving this task; route mutations there
+    string taskQueue?;
     string taskId;
     string taskName;
     string activityName;
@@ -422,6 +438,10 @@ public type CorsConfig record {|
 # + closeTime - ISO-8601 timestamp when it ended, or `()` if still running
 # + input - Workflow input as JSON, or `()` if not available
 public type WorkflowInstanceSummary record {|
+    # The Temporal namespace the task lives in (the project scope)
+    string namespace?;
+    # The task queue of the integration serving this task; route mutations there
+    string taskQueue?;
     string workflowId;
     string runId;
     string workflowType;

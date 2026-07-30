@@ -43,6 +43,14 @@
 //   # 2. List pending approvals
 //   curl -s 'http://localhost:8234/workflow/human-tasks?status=PENDING'
 //
+//   # 2b. Task-queue scoping: listings are namespace-wide (the project); every row
+//   #     carries `namespace` and `taskQueue` identifying the owning integration, and
+//   #     an optional `taskQueue` query param scopes to one integration (also on
+//   #     /workflows and /human-tasks/pending-count and /review-activities):
+//   curl -s 'http://localhost:8234/workflow/human-tasks?taskQueue=MY_QUEUE'
+//   #     Mutations (complete/fail/decide) of a task served by a DIFFERENT integration
+//   #     return 403 - route them to that integration's management API.
+//
 //   # 3. Approve the request (replace TASK_ID with the taskId from step 2)
 //   curl -s -X POST http://localhost:8234/workflow/human-tasks/TASK_ID/complete \
 //        -H 'Content-Type: application/json' \

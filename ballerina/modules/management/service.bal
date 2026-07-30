@@ -432,12 +432,13 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             string? startTimeFrom = (),
             string? startTimeTo = (),
             string? closeTimeFrom = (),
-            string? closeTimeTo = ())
+            string? closeTimeTo = (),
+            string? taskQueue = ())
             returns json|http:InternalServerError {
         int effectiveLimit = clampLimit('limit, maxPageSize);
         WorkflowInstancePage|error page = listWorkflowInstances(
             status, workflowType, workflowId, startedBy, effectiveLimit, pageToken,
-                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo);
+                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
         if page is error {
             return <http:InternalServerError>{body: errorBody("Failed to list workflows: " + page.message())};
         }
@@ -887,10 +888,11 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             string? startTimeFrom = (),
             string? startTimeTo = (),
             string? closeTimeFrom = (),
-            string? closeTimeTo = ())
+            string? closeTimeTo = (),
+            string? taskQueue = ())
             returns json|http:InternalServerError {
         HumanTaskSummary[]|error all = listAllHumanTasks(status,
-                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo);
+                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
         if all is error {
             return <http:InternalServerError>{body: errorBody("Failed to list human tasks: " + all.message())};
         }
@@ -924,9 +926,10 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
     # + return - `{count: N}` JSON object, or an internal server error.
     resource isolated function get human\-tasks/pending\-count(
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
+            @http:Header {name: "x-user-roles"} string? userRoles,
+            string? taskQueue = ())
             returns json|http:InternalServerError {
-        HumanTaskSummary[]|error pending = listAllHumanTasks("PENDING");
+        HumanTaskSummary[]|error pending = listAllHumanTasks("PENDING", taskQueue = taskQueue);
         if pending is error {
             return <http:InternalServerError>{body: errorBody("Failed to count pending tasks: " + pending.message())};
         }
@@ -1046,10 +1049,11 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             string? startTimeFrom = (),
             string? startTimeTo = (),
             string? closeTimeFrom = (),
-            string? closeTimeTo = ())
+            string? closeTimeTo = (),
+            string? taskQueue = ())
             returns json|http:InternalServerError {
         ReviewActivitySummary[]|error all = listAllReviewActivities(status,
-                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo);
+                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
         if all is error {
             return <http:InternalServerError>{
                 body: errorBody("Failed to list review activities: " + all.message())};

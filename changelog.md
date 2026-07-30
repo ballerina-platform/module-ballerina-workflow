@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Management API task-queue scoping for namespaces shared by multiple integrations
+  (a project): human-task, review-activity, and workflow-instance listings (and the
+  pending count) accept an optional `taskQueue` filter, every list/detail result
+  carries `namespace` and `taskQueue` identifying its owning integration, and task
+  mutations (complete/fail/decide) are rejected with 403 when the task is served by
+  a different integration's task queue.
 - `ToolDecl` gating is honored end to end for durable agent tools: the compiler plugin
   forwards `{tool: x, requiresApproval: true, userRoles: ...}` entries to the registration,
   every tool shape (`@ai:AgentTool` function, `ai:ToolConfig`, `ai:BaseToolKit`) is accepted

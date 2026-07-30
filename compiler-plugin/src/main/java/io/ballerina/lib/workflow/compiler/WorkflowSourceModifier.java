@@ -422,8 +422,8 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         }
         for (DurableAgentDeclInfo decl : agentDecls) {
             addPrefixIfQualified(prefixes, decl.modelSource());
-            addPrefixIfQualified(prefixes, decl.inputTypeSource());
-            addPrefixIfQualified(prefixes, decl.resultTypeSource());
+            addTypeExpressionPrefixes(prefixes, decl.inputTypeSource());
+            addTypeExpressionPrefixes(prefixes, decl.resultTypeSource());
             for (DurableAgentDeclInfo.ActivityDecl activity : decl.activities()) {
                 addPrefixIfQualified(prefixes, activity.functionRefSource());
             }
@@ -439,6 +439,22 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             }
         }
         return prefixes;
+    }
+
+    // A type expression can carry qualified references anywhere inside generics, unions,
+    // arrays, and nested types (e.g. map<mod:Foo>|other:Bar[]); collect every module
+    // prefix rather than only the text before the first colon.
+    private static final java.util.regex.Pattern QUALIFIED_TYPE_REF =
+            java.util.regex.Pattern.compile("([A-Za-z_][A-Za-z0-9_]*)\\s*:");
+
+    private static void addTypeExpressionPrefixes(Set<String> prefixes, String typeSource) {
+        if (typeSource == null) {
+            return;
+        }
+        java.util.regex.Matcher matcher = QUALIFIED_TYPE_REF.matcher(typeSource);
+        while (matcher.find()) {
+            prefixes.add(matcher.group(1));
+        }
     }
 
     private static void addPrefixIfQualified(Set<String> prefixes, String ref) {

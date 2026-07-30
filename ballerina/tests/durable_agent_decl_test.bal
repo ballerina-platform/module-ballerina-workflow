@@ -24,6 +24,7 @@
 
 import ballerina/ai;
 import ballerina/jballerina.java;
+import ballerina/lang.runtime;
 import ballerina/test;
 import ballerina/workflow.internal as wfInternal;
 import ballerina/workflow.management;
@@ -264,7 +265,12 @@ function testDeclaredResultTypeEndToEnd() returns error? {
 
     string|error runResult = typedResultAgent.run("Is the laptop in stock?");
     if runResult is error {
-        return; // no workflow server in this environment
+        // Skip only when the embedded workflow server is unavailable in this environment;
+        // any other failure means the typed-result path broke and must fail the test.
+        if runResult.message().includes("Workflow client not initialized") {
+            return;
+        }
+        return runResult;
     }
     // The mock model provider's generate returns {summary: "generated summary", score: 7};
     // the runner's loop-exit generateResult call must convert it to the declared type.
@@ -272,6 +278,29 @@ function testDeclaredResultTypeEndToEnd() returns error? {
     test:assertEquals(result.summary, "generated summary",
         "The declared result type should be produced by the loop-exit generate call");
     test:assertEquals(result.score, 7, "The typed result fields should convert");
+
+    // The non-blocking read returns the same typed result once the run has completed.
+    // The server's execution-status visibility can lag the result future by a beat,
+    // so poll through transient AgentBusyError reads.
+    CoverageSummary? polled = ();
+    foreach int _ in 0 ..< 20 {
+        CoverageSummary|error read = typedResultAgent.getResult(runResult);
+        if read is CoverageSummary {
+            polled = read;
+            break;
+        }
+        if !(read is AgentBusyError) {
+            return read;
+        }
+        runtime:sleep(0.25);
+    }
+    if polled is () {
+        test:assertFail("getResult never returned the completed typed result");
+    } else {
+        test:assertEquals(polled.summary, "generated summary",
+            "getResult should return the declared typed result after completion");
+        test:assertEquals(polled.score, 7, "getResult should convert the typed result fields");
+    }
 }
 
 // ── Built-in durable sleep tool ──────────────────────────────────────────────

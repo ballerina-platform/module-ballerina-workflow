@@ -708,11 +708,17 @@ public final class DurableAgentNative {
                 if (blocking) {
                     raw = stub.getResult(Object.class);
                 } else {
-                    try {
-                        raw = stub.getResult(1, TimeUnit.MILLISECONDS, Object.class);
-                    } catch (java.util.concurrent.TimeoutException e) {
+                    // A tiny getResult timeout is unreliable for completed runs (the server
+                    // round trip alone exceeds it), so check the execution status instead:
+                    // still running means busy, any closed status has its result available.
+                    io.temporal.api.enums.v1.WorkflowExecutionStatus status = stub.describe().getStatus();
+                    if (status == io.temporal.api.enums.v1.WorkflowExecutionStatus
+                                .WORKFLOW_EXECUTION_STATUS_RUNNING
+                            || status == io.temporal.api.enums.v1.WorkflowExecutionStatus
+                                .WORKFLOW_EXECUTION_STATUS_CONTINUED_AS_NEW) {
                         return createAgentBusyError(instanceId);
                     }
+                    raw = stub.getResult(Object.class);
                 }
                 Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(raw);
                 return TypesUtil.cloneWithType(ballerinaResult, typedesc.getDescribingType());

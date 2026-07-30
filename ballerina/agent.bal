@@ -389,6 +389,25 @@ isolated function generate(string agentName, string query) returns anydata|error
     return result;
 }
 
+# Built-in agent activity producing the agent's declared typed final result: one more
+# model call converts the concluded conversation into the declaration's `resultType`.
+# Runs on the worker, where the declaration registry resolves the target typedesc.
+#
+# + agentName - The agent's workflow type; keys the registered model provider
+# + declaredAgent - The agent's declaration name; keys the run spec (result type)
+# + query - The generation prompt carrying the conversation outcome
+# + return - The generated value of the declared result type, or an error
+@Activity
+isolated function generateResult(string agentName, string declaredAgent, string query)
+        returns anydata|error {
+    ai:ModelProvider model = check getAgentModel(agentName);
+    DurableAgentRunSpec spec = check getDurableAgentRunSpec(declaredAgent);
+    typedesc<anydata> resultType = spec.resultType ?: anydata;
+    ai:Prompt prompt = `${query}`;
+    anydata result = check model->generate(prompt, resultType);
+    return result;
+}
+
 // Converts a mirror message to the corresponding ballerina/ai message type.
 isolated function toAiMessage(AgentChatMessage message) returns ai:ChatMessage|error {
     if message is AgentSystemMessage {
@@ -834,7 +853,20 @@ isolated function runDurableAgentObject(handle agentCtx, map<anydata> runInput)
         // until then a multi-event agent uses a bounded default wait per turn.
         eventTimeout = multiEvent ? {minutes: 30} : ()
     );
-    return readAgentContextFinalResponse(agentCtx);
+    typedesc<anydata>? declaredResultType = spec.resultType;
+    if declaredResultType is () {
+        return readAgentContextFinalResponse(agentCtx);
+    }
+    // Declared result type: one more durable model call converts the concluded
+    // conversation into the declared type; waitForResult/getResult return it.
+    string finalText = readAgentContextFinalResponse(agentCtx);
+    anydata typedResult = check callAgentActivity("generateResult", {
+        "agentName": getAgentWorkflowType(agentCtx),
+        "declaredAgent": agentName,
+        "query": "Produce the final result of this conversation." +
+            (finalText == "" ? "" : "\n\nConversation outcome:\n" + finalText)
+    });
+    return typedResult;
 }
 
 # Registers one declared activity capability on the runner's context, converting
@@ -1004,7 +1036,8 @@ isolated function armPeerAgentCallback(handle ctxHandle, string childId, string 
 // runner machinery appears in this module's public API.
 function registerDurableAgentRunnerNatives() {
     setDurableAgentObjectRunner(runDurableAgentObject,
-        {"llmChat": llmChat, "generate": generate, "executeAgentTool": executeAgentTool});
+        {"llmChat": llmChat, "generate": generate, "generateResult": generateResult,
+            "executeAgentTool": executeAgentTool});
 }
 
 isolated function setDurableAgentObjectRunner(function runner, map<function> builtinActivities) = @java:Method {

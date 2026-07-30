@@ -93,18 +93,21 @@ public final class DurableAgentNative {
         // The agent's workflow input typedesc: string (the query text is the input, the
         // default), another data type (structured run input), or null (no-input agent).
         private final BTypedesc inputType;
+        private final BTypedesc resultType;
         private final Map<String, ActivityDecl> activities = new LinkedHashMap<>();
         private final Map<String, BFunctionPointer> tools = new LinkedHashMap<>();
         private final Map<String, EventDecl> events = new LinkedHashMap<>();
         private final Map<String, Object> humanTasks = new LinkedHashMap<>();
         private final Map<String, PeerDecl> peers = new LinkedHashMap<>();
 
-        AgentDecl(String agentName, BObject model, Object systemPrompt, long maxIter, BTypedesc inputType) {
+        AgentDecl(String agentName, BObject model, Object systemPrompt, long maxIter, BTypedesc inputType,
+                  BTypedesc resultType) {
             this.agentName = agentName;
             this.model = model;
             this.systemPrompt = systemPrompt;
             this.maxIter = maxIter;
             this.inputType = inputType;
+            this.resultType = resultType;
         }
 
         public String agentName() {
@@ -130,6 +133,10 @@ public final class DurableAgentNative {
          */
         public BTypedesc inputType() {
             return inputType;
+        }
+
+        public BTypedesc resultType() {
+            return resultType;
         }
 
         public Map<String, ActivityDecl> activities() {
@@ -205,11 +212,12 @@ public final class DurableAgentNative {
      * @return true on success, or a BError when the name is already registered
      */
     public static Object registerDurableAgentDecl(BString agentName, BObject model, Object systemPrompt,
-                                                  long maxIter, Object inputType) {
+                                                  long maxIter, Object inputType, Object resultType) {
         String name = agentName.getValue();
         AgentDecl existing = AGENT_DECL_REGISTRY.putIfAbsent(name,
                 new AgentDecl(name, model, systemPrompt, maxIter,
-                        inputType instanceof BTypedesc typedesc ? typedesc : null));
+                        inputType instanceof BTypedesc typedesc ? typedesc : null,
+                        resultType instanceof BTypedesc resultTypedesc ? resultTypedesc : null));
         if (existing != null) {
             return ErrorCreator.createError(StringUtils.fromString(
                     "A durable agent named '" + name + "' is already registered"));
@@ -470,6 +478,9 @@ public final class DurableAgentNative {
             spec.put("systemPrompt", decl.systemPrompt());
             spec.put("maxIter", decl.maxIter());
             spec.put("model", decl.model());
+            if (decl.resultType() != null) {
+                spec.put("resultType", decl.resultType());
+            }
             spec.put("activities", activities);
             spec.put("tools", tools);
             spec.put("events", events);

@@ -315,6 +315,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                 .append(", ").append(decl.systemPromptSource())
                 .append(", ").append(decl.maxIterSource() != null ? decl.maxIterSource() : "16")
                 .append(", ").append(decl.inputTypeSource() != null ? decl.inputTypeSource() : "string")
+                .append(", ").append(decl.resultTypeSource() != null ? decl.resultTypeSource() : "()")
                 .append(");").append(System.lineSeparator());
         for (DurableAgentDeclInfo.ActivityDecl activity : decl.activities()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
@@ -422,6 +423,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         for (DurableAgentDeclInfo decl : agentDecls) {
             addPrefixIfQualified(prefixes, decl.modelSource());
             addPrefixIfQualified(prefixes, decl.inputTypeSource());
+            addPrefixIfQualified(prefixes, decl.resultTypeSource());
             for (DurableAgentDeclInfo.ActivityDecl activity : decl.activities()) {
                 addPrefixIfQualified(prefixes, activity.functionRefSource());
             }

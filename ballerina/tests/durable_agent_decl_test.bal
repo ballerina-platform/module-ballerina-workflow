@@ -236,3 +236,38 @@ function testDurableAgentDriverStubs() {
             "waitForDataResult error should name the missing instance: " + waitEventResult.message());
     }
 }
+
+// ── Declared result type: the loop exit produces a typed final result ───────
+
+type CoverageSummary record {|
+    string summary;
+    int score;
+|};
+
+final DurableAgent typedResultAgent = check new ({
+    systemPrompt: {role: "", instructions: "You are an inventory assistant."},
+    model: declTestModel,
+    resultType: CoverageSummary,
+    activities: [checkStock]
+});
+
+@test:Config {groups: ["unit"], dependsOn: [testObjectModelRunnerEndToEnd]}
+function testDeclaredResultTypeEndToEnd() returns error? {
+    // Mirror the plugin-generated registration for an agent with a declared result type.
+    _ = check wfInternal:registerDurableAgentDecl("typedResultAgent", declTestModel,
+        {role: "", instructions: "You are an inventory assistant."}, 16, string, CoverageSummary);
+    _ = check wfInternal:registerDurableAgentActivity("typedResultAgent", "checkStock", checkStock);
+    _ = check wfInternal:registerDurableAgentRunner("typedResultAgent");
+    typedResultAgent.bindAgentName("typedResultAgent");
+
+    string|error runResult = typedResultAgent.run("Is the laptop in stock?");
+    if runResult is error {
+        return; // no workflow server in this environment
+    }
+    // The mock model provider's generate returns {summary: "generated summary", score: 7};
+    // the runner's loop-exit generateResult call must convert it to the declared type.
+    CoverageSummary result = check typedResultAgent.waitForResult(runResult);
+    test:assertEquals(result.summary, "generated summary",
+        "The declared result type should be produced by the loop-exit generate call");
+    test:assertEquals(result.score, 7, "The typed result fields should convert");
+}

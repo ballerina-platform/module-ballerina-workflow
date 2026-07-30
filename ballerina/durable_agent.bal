@@ -154,10 +154,15 @@ public type PeerDecl record {|
 #               the input; a data type declares a structured `run` input payload
 #               validated against it; `()` declares a no-input agent (started
 #               empty, typically driven by its event channels)
+# + resultType - When declared, the agent produces a typed final result: as the
+#                reasoning loop concludes, one more durable model call converts the
+#                conversation outcome into this type, and `waitForResult`/`getResult`
+#                return it. `()` keeps the final text response
 public type DurableAgentConfig record {|
     ai:SystemPrompt systemPrompt;
     ai:ModelProvider model;
     typedesc<anydata>? inputType = string;
+    typedesc<anydata>? resultType = ();
     (ActivityDecl|function)[] activities = [];
     (ToolDecl|ai:ToolConfig|ai:BaseToolKit|function)[] tools = [];
     EventDecl[] events = [];
@@ -338,6 +343,7 @@ type DurableAgentRunSpec record {|
     json systemPrompt;
     int maxIter;
     ai:ModelProvider model;
+    typedesc<anydata>? resultType = ();
     DurableAgentActivitySpec[] activities = [];
     DurableAgentToolSpec[] tools = [];
     DurableAgentEventSpec[] events = [];

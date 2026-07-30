@@ -31,6 +31,7 @@ import java.util.List;
  * @param systemPromptSource source text of the {@code systemPrompt} config expression
  * @param maxIterSource      source text of the {@code maxIter} config expression, or null for default
  * @param inputTypeSource    source text of the {@code inputType} config expression, or null for default
+ * @param resultTypeSource   source text of the {@code resultType} config expression, or null for default
  * @param activities         declared activity capabilities
  * @param aiToolRefs         source refs of {@code @ai:AgentTool} function tools
  * @param events             declared event channels
@@ -44,6 +45,7 @@ public record DurableAgentDeclInfo(String agentName,
                                    String systemPromptSource,
                                    String maxIterSource,
                                    String inputTypeSource,
+                                   String resultTypeSource,
                                    List<ActivityDecl> activities,
                                    List<String> aiToolRefs,
                                    List<EventDecl> events,

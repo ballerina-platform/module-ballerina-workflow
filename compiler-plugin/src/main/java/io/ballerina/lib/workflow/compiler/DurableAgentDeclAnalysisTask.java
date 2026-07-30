@@ -218,6 +218,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         String systemPromptSource = null;
         String maxIterSource = null;
         String inputTypeSource = null;
+        String resultTypeSource = null;
         List<DurableAgentDeclInfo.ActivityDecl> activities = new ArrayList<>();
         List<String> aiToolRefs = new ArrayList<>();
         List<DurableAgentDeclInfo.EventDecl> events = new ArrayList<>();
@@ -238,6 +239,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 case "systemPrompt" -> systemPromptSource = value.toSourceCode().strip();
                 case "maxIter" -> maxIterSource = value.toSourceCode().strip();
                 case "inputType" -> inputTypeSource = value.toSourceCode().strip();
+                case "resultType" -> resultTypeSource = value.toSourceCode().strip();
                 case "activities" -> extractActivities(value, activities, seenNames, agentName, context);
                 case "tools" -> extractTools(value, aiToolRefs, seenNames, agentName, context);
                 case "events" -> extractEvents(value, events, seenNames, agentName, context);
@@ -250,7 +252,8 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         }
 
         return new DurableAgentDeclInfo(agentName, modelSource, systemPromptSource,
-                maxIterSource, inputTypeSource, activities, aiToolRefs, events, humanTasks, peers);
+                maxIterSource, inputTypeSource, resultTypeSource, activities, aiToolRefs, events, humanTasks,
+                peers);
     }
 
     private void extractActivities(ExpressionNode value, List<DurableAgentDeclInfo.ActivityDecl> activities,

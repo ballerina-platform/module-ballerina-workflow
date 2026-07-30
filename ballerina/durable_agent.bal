@@ -313,6 +313,7 @@ type DurableAgentActivitySpec record {|
 type DurableAgentToolSpec record {|
     string toolName;
     function tool;
+    json meta = ();
 |};
 
 type DurableAgentEventSpec record {|

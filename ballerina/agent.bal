@@ -562,29 +562,33 @@ isolated function registerActivity(handle agentCtx, function activity, string? n
 #
 # + agentCtx - The native agent context handle
 # + tool - The tool to register
+# + requiresApproval - When `true`, a `PRE_RUN` review activity gates every call
+# + userRoles - Role(s) permitted to decide reviews of gated tools; defaults to
+#               the agent-level approval roles when omitted
 # + return - An error if the tool cannot be registered (e.g. a function
 #            missing the `@ai:AgentTool` annotation), otherwise nil
-isolated function registerAgentTool(handle agentCtx, ai:BaseToolKit|ai:ToolConfig|ai:FunctionTool tool)
-        returns error? {
+isolated function registerAgentTool(handle agentCtx, ai:BaseToolKit|ai:ToolConfig|ai:FunctionTool tool,
+        boolean requiresApproval = false, string|string[]? userRoles = ()) returns error? {
     if tool is ai:BaseToolKit {
         foreach ai:ToolConfig config in tool.getTools() {
-            check recordToolConfig(agentCtx, config);
+            check recordToolConfig(agentCtx, config, requiresApproval, userRoles);
         }
     } else if tool is ai:ToolConfig {
-        check recordToolConfig(agentCtx, tool);
+        check recordToolConfig(agentCtx, tool, requiresApproval, userRoles);
     } else {
         ai:ToolConfig[] configs = ai:getToolConfigs([tool]);
         if configs.length() == 0 {
             return error("Agent tool functions must be annotated with @ai:AgentTool");
         }
-        check recordToolConfig(agentCtx, configs[0]);
+        check recordToolConfig(agentCtx, configs[0], requiresApproval, userRoles);
     }
 }
 
-isolated function recordToolConfig(handle agentCtx, ai:ToolConfig config) returns error? {
+isolated function recordToolConfig(handle agentCtx, ai:ToolConfig config, boolean requiresApproval = false,
+        string|string[]? userRoles = ()) returns error? {
     map<json>? parameters = config.parameters;
     return recordAiTool(agentCtx, config.caller, config.name, config.description,
-            parameters is () ? () : parameters.toJsonString(), false);
+            parameters is () ? () : parameters.toJsonString(), requiresApproval, userRoles);
 }
 
 # Declares a named two-way data-event channel for the agent. `DurableAgent.sendData`
@@ -693,7 +697,7 @@ isolated function recordActivityTool(handle nativeContext, function tool, string
 } external;
 
 isolated function recordAiTool(handle nativeContext, function tool, string name, string description,
-        string? parametersJson, boolean requiresApproval) returns error? = @java:Method {
+        string? parametersJson, boolean requiresApproval, string|string[]? userRoles) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "recordAiTool"
 } external;
@@ -802,8 +806,7 @@ isolated function runDurableAgentObject(handle agentCtx, map<anydata> runInput)
         check registerDeclaredActivity(agentCtx, activitySpec);
     }
     foreach DurableAgentToolSpec toolSpec in spec.tools {
-        ai:FunctionTool toolFn = check toolSpec.tool.ensureType();
-        check registerAgentTool(agentCtx, toolFn);
+        check registerDeclaredTool(agentCtx, toolSpec);
     }
     boolean multiEvent = false;
     foreach DurableAgentEventSpec eventSpec in spec.events {
@@ -848,6 +851,47 @@ isolated function runDurableAgentObject(handle agentCtx, map<anydata> runInput)
 # + agentCtx - The native agent context handle
 # + activitySpec - The declared activity
 # + return - An error when registration fails
+// Registers one declared AI tool on the runner's context. The declaration carries the
+// normalized tool config (name/description/parameters) plus the ToolDecl gating fields;
+// the config is rebuilt here rather than re-derived, because an `ai:ToolConfig` literal's
+// caller need not be annotated with `@ai:AgentTool`.
+isolated function registerDeclaredTool(handle agentCtx, DurableAgentToolSpec toolSpec) returns error? {
+    string description = toolSpec.toolName;
+    map<json>? parameters = ();
+    boolean requiresApproval = false;
+    string|string[]? userRoles = ();
+    json meta = toolSpec.meta;
+    if meta is map<json> {
+        json descriptionJson = meta["description"];
+        if descriptionJson is string {
+            description = descriptionJson;
+        }
+        json parametersJson = meta["parameters"];
+        if parametersJson is string {
+            json parsed = check parametersJson.fromJsonString();
+            parameters = check parsed.cloneWithType();
+        }
+        json approvalJson = meta["requiresApproval"];
+        if approvalJson is boolean {
+            requiresApproval = approvalJson;
+        }
+        json rolesJson = meta["userRoles"];
+        if rolesJson is string {
+            userRoles = rolesJson;
+        } else if rolesJson is json[] {
+            userRoles = check rolesJson.cloneWithType();
+        }
+    }
+    ai:FunctionTool caller = check toolSpec.tool.ensureType();
+    ai:ToolConfig config = {
+        name: toolSpec.toolName,
+        description,
+        parameters,
+        caller
+    };
+    check registerAgentTool(agentCtx, config, requiresApproval, userRoles);
+}
+
 isolated function registerDeclaredActivity(handle agentCtx, DurableAgentActivitySpec activitySpec)
         returns error? {
     string? description = ();

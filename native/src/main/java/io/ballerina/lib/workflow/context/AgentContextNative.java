@@ -416,7 +416,7 @@ public final class AgentContextNative {
     }
 
     public static Object recordAiTool(BHandle handle, BFunctionPointer fn, BString name, BString description,
-                                      Object parametersJson, boolean requiresApproval) {
+                                      Object parametersJson, boolean requiresApproval, Object userRolesArg) {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             Map<String, Object> schema;
@@ -426,7 +426,7 @@ public final class AgentContextNative {
                 schema = parameterSchemaOf(fn);
             }
             info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, KIND_AI_TOOL,
-                    null, null, requiresApproval, null, new String[0]));
+                    null, null, requiresApproval, null, parseReviewRoles(userRolesArg)));
             WorkflowWorkerNative.putAgentTool(info.workflowType, name.getValue(), fn);
             return null;
         } catch (Exception e) {

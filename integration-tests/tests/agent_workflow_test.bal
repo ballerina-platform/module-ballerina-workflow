@@ -50,6 +50,19 @@ function testDurableAgentPromptDriven() returns error? {
 }
 
 @test:Config {}
+function testDurableAgentDeclaredAiTool() returns error? {
+    // The declared ToolDecl (wrapping an ai:ToolConfig with an unannotated caller) must be
+    // registered by the runner and executed durably through executeAgentTool.
+    string agentId = check quoteAgent.run("How much is the laptop?");
+
+    string result = check quoteAgent.waitForResult(agentId);
+    test:assertEquals(result, "Quote: laptop costs $500",
+            "The declared AI tool should complete the LLM -> tool -> LLM round trip");
+    test:assertEquals(getAgentFinalResponse(agentId), "Quote: laptop costs $500",
+            "The recorded final response should match the workflow result");
+}
+
+@test:Config {}
 function testDurableAgentMultiTurnConversation() returns error? {
     // MULTI_EVENT: FIFO re-armed chat waits across turns against the real server,
     // with per-turn responses observable via management:getAgentResponse.

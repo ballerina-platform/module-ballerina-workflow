@@ -39,6 +39,48 @@ import java.util.Map;
 public final class TestNatives {
 
     /**
+     * Test-only: starts a plain {@code workflow-*} typed workflow on an ARBITRARY task queue
+     * (no worker serves it, so it stays RUNNING), so instance-listing scoping can be asserted
+     * against a foreign integration's workflow.
+     *
+     * @param workflowId   the workflow ID
+     * @param taskQueue    the foreign task queue name
+     * @param workflowType the workflow type (use a {@code workflow-} prefix for listings)
+     * @return null on success, or a BError
+     */
+    public static Object startForeignQueueWorkflow(io.ballerina.runtime.api.values.BString workflowId,
+            io.ballerina.runtime.api.values.BString taskQueue,
+            io.ballerina.runtime.api.values.BString workflowType) {
+        try {
+            io.temporal.client.WorkflowClient client =
+                    io.ballerina.lib.workflow.worker.WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return io.ballerina.runtime.api.creators.ErrorCreator.createError(
+                        io.ballerina.runtime.api.utils.StringUtils.fromString("Workflow client not initialized"));
+            }
+            io.temporal.client.WorkflowOptions options = io.temporal.client.WorkflowOptions.newBuilder()
+                    .setWorkflowId(workflowId.getValue())
+                    .setTaskQueue(taskQueue.getValue())
+                    .build();
+            io.temporal.client.WorkflowStub stub =
+                    client.newUntypedWorkflowStub(workflowType.getValue(), options);
+            stub.start(java.util.Map.of());
+            return null;
+        } catch (Exception e) {
+            // Reruns against a persistent dev server find the fixture already started —
+            // which is exactly the state the tests need. (Checked by name: exception-table
+            // types must resolve during Ballerina interop validation, where the temporal
+            // classes are not on the classpath.)
+            if (e.getClass().getName().contains("AlreadyStarted")) {
+                return null;
+            }
+            return io.ballerina.runtime.api.creators.ErrorCreator.createError(
+                    io.ballerina.runtime.api.utils.StringUtils.fromString(
+                            "Failed to start foreign-queue workflow: " + e.getMessage()));
+        }
+    }
+
+    /**
      * Test-only: starts an untyped workflow shaped like a human task on an ARBITRARY task
      * queue (no worker serves it, so it stays RUNNING). Lets one test process simulate a
      * second integration sharing the namespace, to validate task-queue scoping.
@@ -74,11 +116,13 @@ public final class TestNatives {
                     client.newUntypedWorkflowStub("humantask-" + taskName.getValue(), options);
             stub.start(java.util.Map.of());
             return null;
-        } catch (io.temporal.client.WorkflowExecutionAlreadyStarted e) {
+        } catch (Exception e) {
             // A previous test run already created the fixture; it is still pending
             // (no worker serves the foreign queue), which is exactly what tests need.
-            return null;
-        } catch (Exception e) {
+            // (Checked by name — see startForeignQueueWorkflow.)
+            if (e.getClass().getName().contains("AlreadyStarted")) {
+                return null;
+            }
             return io.ballerina.runtime.api.creators.ErrorCreator.createError(
                     io.ballerina.runtime.api.utils.StringUtils.fromString(
                             "Failed to start foreign-queue task: " + e.getMessage()));

@@ -37,6 +37,15 @@ isolated function startForeignQueueHumanTask(string workflowId, string taskQueue
     'class: "io.ballerina.lib.workflow.test.TestNatives"
 } external;
 
+// Test-only: a plain workflow-* typed workflow on a foreign queue, so instance-listing
+// scoping is asserted against a real foreign workflow (human tasks are excluded there).
+isolated function startForeignQueueWorkflow(string workflowId, string taskQueue,
+        string workflowType) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.test.TestNatives"
+} external;
+
+const string FOREIGN_INSTANCE_ID = "foreign-scope-instance";
+
 const string IDENTITY_TASK_ID = "humantask-identity-check";
 
 @test:Config {}
@@ -93,11 +102,20 @@ function testTaskQueueFilterScopesListings() returns error? {
         test:assertTrue(t.taskId != FOREIGN_TASK_ID, "Local-queue filter must exclude foreign tasks");
     }
 
-    // Instance listings honor the filter the same way.
+    // Instance listings honor the filter the same way — asserted against a real foreign
+    // workflow-* fixture (human tasks are excluded from instance listings).
+    check startForeignQueueWorkflow(FOREIGN_INSTANCE_ID, FOREIGN_QUEUE, "workflow-foreignScope");
     management:WorkflowInstancePage page = check management:listWorkflowInstances(taskQueue = FOREIGN_QUEUE);
+    boolean foreignInstanceSeen = false;
     foreach management:WorkflowInstanceSummary inst in page.items {
         test:assertEquals(inst?.taskQueue, FOREIGN_QUEUE, "Instance rows must honor the queue filter");
+        if inst.workflowId == FOREIGN_INSTANCE_ID {
+            foreignInstanceSeen = true;
+            test:assertEquals(inst?.namespace, "default", "Instance rows must carry the namespace");
+        }
     }
+    test:assertTrue(foreignInstanceSeen,
+        "The foreign workflow fixture must appear in the queue-filtered instance listing");
 }
 
 @test:Config {dependsOn: [testTaskQueueFilterScopesListings]}

@@ -219,6 +219,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         String maxIterSource = null;
         String inputTypeSource = null;
         String resultTypeSource = null;
+        List<String> typeRefPrefixes = new ArrayList<>();
         List<DurableAgentDeclInfo.ActivityDecl> activities = new ArrayList<>();
         List<String> aiToolRefs = new ArrayList<>();
         List<DurableAgentDeclInfo.EventDecl> events = new ArrayList<>();
@@ -238,8 +239,14 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 case "model" -> modelSource = value.toSourceCode().strip();
                 case "systemPrompt" -> systemPromptSource = value.toSourceCode().strip();
                 case "maxIter" -> maxIterSource = value.toSourceCode().strip();
-                case "inputType" -> inputTypeSource = value.toSourceCode().strip();
-                case "resultType" -> resultTypeSource = value.toSourceCode().strip();
+                case "inputType" -> {
+                    inputTypeSource = value.toSourceCode().strip();
+                    collectQualifiedPrefixes(value, typeRefPrefixes);
+                }
+                case "resultType" -> {
+                    resultTypeSource = value.toSourceCode().strip();
+                    collectQualifiedPrefixes(value, typeRefPrefixes);
+                }
                 case "activities" -> extractActivities(value, activities, seenNames, agentName, context);
                 case "tools" -> extractTools(value, aiToolRefs, seenNames, agentName, context);
                 case "events" -> extractEvents(value, events, seenNames, agentName, context);
@@ -252,8 +259,8 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         }
 
         return new DurableAgentDeclInfo(agentName, modelSource, systemPromptSource,
-                maxIterSource, inputTypeSource, resultTypeSource, activities, aiToolRefs, events, humanTasks,
-                peers);
+                maxIterSource, inputTypeSource, resultTypeSource, typeRefPrefixes, activities, aiToolRefs,
+                events, humanTasks, peers);
     }
 
     private void extractActivities(ExpressionNode value, List<DurableAgentDeclInfo.ActivityDecl> activities,
@@ -309,6 +316,23 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         checkUnique(toolName, seenNames, agentName, nameLocation, context);
         activities.add(new DurableAgentDeclInfo.ActivityDecl(toolName, functionRefSource,
                 meta.isEmpty() ? null : "{" + meta + "}"));
+    }
+
+    // Collects the module prefixes of qualified references anywhere inside a type
+    // expression (generics, unions, nested types) from the parsed node — unlike a textual
+    // scan, this cannot mistake mapping keys or record fields for module prefixes.
+    private void collectQualifiedPrefixes(Node node, List<String> out) {
+        if (node instanceof io.ballerina.compiler.syntax.tree.QualifiedNameReferenceNode qualified) {
+            String prefix = qualified.modulePrefix().text().strip();
+            if (!prefix.isEmpty() && !out.contains(prefix)) {
+                out.add(prefix);
+            }
+        }
+        if (node instanceof io.ballerina.compiler.syntax.tree.NonTerminalNode nonTerminal) {
+            for (Node child : nonTerminal.children()) {
+                collectQualifiedPrefixes(child, out);
+            }
+        }
     }
 
     private void extractTools(ExpressionNode value, List<String> aiToolRefs, Set<String> seenNames,

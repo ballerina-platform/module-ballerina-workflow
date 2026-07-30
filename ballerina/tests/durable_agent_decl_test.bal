@@ -345,7 +345,12 @@ function testBuiltinDurableSleepTool() returns error? {
 
     string|error runResult = sleepingAgent.run("Wait a moment, then confirm.");
     if runResult is error {
-        return; // no workflow server in this environment
+        // Skip only when the embedded workflow server is unavailable; any other error
+        // means the sleep/timer path broke and must fail the test.
+        if runResult.message().includes("Workflow client not initialized") {
+            return;
+        }
+        return runResult;
     }
     // The model calls the always-available sleep builtin; the loop runs a durable
     // one-second timer on the workflow thread and feeds the outcome back.

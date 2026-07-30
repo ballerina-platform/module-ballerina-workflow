@@ -82,6 +82,15 @@ public final class AgentContextNative {
     private static final String SLEEP_TOOL = "sleep";
     private static final String EVENT_TOOL_PREFIX = "awaitEvent_";
     private static final String END_CONVERSATION_TOOL = "endConversation";
+    // Names of built-in tools published by getAgentToolDefs; user registrations must not
+    // shadow them, or the model would see duplicate definitions with diverging dispatch.
+    private static final java.util.Set<String> RESERVED_TOOL_NAMES =
+            java.util.Set.of(SLEEP_TOOL, END_CONVERSATION_TOOL);
+
+    private static BError reservedToolNameError(String name) {
+        return ErrorCreator.createError(StringUtils.fromString(
+                "The tool name '" + name + "' is reserved for a built-in agent tool"));
+    }
 
     // Interaction patterns (mirrors workflow:AgentInteractionPattern).
     private static final String MULTI_EVENT = "MULTI_EVENT";
@@ -361,6 +370,9 @@ public final class AgentContextNative {
             Map<String, Object> schema = parameterSchemaOf(fn, boundNames, activityName);
             // NoRetry arrives as nil; AutoRetry as a BMap; ManualRetry as the "MANUAL_RETRY" BString.
             Object policy = retryPolicy instanceof BMap || retryPolicy instanceof BString ? retryPolicy : null;
+            if (RESERVED_TOOL_NAMES.contains(toolName)) {
+                return reservedToolNameError(toolName);
+            }
             info.tools.add(new ToolMeta(toolName, description, schema, KIND_ACTIVITY, activityName, bindings,
                     requiresApproval, policy, parseReviewRoles(userRolesArg)));
             return null;
@@ -408,6 +420,9 @@ public final class AgentContextNative {
             properties.put("query", query);
             schema.put("properties", properties);
             schema.put("required", java.util.List.of("query"));
+            if (RESERVED_TOOL_NAMES.contains(name.getValue())) {
+                return reservedToolNameError(name.getValue());
+            }
             info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, kindSpec.getValue(),
                     null, null, requiresApproval, null, new String[0]));
             return null;
@@ -426,6 +441,9 @@ public final class AgentContextNative {
                 schema = parseSchema(schemaJson.getValue());
             } else {
                 schema = parameterSchemaOf(fn);
+            }
+            if (RESERVED_TOOL_NAMES.contains(name.getValue())) {
+                return reservedToolNameError(name.getValue());
             }
             info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, KIND_AI_TOOL,
                     null, null, requiresApproval, null, new String[0]));
@@ -468,6 +486,9 @@ public final class AgentContextNative {
             Map<String, Object> schema = new LinkedHashMap<>();
             schema.put("type", "object");
             schema.put("additionalProperties", Boolean.TRUE);
+            if (RESERVED_TOOL_NAMES.contains(name)) {
+                return reservedToolNameError(name);
+            }
             info.tools.add(new ToolMeta(name, descriptionStr, schema, KIND_HUMAN_TASK));
             info.humanTasks.put(name, new HumanTaskMeta(userRoles, titleStr, descriptionStr, resultType,
                     timeout instanceof BMap ? timeout : null));
@@ -526,6 +547,8 @@ public final class AgentContextNative {
         Map<String, Object> secondsProperty = new LinkedHashMap<>();
         secondsProperty.put("type", "integer");
         secondsProperty.put("description", "How long to sleep, in seconds");
+        secondsProperty.put("minimum", 1);
+        secondsProperty.put("maximum", 86400);
         sleepProperties.put("seconds", secondsProperty);
         sleepSchema.put("properties", sleepProperties);
         sleepSchema.put("required", java.util.List.of("seconds"));

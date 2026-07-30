@@ -23,6 +23,7 @@
 // mutating a task served by a different integration is rejected.
 
 import ballerina/jballerina.java;
+import ballerina/lang.runtime;
 import ballerina/test;
 import ballerina/workflow.management as management;
 
@@ -48,26 +49,39 @@ const string FOREIGN_INSTANCE_ID = "foreign-scope-instance";
 
 const string IDENTITY_TASK_ID = "humantask-identity-check";
 
+// Temporal's visibility store is eventually consistent: a just-started fixture may take
+// a moment to appear in listings, so assertions poll until it is indexed.
+isolated function awaitHumanTaskVisible(string taskId, string? taskQueue = ())
+        returns management:HumanTaskSummary|error {
+    foreach int _ in 0 ..< 40 {
+        management:HumanTaskSummary[] tasks = check management:listAllHumanTasks(taskQueue = taskQueue);
+        foreach management:HumanTaskSummary t in tasks {
+            if t.taskId == taskId {
+                return t;
+            }
+        }
+        runtime:sleep(0.5);
+    }
+    return error("Fixture '" + taskId + "' never became visible in the listing");
+}
+
 @test:Config {}
 function testHumanTaskRowsCarryQueueIdentity() returns error? {
     // Create a known fixture so the assertions cannot pass vacuously, then assert it
     // is returned with the right attribution and every row identifies its integration.
     check startForeignQueueHumanTask(IDENTITY_TASK_ID, FOREIGN_QUEUE, "identityCheckTask", ["OTHER_ROLE"]);
 
+    management:HumanTaskSummary fixture = check awaitHumanTaskVisible(IDENTITY_TASK_ID);
+    test:assertEquals(fixture?.taskQueue, FOREIGN_QUEUE,
+        "The fixture must be attributed to the queue it was started on");
+
     management:HumanTaskSummary[] tasks = check management:listAllHumanTasks();
     test:assertTrue(tasks.length() > 0, "The listing must contain at least the created fixture");
-    boolean fixtureSeen = false;
     foreach management:HumanTaskSummary t in tasks {
         test:assertEquals(t?.namespace, "default", "Rows must carry the namespace");
         test:assertTrue(t?.taskQueue is string && t?.taskQueue != "",
             "Rows must carry the owning task queue");
-        if t.taskId == IDENTITY_TASK_ID {
-            fixtureSeen = true;
-            test:assertEquals(t?.taskQueue, FOREIGN_QUEUE,
-                "The fixture must be attributed to the queue it was started on");
-        }
     }
-    test:assertTrue(fixtureSeen, "The created fixture must be returned by the listing");
 }
 
 @test:Config {}
@@ -75,19 +89,9 @@ function testTaskQueueFilterScopesListings() returns error? {
     check startForeignQueueHumanTask(FOREIGN_TASK_ID, FOREIGN_QUEUE, "foreignScopeTask", ["OTHER_ROLE"]);
 
     // Unfiltered: the foreign task is visible (namespace-wide read tolerance).
-    management:HumanTaskSummary[] all = check management:listAllHumanTasks();
-    management:HumanTaskSummary? foreign = ();
-    foreach management:HumanTaskSummary t in all {
-        if t.taskId == FOREIGN_TASK_ID {
-            foreign = t;
-        }
-    }
-    test:assertTrue(foreign is management:HumanTaskSummary,
-        "The foreign integration's task must appear in the namespace-wide listing");
-    if foreign is management:HumanTaskSummary {
-        test:assertEquals(foreign?.taskQueue, FOREIGN_QUEUE,
-            "The foreign task must be attributed to its own task queue");
-    }
+    management:HumanTaskSummary foreign = check awaitHumanTaskVisible(FOREIGN_TASK_ID);
+    test:assertEquals(foreign?.taskQueue, FOREIGN_QUEUE,
+        "The foreign task must be attributed to its own task queue");
 
     // Filtered to the foreign queue: only its tasks.
     management:HumanTaskSummary[] foreignOnly = check management:listAllHumanTasks(taskQueue = FOREIGN_QUEUE);
@@ -105,14 +109,20 @@ function testTaskQueueFilterScopesListings() returns error? {
     // Instance listings honor the filter the same way — asserted against a real foreign
     // workflow-* fixture (human tasks are excluded from instance listings).
     check startForeignQueueWorkflow(FOREIGN_INSTANCE_ID, FOREIGN_QUEUE, "workflow-foreignScope");
-    management:WorkflowInstancePage page = check management:listWorkflowInstances(taskQueue = FOREIGN_QUEUE);
     boolean foreignInstanceSeen = false;
-    foreach management:WorkflowInstanceSummary inst in page.items {
-        test:assertEquals(inst?.taskQueue, FOREIGN_QUEUE, "Instance rows must honor the queue filter");
-        if inst.workflowId == FOREIGN_INSTANCE_ID {
-            foreignInstanceSeen = true;
-            test:assertEquals(inst?.namespace, "default", "Instance rows must carry the namespace");
+    foreach int _ in 0 ..< 40 {
+        management:WorkflowInstancePage page = check management:listWorkflowInstances(taskQueue = FOREIGN_QUEUE);
+        foreach management:WorkflowInstanceSummary inst in page.items {
+            test:assertEquals(inst?.taskQueue, FOREIGN_QUEUE, "Instance rows must honor the queue filter");
+            if inst.workflowId == FOREIGN_INSTANCE_ID {
+                foreignInstanceSeen = true;
+                test:assertEquals(inst?.namespace, "default", "Instance rows must carry the namespace");
+            }
         }
+        if foreignInstanceSeen {
+            break;
+        }
+        runtime:sleep(0.5);
     }
     test:assertTrue(foreignInstanceSeen,
         "The foreign workflow fixture must appear in the queue-filtered instance listing");

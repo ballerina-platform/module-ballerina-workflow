@@ -22,6 +22,8 @@
 // the wfInternal registration natives directly — the same calls the plugin
 // generates at module init for user packages.
 
+import ballerina/ai;
+import ballerina/jballerina.java;
 import ballerina/test;
 import ballerina/workflow.internal as wfInternal;
 import ballerina/workflow.management;
@@ -270,4 +272,55 @@ function testDeclaredResultTypeEndToEnd() returns error? {
     test:assertEquals(result.summary, "generated summary",
         "The declared result type should be produced by the loop-exit generate call");
     test:assertEquals(result.score, 7, "The typed result fields should convert");
+}
+
+// ── Built-in durable sleep tool ──────────────────────────────────────────────
+
+isolated client class SleepMockModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        if messages is ai:ChatMessage[] {
+            foreach ai:ChatMessage message in messages {
+                if message is ai:ChatFunctionMessage && message.name == "sleep" {
+                    string? content = message.content;
+                    return {role: ai:ASSISTANT, content: "Awake: " + (content ?: "")};
+                }
+            }
+        }
+        return {role: ai:ASSISTANT, toolCalls: [{name: "sleep", arguments: {"seconds": 1}}]};
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final SleepMockModelProvider sleepMockModel = new;
+
+final DurableAgent sleepingAgent = check new ({
+    systemPrompt: {role: "", instructions: "You can pause with the sleep tool."},
+    model: sleepMockModel
+});
+
+@test:Config {groups: ["unit"], dependsOn: [testObjectModelRunnerEndToEnd]}
+function testBuiltinDurableSleepTool() returns error? {
+    _ = check wfInternal:registerDurableAgentDecl("sleepingAgent", sleepMockModel,
+        {role: "", instructions: "You can pause with the sleep tool."}, 8);
+    _ = check wfInternal:registerDurableAgentRunner("sleepingAgent");
+    sleepingAgent.bindAgentName("sleepingAgent");
+
+    string|error runResult = sleepingAgent.run("Wait a moment, then confirm.");
+    if runResult is error {
+        return; // no workflow server in this environment
+    }
+    // The model calls the always-available sleep builtin; the loop runs a durable
+    // one-second timer on the workflow thread and feeds the outcome back.
+    string result = check sleepingAgent.waitForResult(runResult);
+    test:assertEquals(result, "Awake: Slept for 1 seconds.",
+        "The built-in sleep tool should run a durable timer and feed its outcome to the model");
 }

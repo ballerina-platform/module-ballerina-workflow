@@ -272,6 +272,24 @@ isolated function dispatchAgentTool(handle ctxHandle, string agentName, AgentFun
     }
 
     anydata|error result;
+    if kind == "sleep" {
+        // Durable sleep: a workflow-side timer, never an activity. Capped to a day so a
+        // hallucinated duration cannot park the instance indefinitely.
+        int seconds = 0;
+        anydata rawSeconds = args["seconds"];
+        if rawSeconds is int {
+            seconds = rawSeconds;
+        } else if rawSeconds is float|decimal {
+            seconds = <int>rawSeconds;
+        }
+        if seconds <= 0 {
+            return "Error: sleep requires a positive 'seconds' argument.";
+        }
+        int cappedSeconds = int:min(seconds, 86400);
+        check agentSleepMillis(ctxHandle, cappedSeconds * 1000);
+        return string `Slept for ${cappedSeconds} seconds.`;
+    }
+
     if kind == "activity" {
         // Resolved through the context so registration-time bindings (fixed
         // arguments, connection markers) are merged in and a tool-name override
@@ -341,6 +359,13 @@ isolated function executeAgentTool(string agentName, string toolName, json argum
     // boundary; surface their textual form to the model instead.
     return result.toString();
 }
+
+// Durable sleep on the workflow thread (a Temporal timer); the handle parameter is
+// unused by the native, which sleeps the current workflow context.
+isolated function agentSleepMillis(handle nativeContext, int millis) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
+    name: "sleepMillis"
+} external;
 
 // Looks up a registered AI tool function pointer for the wrapper activity.
 isolated function getAgentToolFunction(string agentName, string toolName)

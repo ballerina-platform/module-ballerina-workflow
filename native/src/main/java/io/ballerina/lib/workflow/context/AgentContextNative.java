@@ -78,6 +78,8 @@ public final class AgentContextNative {
     private static final String KIND_HUMAN_TASK = "humantask";
     private static final String KIND_EVENT_PREFIX = "event:";
     private static final String KIND_END = "end";
+    private static final String KIND_SLEEP = "sleep";
+    private static final String SLEEP_TOOL = "sleep";
     private static final String EVENT_TOOL_PREFIX = "awaitEvent_";
     private static final String END_CONVERSATION_TOOL = "endConversation";
 
@@ -516,6 +518,21 @@ public final class AgentContextNative {
                             + "end the conversation.",
                     schema, KIND_END));
         }
+        // Durable sleep is always available: the timer is a workflow-side operation
+        // (never an activity), so the agent survives restarts while sleeping.
+        Map<String, Object> sleepSchema = new LinkedHashMap<>();
+        sleepSchema.put("type", "object");
+        Map<String, Object> sleepProperties = new LinkedHashMap<>();
+        Map<String, Object> secondsProperty = new LinkedHashMap<>();
+        secondsProperty.put("type", "integer");
+        secondsProperty.put("description", "How long to sleep, in seconds");
+        sleepProperties.put("seconds", secondsProperty);
+        sleepSchema.put("properties", sleepProperties);
+        sleepSchema.put("required", java.util.List.of("seconds"));
+        defs.add(toolDef(SLEEP_TOOL,
+                "Pauses this agent durably for the given number of seconds. The agent survives worker "
+                        + "restarts while sleeping and resumes exactly where it left off.",
+                sleepSchema, KIND_SLEEP));
         return StringUtils.fromString(TypesUtil.toJsonString(defs));
     }
 

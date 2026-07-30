@@ -432,6 +432,32 @@ public final class AgentContextNative {
         }
     }
 
+    /**
+     * Durable, interruptible sleep for the built-in agent sleep tool: a workflow-side timer
+     * that ends early when the {@code __agent_wake} signal arrives (sent by the management
+     * API). The wake request is consumed so it interrupts exactly one sleep.
+     *
+     * @param handle the agent context handle (unused; the current workflow sleeps)
+     * @param millis how long to sleep
+     * @return true when the timer ran to completion, false when a wake interrupted it,
+     *         or a BError on failure
+     */
+    public static Object agentInterruptibleSleep(BHandle handle, long millis) {
+        try {
+            io.ballerina.lib.workflow.worker.WorkflowWorkerNative.awaitWhileSuspended();
+            boolean woken = Workflow.await(java.time.Duration.ofMillis(millis),
+                    io.ballerina.lib.workflow.worker.WorkflowWorkerNative::isWakeRequested);
+            if (woken) {
+                io.ballerina.lib.workflow.worker.WorkflowWorkerNative.clearWakeRequest();
+            }
+            return !woken;
+        } catch (io.temporal.worker.NonDeterministicException | io.temporal.failure.TemporalFailure e) {
+            throw e;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString("Agent sleep failed: " + e.getMessage()));
+        }
+    }
+
     public static Object recordAiTool(BHandle handle, BFunctionPointer fn, BString name, BString description,
                                       Object parametersJson, boolean requiresApproval) {
         try {
@@ -548,13 +574,13 @@ public final class AgentContextNative {
         secondsProperty.put("type", "integer");
         secondsProperty.put("description", "How long to sleep, in seconds");
         secondsProperty.put("minimum", 1);
-        secondsProperty.put("maximum", 86400);
         sleepProperties.put("seconds", secondsProperty);
         sleepSchema.put("properties", sleepProperties);
         sleepSchema.put("required", java.util.List.of("seconds"));
         defs.add(toolDef(SLEEP_TOOL,
                 "Pauses this agent durably for the given number of seconds. The agent survives worker "
-                        + "restarts while sleeping and resumes exactly where it left off.",
+                        + "restarts while sleeping and resumes exactly where it left off; a wake signal "
+                        + "from the management API ends the sleep early.",
                 sleepSchema, KIND_SLEEP));
         return StringUtils.fromString(TypesUtil.toJsonString(defs));
     }

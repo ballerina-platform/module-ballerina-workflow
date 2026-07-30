@@ -358,3 +358,60 @@ function testBuiltinDurableSleepTool() returns error? {
     test:assertEquals(result, "Awake: Slept for 1 seconds.",
         "The built-in sleep tool should run a durable timer and feed its outcome to the model");
 }
+
+
+isolated client class LongSleepMockModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        if messages is ai:ChatMessage[] {
+            foreach ai:ChatMessage message in messages {
+                if message is ai:ChatFunctionMessage && message.name == "sleep" {
+                    string? content = message.content;
+                    return {role: ai:ASSISTANT, content: "Awake: " + (content ?: "")};
+                }
+            }
+        }
+        return {role: ai:ASSISTANT, toolCalls: [{name: "sleep", arguments: {"seconds": 300}}]};
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final LongSleepMockModelProvider longSleepMockModel = new;
+
+final DurableAgent wakeableAgent = check new ({
+    systemPrompt: {role: "", instructions: "You can pause with the sleep tool."},
+    model: longSleepMockModel
+});
+
+@test:Config {groups: ["unit"], dependsOn: [testBuiltinDurableSleepTool]}
+function testWakeSignalInterruptsSleep() returns error? {
+    _ = check wfInternal:registerDurableAgentDecl("wakeableAgent", longSleepMockModel,
+        {role: "", instructions: "You can pause with the sleep tool."}, 8);
+    _ = check wfInternal:registerDurableAgentRunner("wakeableAgent");
+    wakeableAgent.bindAgentName("wakeableAgent");
+
+    string|error runResult = wakeableAgent.run("Wait for a long time.");
+    if runResult is error {
+        if runResult.message().includes("Workflow client not initialized") {
+            return;
+        }
+        return runResult;
+    }
+    // Give the loop a moment to enter the 300-second durable sleep, then wake it
+    // through the management API; the agent must finish promptly with the
+    // interruption fed back to the model instead of sleeping out the timer.
+    runtime:sleep(2);
+    check management:wakeAgent(runResult);
+    string result = check wakeableAgent.waitForResult(runResult);
+    test:assertEquals(result,
+        "Awake: Sleep was interrupted by a wake signal before the 300 seconds elapsed.",
+        "The wake signal should end the built-in sleep early");
+}

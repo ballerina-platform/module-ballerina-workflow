@@ -273,8 +273,9 @@ isolated function dispatchAgentTool(handle ctxHandle, string agentName, AgentFun
 
     anydata|error result;
     if kind == "sleep" {
-        // Durable sleep: a workflow-side timer, never an activity. Capped to a day so a
-        // hallucinated duration cannot park the instance indefinitely.
+        // Durable sleep: a workflow-side timer, never an activity. There is no upper
+        // bound - durable timers are exactly for long pauses, and a management-API wake
+        // signal can end the sleep early at any time.
         int seconds = 0;
         anydata rawSeconds = args["seconds"];
         if rawSeconds is int {
@@ -285,9 +286,11 @@ isolated function dispatchAgentTool(handle ctxHandle, string agentName, AgentFun
         if seconds <= 0 {
             return "Error: sleep requires a positive 'seconds' argument.";
         }
-        int cappedSeconds = int:min(seconds, 86400);
-        check agentSleepMillis(ctxHandle, cappedSeconds * 1000);
-        return string `Slept for ${cappedSeconds} seconds.`;
+        boolean completed = check agentInterruptibleSleep(ctxHandle, seconds * 1000);
+        if completed {
+            return string `Slept for ${seconds} seconds.`;
+        }
+        return string `Sleep was interrupted by a wake signal before the ${seconds} seconds elapsed.`;
     }
 
     if kind == "activity" {
@@ -360,11 +363,11 @@ isolated function executeAgentTool(string agentName, string toolName, json argum
     return result.toString();
 }
 
-// Durable sleep on the workflow thread (a Temporal timer); the handle parameter is
-// unused by the native, which sleeps the current workflow context.
-isolated function agentSleepMillis(handle nativeContext, int millis) returns error? = @java:Method {
-    'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
-    name: "sleepMillis"
+// Durable, wake-interruptible sleep on the workflow thread (a Temporal timer); returns
+// true when the timer ran to completion, false when a management wake signal ended it.
+isolated function agentInterruptibleSleep(handle nativeContext, int millis) returns boolean|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.AgentContextNative",
+    name: "agentInterruptibleSleep"
 } external;
 
 // Looks up a registered AI tool function pointer for the wrapper activity.

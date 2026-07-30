@@ -120,6 +120,20 @@ public isolated function listWorkflowDefinitions() returns WorkflowDefinition[]|
 # check management:suspendWorkflow(workflowId);
 # ```
 #
+# Wakes a durable agent instance out of its built-in `sleep` tool by sending the
+# `__agent_wake` signal. Harmless when the instance is not sleeping: the request
+# is consumed by the next sleep.
+#
+# ```ballerina
+# check management:wakeAgent(instanceId);
+# ```
+#
+# + workflowId - The agent instance ID to wake
+# + return - An error if the signal cannot be delivered
+public isolated function wakeAgent(string workflowId) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
 # + workflowId - The workflow ID to suspend
 # + return - An error if the signal cannot be delivered
 public isolated function suspendWorkflow(string workflowId) returns error? = @java:Method {

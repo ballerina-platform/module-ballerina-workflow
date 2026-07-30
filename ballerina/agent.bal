@@ -16,7 +16,6 @@
 
 import ballerina/ai;
 import ballerina/jballerina.java;
-import ballerina/time;
 
 // ============================================================================
 // anydata mirrors of the ballerina/ai chat message types.
@@ -329,6 +328,11 @@ isolated function executeAgentTool(string agentName, string toolName, json argum
     if normalizedArgs is map<json> {
         args = normalizedArgs;
     }
+    // An MCP tool's caller takes a single `mcp:CallToolParams` argument; wrap the
+    // model's arguments the same way the ai module's own tool store does.
+    if isAgentMcpTool(agentName, toolName) {
+        args = {params: {name: toolName, arguments: args}};
+    }
     ai:ToolExecutionResult execution = ai:executeTool(fn, args);
     any|error result = execution.result;
     if result is error {
@@ -341,6 +345,12 @@ isolated function executeAgentTool(string agentName, string toolName, json argum
     // boundary; surface their textual form to the model instead.
     return result.toString();
 }
+
+// Whether the registered tool is an MCP tool (its caller takes mcp:CallToolParams).
+isolated function isAgentMcpTool(string agentName, string toolName) returns boolean = @java:Method {
+    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
+    name: "isAgentMcpTool"
+} external;
 
 // Looks up a registered AI tool function pointer for the wrapper activity.
 isolated function getAgentToolFunction(string agentName, string toolName)
@@ -486,7 +496,7 @@ type AgentRunConfig record {|
 
     # Maximum wait per event. On timeout the model is told the wait timed
     # out so it can wrap up gracefully. Required for `MULTI_EVENT`
-    time:Duration? eventTimeout = ();
+    Duration? eventTimeout = ();
 
     # Hard cap on the total number of event waits per run; exceeding it fails
     # the agent (backstop for open-ended conversations)
@@ -505,7 +515,7 @@ type AgentRunConfig record {|
 #             the review timed out so it can wrap up. Omit to wait indefinitely
 type ApprovalConfig record {|
     string|string[] userRoles = "manager";
-    time:Duration? timeout = ();
+    Duration? timeout = ();
 |};
 
 // Internal shape of a registered tool: the LLM-facing definition plus the
@@ -562,29 +572,37 @@ isolated function registerActivity(handle agentCtx, function activity, string? n
 #
 # + agentCtx - The native agent context handle
 # + tool - The tool to register
+# + requiresApproval - When `true`, a `PRE_RUN` review activity gates every call
+# + userRoles - Role(s) permitted to decide reviews of gated tools; defaults to
+#               the agent-level approval roles when omitted
 # + return - An error if the tool cannot be registered (e.g. a function
 #            missing the `@ai:AgentTool` annotation), otherwise nil
-isolated function registerAgentTool(handle agentCtx, ai:BaseToolKit|ai:ToolConfig|ai:FunctionTool tool)
+isolated function registerAgentTool(handle agentCtx, ai:BaseToolKit|ai:ToolConfig|ai:FunctionTool tool,
+        boolean requiresApproval = false, string|string[]? userRoles = (), boolean mcpTool = false)
         returns error? {
     if tool is ai:BaseToolKit {
+        // MCP toolkit callers take a single `mcp:CallToolParams` argument, so the
+        // execution wrapper must know to wrap the model's arguments accordingly.
+        boolean isMcp = tool is ai:McpBaseToolKit;
         foreach ai:ToolConfig config in tool.getTools() {
-            check recordToolConfig(agentCtx, config);
+            check recordToolConfig(agentCtx, config, requiresApproval, userRoles, isMcp);
         }
     } else if tool is ai:ToolConfig {
-        check recordToolConfig(agentCtx, tool);
+        check recordToolConfig(agentCtx, tool, requiresApproval, userRoles, mcpTool);
     } else {
         ai:ToolConfig[] configs = ai:getToolConfigs([tool]);
         if configs.length() == 0 {
             return error("Agent tool functions must be annotated with @ai:AgentTool");
         }
-        check recordToolConfig(agentCtx, configs[0]);
+        check recordToolConfig(agentCtx, configs[0], requiresApproval, userRoles, mcpTool);
     }
 }
 
-isolated function recordToolConfig(handle agentCtx, ai:ToolConfig config) returns error? {
+isolated function recordToolConfig(handle agentCtx, ai:ToolConfig config, boolean requiresApproval = false,
+        string|string[]? userRoles = (), boolean mcpTool = false) returns error? {
     map<json>? parameters = config.parameters;
     return recordAiTool(agentCtx, config.caller, config.name, config.description,
-            parameters is () ? () : parameters.toJsonString(), false);
+            parameters is () ? () : parameters.toJsonString(), requiresApproval, userRoles, mcpTool);
 }
 
 # Declares a named two-way data-event channel for the agent. `DurableAgent.sendData`
@@ -621,7 +639,7 @@ isolated function registerAgentEvent(handle agentCtx, string name, typedesc<anyd
 # + return - An error if the task cannot be registered, otherwise nil
 isolated function registerHumanTask(handle agentCtx, string taskName, string|string[] userRoles,
         typedesc<anydata> resultType = anydata, string? title = (), string? description = (),
-        time:Duration? timeout = ()) returns error? {
+        Duration? timeout = ()) returns error? {
     return recordHumanTaskTool(agentCtx, taskName, userRoles, resultType, title, description,
             timeout);
 }
@@ -693,7 +711,8 @@ isolated function recordActivityTool(handle nativeContext, function tool, string
 } external;
 
 isolated function recordAiTool(handle nativeContext, function tool, string name, string description,
-        string? parametersJson, boolean requiresApproval) returns error? = @java:Method {
+        string? parametersJson, boolean requiresApproval, string|string[]? userRoles,
+        boolean mcpTool) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "recordAiTool"
 } external;
@@ -707,14 +726,14 @@ isolated function awaitAgentToolReview(handle nativeContext, string toolName, st
     name: "awaitToolReview"
 } external;
 
-isolated function setAgentApproval(handle nativeContext, string|string[] userRoles, time:Duration? timeout)
+isolated function setAgentApproval(handle nativeContext, string|string[] userRoles, Duration? timeout)
         returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "setAgentApproval"
 } external;
 
 isolated function recordHumanTaskTool(handle nativeContext, string taskName, string|string[] userRoles,
-        typedesc<anydata> resultType, string? title, string? description, time:Duration? timeout)
+        typedesc<anydata> resultType, string? title, string? description, Duration? timeout)
         returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "recordHumanTaskTool"
@@ -726,7 +745,7 @@ isolated function registerAgentUpdateEvent(handle nativeContext, string name, ty
     name: "registerUpdateEvent"
 } external;
 
-isolated function setAgentInteraction(handle nativeContext, string pattern, time:Duration? eventTimeout,
+isolated function setAgentInteraction(handle nativeContext, string pattern, Duration? eventTimeout,
         int maxEventWaits) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "setInteraction"
@@ -802,8 +821,7 @@ isolated function runDurableAgentObject(handle agentCtx, map<anydata> runInput)
         check registerDeclaredActivity(agentCtx, activitySpec);
     }
     foreach DurableAgentToolSpec toolSpec in spec.tools {
-        ai:FunctionTool toolFn = check toolSpec.tool.ensureType();
-        check registerAgentTool(agentCtx, toolFn);
+        check registerDeclaredTool(agentCtx, toolSpec);
     }
     boolean multiEvent = false;
     foreach DurableAgentEventSpec eventSpec in spec.events {
@@ -848,6 +866,48 @@ isolated function runDurableAgentObject(handle agentCtx, map<anydata> runInput)
 # + agentCtx - The native agent context handle
 # + activitySpec - The declared activity
 # + return - An error when registration fails
+// Registers one declared AI tool on the runner's context. The declaration carries the
+// normalized tool config (name/description/parameters) plus the ToolDecl gating fields;
+// the config is rebuilt here rather than re-derived, because an `ai:ToolConfig` literal's
+// caller need not be annotated with `@ai:AgentTool`.
+isolated function registerDeclaredTool(handle agentCtx, DurableAgentToolSpec toolSpec) returns error? {
+    string description = toolSpec.toolName;
+    map<json>? parameters = ();
+    boolean requiresApproval = false;
+    string|string[]? userRoles = ();
+    json meta = toolSpec.meta;
+    if meta is map<json> {
+        json descriptionJson = meta["description"];
+        if descriptionJson is string {
+            description = descriptionJson;
+        }
+        json parametersJson = meta["parameters"];
+        if parametersJson is string {
+            json parsed = check parametersJson.fromJsonString();
+            parameters = check parsed.cloneWithType();
+        }
+        json approvalJson = meta["requiresApproval"];
+        if approvalJson is boolean {
+            requiresApproval = approvalJson;
+        }
+        json rolesJson = meta["userRoles"];
+        if rolesJson is string {
+            userRoles = rolesJson;
+        } else if rolesJson is json[] {
+            userRoles = check rolesJson.cloneWithType();
+        }
+    }
+    boolean mcpTool = meta is map<json> && meta["isMcp"] == true;
+    ai:FunctionTool caller = check toolSpec.tool.ensureType();
+    ai:ToolConfig config = {
+        name: toolSpec.toolName,
+        description,
+        parameters,
+        caller
+    };
+    check registerAgentTool(agentCtx, config, requiresApproval, userRoles, mcpTool);
+}
+
 isolated function registerDeclaredActivity(handle agentCtx, DurableAgentActivitySpec activitySpec)
         returns error? {
     string? description = ();
@@ -928,7 +988,7 @@ isolated function registerDeclaredHumanTask(handle agentCtx, DurableAgentHumanTa
     string|string[] roles = "manager";
     string? title = ();
     string? description = ();
-    time:Duration? timeout = ();
+    Duration? timeout = ();
     json meta = taskSpec.meta;
     if meta is map<json> {
         json rolesJson = meta["roles"];

@@ -16,7 +16,9 @@
 
 import ballerina/jballerina.java;
 import ballerina/lang.runtime;
+import ballerina/ai;
 import ballerina/test;
+import ballerina/workflow.internal as wfInternal;
 import ballerina/workflow.management;
 
 // Probe: reads the final response the agent recorded on completion (agents have
@@ -46,6 +48,34 @@ function testDurableAgentPromptDriven() returns error? {
     test:assertEquals(result, "Stock check result: laptop is in stock",
             "Prompt-driven agent should complete the LLM -> tool -> LLM round trip");
     test:assertEquals(getAgentFinalResponse(agentId), "Stock check result: laptop is in stock",
+            "The recorded final response should match the workflow result");
+}
+
+@test:Config {}
+function testDurableAgentMcpToolKit() returns error? {
+    // The MCP server runs in this same package; the toolkit connects, lists its tools,
+    // and registers them on the agent through the plugin's registration path. The agent
+    // then executes the MCP tool durably through the built-in executeAgentTool activity.
+    ai:McpToolKit mcpKit = check new ("http://localhost:9310/mcp");
+    _ = check wfInternal:registerDurableAgentTool("mcpQuoteAgent", mcpKit);
+
+    string agentId = check mcpQuoteAgent.run("How much is the laptop?");
+
+    string result = check mcpQuoteAgent.waitForResult(agentId);
+    test:assertTrue(result.startsWith("MCP quote:") && result.includes("laptop costs $750"),
+            "The MCP tool result should complete the LLM -> MCP tool -> LLM round trip: " + result);
+}
+
+@test:Config {}
+function testDurableAgentDeclaredAiTool() returns error? {
+    // The declared ToolDecl (wrapping an ai:ToolConfig with an unannotated caller) must be
+    // registered by the runner and executed durably through executeAgentTool.
+    string agentId = check quoteAgent.run("How much is the laptop?");
+
+    string result = check quoteAgent.waitForResult(agentId);
+    test:assertEquals(result, "Quote: laptop costs $500",
+            "The declared AI tool should complete the LLM -> tool -> LLM round trip");
+    test:assertEquals(getAgentFinalResponse(agentId), "Quote: laptop costs $500",
             "The recorded final response should match the workflow result");
 }
 

@@ -324,10 +324,17 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                     .append(", ").append(activity.metaSource() != null ? activity.metaSource() : "()")
                     .append(");").append(System.lineSeparator());
         }
-        for (String toolRef : decl.aiToolRefs()) {
+        for (DurableAgentDeclInfo.ToolRef toolRef : decl.aiToolRefs()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
                     .append(":registerDurableAgentTool(").append(agentNameLiteral)
-                    .append(", ").append(toolRef).append(");").append(System.lineSeparator());
+                    .append(", ").append(toolRef.refSource());
+            if (toolRef.approvalSource() != null) {
+                body.append(", requiresApproval = ").append(toolRef.approvalSource());
+            }
+            if (toolRef.rolesSource() != null) {
+                body.append(", userRoles = ").append(toolRef.rolesSource());
+            }
+            body.append(");").append(System.lineSeparator());
         }
         for (DurableAgentDeclInfo.EventDecl event : decl.events()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
@@ -425,8 +432,10 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             for (DurableAgentDeclInfo.ActivityDecl activity : decl.activities()) {
                 addPrefixIfQualified(prefixes, activity.functionRefSource());
             }
-            for (String toolRef : decl.aiToolRefs()) {
-                addPrefixIfQualified(prefixes, toolRef);
+            for (DurableAgentDeclInfo.ToolRef toolRef : decl.aiToolRefs()) {
+                addPrefixIfQualified(prefixes, toolRef.refSource());
+                addPrefixIfQualified(prefixes, toolRef.approvalSource());
+                addPrefixIfQualified(prefixes, toolRef.rolesSource());
             }
             for (DurableAgentDeclInfo.EventDecl event : decl.events()) {
                 addPrefixIfQualified(prefixes, event.requestTypeSource());

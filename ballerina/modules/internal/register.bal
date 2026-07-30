@@ -185,19 +185,44 @@ public isolated function registerDurableAgentHumanTask(string agentName, string 
 # registry (so the built-in `executeAgentTool` activity can resolve it).
 #
 # + agentName - The agent's name (its module-level variable name)
-# + tool - The `@ai:AgentTool` function
+# + tool - The tool: an `@ai:AgentTool` function, an `ai:ToolConfig`, or a toolkit
+# + requiresApproval - When `true`, a `PRE_RUN` review activity gates every call
+# + userRoles - Role(s) permitted to decide reviews of this tool
 # + return - `true` on success, or an error
-public isolated function registerDurableAgentTool(string agentName, ai:FunctionTool tool)
-        returns boolean|error {
-    ai:ToolConfig[] configs = ai:getToolConfigs([tool]);
-    if configs.length() == 0 {
-        return error("Agent tool functions must be annotated with @ai:AgentTool");
+public isolated function registerDurableAgentTool(string agentName,
+        ai:BaseToolKit|ai:ToolConfig|ai:FunctionTool tool, boolean requiresApproval = false,
+        string|string[]? userRoles = ()) returns boolean|error {
+    ai:ToolConfig[] configs;
+    boolean isMcp = tool is ai:McpBaseToolKit;
+    if tool is ai:BaseToolKit {
+        configs = tool.getTools();
+    } else if tool is ai:ToolConfig {
+        configs = [tool];
+    } else {
+        configs = ai:getToolConfigs([tool]);
+        if configs.length() == 0 {
+            return error("Agent tool functions must be annotated with @ai:AgentTool");
+        }
     }
-    return registerDurableAgentToolNative(agentName, configs[0].name, tool);
+    boolean result = true;
+    foreach ai:ToolConfig config in configs {
+        map<json>? parameters = config.parameters;
+        json meta = {
+            description: config.description,
+            parameters: parameters is () ? () : parameters.toJsonString(),
+            requiresApproval,
+            userRoles,
+            isMcp
+        };
+        boolean registered =
+            check registerDurableAgentToolNative(agentName, config.name, config.caller, meta);
+        result = result && registered;
+    }
+    return result;
 }
 
-isolated function registerDurableAgentToolNative(string agentName, string toolName, function tool)
-        returns boolean|error = @java:Method {
+isolated function registerDurableAgentToolNative(string agentName, string toolName, function tool,
+        json meta) returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
     name: "registerDurableAgentTool"
 } external;

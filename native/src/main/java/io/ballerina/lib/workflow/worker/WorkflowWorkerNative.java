@@ -247,6 +247,7 @@ public final class WorkflowWorkerNative {
     // ai:ModelProvider client used by its LLM activities. Populated at runtime when the
     // object-model runner builds the agent (AgentContextNative.registerModel).
     private static final Map<String, BObject> AGENT_MODEL_REGISTRY = new ConcurrentHashMap<>();
+    private static final java.util.Set<String> AGENT_MCP_TOOLS = java.util.concurrent.ConcurrentHashMap.newKeySet();
     // Maps "<agent workflow type>.<tool name>" to the AI tool function pointer invoked by the
     // built-in executeAgentTool activity wrapper. Populated at module init by the
     // compiler-plugin-emitted `wfInternal:registerDurableAgentTool(...)` calls (so every worker
@@ -1227,7 +1228,38 @@ public final class WorkflowWorkerNative {
      * @param tool         the tool function pointer
      */
     public static void putAgentTool(String workflowType, String toolName, BFunctionPointer tool) {
-        AGENT_TOOL_REGISTRY.put(workflowType + "." + toolName, tool);
+        putAgentTool(workflowType, toolName, tool, false);
+    }
+
+    /**
+     * Registers an AI tool, recording whether it is an MCP tool: MCP callers take a single
+     * {@code mcp:CallToolParams} argument, so {@code executeAgentTool} must wrap the model's
+     * arguments accordingly before delegating to {@code ai:executeTool}.
+     *
+     * @param workflowType the agent workflow type
+     * @param toolName     the tool name advertised to the model
+     * @param tool         the tool function pointer
+     * @param mcpTool      whether the tool comes from an MCP toolkit
+     */
+    public static void putAgentTool(String workflowType, String toolName, BFunctionPointer tool, boolean mcpTool) {
+        String key = workflowType + "." + toolName;
+        AGENT_TOOL_REGISTRY.put(key, tool);
+        if (mcpTool) {
+            AGENT_MCP_TOOLS.add(key);
+        } else {
+            AGENT_MCP_TOOLS.remove(key);
+        }
+    }
+
+    /**
+     * Whether the registered tool is an MCP tool (its caller takes {@code mcp:CallToolParams}).
+     *
+     * @param agentName the agent workflow type
+     * @param toolName  the tool name
+     * @return true when the tool was registered from an MCP toolkit
+     */
+    public static boolean isAgentMcpTool(BString agentName, BString toolName) {
+        return AGENT_MCP_TOOLS.contains(agentName.getValue() + "." + toolName.getValue());
     }
 
     /**

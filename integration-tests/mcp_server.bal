@@ -21,12 +21,12 @@
 
 import ballerina/mcp;
 
-listener mcp:Listener mcpTestListener = check new (9310);
+listener mcp:StreamableHttpListener mcpTestListener = check new (9310);
 
-@mcp:ServiceConfig {
+@mcp:StreamableHttpServiceConfig {
     info: {name: "Workflow Integration MCP Server", version: "1.0.0"}
 }
-service mcp:Service /mcp on mcpTestListener {
+service mcp:StreamableHttpService /mcp on mcpTestListener {
 
     @mcp:Tool {description: "Quotes the price of an item"}
     remote function quoteItemPriceMcp(string item) returns string {

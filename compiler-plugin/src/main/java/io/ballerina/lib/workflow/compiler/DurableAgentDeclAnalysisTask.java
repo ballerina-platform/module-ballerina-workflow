@@ -49,7 +49,6 @@ import io.ballerina.compiler.syntax.tree.TypeDescriptorNode;
 import io.ballerina.compiler.syntax.tree.VariableDeclarationNode;
 import io.ballerina.projects.Document;
 import io.ballerina.projects.DocumentId;
-import io.ballerina.projects.Module;
 import io.ballerina.projects.plugins.AnalysisTask;
 import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
 import io.ballerina.tools.diagnostics.DiagnosticFactory;
@@ -522,43 +521,79 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
     // @ai:AgentTool 'auth' (OAuth scopes / Agent-ID config) is enforced by the ai:Agent run
     // loop, which the durable agent does not use — reject the declaration instead of running
     // the tool unauthenticated. Full support is tracked in ballerina-library#8978. Annotation
-    // attachment values are not compile-time constants, so the check reads the annotation
-    // syntactically from the function's definition in the current module.
+    // attachment values are not compile-time constants, so after resolving the reference
+    // through the semantic model, the check reads the annotation syntactically from the
+    // function's definition (located by the symbol's position, so qualified references and
+    // same-name collisions resolve correctly). Definitions outside the current package
+    // cannot be inspected syntactically and are skipped.
     private void checkToolAuthUnsupported(Node toolRefNode, String agentName,
                                           SyntaxNodeAnalysisContext context) {
         if (toolRefNode == null) {
             return;
         }
-        String functionName = simpleName(toolRefNode.toSourceCode().strip());
-        Module module = context.currentPackage().getDefaultModule();
-        for (DocumentId documentId : module.documentIds()) {
-            Document document = module.document(documentId);
-            ModulePartNode root = document.syntaxTree().rootNode();
-            for (Node member : root.members()) {
-                if (!(member instanceof FunctionDefinitionNode functionDef)
-                        || !functionName.equals(functionDef.functionName().text())) {
-                    continue;
-                }
-                if (functionDef.metadata().isEmpty()) {
+        java.util.Optional<Symbol> symbol = context.semanticModel().symbol(toolRefNode);
+        if (symbol.isEmpty() || symbol.get().kind() != SymbolKind.FUNCTION
+                || symbol.get().getLocation().isEmpty()) {
+            return;
+        }
+        Location definition = symbol.get().getLocation().get();
+        FunctionDefinitionNode functionDef = findFunctionDefinition(context, definition);
+        if (functionDef == null || functionDef.metadata().isEmpty()) {
+            return;
+        }
+        for (AnnotationNode annotation : functionDef.metadata().get().annotations()) {
+            if (!isAiAgentToolAnnotation(context, annotation) || annotation.annotValue().isEmpty()) {
+                continue;
+            }
+            for (MappingFieldNode field : annotation.annotValue().get().fields()) {
+                if (field instanceof SpecificFieldNode specificField
+                        && "auth".equals(specificField.fieldName().toSourceCode().strip())) {
+                    reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_155,
+                            toolRefNode.location(), functionDef.functionName().text(), agentName);
                     return;
                 }
-                for (AnnotationNode annotation : functionDef.metadata().get().annotations()) {
-                    String annotRef = annotation.annotReference().toSourceCode().strip();
-                    if (!annotRef.endsWith("AgentTool") || annotation.annotValue().isEmpty()) {
-                        continue;
-                    }
-                    for (MappingFieldNode field : annotation.annotValue().get().fields()) {
-                        if (field instanceof SpecificFieldNode specificField
-                                && "auth".equals(specificField.fieldName().toSourceCode().strip())) {
-                            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_155,
-                                    toolRefNode.location(), functionName, agentName);
-                            return;
-                        }
-                    }
-                }
-                return;
             }
         }
+    }
+
+    // Locates the function definition node holding the given symbol location (the symbol's
+    // position is its name token) across all modules of the current package.
+    private FunctionDefinitionNode findFunctionDefinition(SyntaxNodeAnalysisContext context,
+                                                          Location definition) {
+        String fileName = definition.lineRange().fileName();
+        int line = definition.lineRange().startLine().line();
+        for (io.ballerina.projects.Module module : context.currentPackage().modules()) {
+            for (DocumentId documentId : module.documentIds()) {
+                Document document = module.document(documentId);
+                if (!document.name().endsWith(fileName)) {
+                    continue;
+                }
+                ModulePartNode root = document.syntaxTree().rootNode();
+                for (Node member : root.members()) {
+                    if (member instanceof FunctionDefinitionNode functionDef
+                            && functionDef.functionName().lineRange().startLine().line() == line) {
+                        return functionDef;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    // Resolves the annotation reference and requires ballerina/ai's AgentTool — alias imports
+    // resolve correctly, and unrelated annotations that happen to be named AgentTool (or to
+    // carry an auth field) do not match.
+    private boolean isAiAgentToolAnnotation(SyntaxNodeAnalysisContext context, AnnotationNode annotation) {
+        java.util.Optional<Symbol> symbol = context.semanticModel().symbol(annotation);
+        if (symbol.isEmpty() || !(symbol.get()
+                instanceof io.ballerina.compiler.api.symbols.AnnotationSymbol annotationSymbol)) {
+            return false;
+        }
+        return annotationSymbol.getName().map("AgentTool"::equals).orElse(false)
+                && annotationSymbol.getModule()
+                        .map(module -> "ai".equals(module.id().moduleName())
+                                && "ballerina".equals(module.id().orgName()))
+                        .orElse(false);
     }
 
     private void checkUnique(String name, Set<String> seenNames, String agentName, Location location,

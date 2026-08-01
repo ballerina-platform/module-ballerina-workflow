@@ -1046,6 +1046,9 @@ public class WorkflowCompilerPluginTest {
         Assert.assertEquals(diags.size(), 2,
                 "Expected 2 WORKFLOW_156 errors for the non-constant names. Errors: "
                         + diagnosticResult.errors());
+        Assert.assertEquals(diagnosticResult.errorCount(), 2,
+                "Expected the name errors to be the only compiler errors. Errors: "
+                        + diagnosticResult.errors());
     }
 
     @Test(groups = "invalid")
@@ -1057,6 +1060,9 @@ public class WorkflowCompilerPluginTest {
         List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_155");
         Assert.assertEquals(diags.size(), 2,
                 "Expected 2 WORKFLOW_155 errors for the auth-annotated tools. Errors: "
+                        + diagnosticResult.errors());
+        Assert.assertEquals(diagnosticResult.errorCount(), 2,
+                "Expected the auth errors to be the only compiler errors. Errors: "
                         + diagnosticResult.errors());
     }
 

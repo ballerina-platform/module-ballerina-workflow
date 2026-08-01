@@ -51,6 +51,21 @@ isolated function plainTool(string id) returns string {
     return id;
 }
 
+// A local annotation that happens to be named AgentTool with an auth field — NOT the ai
+// module's annotation, so it must not be flagged.
+type LocalToolConfig record {|
+    anydata auth?;
+|};
+
+annotation LocalToolConfig AgentTool on function;
+
+@AgentTool {
+    auth: {scopes: ["local:read"]}
+}
+isolated function locallyAnnotatedTool(string id) returns string {
+    return id;
+}
+
 // ERROR x2: the bare reference and the ToolDecl entry both carry an auth requirement;
 // the un-authed tool passes.
 final workflow:DurableAgent orderAgent = check new ({
@@ -59,6 +74,7 @@ final workflow:DurableAgent orderAgent = check new ({
     tools: [
         lookupOrder,
         {tool: cancelOrder, requiresApproval: true},
-        plainTool
+        plainTool,
+        locallyAnnotatedTool
     ]
 });

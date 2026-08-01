@@ -1036,6 +1036,37 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "invalid")
+    public void testInvalidHumanTaskNameNotConstant() {
+        // Capability names drive the designer and the Temporal registration, so they must be
+        // compile-time constant strings: an interpolated agent-task name and a variable
+        // workflow-task name are each flagged; a non-interpolated template passes.
+        DiagnosticResult diagnosticResult = getDiagnosticResult(
+                "invalid_human_task_name_not_constant");
+        List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_156");
+        Assert.assertEquals(diags.size(), 2,
+                "Expected 2 WORKFLOW_156 errors for the non-constant names. Errors: "
+                        + diagnosticResult.errors());
+        Assert.assertEquals(diagnosticResult.errorCount(), 2,
+                "Expected the name errors to be the only compiler errors. Errors: "
+                        + diagnosticResult.errors());
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentToolAuth() {
+        // @ai:AgentTool auth is enforced by the ai:Agent run loop only — a durable agent
+        // declaring such a tool (bare or as a ToolDecl) is rejected; un-authed tools pass.
+        DiagnosticResult diagnosticResult = getDiagnosticResult(
+                "invalid_durable_agent_tool_auth");
+        List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_155");
+        Assert.assertEquals(diags.size(), 2,
+                "Expected 2 WORKFLOW_155 errors for the auth-annotated tools. Errors: "
+                        + diagnosticResult.errors());
+        Assert.assertEquals(diagnosticResult.errorCount(), 2,
+                "Expected the auth errors to be the only compiler errors. Errors: "
+                        + diagnosticResult.errors());
+    }
+
+    @Test(groups = "invalid")
     public void testInvalidDurableAgentDuplicateNames() {
         // "approval" is used by an activity, an event, and a human task — one flat namespace,
         // so the second and third uses are each flagged.

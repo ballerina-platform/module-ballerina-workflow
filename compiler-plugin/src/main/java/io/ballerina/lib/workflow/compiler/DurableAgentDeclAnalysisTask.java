@@ -26,15 +26,18 @@ import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.api.symbols.VariableSymbol;
+import io.ballerina.compiler.syntax.tree.AnnotationNode;
 import io.ballerina.compiler.syntax.tree.CaptureBindingPatternNode;
 import io.ballerina.compiler.syntax.tree.CheckExpressionNode;
 import io.ballerina.compiler.syntax.tree.ExplicitNewExpressionNode;
 import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
+import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.ImplicitNewExpressionNode;
 import io.ballerina.compiler.syntax.tree.ListConstructorExpressionNode;
 import io.ballerina.compiler.syntax.tree.MappingConstructorExpressionNode;
 import io.ballerina.compiler.syntax.tree.MappingFieldNode;
+import io.ballerina.compiler.syntax.tree.ModulePartNode;
 import io.ballerina.compiler.syntax.tree.ModuleVariableDeclarationNode;
 import io.ballerina.compiler.syntax.tree.Node;
 import io.ballerina.compiler.syntax.tree.PositionalArgumentNode;
@@ -44,6 +47,7 @@ import io.ballerina.compiler.syntax.tree.SpecificFieldNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.compiler.syntax.tree.TypeDescriptorNode;
 import io.ballerina.compiler.syntax.tree.VariableDeclarationNode;
+import io.ballerina.projects.Document;
 import io.ballerina.projects.DocumentId;
 import io.ballerina.projects.plugins.AnalysisTask;
 import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
@@ -345,6 +349,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     || member.kind() == SyntaxKind.QUALIFIED_NAME_REFERENCE) {
                 String refSource = member.toSourceCode().strip();
                 checkUnique(simpleName(refSource), seenNames, agentName, member.location(), context);
+                checkToolAuthUnsupported(member, agentName, context);
                 aiToolRefs.add(new DurableAgentDeclInfo.ToolRef(refSource, null, null));
             } else if (member instanceof MappingConstructorExpressionNode toolDecl) {
                 // A ToolDecl entry: {tool: <ref>, requiresApproval: ..., userRoles: ...}. The
@@ -352,6 +357,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 String toolRef = null;
                 String approvalSource = null;
                 String rolesSource = null;
+                Node toolRefNode = null;
                 for (MappingFieldNode field : toolDecl.fields()) {
                     if (!(field instanceof SpecificFieldNode specificField)
                             || specificField.valueExpr().isEmpty()) {
@@ -360,7 +366,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     String fieldName = specificField.fieldName().toSourceCode().strip();
                     String valueSource = specificField.valueExpr().get().toSourceCode().strip();
                     switch (fieldName) {
-                        case "tool" -> toolRef = valueSource;
+                        case "tool" -> {
+                            toolRef = valueSource;
+                            toolRefNode = specificField.valueExpr().get();
+                        }
                         case "requiresApproval" -> approvalSource = valueSource;
                         case "userRoles" -> rolesSource = valueSource;
                         default -> {
@@ -371,6 +380,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     continue;
                 }
                 checkUnique(simpleName(toolRef), seenNames, agentName, member.location(), context);
+                checkToolAuthUnsupported(toolRefNode, agentName, context);
                 aiToolRefs.add(new DurableAgentDeclInfo.ToolRef(toolRef, approvalSource, rolesSource));
             }
             // ai:ToolConfig / toolkit constructor expressions carry their functions by value and
@@ -403,6 +413,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     case "name" -> {
                         name = stringLiteralValue(fieldValue);
                         nameLocation = fieldValue.location();
+                        if (name == null) {
+                            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_156,
+                                    fieldValue.location(), "data-event channel");
+                        }
                     }
                     case "request" -> requestSource = fieldValue.toSourceCode().strip();
                     case "response" -> responseSource = fieldValue.toSourceCode().strip();
@@ -445,6 +459,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     case "name" -> {
                         name = stringLiteralValue(fieldValue);
                         nameLocation = fieldValue.location();
+                        if (name == null) {
+                            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_156,
+                                    fieldValue.location(), "human task");
+                        }
                     }
                     // The result typedesc travels separately (it is not json).
                     case "resultType" -> resultTypeSource = fieldValue.toSourceCode().strip();
@@ -500,6 +518,84 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         }
     }
 
+    // @ai:AgentTool 'auth' (OAuth scopes / Agent-ID config) is enforced by the ai:Agent run
+    // loop, which the durable agent does not use — reject the declaration instead of running
+    // the tool unauthenticated. Full support is tracked in ballerina-library#8978. Annotation
+    // attachment values are not compile-time constants, so after resolving the reference
+    // through the semantic model, the check reads the annotation syntactically from the
+    // function's definition (located by the symbol's position, so qualified references and
+    // same-name collisions resolve correctly). Definitions outside the current package
+    // cannot be inspected syntactically and are skipped.
+    private void checkToolAuthUnsupported(Node toolRefNode, String agentName,
+                                          SyntaxNodeAnalysisContext context) {
+        if (toolRefNode == null) {
+            return;
+        }
+        java.util.Optional<Symbol> symbol = context.semanticModel().symbol(toolRefNode);
+        if (symbol.isEmpty() || symbol.get().kind() != SymbolKind.FUNCTION
+                || symbol.get().getLocation().isEmpty()) {
+            return;
+        }
+        Location definition = symbol.get().getLocation().get();
+        FunctionDefinitionNode functionDef = findFunctionDefinition(context, definition);
+        if (functionDef == null || functionDef.metadata().isEmpty()) {
+            return;
+        }
+        for (AnnotationNode annotation : functionDef.metadata().get().annotations()) {
+            if (!isAiAgentToolAnnotation(context, annotation) || annotation.annotValue().isEmpty()) {
+                continue;
+            }
+            for (MappingFieldNode field : annotation.annotValue().get().fields()) {
+                if (field instanceof SpecificFieldNode specificField
+                        && "auth".equals(specificField.fieldName().toSourceCode().strip())) {
+                    reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_155,
+                            toolRefNode.location(), functionDef.functionName().text(), agentName);
+                    return;
+                }
+            }
+        }
+    }
+
+    // Locates the function definition node holding the given symbol location (the symbol's
+    // position is its name token) across all modules of the current package.
+    private FunctionDefinitionNode findFunctionDefinition(SyntaxNodeAnalysisContext context,
+                                                          Location definition) {
+        String fileName = definition.lineRange().fileName();
+        int line = definition.lineRange().startLine().line();
+        for (io.ballerina.projects.Module module : context.currentPackage().modules()) {
+            for (DocumentId documentId : module.documentIds()) {
+                Document document = module.document(documentId);
+                if (!document.name().endsWith(fileName)) {
+                    continue;
+                }
+                ModulePartNode root = document.syntaxTree().rootNode();
+                for (Node member : root.members()) {
+                    if (member instanceof FunctionDefinitionNode functionDef
+                            && functionDef.functionName().lineRange().startLine().line() == line) {
+                        return functionDef;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    // Resolves the annotation reference and requires ballerina/ai's AgentTool — alias imports
+    // resolve correctly, and unrelated annotations that happen to be named AgentTool (or to
+    // carry an auth field) do not match.
+    private boolean isAiAgentToolAnnotation(SyntaxNodeAnalysisContext context, AnnotationNode annotation) {
+        java.util.Optional<Symbol> symbol = context.semanticModel().symbol(annotation);
+        if (symbol.isEmpty() || !(symbol.get()
+                instanceof io.ballerina.compiler.api.symbols.AnnotationSymbol annotationSymbol)) {
+            return false;
+        }
+        return annotationSymbol.getName().map("AgentTool"::equals).orElse(false)
+                && annotationSymbol.getModule()
+                        .map(module -> "ai".equals(module.id().moduleName())
+                                && "ballerina".equals(module.id().orgName()))
+                        .orElse(false);
+    }
+
     private void checkUnique(String name, Set<String> seenNames, String agentName, Location location,
                              SyntaxNodeAnalysisContext context) {
         if (name == null || name.isEmpty()) {
@@ -522,14 +618,26 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
      * plain string literal (template or computed names are not statically resolvable).
      */
     private static String stringLiteralValue(ExpressionNode expression) {
-        if (expression.kind() != SyntaxKind.STRING_LITERAL) {
-            return null;
+        if (expression.kind() == SyntaxKind.STRING_LITERAL) {
+            String text = expression.toSourceCode().strip();
+            if (text.length() >= 2 && text.startsWith("\"") && text.endsWith("\"")) {
+                return text.substring(1, text.length() - 1);
+            }
+            return text;
         }
-        String text = expression.toSourceCode().strip();
-        if (text.length() >= 2 && text.startsWith("\"") && text.endsWith("\"")) {
-            return text.substring(1, text.length() - 1);
+        // A string template without interpolations is also a compile-time constant.
+        if (expression.kind() == SyntaxKind.STRING_TEMPLATE_EXPRESSION) {
+            String text = expression.toSourceCode().strip();
+            int open = text.indexOf('`');
+            int close = text.lastIndexOf('`');
+            if (open >= 0 && close > open) {
+                String content = text.substring(open + 1, close);
+                if (!content.contains("${")) {
+                    return content;
+                }
+            }
         }
-        return text;
+        return null;
     }
 
     private static String simpleName(String refSource) {

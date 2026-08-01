@@ -222,6 +222,16 @@ public enum WorkflowDiagnostic {
             DiagnosticSeverity.ERROR),
     WORKFLOW_154("WORKFLOW_154",
             "The 'input' argument of 'run' does not match durable agent '%s': %s",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_155("WORKFLOW_155",
+            "Tool '%s' of durable agent '%s' declares an authorization requirement "
+                    + "(@ai:AgentTool auth), which durable agents do not support yet: the tool "
+                    + "would run without token acquisition or scope validation",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_156("WORKFLOW_156",
+            "The %s name must be a constant string: templates with interpolations or computed "
+                    + "expressions are not allowed, since the name drives the designer rendering "
+                    + "and the Temporal registration",
             DiagnosticSeverity.ERROR);
 
     private final String code;

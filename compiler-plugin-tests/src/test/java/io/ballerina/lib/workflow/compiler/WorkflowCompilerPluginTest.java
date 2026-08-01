@@ -1036,6 +1036,19 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "invalid")
+    public void testInvalidHumanTaskNameNotConstant() {
+        // Capability names drive the designer and the Temporal registration, so they must be
+        // compile-time constant strings: an interpolated agent-task name and a variable
+        // workflow-task name are each flagged; a non-interpolated template passes.
+        DiagnosticResult diagnosticResult = getDiagnosticResult(
+                "invalid_human_task_name_not_constant");
+        List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_156");
+        Assert.assertEquals(diags.size(), 2,
+                "Expected 2 WORKFLOW_156 errors for the non-constant names. Errors: "
+                        + diagnosticResult.errors());
+    }
+
+    @Test(groups = "invalid")
     public void testInvalidDurableAgentToolAuth() {
         // @ai:AgentTool auth is enforced by the ai:Agent run loop only — a durable agent
         // declaring such a tool (bare or as a ToolDecl) is rejected; un-authed tools pass.

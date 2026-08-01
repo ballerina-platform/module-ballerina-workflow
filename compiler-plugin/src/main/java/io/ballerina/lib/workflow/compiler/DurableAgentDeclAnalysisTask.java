@@ -414,6 +414,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     case "name" -> {
                         name = stringLiteralValue(fieldValue);
                         nameLocation = fieldValue.location();
+                        if (name == null) {
+                            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_156,
+                                    fieldValue.location(), "data-event channel");
+                        }
                     }
                     case "request" -> requestSource = fieldValue.toSourceCode().strip();
                     case "response" -> responseSource = fieldValue.toSourceCode().strip();
@@ -456,6 +460,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     case "name" -> {
                         name = stringLiteralValue(fieldValue);
                         nameLocation = fieldValue.location();
+                        if (name == null) {
+                            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_156,
+                                    fieldValue.location(), "human task");
+                        }
                     }
                     // The result typedesc travels separately (it is not json).
                     case "resultType" -> resultTypeSource = fieldValue.toSourceCode().strip();
@@ -575,14 +583,26 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
      * plain string literal (template or computed names are not statically resolvable).
      */
     private static String stringLiteralValue(ExpressionNode expression) {
-        if (expression.kind() != SyntaxKind.STRING_LITERAL) {
-            return null;
+        if (expression.kind() == SyntaxKind.STRING_LITERAL) {
+            String text = expression.toSourceCode().strip();
+            if (text.length() >= 2 && text.startsWith("\"") && text.endsWith("\"")) {
+                return text.substring(1, text.length() - 1);
+            }
+            return text;
         }
-        String text = expression.toSourceCode().strip();
-        if (text.length() >= 2 && text.startsWith("\"") && text.endsWith("\"")) {
-            return text.substring(1, text.length() - 1);
+        // A string template without interpolations is also a compile-time constant.
+        if (expression.kind() == SyntaxKind.STRING_TEMPLATE_EXPRESSION) {
+            String text = expression.toSourceCode().strip();
+            int open = text.indexOf('`');
+            int close = text.lastIndexOf('`');
+            if (open >= 0 && close > open) {
+                String content = text.substring(open + 1, close);
+                if (!content.contains("${")) {
+                    return content;
+                }
+            }
         }
-        return text;
+        return null;
     }
 
     private static String simpleName(String refSource) {

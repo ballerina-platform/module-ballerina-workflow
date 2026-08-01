@@ -26,15 +26,18 @@ import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.api.symbols.VariableSymbol;
+import io.ballerina.compiler.syntax.tree.AnnotationNode;
 import io.ballerina.compiler.syntax.tree.CaptureBindingPatternNode;
 import io.ballerina.compiler.syntax.tree.CheckExpressionNode;
 import io.ballerina.compiler.syntax.tree.ExplicitNewExpressionNode;
 import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
+import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.ImplicitNewExpressionNode;
 import io.ballerina.compiler.syntax.tree.ListConstructorExpressionNode;
 import io.ballerina.compiler.syntax.tree.MappingConstructorExpressionNode;
 import io.ballerina.compiler.syntax.tree.MappingFieldNode;
+import io.ballerina.compiler.syntax.tree.ModulePartNode;
 import io.ballerina.compiler.syntax.tree.ModuleVariableDeclarationNode;
 import io.ballerina.compiler.syntax.tree.Node;
 import io.ballerina.compiler.syntax.tree.PositionalArgumentNode;
@@ -44,7 +47,9 @@ import io.ballerina.compiler.syntax.tree.SpecificFieldNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.compiler.syntax.tree.TypeDescriptorNode;
 import io.ballerina.compiler.syntax.tree.VariableDeclarationNode;
+import io.ballerina.projects.Document;
 import io.ballerina.projects.DocumentId;
+import io.ballerina.projects.Module;
 import io.ballerina.projects.plugins.AnalysisTask;
 import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
 import io.ballerina.tools.diagnostics.DiagnosticFactory;
@@ -345,6 +350,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     || member.kind() == SyntaxKind.QUALIFIED_NAME_REFERENCE) {
                 String refSource = member.toSourceCode().strip();
                 checkUnique(simpleName(refSource), seenNames, agentName, member.location(), context);
+                checkToolAuthUnsupported(member, agentName, context);
                 aiToolRefs.add(new DurableAgentDeclInfo.ToolRef(refSource, null, null));
             } else if (member instanceof MappingConstructorExpressionNode toolDecl) {
                 // A ToolDecl entry: {tool: <ref>, requiresApproval: ..., userRoles: ...}. The
@@ -352,6 +358,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 String toolRef = null;
                 String approvalSource = null;
                 String rolesSource = null;
+                Node toolRefNode = null;
                 for (MappingFieldNode field : toolDecl.fields()) {
                     if (!(field instanceof SpecificFieldNode specificField)
                             || specificField.valueExpr().isEmpty()) {
@@ -360,7 +367,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     String fieldName = specificField.fieldName().toSourceCode().strip();
                     String valueSource = specificField.valueExpr().get().toSourceCode().strip();
                     switch (fieldName) {
-                        case "tool" -> toolRef = valueSource;
+                        case "tool" -> {
+                            toolRef = valueSource;
+                            toolRefNode = specificField.valueExpr().get();
+                        }
                         case "requiresApproval" -> approvalSource = valueSource;
                         case "userRoles" -> rolesSource = valueSource;
                         default -> {
@@ -371,6 +381,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     continue;
                 }
                 checkUnique(simpleName(toolRef), seenNames, agentName, member.location(), context);
+                checkToolAuthUnsupported(toolRefNode, agentName, context);
                 aiToolRefs.add(new DurableAgentDeclInfo.ToolRef(toolRef, approvalSource, rolesSource));
             }
             // ai:ToolConfig / toolkit constructor expressions carry their functions by value and
@@ -497,6 +508,48 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             checkUnique(name, seenNames, agentName, nameLocation, context);
             peers.add(new DurableAgentDeclInfo.PeerDecl(name, targetAgent,
                     meta.isEmpty() ? null : "{" + meta + "}"));
+        }
+    }
+
+    // @ai:AgentTool 'auth' (OAuth scopes / Agent-ID config) is enforced by the ai:Agent run
+    // loop, which the durable agent does not use — reject the declaration instead of running
+    // the tool unauthenticated. Full support is tracked in ballerina-library#8978. Annotation
+    // attachment values are not compile-time constants, so the check reads the annotation
+    // syntactically from the function's definition in the current module.
+    private void checkToolAuthUnsupported(Node toolRefNode, String agentName,
+                                          SyntaxNodeAnalysisContext context) {
+        if (toolRefNode == null) {
+            return;
+        }
+        String functionName = simpleName(toolRefNode.toSourceCode().strip());
+        Module module = context.currentPackage().getDefaultModule();
+        for (DocumentId documentId : module.documentIds()) {
+            Document document = module.document(documentId);
+            ModulePartNode root = document.syntaxTree().rootNode();
+            for (Node member : root.members()) {
+                if (!(member instanceof FunctionDefinitionNode functionDef)
+                        || !functionName.equals(functionDef.functionName().text())) {
+                    continue;
+                }
+                if (functionDef.metadata().isEmpty()) {
+                    return;
+                }
+                for (AnnotationNode annotation : functionDef.metadata().get().annotations()) {
+                    String annotRef = annotation.annotReference().toSourceCode().strip();
+                    if (!annotRef.endsWith("AgentTool") || annotation.annotValue().isEmpty()) {
+                        continue;
+                    }
+                    for (MappingFieldNode field : annotation.annotValue().get().fields()) {
+                        if (field instanceof SpecificFieldNode specificField
+                                && "auth".equals(specificField.fieldName().toSourceCode().strip())) {
+                            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_155,
+                                    toolRefNode.location(), functionName, agentName);
+                            return;
+                        }
+                    }
+                }
+                return;
+            }
         }
     }
 

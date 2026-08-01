@@ -1036,6 +1036,18 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "invalid")
+    public void testInvalidDurableAgentToolAuth() {
+        // @ai:AgentTool auth is enforced by the ai:Agent run loop only — a durable agent
+        // declaring such a tool (bare or as a ToolDecl) is rejected; un-authed tools pass.
+        DiagnosticResult diagnosticResult = getDiagnosticResult(
+                "invalid_durable_agent_tool_auth");
+        List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_155");
+        Assert.assertEquals(diags.size(), 2,
+                "Expected 2 WORKFLOW_155 errors for the auth-annotated tools. Errors: "
+                        + diagnosticResult.errors());
+    }
+
+    @Test(groups = "invalid")
     public void testInvalidDurableAgentDuplicateNames() {
         // "approval" is used by an activity, an event, and a human task — one flat namespace,
         // so the second and third uses are each flagged.

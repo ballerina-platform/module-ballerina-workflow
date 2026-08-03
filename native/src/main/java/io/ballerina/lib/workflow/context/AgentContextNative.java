@@ -92,6 +92,45 @@ public final class AgentContextNative {
                 "The tool name '" + name + "' is reserved for a built-in agent tool"));
     }
 
+    /**
+     * Rejects a capability name already taken on this agent context. Activities, AI tools, peers,
+     * and human tasks are all advertised to the model under this one name, which is also what
+     * dispatch keys on: a second registration would show the model two identical tools and
+     * silently shadow the first. The compiler plugin rejects the duplicates it can see in a
+     * declaration (WORKFLOW_150), but names registered on the context are not always statically
+     * known — this is the check that always runs.
+     *
+     * @param info the agent context state
+     * @param name the capability name being registered
+     * @return an error when the name is already registered, otherwise null
+     */
+    private static BError duplicateCapabilityError(AgentContextInfo info, String name) {
+        boolean taken = false;
+        for (ToolMeta tool : info.tools) {
+            if (tool.name().equals(name)) {
+                taken = true;
+                break;
+            }
+        }
+        // Each declared channel is advertised as its own wait-tool, so those generated names
+        // are taken as well even though no ToolMeta carries them.
+        if (!taken && info.eventNames != null) {
+            for (String eventName : info.eventNames) {
+                if (name.equals(EVENT_TOOL_PREFIX + eventName)) {
+                    taken = true;
+                    break;
+                }
+            }
+        }
+        if (!taken) {
+            return null;
+        }
+        return ErrorCreator.createError(StringUtils.fromString(
+                "Duplicate capability name '" + name + "' on agent '" + info.workflowType
+                        + "': activities, tools, human tasks, and events share one namespace, and '"
+                        + name + "' is already registered. Give the capability a different name."));
+    }
+
     // Interaction patterns (mirrors workflow:AgentInteractionPattern).
     private static final String MULTI_EVENT = "MULTI_EVENT";
 
@@ -378,6 +417,10 @@ public final class AgentContextNative {
             if (RESERVED_TOOL_NAMES.contains(toolName)) {
                 return reservedToolNameError(toolName);
             }
+            BError duplicate = duplicateCapabilityError(info, toolName);
+            if (duplicate != null) {
+                return duplicate;
+            }
             info.tools.add(new ToolMeta(toolName, description, schema, KIND_ACTIVITY, activityName, bindings,
                     requiresApproval, policy, parseReviewRoles(userRolesArg)));
             return null;
@@ -428,6 +471,10 @@ public final class AgentContextNative {
             if (RESERVED_TOOL_NAMES.contains(name.getValue())) {
                 return reservedToolNameError(name.getValue());
             }
+            BError duplicate = duplicateCapabilityError(info, name.getValue());
+            if (duplicate != null) {
+                return duplicate;
+            }
             info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, kindSpec.getValue(),
                     null, null, requiresApproval, null, new String[0]));
             return null;
@@ -477,6 +524,10 @@ public final class AgentContextNative {
             if (RESERVED_TOOL_NAMES.contains(name.getValue())) {
                 return reservedToolNameError(name.getValue());
             }
+            BError duplicate = duplicateCapabilityError(info, name.getValue());
+            if (duplicate != null) {
+                return duplicate;
+            }
             info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, KIND_AI_TOOL,
                     null, null, requiresApproval, null, parseReviewRoles(userRolesArg)));
             WorkflowWorkerNative.putAgentTool(info.workflowType, name.getValue(), fn, mcpTool);
@@ -520,6 +571,10 @@ public final class AgentContextNative {
             schema.put("additionalProperties", Boolean.TRUE);
             if (RESERVED_TOOL_NAMES.contains(name)) {
                 return reservedToolNameError(name);
+            }
+            BError duplicate = duplicateCapabilityError(info, name);
+            if (duplicate != null) {
+                return duplicate;
             }
             info.tools.add(new ToolMeta(name, descriptionStr, schema, KIND_HUMAN_TASK));
             info.humanTasks.put(name, new HumanTaskMeta(userRoles, titleStr, descriptionStr, resultType,
@@ -647,6 +702,18 @@ public final class AgentContextNative {
         if (eventName.isEmpty() || eventName.contains(".") || eventName.contains("|")) {
             return ErrorCreator.createError(StringUtils.fromString(
                     "Invalid update channel name '" + eventName + "': must be non-empty and not contain '.' or '|'"));
+        }
+        // A channel is advertised to the model as a wait-tool, so it shares the capability
+        // namespace: a repeated channel would advertise that tool twice, and a channel whose
+        // wait-tool name is already taken would make dispatch ambiguous.
+        if (info.eventNames.contains(eventName)) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Duplicate data-event channel '" + eventName + "' on agent '" + info.workflowType
+                            + "': the channel is already registered."));
+        }
+        BError duplicate = duplicateCapabilityError(info, EVENT_TOOL_PREFIX + eventName);
+        if (duplicate != null) {
+            return duplicate;
         }
         info.eventNames.add(eventName);
         info.updateEvents.put(eventName, new Object[] {requestType, responseType});

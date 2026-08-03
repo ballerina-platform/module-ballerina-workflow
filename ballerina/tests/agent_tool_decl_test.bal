@@ -85,8 +85,18 @@ function testRegisterDurableAgentToolShapes() returns error? {
     // Shape 2: an `ai:ToolConfig` literal — the caller is NOT `@ai:AgentTool` annotated.
     _ = check wfInternal:registerDurableAgentTool("toolShapesAgent", quoteToolConfig);
 
-    // Shape 3: an `ai:BaseToolKit` — expanded via getTools().
-    _ = check wfInternal:registerDurableAgentTool("toolShapesAgent", new TestToolKit());
+    // Shape 3: an `ai:BaseToolKit` — expanded via getTools(). Registered on its own agent
+    // because the toolkit expands to `lookupPrice`, which shape 1 already claimed above:
+    // one name cannot be advertised twice to the same agent.
+    _ = check wfInternal:registerDurableAgentDecl("toolKitShapeAgent", toolDeclModel,
+        {role: "", instructions: "Tool shapes."}, 8);
+    _ = check wfInternal:registerDurableAgentTool("toolKitShapeAgent", new TestToolKit());
+
+    // The same name cannot be claimed twice on one agent, whatever shape it arrives in.
+    boolean|error duplicateTool = wfInternal:registerDurableAgentTool("toolShapesAgent",
+        new TestToolKit());
+    test:assertTrue(duplicateTool is error,
+        "A toolkit re-exposing an already registered tool name should be rejected");
 
     // ToolDecl gating fields pass through as named arguments (what the plugin emits for
     // `{tool: x, requiresApproval: true, userRoles: "finance"}`).

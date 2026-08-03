@@ -99,6 +99,21 @@ public final class DurableAgentNative {
         private final Map<String, EventDecl> events = new LinkedHashMap<>();
         private final Map<String, Object> humanTasks = new LinkedHashMap<>();
         private final Map<String, PeerDecl> peers = new LinkedHashMap<>();
+        // Every capability name claimed on this agent, mapped to the kind that claimed it.
+        // Capabilities are keyed by name in their own maps, so an unchecked duplicate would
+        // silently replace the earlier declaration instead of failing.
+        private final Map<String, String> capabilityKinds = new LinkedHashMap<>();
+
+        /**
+         * Claims {@code name} in this agent's flat capability namespace.
+         *
+         * @param name the capability name
+         * @param kind the capability kind claiming it, for the error message
+         * @return the kind already holding the name, or null when the claim succeeds
+         */
+        String claimCapabilityName(String name, String kind) {
+            return capabilityKinds.putIfAbsent(name, kind);
+        }
 
         AgentDecl(String agentName, BObject model, Object systemPrompt, long maxIter, BTypedesc inputType,
                   BTypedesc resultType) {
@@ -174,10 +189,12 @@ public final class DurableAgentNative {
      *
      * @param toolName the tool name advertised to the model
      * @param function the @workflow:Activity function
-     * @param meta     the declaration metadata (description, bindings, gating, retry policy) as
+     * @param meta     the declaration metadata (description, gating, retry policy) as
      *                 a Ballerina value
+     * @param bindings the arguments fixed at registration (e.g. a client), or nil
      */
-    public record ActivityDecl(String toolName, BFunctionPointer function, Object meta) { }
+    public record ActivityDecl(String toolName, BFunctionPointer function, Object meta,
+                               Object bindings) { }
 
     /**
      * A declared AI tool of a durable agent.
@@ -246,13 +263,18 @@ public final class DurableAgentNative {
      * @return true on success, or a BError when the agent is unknown
      */
     public static Object registerDurableAgentActivity(BString agentName, BString toolName,
-                                                      BFunctionPointer function, Object meta) {
+                                                      BFunctionPointer function, Object meta,
+                                                      Object bindings) {
         AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName.getValue());
         if (decl == null) {
             return unknownAgentError(agentName.getValue());
         }
+        Object duplicate = duplicateCapabilityError(decl, toolName.getValue(), "an activity");
+        if (duplicate != null) {
+            return duplicate;
+        }
         decl.activities().put(toolName.getValue(),
-                new ActivityDecl(toolName.getValue(), function, meta));
+                new ActivityDecl(toolName.getValue(), function, meta, bindings));
         return true;
     }
 
@@ -272,6 +294,10 @@ public final class DurableAgentNative {
         if (decl == null) {
             return unknownAgentError(agentName.getValue());
         }
+        Object duplicate = duplicateCapabilityError(decl, eventName.getValue(), "a data-event channel");
+        if (duplicate != null) {
+            return duplicate;
+        }
         decl.events().put(eventName.getValue(),
                 new EventDecl(eventName.getValue(), request, response, cardinality.getValue()));
         return true;
@@ -290,6 +316,10 @@ public final class DurableAgentNative {
         AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName.getValue());
         if (decl == null) {
             return unknownAgentError(agentName.getValue());
+        }
+        Object duplicate = duplicateCapabilityError(decl, taskName.getValue(), "a human task");
+        if (duplicate != null) {
+            return duplicate;
         }
         decl.humanTasks().put(taskName.getValue(), new HumanTaskDeclEntry(meta, resultType));
         return true;
@@ -333,6 +363,10 @@ public final class DurableAgentNative {
         AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName.getValue());
         if (decl == null) {
             return unknownAgentError(agentName.getValue());
+        }
+        Object duplicate = duplicateCapabilityError(decl, toolName.getValue(), "a tool");
+        if (duplicate != null) {
+            return duplicate;
         }
         decl.tools().put(toolName.getValue(), new ToolDeclEntry(toolName.getValue(), tool, meta));
         boolean mcpTool = meta instanceof io.ballerina.runtime.api.values.BMap<?, ?> metaMap
@@ -431,6 +465,7 @@ public final class DurableAgentNative {
                 fields.put("toolName", StringUtils.fromString(activity.toolName()));
                 fields.put("activity", activity.function());
                 fields.put("meta", activity.meta());
+                fields.put("bindings", activity.bindings());
                 activities.append(ValueCreator.createRecordValue(
                         ModuleUtils.getModule(), ACTIVITY_SPEC_RECORD, fields));
             }
@@ -802,6 +837,10 @@ public final class DurableAgentNative {
         if (decl == null) {
             return unknownAgentError(agentName.getValue());
         }
+        Object duplicate = duplicateCapabilityError(decl, peerName.getValue(), "a peer agent");
+        if (duplicate != null) {
+            return duplicate;
+        }
         decl.peers().put(peerName.getValue(),
                 new PeerDecl(peerName.getValue(), targetAgent.getValue(), meta));
         return true;
@@ -1077,5 +1116,32 @@ public final class DurableAgentNative {
     private static Object unknownAgentError(String agentName) {
         return ErrorCreator.createError(StringUtils.fromString(
                 "Unknown durable agent '" + agentName + "': the agent declaration was not registered"));
+    }
+
+    /**
+     * Claims a capability name on the agent, or returns the error to fail startup with.
+     *
+     * <p>Events, tools, activities, human tasks, and peers share one flat namespace per agent:
+     * the name is what the model calls, what dispatch keys on, and — for a human task — the
+     * Temporal workflow type of the task. These registrations run from module init, so rejecting
+     * a duplicate here fails the program at startup rather than letting one declaration silently
+     * replace the other. The compiler plugin reports the same conflict as WORKFLOW_150 wherever
+     * it can see it; this check also covers what it cannot (a declaration compiled elsewhere, or
+     * a plugin that did not run).
+     *
+     * @param decl the agent declaration
+     * @param name the capability name being registered
+     * @param kind the capability kind, for the error message
+     * @return an error when the name is already claimed, otherwise null
+     */
+    private static Object duplicateCapabilityError(AgentDecl decl, String name, String kind) {
+        String claimedBy = decl.claimCapabilityName(name, kind);
+        if (claimedBy == null) {
+            return null;
+        }
+        return ErrorCreator.createError(StringUtils.fromString(
+                "Duplicate capability name '" + name + "' in durable agent '" + decl.agentName()
+                        + "': declared as " + kind + " and as " + claimedBy + ". Events, tools, activities, "
+                        + "human tasks, and peers share one flat namespace — give one of them a different name."));
     }
 }

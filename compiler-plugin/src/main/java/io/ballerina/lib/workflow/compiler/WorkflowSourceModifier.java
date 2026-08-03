@@ -323,6 +323,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                     .append(", \"").append(escapeBallerinaStringLiteral(activity.toolName()))
                     .append("\", ").append(activity.functionRefSource())
                     .append(", ").append(activity.metaSource() != null ? activity.metaSource() : "()")
+                    .append(", ").append(activity.bindingsSource() != null ? activity.bindingsSource() : "()")
                     .append(");").append(System.lineSeparator());
         }
         for (DurableAgentDeclInfo.ToolRef toolRef : decl.aiToolRefs()) {
@@ -434,6 +435,10 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             prefixes.addAll(decl.typeRefPrefixes());
             for (DurableAgentDeclInfo.ActivityDecl activity : decl.activities()) {
                 addPrefixIfQualified(prefixes, activity.functionRefSource());
+                // The prefixes inside a bindings mapping are collected from its parsed nodes at
+                // analysis time and arrive in typeRefPrefixes: reading them off the raw source
+                // would take the mapping's first colon — the one after a key — for a qualifier,
+                // and miss the qualified values it is supposed to find.
             }
             for (DurableAgentDeclInfo.ToolRef toolRef : decl.aiToolRefs()) {
                 addPrefixIfQualified(prefixes, toolRef.refSource());

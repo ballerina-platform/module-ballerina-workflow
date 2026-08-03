@@ -65,10 +65,9 @@ public type EventDecl record {|
 # + description - Tool description advertised to the model; defaults to the
 #                 function's doc comment
 # + bindings - Fixed arguments partially applied to the activity (e.g. a
-#              `connection`), hidden from the model. Not yet supported in the
-#              declaration form (bound client objects cannot travel through the
-#              compile-time registration metadata) — register such activities on
-#              the context with `registerActivity(..., bindings = ...)` instead
+#              `connection`), hidden from the model: only the remaining data
+#              parameters appear in the tool's schema. Client objects are bound
+#              by referencing their module-level `final` variable
 # + requiresApproval - When `true`, a `PRE_RUN` review activity gates every call
 # + userRoles - Role(s) permitted to decide reviews of this activity
 # + retryPolicy - Retry behaviour on failure, as for `ctx->callActivity`
@@ -145,7 +144,10 @@ public type PeerDecl record {|
 # + tools - AI tools: `@ai:AgentTool` functions, `ai:ToolConfig`s, toolkits, or
 #           `ToolDecl` when gating is needed
 # + events - Named event channels with request/response types and cardinality
-# + humanTasks - Human task capabilities
+# + humanTasks - Human task capabilities. Capability names share one namespace
+#                across activities, tools, events, human tasks, and peers: a name
+#                claimed twice is rejected when the agent registers, so the
+#                program fails at startup
 # + peers - Peer durable agents advertised as delegable tools
 # + maxIter - Hard cap on reasoning iterations per turn
 # + inputType - The agent's workflow input type, used by `run` and the management
@@ -312,6 +314,7 @@ type DurableAgentActivitySpec record {|
     string toolName;
     function activity;
     json meta = ();
+    map<anydata|object {}>? bindings = ();
 |};
 
 type DurableAgentToolSpec record {|

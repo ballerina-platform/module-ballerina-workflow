@@ -8,6 +8,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Declared agent activities honor `bindings`: arguments fixed at registration (typically a
+  client the model cannot supply) are carried from the declaration through to the
+  registration, so a connection-based activity can be exposed as an agent tool by binding
+  its client to a module-level variable.
+- Compile-time guards for durable agent declarations: a tool that declares an
+  `@ai:AgentTool` authorization requirement is rejected (durable agents do not run the
+  `ai:Agent` loop that acquires tokens and validates scopes), capability names must be
+  constant strings (the name drives both the designer rendering and the Temporal
+  registration), and an activity is rejected when a parameter the model cannot supply
+  is left without a `bindings` entry.
+
+### Fixed
+
+- Duplicate capability names in a durable agent now fail at startup. Activities, tools,
+  events, human tasks, and peers share one namespace per agent — the name is the tool the
+  model calls, and for a human task also the Temporal workflow type — but a second
+  registration used to replace the first silently. Registration now rejects a name that is
+  already claimed, both at module init (where the declaration registers) and on the agent
+  context (where names the compiler plugin cannot see are registered), so the conflict
+  surfaces even where the WORKFLOW_150 compile-time check cannot reach.
+
+## [0.8.1] - 2026-08-03
+
+### Added
+
+- Durable agents can declare a `resultType`: as the reasoning loop concludes, one more
+  durable model call converts the outcome into that type, and `getResult`/`waitForResult`
+  return the typed value instead of the final text.
+- Durable sleep for agents: agents can pause on a workflow-side timer, and a sleeping
+  agent can be woken early through the management API (`POST /workflows/{id}/wake`),
+  which cancels the pending sleep.
 - Management API task-queue scoping for namespaces shared by multiple integrations
   (a project): human-task, review-activity, and workflow-instance listings (and the
   pending count) accept an optional `taskQueue` filter, every list/detail result
@@ -24,6 +55,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Timeout fields across the module (`sleep`, human tasks, approval config, event timeouts)
   now use a module-owned `workflow:Duration` record, structurally identical to
   `time:Duration` (existing values remain assignable).
+- The module builds against the latest `ballerina/ai` and `ballerina/mcp` releases.
+
+### Fixed
+
+- Reading a durable agent's result no longer reports the instance as permanently busy:
+  the read checks the instance status instead of relying on a short result timeout.
 
 ## [0.8.0] - 2026-07-24
 

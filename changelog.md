@@ -16,9 +16,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   `@ai:AgentTool` authorization requirement is rejected (durable agents do not run the
   `ai:Agent` loop that acquires tokens and validates scopes), capability names must be
   constant strings (the name drives both the designer rendering and the Temporal
-  registration), and an activity whose parameters are not all data is rejected — such
-  arguments can only be fixed through registration-time `bindings`, which the
-  declaration form does not carry yet.
+  registration), and an activity is rejected when a parameter the model cannot supply
+  is left without a `bindings` entry.
+
+### Fixed
+
+- Duplicate capability names in a durable agent now fail at startup. Activities, tools,
+  events, human tasks, and peers share one namespace per agent — the name is the tool the
+  model calls, and for a human task also the Temporal workflow type — but a second
+  registration used to replace the first silently. Registration now rejects a name that is
+  already claimed, both at module init (where the declaration registers) and on the agent
+  context (where names the compiler plugin cannot see are registered), so the conflict
+  surfaces even where the WORKFLOW_150 compile-time check cannot reach.
 
 ## [0.8.1] - 2026-08-03
 

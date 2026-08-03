@@ -235,10 +235,9 @@ public enum WorkflowDiagnostic {
             DiagnosticSeverity.ERROR),
     WORKFLOW_157("WORKFLOW_157",
             "Activity '%s' of durable agent '%s' takes parameter '%s' of type '%s', which is not "
-                    + "data the model can supply. Such arguments must be fixed at registration "
-                    + "through 'bindings', which the agent declaration does not support yet: "
-                    + "register the activity on the context with 'registerActivity(..., bindings = ...)' "
-                    + "or expose an activity whose parameters are all data",
+                    + "data the model can supply: fix the argument at registration by declaring the "
+                    + "activity as '{activity: %s, bindings: {%s: <value>}}', or expose an activity "
+                    + "whose parameters are all data",
             DiagnosticSeverity.ERROR);
 
     private final String code;

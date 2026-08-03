@@ -1094,6 +1094,21 @@ public class WorkflowCompilerPluginTest {
                         + getDiagnosticMessages(diagnosticResult));
     }
 
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentDuplicateHumanTaskNames() {
+        // Two human tasks of one agent named "approve": the name is the task's identity, so the
+        // second declaration is rejected instead of silently shadowing the first.
+        DiagnosticResult diagnosticResult = getDiagnosticResult(
+                "invalid_durable_agent_duplicate_human_tasks");
+        List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_150");
+        Assert.assertEquals(diags.size(), 1,
+                "Expected 1 WORKFLOW_150 error for the duplicate human task name. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        Assert.assertEquals(diagnosticResult.errorCount(), 1,
+                "Expected the duplicate name to be the only compiler error. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
     // ===== sendData validation test cases =====
 
     @Test(groups = "valid")

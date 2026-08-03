@@ -634,8 +634,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             if (WorkflowPluginUtils.isSubtypeOfAnydata(type, context.semanticModel())) {
                 continue;
             }
+            String parameterName = parameter.getName().orElse("?");
             reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_157, activityRefNode.location(),
-                    toolName, agentName, parameter.getName().orElse("?"), type.signature());
+                    toolName, agentName, parameterName, type.signature(),
+                    activityRefNode.toSourceCode().strip(), parameterName);
             return;
         }
     }

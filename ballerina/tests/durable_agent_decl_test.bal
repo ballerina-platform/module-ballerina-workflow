@@ -90,6 +90,38 @@ function testDurableAgentBuiltinActivityNameCollision() returns error? {
     }
 }
 
+@test:Config {}
+function testDurableAgentDuplicateCapabilityNames() returns error? {
+    // A capability name is the agent's identity for that capability — the tool the model
+    // calls, and for a human task the Temporal workflow type of the task. Registering a
+    // name twice would replace the earlier declaration silently, so the registration
+    // (which runs at module init) fails and the program does not start. The compiler
+    // plugin reports the same conflict as WORKFLOW_150, but it cannot see every
+    // declaration, so this check always runs.
+    _ = check wfInternal:registerDurableAgentDecl("duplicateNameAgent", declTestModel,
+        {role: "Test assistant", instructions: "Assist with tests."}, 8);
+    _ = check wfInternal:registerDurableAgentHumanTask("duplicateNameAgent", "approve",
+        {roles: "manager"});
+
+    boolean|error duplicateTask = wfInternal:registerDurableAgentHumanTask("duplicateNameAgent",
+        "approve", {roles: "finance"});
+    test:assertTrue(duplicateTask is error, "A second human task named 'approve' should be rejected");
+    if duplicateTask is error {
+        test:assertTrue(duplicateTask.message().includes("Duplicate capability name 'approve'"),
+            "The error should name the duplicate: " + duplicateTask.message());
+    }
+
+    // The namespace is flat: an activity cannot reuse a human task's name either.
+    boolean|error crossKind = wfInternal:registerDurableAgentActivity("duplicateNameAgent",
+        "approve", declTestActivity);
+    test:assertTrue(crossKind is error,
+        "An activity reusing the human task's name should be rejected");
+
+    // A different name on the same agent still registers.
+    _ = check wfInternal:registerDurableAgentHumanTask("duplicateNameAgent", "reject",
+        {roles: "manager"});
+}
+
 final DurableAgent runnerCoverageAgent = check new ({
     systemPrompt: {role: "", instructions: "You are an inventory assistant."},
     model: declTestModel,

@@ -144,7 +144,10 @@ public type PeerDecl record {|
 # + tools - AI tools: `@ai:AgentTool` functions, `ai:ToolConfig`s, toolkits, or
 #           `ToolDecl` when gating is needed
 # + events - Named event channels with request/response types and cardinality
-# + humanTasks - Human task capabilities
+# + humanTasks - Human task capabilities. Capability names share one namespace
+#                across activities, tools, events, human tasks, and peers: a name
+#                claimed twice is rejected when the agent registers, so the
+#                program fails at startup
 # + peers - Peer durable agents advertised as delegable tools
 # + maxIter - Hard cap on reasoning iterations per turn
 # + inputType - The agent's workflow input type, used by `run` and the management

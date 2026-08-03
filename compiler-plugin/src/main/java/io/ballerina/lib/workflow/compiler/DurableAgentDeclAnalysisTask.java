@@ -21,6 +21,7 @@ package io.ballerina.lib.workflow.compiler;
 import io.ballerina.compiler.api.SemanticModel;
 import io.ballerina.compiler.api.symbols.ClassSymbol;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
+import io.ballerina.compiler.api.symbols.FunctionTypeSymbol;
 import io.ballerina.compiler.api.symbols.ModuleSymbol;
 import io.ballerina.compiler.api.symbols.ParameterSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
@@ -253,7 +254,8 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     resultTypeSource = value.toSourceCode().strip();
                     collectQualifiedPrefixes(value, typeRefPrefixes);
                 }
-                case "activities" -> extractActivities(value, activities, seenNames, agentName, context);
+                case "activities" ->
+                        extractActivities(value, activities, seenNames, agentName, typeRefPrefixes, context);
                 case "tools" -> extractTools(value, aiToolRefs, seenNames, agentName, context);
                 case "events" -> extractEvents(value, events, seenNames, agentName, context);
                 case "humanTasks" -> extractHumanTasks(value, humanTasks, seenNames, agentName, context);
@@ -270,7 +272,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
     }
 
     private void extractActivities(ExpressionNode value, List<DurableAgentDeclInfo.ActivityDecl> activities,
-                                   Set<String> seenNames, String agentName,
+                                   Set<String> seenNames, String agentName, List<String> typeRefPrefixes,
                                    SyntaxNodeAnalysisContext context) {
         if (!(value instanceof ListConstructorExpressionNode list)) {
             return;
@@ -282,24 +284,24 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 String refSource = member.toSourceCode().strip();
                 String toolName = simpleName(refSource);
                 checkUnique(toolName, seenNames, agentName, member.location(), context);
-                checkActivityParametersAreData(member, toolName, agentName, context);
+                checkActivityParametersAreData(member, toolName, agentName, Set.of(), context);
                 activities.add(new DurableAgentDeclInfo.ActivityDecl(toolName, refSource, null, null));
             } else if (member instanceof MappingConstructorExpressionNode declMapping) {
-                extractActivityDecl(declMapping, activities, seenNames, agentName, context);
+                extractActivityDecl(declMapping, activities, seenNames, agentName, typeRefPrefixes, context);
             }
         }
     }
 
     private void extractActivityDecl(MappingConstructorExpressionNode declMapping,
                                      List<DurableAgentDeclInfo.ActivityDecl> activities,
-                                     Set<String> seenNames, String agentName,
+                                     Set<String> seenNames, String agentName, List<String> typeRefPrefixes,
                                      SyntaxNodeAnalysisContext context) {
         String functionRefSource = null;
         String explicitName = null;
         StringBuilder meta = new StringBuilder();
         Location nameLocation = declMapping.location();
         Node activityRefNode = null;
-        boolean hasBindings = false;
+        Set<String> boundParameters = Set.of();
         String bindingsSource = null;
         for (MappingFieldNode declField : declMapping.fields()) {
             if (!(declField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
@@ -317,12 +319,14 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     nameLocation = declValue.location();
                 }
                 // bindings may hold client objects, which are not json — they stay out of the
-                // metadata and are re-emitted separately when activity binding support lands.
+                // metadata and are emitted as their own argument of the registration.
                 case "bindings" -> {
-                    hasBindings = true;
                     // Emitted verbatim into the generated registration: bound client objects
-                    // reference their module-level variables, which are in scope there.
+                    // reference their module-level variables, which are in scope there, so the
+                    // prefixes of any qualified reference inside must travel with it.
                     bindingsSource = declValue.toSourceCode().strip();
+                    boundParameters = boundParameterNames(declValue);
+                    collectQualifiedPrefixes(declValue, typeRefPrefixes);
                 }
                 default -> appendMetaField(meta, key, declValue.toSourceCode().strip());
             }
@@ -332,10 +336,8 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         }
         String toolName = explicitName != null ? explicitName : simpleName(functionRefSource);
         checkUnique(toolName, seenNames, agentName, nameLocation, context);
-        if (!hasBindings) {
-            checkActivityParametersAreData(activityRefNode == null ? declMapping : activityRefNode,
-                    toolName, agentName, context);
-        }
+        checkActivityParametersAreData(activityRefNode == null ? declMapping : activityRefNode,
+                toolName, agentName, boundParameters, context);
         activities.add(new DurableAgentDeclInfo.ActivityDecl(toolName, functionRefSource,
                 meta.isEmpty() ? null : "{" + meta + "}", bindingsSource));
     }
@@ -614,32 +616,72 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                         .orElse(false);
     }
 
-    // An agent invokes an activity with arguments the model produces, so every parameter must
-    // be data. Client objects and other non-data parameters can only be supplied through
-    // registration-time 'bindings', which the declaration form does not carry yet — reject the
-    // declaration instead of generating an agent whose tool can never be called.
+    // An agent invokes an activity with arguments the model produces, so every parameter the
+    // model has to fill must be data. Client objects and other non-data parameters are only
+    // usable when fixed at registration through 'bindings' — reject the declaration instead of
+    // generating an agent whose tool can never be called. A parameter named by 'bindings' is
+    // supplied at registration and is therefore not the model's to produce.
     private void checkActivityParametersAreData(Node activityRefNode, String toolName, String agentName,
+                                                Set<String> boundParameters,
                                                 SyntaxNodeAnalysisContext context) {
+        if (boundParameters == null) {
+            // The bindings are not a mapping constructor, so which parameters they supply is
+            // not knowable here; nothing can be shown to be unbound.
+            return;
+        }
         java.util.Optional<Symbol> symbol = context.semanticModel().symbol(activityRefNode);
         if (symbol.isEmpty() || !(symbol.get() instanceof FunctionSymbol functionSymbol)) {
             return;
         }
-        java.util.Optional<java.util.List<ParameterSymbol>> params =
-                functionSymbol.typeDescriptor().params();
-        if (params.isEmpty()) {
-            return;
-        }
-        for (ParameterSymbol parameter : params.get()) {
-            TypeSymbol type = parameter.typeDescriptor();
-            if (WorkflowPluginUtils.isSubtypeOfAnydata(type, context.semanticModel())) {
-                continue;
+        FunctionTypeSymbol typeDescriptor = functionSymbol.typeDescriptor();
+        for (ParameterSymbol parameter : typeDescriptor.params().orElse(List.of())) {
+            if (reportNonDataParameter(parameter, activityRefNode, toolName, agentName,
+                    boundParameters, context)) {
+                return;
             }
-            String parameterName = parameter.getName().orElse("?");
-            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_157, activityRefNode.location(),
-                    toolName, agentName, parameterName, type.signature(),
-                    activityRefNode.toSourceCode().strip(), parameterName);
-            return;
         }
+        // A rest parameter is filled by the model too, so the same rule applies to it.
+        typeDescriptor.restParam().ifPresent(restParam -> reportNonDataParameter(
+                restParam, activityRefNode, toolName, agentName, boundParameters, context));
+    }
+
+    // Reports WORKFLOW_157 for a parameter the model can neither produce nor have bound,
+    // returning whether it did.
+    private boolean reportNonDataParameter(ParameterSymbol parameter, Node activityRefNode, String toolName,
+                                           String agentName, Set<String> boundParameters,
+                                           SyntaxNodeAnalysisContext context) {
+        TypeSymbol type = parameter.typeDescriptor();
+        String parameterName = parameter.getName().orElse("?");
+        if (boundParameters.contains(parameterName)
+                || WorkflowPluginUtils.isSubtypeOfAnydata(type, context.semanticModel())) {
+            return false;
+        }
+        reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_157, activityRefNode.location(),
+                toolName, agentName, parameterName, type.signature(),
+                activityRefNode.toSourceCode().strip(), parameterName);
+        return true;
+    }
+
+    /**
+     * The parameter names a {@code bindings} mapping supplies at registration.
+     *
+     * <p>Only a mapping constructor states its keys statically. When the bindings arrive as
+     * anything else — a variable reference, say — no parameter can be shown to be unbound, so
+     * every parameter counts as bound rather than reporting a conflict that may not exist.
+     */
+    private static Set<String> boundParameterNames(ExpressionNode bindings) {
+        if (!(bindings instanceof MappingConstructorExpressionNode mapping)) {
+            return null;
+        }
+        Set<String> names = new HashSet<>();
+        for (MappingFieldNode field : mapping.fields()) {
+            if (field instanceof SpecificFieldNode specificField) {
+                String key = specificField.fieldName().toSourceCode().strip();
+                names.add(key.length() > 1 && key.startsWith("\"") && key.endsWith("\"")
+                        ? key.substring(1, key.length() - 1) : key);
+            }
+        }
+        return names;
     }
 
     private void checkUnique(String name, Set<String> seenNames, String agentName, Location location,

@@ -105,15 +105,30 @@ public final class AgentContextNative {
      * @return an error when the name is already registered, otherwise null
      */
     private static BError duplicateCapabilityError(AgentContextInfo info, String name) {
+        boolean taken = false;
         for (ToolMeta tool : info.tools) {
             if (tool.name().equals(name)) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Duplicate capability name '" + name + "' on agent '" + info.workflowType
-                                + "': activities, tools, human tasks, and events share one namespace, and '"
-                                + name + "' is already registered. Give the capability a different name."));
+                taken = true;
+                break;
             }
         }
-        return null;
+        // Each declared channel is advertised as its own wait-tool, so those generated names
+        // are taken as well even though no ToolMeta carries them.
+        if (!taken && info.eventNames != null) {
+            for (String eventName : info.eventNames) {
+                if (name.equals(EVENT_TOOL_PREFIX + eventName)) {
+                    taken = true;
+                    break;
+                }
+            }
+        }
+        if (!taken) {
+            return null;
+        }
+        return ErrorCreator.createError(StringUtils.fromString(
+                "Duplicate capability name '" + name + "' on agent '" + info.workflowType
+                        + "': activities, tools, human tasks, and events share one namespace, and '"
+                        + name + "' is already registered. Give the capability a different name."));
     }
 
     // Interaction patterns (mirrors workflow:AgentInteractionPattern).
@@ -687,6 +702,18 @@ public final class AgentContextNative {
         if (eventName.isEmpty() || eventName.contains(".") || eventName.contains("|")) {
             return ErrorCreator.createError(StringUtils.fromString(
                     "Invalid update channel name '" + eventName + "': must be non-empty and not contain '.' or '|'"));
+        }
+        // A channel is advertised to the model as a wait-tool, so it shares the capability
+        // namespace: a repeated channel would advertise that tool twice, and a channel whose
+        // wait-tool name is already taken would make dispatch ambiguous.
+        if (info.eventNames.contains(eventName)) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Duplicate data-event channel '" + eventName + "' on agent '" + info.workflowType
+                            + "': the channel is already registered."));
+        }
+        BError duplicate = duplicateCapabilityError(info, EVENT_TOOL_PREFIX + eventName);
+        if (duplicate != null) {
+            return duplicate;
         }
         info.eventNames.add(eventName);
         info.updateEvents.put(eventName, new Object[] {requestType, responseType});

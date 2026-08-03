@@ -1053,17 +1053,38 @@ public class WorkflowCompilerPluginTest {
 
     @Test(groups = "invalid")
     public void testInvalidDurableAgentActivityWithConnection() {
-        // An activity taking a client parameter cannot be driven by the model, and the
-        // declaration form cannot bind it — both the bare reference and the ActivityDecl
-        // entry are rejected, while the data-only activity passes.
+        // A parameter the model cannot supply is rejected unless 'bindings' fixes it at
+        // registration: the bare reference, the ActivityDecl entry, an empty bindings map, a
+        // non-data rest parameter, and bindings that leave that rest parameter unbound are all
+        // flagged, while the fully bound entry and the data-only activity pass.
         DiagnosticResult diagnosticResult = getDiagnosticResult(
                 "invalid_durable_agent_activity_connection");
         List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_157");
-        Assert.assertEquals(diags.size(), 2,
-                "Expected 2 WORKFLOW_157 errors for the connection-based activity. Errors: "
+        Assert.assertEquals(diags.size(), 5,
+                "Expected 5 WORKFLOW_157 errors for the unusable activity parameters. Errors: "
                         + diagnosticResult.errors());
-        Assert.assertEquals(diagnosticResult.errorCount(), 2,
+        Assert.assertEquals(diagnosticResult.errorCount(), 5,
                 "Expected the activity errors to be the only compiler errors. Errors: "
+                        + diagnosticResult.errors());
+
+        // The message has to name the parameter and its type, or it does not say what to bind.
+        // The type is rendered fully qualified (ballerina/http:<version>:Client), so the
+        // assertion pins the name and the type's tail rather than a version-specific string.
+        long clientDiags = diags.stream()
+                .map(Diagnostic::message)
+                .filter(message -> message.contains("parameter connection of type")
+                        && message.contains(":Client,"))
+                .count();
+        Assert.assertEquals(clientDiags, 3,
+                "Expected the client-parameter errors to name 'connection' and its type. Errors: "
+                        + diagnosticResult.errors());
+        long restDiags = diags.stream()
+                .map(Diagnostic::message)
+                .filter(message -> message.contains("parameter targets of type")
+                        && message.contains(":Client[],"))
+                .count();
+        Assert.assertEquals(restDiags, 2,
+                "Expected the rest-parameter errors to name 'targets' and its type. Errors: "
                         + diagnosticResult.errors());
     }
 

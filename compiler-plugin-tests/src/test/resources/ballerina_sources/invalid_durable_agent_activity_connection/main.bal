@@ -33,8 +33,16 @@ isolated function lookupOrder(string id) returns string {
     return "order " + id;
 }
 
-// ERROR x2: the bare reference and the ActivityDecl entry both expose the client parameter;
-// the data-only activity passes.
+// A rest parameter is filled by the model too, so a non-data one is just as unusable.
+@workflow:Activity
+isolated function broadcast(string message, http:Client... targets) returns error? {
+    return;
+}
+
+// ERROR x5: every entry leaves a parameter the model cannot supply — the bare reference and
+// the ActivityDecl entry expose the client, empty bindings supply nothing, the rest parameter
+// is non-data, and binding only the data parameter still leaves the rest parameter unbound.
+// The fully bound entry and the data-only activity pass.
 final workflow:DurableAgent orderAgent = check new ({
     systemPrompt: {role: "Order assistant", instructions: "Help the user."},
     model: chatModel,
@@ -43,6 +51,9 @@ final workflow:DurableAgent orderAgent = check new ({
         {activity: httpGet, name: "fetch"},
         // Binding the client at registration is the supported form, so this entry passes.
         {activity: httpGet, name: "bound", bindings: {connection: apiClient}},
+        {activity: httpGet, name: "empty", bindings: {}},
+        broadcast,
+        {activity: broadcast, name: "partial", bindings: {message: "hi"}},
         lookupOrder
     ]
 });

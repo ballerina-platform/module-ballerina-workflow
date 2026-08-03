@@ -232,6 +232,13 @@ public enum WorkflowDiagnostic {
             "The %s name must be a constant string: templates with interpolations or computed "
                     + "expressions are not allowed, since the name drives the designer rendering "
                     + "and the Temporal registration",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_157("WORKFLOW_157",
+            "Activity '%s' of durable agent '%s' takes parameter '%s' of type '%s', which is not "
+                    + "data the model can supply. Such arguments must be fixed at registration "
+                    + "through 'bindings', which the agent declaration does not support yet: "
+                    + "register the activity on the context with 'registerActivity(..., bindings = ...)' "
+                    + "or expose an activity whose parameters are all data",
             DiagnosticSeverity.ERROR);
 
     private final String code;

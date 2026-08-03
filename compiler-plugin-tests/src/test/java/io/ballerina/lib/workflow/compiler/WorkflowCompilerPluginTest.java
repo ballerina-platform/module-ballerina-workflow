@@ -1052,6 +1052,22 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "invalid")
+    public void testInvalidDurableAgentActivityWithConnection() {
+        // An activity taking a client parameter cannot be driven by the model, and the
+        // declaration form cannot bind it — both the bare reference and the ActivityDecl
+        // entry are rejected, while the data-only activity passes.
+        DiagnosticResult diagnosticResult = getDiagnosticResult(
+                "invalid_durable_agent_activity_connection");
+        List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_157");
+        Assert.assertEquals(diags.size(), 2,
+                "Expected 2 WORKFLOW_157 errors for the connection-based activity. Errors: "
+                        + diagnosticResult.errors());
+        Assert.assertEquals(diagnosticResult.errorCount(), 2,
+                "Expected the activity errors to be the only compiler errors. Errors: "
+                        + diagnosticResult.errors());
+    }
+
+    @Test(groups = "invalid")
     public void testInvalidDurableAgentToolAuth() {
         // @ai:AgentTool auth is enforced by the ai:Agent run loop only — a durable agent
         // declaring such a tool (bare or as a ToolDecl) is rejected; un-authed tools pass.

@@ -20,7 +20,9 @@ package io.ballerina.lib.workflow.compiler;
 
 import io.ballerina.compiler.api.SemanticModel;
 import io.ballerina.compiler.api.symbols.ClassSymbol;
+import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.ModuleSymbol;
+import io.ballerina.compiler.api.symbols.ParameterSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
@@ -280,6 +282,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 String refSource = member.toSourceCode().strip();
                 String toolName = simpleName(refSource);
                 checkUnique(toolName, seenNames, agentName, member.location(), context);
+                checkActivityParametersAreData(member, toolName, agentName, context);
                 activities.add(new DurableAgentDeclInfo.ActivityDecl(toolName, refSource, null));
             } else if (member instanceof MappingConstructorExpressionNode declMapping) {
                 extractActivityDecl(declMapping, activities, seenNames, agentName, context);
@@ -295,6 +298,8 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         String explicitName = null;
         StringBuilder meta = new StringBuilder();
         Location nameLocation = declMapping.location();
+        Node activityRefNode = null;
+        boolean hasBindings = false;
         for (MappingFieldNode declField : declMapping.fields()) {
             if (!(declField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
                 continue;
@@ -302,14 +307,17 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             String key = sf.fieldName().toSourceCode().strip();
             ExpressionNode declValue = sf.valueExpr().get();
             switch (key) {
-                case "activity" -> functionRefSource = declValue.toSourceCode().strip();
+                case "activity" -> {
+                    functionRefSource = declValue.toSourceCode().strip();
+                    activityRefNode = declValue;
+                }
                 case "name" -> {
                     explicitName = stringLiteralValue(declValue);
                     nameLocation = declValue.location();
                 }
                 // bindings may hold client objects, which are not json — they stay out of the
                 // metadata and are re-emitted separately when activity binding support lands.
-                case "bindings" -> { }
+                case "bindings" -> hasBindings = true;
                 default -> appendMetaField(meta, key, declValue.toSourceCode().strip());
             }
         }
@@ -318,6 +326,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         }
         String toolName = explicitName != null ? explicitName : simpleName(functionRefSource);
         checkUnique(toolName, seenNames, agentName, nameLocation, context);
+        if (!hasBindings) {
+            checkActivityParametersAreData(activityRefNode == null ? declMapping : activityRefNode,
+                    toolName, agentName, context);
+        }
         activities.add(new DurableAgentDeclInfo.ActivityDecl(toolName, functionRefSource,
                 meta.isEmpty() ? null : "{" + meta + "}"));
     }
@@ -594,6 +606,32 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                         .map(module -> "ai".equals(module.id().moduleName())
                                 && "ballerina".equals(module.id().orgName()))
                         .orElse(false);
+    }
+
+    // An agent invokes an activity with arguments the model produces, so every parameter must
+    // be data. Client objects and other non-data parameters can only be supplied through
+    // registration-time 'bindings', which the declaration form does not carry yet — reject the
+    // declaration instead of generating an agent whose tool can never be called.
+    private void checkActivityParametersAreData(Node activityRefNode, String toolName, String agentName,
+                                                SyntaxNodeAnalysisContext context) {
+        java.util.Optional<Symbol> symbol = context.semanticModel().symbol(activityRefNode);
+        if (symbol.isEmpty() || !(symbol.get() instanceof FunctionSymbol functionSymbol)) {
+            return;
+        }
+        java.util.Optional<java.util.List<ParameterSymbol>> params =
+                functionSymbol.typeDescriptor().params();
+        if (params.isEmpty()) {
+            return;
+        }
+        for (ParameterSymbol parameter : params.get()) {
+            TypeSymbol type = parameter.typeDescriptor();
+            if (WorkflowPluginUtils.isSubtypeOfAnydata(type, context.semanticModel())) {
+                continue;
+            }
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_157, activityRefNode.location(),
+                    toolName, agentName, parameter.getName().orElse("?"), type.signature());
+            return;
+        }
     }
 
     private void checkUnique(String name, Set<String> seenNames, String agentName, Location location,

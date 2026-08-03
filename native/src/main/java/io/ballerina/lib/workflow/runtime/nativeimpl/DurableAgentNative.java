@@ -174,10 +174,12 @@ public final class DurableAgentNative {
      *
      * @param toolName the tool name advertised to the model
      * @param function the @workflow:Activity function
-     * @param meta     the declaration metadata (description, bindings, gating, retry policy) as
+     * @param meta     the declaration metadata (description, gating, retry policy) as
      *                 a Ballerina value
+     * @param bindings the arguments fixed at registration (e.g. a client), or nil
      */
-    public record ActivityDecl(String toolName, BFunctionPointer function, Object meta) { }
+    public record ActivityDecl(String toolName, BFunctionPointer function, Object meta,
+                               Object bindings) { }
 
     /**
      * A declared AI tool of a durable agent.
@@ -246,13 +248,14 @@ public final class DurableAgentNative {
      * @return true on success, or a BError when the agent is unknown
      */
     public static Object registerDurableAgentActivity(BString agentName, BString toolName,
-                                                      BFunctionPointer function, Object meta) {
+                                                      BFunctionPointer function, Object meta,
+                                                      Object bindings) {
         AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName.getValue());
         if (decl == null) {
             return unknownAgentError(agentName.getValue());
         }
         decl.activities().put(toolName.getValue(),
-                new ActivityDecl(toolName.getValue(), function, meta));
+                new ActivityDecl(toolName.getValue(), function, meta, bindings));
         return true;
     }
 
@@ -431,6 +434,7 @@ public final class DurableAgentNative {
                 fields.put("toolName", StringUtils.fromString(activity.toolName()));
                 fields.put("activity", activity.function());
                 fields.put("meta", activity.meta());
+                fields.put("bindings", activity.bindings());
                 activities.append(ValueCreator.createRecordValue(
                         ModuleUtils.getModule(), ACTIVITY_SPEC_RECORD, fields));
             }

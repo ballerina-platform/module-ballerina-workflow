@@ -146,9 +146,12 @@ public isolated function registerDurableAgentDecl(string agentName, ai:ModelProv
 # + toolName - The tool name advertised to the model
 # + activity - The `@workflow:Activity` function
 # + meta - Declaration metadata (description, gating, retry policy)
+# + bindings - Arguments fixed at registration, keyed by parameter name; client
+#              objects are passed by reference to their module-level variable
 # + return - `true` on success, or an error for an unknown agent
 public isolated function registerDurableAgentActivity(string agentName, string toolName,
-        function activity, json meta = ()) returns boolean|error = @java:Method {
+        function activity, json meta = (), map<anydata|object {}>? bindings = ())
+        returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
     name: "registerDurableAgentActivity"
 } external;

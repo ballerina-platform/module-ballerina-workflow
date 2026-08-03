@@ -19,6 +19,7 @@ import ballerina/http;
 import ballerina/workflow;
 
 final ai:Wso2ModelProvider chatModel = check new ("http://localhost:9099", "test-token");
+final http:Client apiClient = check new ("http://localhost:8080");
 
 // A connection-based activity: the model cannot supply the client, so it can only be
 // exposed through registration-time bindings.
@@ -40,6 +41,8 @@ final workflow:DurableAgent orderAgent = check new ({
     activities: [
         httpGet,
         {activity: httpGet, name: "fetch"},
+        // Binding the client at registration is the supported form, so this entry passes.
+        {activity: httpGet, name: "bound", bindings: {connection: apiClient}},
         lookupOrder
     ]
 });

@@ -283,7 +283,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 String toolName = simpleName(refSource);
                 checkUnique(toolName, seenNames, agentName, member.location(), context);
                 checkActivityParametersAreData(member, toolName, agentName, context);
-                activities.add(new DurableAgentDeclInfo.ActivityDecl(toolName, refSource, null));
+                activities.add(new DurableAgentDeclInfo.ActivityDecl(toolName, refSource, null, null));
             } else if (member instanceof MappingConstructorExpressionNode declMapping) {
                 extractActivityDecl(declMapping, activities, seenNames, agentName, context);
             }
@@ -300,6 +300,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         Location nameLocation = declMapping.location();
         Node activityRefNode = null;
         boolean hasBindings = false;
+        String bindingsSource = null;
         for (MappingFieldNode declField : declMapping.fields()) {
             if (!(declField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
                 continue;
@@ -317,7 +318,12 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 }
                 // bindings may hold client objects, which are not json — they stay out of the
                 // metadata and are re-emitted separately when activity binding support lands.
-                case "bindings" -> hasBindings = true;
+                case "bindings" -> {
+                    hasBindings = true;
+                    // Emitted verbatim into the generated registration: bound client objects
+                    // reference their module-level variables, which are in scope there.
+                    bindingsSource = declValue.toSourceCode().strip();
+                }
                 default -> appendMetaField(meta, key, declValue.toSourceCode().strip());
             }
         }
@@ -331,7 +337,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     toolName, agentName, context);
         }
         activities.add(new DurableAgentDeclInfo.ActivityDecl(toolName, functionRefSource,
-                meta.isEmpty() ? null : "{" + meta + "}"));
+                meta.isEmpty() ? null : "{" + meta + "}", bindingsSource));
     }
 
     // Collects the module prefixes of qualified references anywhere inside a type

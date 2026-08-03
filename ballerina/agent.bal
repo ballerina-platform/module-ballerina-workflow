@@ -1000,7 +1000,7 @@ isolated function registerDeclaredActivity(handle agentCtx, DurableAgentActivity
         }
     }
     check registerActivity(agentCtx, activitySpec.activity, activitySpec.toolName, description,
-        (), requiresApproval, retryPolicy, userRoles);
+        activitySpec.bindings, requiresApproval, retryPolicy, userRoles);
 }
 
 # Registers one declared peer agent on the runner's context, converting the

@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Declared agent activities honor `bindings`: arguments fixed at registration (typically a
+  client the model cannot supply) are carried from the declaration through to the
+  registration, so a connection-based activity can be exposed as an agent tool by binding
+  its client to a module-level variable.
 - Compile-time guards for durable agent declarations: a tool that declares an
   `@ai:AgentTool` authorization requirement is rejected (durable agents do not run the
   `ai:Agent` loop that acquires tokens and validates scopes), capability names must be

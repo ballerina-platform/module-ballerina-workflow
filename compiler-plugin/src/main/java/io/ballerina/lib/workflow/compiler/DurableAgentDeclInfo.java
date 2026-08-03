@@ -72,8 +72,11 @@ public record DurableAgentDeclInfo(String agentName,
      * @param functionRefSource source text of the activity function reference
      * @param metaSource        source text of a json metadata mapping (description, gating,
      *                          retry policy), or null when there is none
+     * @param bindingsSource    source text of the {@code bindings} mapping fixing arguments at
+     *                          registration (e.g. a client), or null when there is none
      */
-    public record ActivityDecl(String toolName, String functionRefSource, String metaSource) { }
+    public record ActivityDecl(String toolName, String functionRefSource, String metaSource,
+                               String bindingsSource) { }
 
     /**
      * A declared AI tool: the tool reference and the optional ToolDecl gating expressions,

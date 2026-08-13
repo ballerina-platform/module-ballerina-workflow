@@ -218,6 +218,12 @@ isolated function validateManagementApiConfig() {
                 "but 'apiKeyValue' is not set.");
         }
     }
+
+    if enforceScopes && !enableJwtAuth && !enableOAuth {
+        panic error("workflow.management.rest: scope enforcement is enabled (enforceScopes = true) " +
+            "but no token-based auth is: enable 'enableJwtAuth' or 'enableOAuth', " +
+            "or disable scope enforcement.");
+    }
 }
 
 # Builds the `http:ListenerConfiguration` from the configurable variables.
@@ -353,11 +359,17 @@ isolated function buildAuthConfigs() returns http:ListenerAuthConfig[]? {
     return configs.length() > 0 ? configs : ();
 }
 
-# Request interceptor that enforces API key authentication (which has no
-# built-in Ballerina HTTP handler). Registered via createInterceptors on the
-# `http:InterceptableService`. The management API master switch needs no gate
-# here: when `enableManagementApi = false` the listener is never created, so
-# no request can reach this service.
+# Request interceptor that resolves the caller's identity and enforces API key
+# authentication (which has no built-in Ballerina HTTP handler). Registered via
+# createInterceptors on the `http:InterceptableService`. The management API
+# master switch needs no gate here: when `enableManagementApi = false` the
+# listener is never created, so no request can reach this service.
+#
+# **Identity** — in token mode (JWT/OAuth2) the caller's identity is extracted
+# from the bearer token's claims onto the x-user-* headers, and scopes are
+# enforced when configured (see identity.bal). The token's signature is still
+# validated by `@http:ServiceConfig { auth: ... }` after this interceptor, so an
+# invalid token never reaches a resource.
 #
 # **API key** — validates the configured header when `enableApiKey = true`;
 # returns `401` only when API key is the sole auth type and validation fails.
@@ -369,7 +381,12 @@ service class ManagementGatewayInterceptor {
     resource function 'default [string... path](
             http:RequestContext ctx,
             http:Request req)
-            returns http:Unauthorized|http:NextService|error? {
+            returns http:Unauthorized|http:Forbidden|http:NextService|error? {
+
+        http:Forbidden? scopeErr = applyCallerIdentity(req, path.length() > 0 ? path[0] : "");
+        if scopeErr is http:Forbidden {
+            return scopeErr;
+        }
 
         // API key auth (no built-in Ballerina HTTP handler)
         if enableApiKey {

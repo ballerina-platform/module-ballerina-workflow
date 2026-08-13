@@ -30,6 +30,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   management operation as a command and returns `{httpStatus, body}` byte-identical
   to the corresponding REST response; the REST resources and the dispatcher share
   one implementation. `getWorkflowMetadata` is re-exported from the same module.
+- Token-based caller identity for the management REST API: with JWT/OAuth2 auth,
+  the caller's user ID and roles are extracted from the bearer token's claims
+  (configurable `userIdClaim`, `rolesClaim` with dotted-path support) and override
+  the `x-user-id`/`x-user-roles` headers so identity cannot be spoofed alongside a
+  valid token (`trustForwardedIdentity = true` restores header precedence). Optional
+  OAuth scope enforcement per operation class via `enforceScopes` and the
+  `scopeWorkflowView/Manage`, `scopeHumanTaskView/Manage` configurables. Basic auth
+  now defaults the audit user ID to the authenticated username.
 
 - Data-event waits are now visible: a workflow blocked on `wait dataEvents.<name>`
   publishes the awaited event names to the execution memo (`wfWaitingEvents`),

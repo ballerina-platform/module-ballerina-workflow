@@ -20,6 +20,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `management:getWorkflowMetadata()` — a startup-complete metadata document
+  (definitions with input schemas, human tasks with completion-form schemas,
+  activities with input schemas, the review-action vocabulary, and durable-agent
+  declarations) for control planes to publish. The compiler plugin now registers
+  the `awaitHumanTask` result type it can determine statically, so completion-form
+  schemas are available before a task first runs.
+- `rest:executeManagementCommand()` in `workflow.management.rest` — executes any
+  management operation as a command and returns `{httpStatus, body}` byte-identical
+  to the corresponding REST response; the REST resources and the dispatcher share
+  one implementation. `getWorkflowMetadata` is re-exported from the same module.
+
 - Data-event waits are now visible: a workflow blocked on `wait dataEvents.<name>`
   publishes the awaited event names to the execution memo (`wfWaitingEvents`),
   which lands in the event history and is readable from a describe call. The

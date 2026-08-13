@@ -16,8 +16,6 @@
 
 import ballerina/http;
 import ballerina/lang.runtime;
-import ballerina/time;
-import ballerina/workflow.management;
 
 // All configurable variables are scoped to [ballerina.workflow.management.rest] in Config.toml.
 //
@@ -34,6 +32,11 @@ import ballerina/workflow.management;
 //   keyFile              = "/etc/certs/tls.key"
 //   basicAuthUsername    = "ops"
 //   basicAuthPassword    = "s3cret!"
+//
+// Every resource below is a thin HTTP adapter over the shared operation functions in
+// operations.bal — the same functions `executeManagementCommand` (dispatcher.bal)
+// executes, which is what keeps a command result byte-identical to the corresponding
+// REST response.
 
 // Validates the management API configuration so any misconfiguration causes a
 // descriptive error at startup rather than a silent runtime failure, and then starts
@@ -305,9 +308,9 @@ function stopManagementService() returns error? {
 // An empty array (all disabled) means no auth is required — suitable for
 // K8s-internal deployments where the service mesh handles identity.
 
-# Builds the `http:ListenerAuthConfig[]` from the configurable auth flags.
-# Called once at module initialization; the result is bound to `mgmtAuthConfigs`.
-# + return - Array of auth configs for the enabled auth types, or nil if none are enabled.
+# Builds the `http:CorsConfig` from the configurable CORS variables.
+# Called once at module initialization via `@http:ServiceConfig`.
+# + return - The CORS configuration; origins are empty when CORS is disabled.
 isolated function buildCorsConfig() returns http:CorsConfig {
     if !enableCors {
         return {allowOrigins: []};
@@ -414,11 +417,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:InternalServerError {
-        management:WorkflowDefinition[]|error defs = management:listWorkflowDefinitions();
-        if defs is error {
-            return <http:InternalServerError>{body: errorBody("Failed to list definitions: " + defs.message())};
-        }
-        return {definitions: defs.toJson()};
+        return opListDefinitions();
     }
 
     // ── Workflow Instances — List & Start ─────────────────────────────────────
@@ -451,14 +450,8 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             string? closeTimeFrom = (),
             string? closeTimeTo = ())
             returns json|http:InternalServerError {
-        int effectiveLimit = clampLimit('limit, maxPageSize);
-        management:WorkflowInstancePage|error page = management:listWorkflowInstances(
-            status, workflowType, workflowId, startedBy, effectiveLimit, pageToken,
+        return opListWorkflows(status, workflowType, workflowId, startedBy, 'limit, pageToken,
                 startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo);
-        if page is error {
-            return <http:InternalServerError>{body: errorBody("Failed to list workflows: " + page.message())};
-        }
-        return page.toJson();
     }
 
     # Starts a new workflow instance.
@@ -470,23 +463,8 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
             @http:Payload map<json> body)
-            returns json|http:Created|http:BadRequest|http:InternalServerError {
-        json? wfTypeJson = body["workflowType"];
-        if wfTypeJson is () {
-            return <http:BadRequest>{body: errorBody("workflowType is required")};
-        }
-        if wfTypeJson !is string {
-            return <http:BadRequest>{body: errorBody("workflowType must be a string")};
-        }
-        string wfType = wfTypeJson;
-        json? input = body["input"];
-        string? wfId = body["workflowId"] is string ? <string>body["workflowId"] : ();
-        int? timeout = body["timeoutSeconds"] is int ? <int>body["timeoutSeconds"] : ();
-        management:WorkflowHandle|error wfHandle = management:startWorkflowByType(wfType, input, wfId, timeout, userId);
-        if wfHandle is error {
-            return <http:InternalServerError>{body: errorBody("Failed to start workflow: " + wfHandle.message())};
-        }
-        return <http:Created>{body: wfHandle.toJson()};
+            returns http:Created|http:BadRequest|http:InternalServerError {
+        return opStartWorkflow(body, userId);
     }
 
     // ── Workflow Instance — Latest Run ───────────────────────────────────────
@@ -502,18 +480,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        http:Forbidden? roleErr = ensureWorkflowDetailAccess(userRoles);
-        if roleErr is http:Forbidden {
-            return roleErr;
-        }
-        management:WorkflowExecutionInfo|error info = management:getWorkflowInfo(workflowId);
-        if info is error {
-            string msg = info.message();
-            return msg.includes("not found") || msg.includes("NOT_FOUND")
-                ? <http:NotFound>{body: errorBody("Workflow not found: " + workflowId)}
-                : <http:InternalServerError>{body: errorBody(msg)};
-        }
-        return info.toJson();
+        return opGetWorkflow(workflowId, (), parseRolesHeader(userRoles));
     }
 
     # Suspends the latest active run of a workflow.
@@ -525,14 +492,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:InternalServerError {
-        error? result = management:suspendWorkflow(workflowId);
-        if result is error {
-            string msg = result.message();
-            return msg.includes("not found")
-                ? <http:NotFound>{body: errorBody(msg)}
-                : <http:InternalServerError>{body: errorBody(msg)};
-        }
-        return {success: true};
+        return opSuspendWorkflow(workflowId, ());
     }
 
     # Resumes the latest suspended run of a workflow.
@@ -544,14 +504,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:InternalServerError {
-        error? result = management:resumeWorkflow(workflowId);
-        if result is error {
-            string msg = result.message();
-            return msg.includes("not found")
-                ? <http:NotFound>{body: errorBody(msg)}
-                : <http:InternalServerError>{body: errorBody(msg)};
-        }
-        return {success: true};
+        return opResumeWorkflow(workflowId, ());
     }
 
     # Terminates the latest run of a workflow immediately.
@@ -567,14 +520,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             returns json|http:NotFound|http:InternalServerError {
         string? reason = body is map<json> && body["reason"] is string
                 ? <string>(<map<json>>body)["reason"] : ();
-        error? result = management:terminateWorkflow(workflowId, "", reason);
-        if result is error {
-            string msg = result.message();
-            return msg.includes("not found") || msg.includes("NOT_FOUND")
-                ? <http:NotFound>{body: errorBody(msg)}
-                : <http:InternalServerError>{body: errorBody(msg)};
-        }
-        return {success: true};
+        return opTerminateWorkflow(workflowId, (), reason);
     }
 
     # Requests graceful cancellation of the latest run of a workflow.
@@ -586,14 +532,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:InternalServerError {
-        error? result = management:cancelWorkflow(workflowId, "");
-        if result is error {
-            string msg = result.message();
-            return msg.includes("not found") || msg.includes("NOT_FOUND")
-                ? <http:NotFound>{body: errorBody(msg)}
-                : <http:InternalServerError>{body: errorBody(msg)};
-        }
-        return {success: true};
+        return opCancelWorkflow(workflowId, ());
     }
 
     # Returns all execution history events for the latest run of a workflow.
@@ -605,18 +544,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        http:Forbidden? roleErr = ensureWorkflowDetailAccess(userRoles);
-        if roleErr is http:Forbidden {
-            return roleErr;
-        }
-        management:HistoryEvent[]|error events = management:getWorkflowHistory(workflowId, "");
-        if events is error {
-            string msg = events.message();
-            return msg.includes("not found") || msg.includes("NOT_FOUND")
-                ? <http:NotFound>{body: errorBody("Workflow not found: " + workflowId)}
-                : <http:InternalServerError>{body: errorBody("Failed to get history: " + msg)};
-        }
-        return {events: events.toJson()};
+        return opWorkflowHistory(workflowId, (), parseRolesHeader(userRoles));
     }
 
     # Returns the activity tree for the latest run of a workflow.
@@ -628,18 +556,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        http:Forbidden? roleErr = ensureWorkflowDetailAccess(userRoles);
-        if roleErr is http:Forbidden {
-            return roleErr;
-        }
-        management:ActivityTreeNode[]|error nodes = management:getActivityTree(workflowId, "");
-        if nodes is error {
-            string msg = nodes.message();
-            return msg.includes("not found") || msg.includes("NOT_FOUND")
-                ? <http:NotFound>{body: errorBody("Workflow not found: " + workflowId)}
-                : <http:InternalServerError>{body: errorBody("Failed to get activity tree: " + msg)};
-        }
-        return {nodes: nodes.toJson()};
+        return opActivityTree(workflowId, (), parseRolesHeader(userRoles));
     }
 
     # Returns the execution graph for the latest run of a workflow.
@@ -651,18 +568,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        http:Forbidden? roleErr = ensureWorkflowDetailAccess(userRoles);
-        if roleErr is http:Forbidden {
-            return roleErr;
-        }
-        management:ExecutionGraph|error graph = management:getExecutionGraph(workflowId, "");
-        if graph is error {
-            string msg = graph.message();
-            return msg.includes("not found") || msg.includes("NOT_FOUND")
-                ? <http:NotFound>{body: errorBody("Workflow not found: " + workflowId)}
-                : <http:InternalServerError>{body: errorBody("Failed to get execution graph: " + msg)};
-        }
-        return graph.toJson();
+        return opExecutionGraph(workflowId, (), parseRolesHeader(userRoles));
     }
 
     // ── Workflow Instance — Detail ────────────────────────────────────────────
@@ -677,19 +583,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        http:Forbidden? roleErr = ensureWorkflowDetailAccess(userRoles);
-        if roleErr is http:Forbidden {
-            return roleErr;
-        }
-        management:WorkflowExecutionInfo|error info = management:getWorkflowInfoForRun(workflowId, runId);
-        if info is error {
-            string msg = info.message();
-            if msg.includes("not found") || msg.includes("NOT_FOUND") {
-                return <http:NotFound>{body: errorBody("Workflow run not found: " + workflowId + "/" + runId)};
-            }
-            return <http:InternalServerError>{body: errorBody(msg)};
-        }
-        return info.toJson();
+        return opGetWorkflow(workflowId, runId, parseRolesHeader(userRoles));
     }
 
     // ── Workflow Lifecycle Operations ─────────────────────────────────────────
@@ -704,14 +598,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:InternalServerError {
-        error? result = management:suspendWorkflowRun(workflowId, runId);
-        if result is error {
-            string msg = result.message();
-            return msg.includes("not found")
-                ? <http:NotFound>{body: errorBody(msg)}
-                : <http:InternalServerError>{body: errorBody(msg)};
-        }
-        return {success: true};
+        return opSuspendWorkflow(workflowId, runId);
     }
 
     # Resumes a suspended workflow.
@@ -724,14 +611,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:InternalServerError {
-        error? result = management:resumeWorkflowRun(workflowId, runId);
-        if result is error {
-            string msg = result.message();
-            return msg.includes("not found")
-                ? <http:NotFound>{body: errorBody(msg)}
-                : <http:InternalServerError>{body: errorBody(msg)};
-        }
-        return {success: true};
+        return opResumeWorkflow(workflowId, runId);
     }
 
     # Terminates a workflow immediately.
@@ -748,14 +628,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             returns json|http:NotFound|http:InternalServerError {
         string? reason = body is map<json> && body["reason"] is string
                 ? <string>(<map<json>>body)["reason"] : ();
-        error? result = management:terminateWorkflow(workflowId, runId, reason);
-        if result is error {
-            string msg = result.message();
-            return msg.includes("not found") || msg.includes("NOT_FOUND")
-                ? <http:NotFound>{body: errorBody(msg)}
-                : <http:InternalServerError>{body: errorBody(msg)};
-        }
-        return {success: true};
+        return opTerminateWorkflow(workflowId, runId, reason);
     }
 
     # Requests graceful cancellation of a workflow.
@@ -768,14 +641,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:InternalServerError {
-        error? result = management:cancelWorkflow(workflowId, runId);
-        if result is error {
-            string msg = result.message();
-            return msg.includes("not found") || msg.includes("NOT_FOUND")
-                ? <http:NotFound>{body: errorBody(msg)}
-                : <http:InternalServerError>{body: errorBody(msg)};
-        }
-        return {success: true};
+        return opCancelWorkflow(workflowId, runId);
     }
 
     // ── Workflow Execution Visualization ─────────────────────────────────────
@@ -790,18 +656,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        http:Forbidden? roleErr = ensureWorkflowDetailAccess(userRoles);
-        if roleErr is http:Forbidden {
-            return roleErr;
-        }
-        management:HistoryEvent[]|error events = management:getWorkflowHistory(workflowId, runId);
-        if events is error {
-            string msg = events.message();
-            return msg.includes("not found") || msg.includes("NOT_FOUND")
-                ? <http:NotFound>{body: errorBody("Workflow not found: " + workflowId)}
-                : <http:InternalServerError>{body: errorBody("Failed to get history: " + msg)};
-        }
-        return {events: events.toJson()};
+        return opWorkflowHistory(workflowId, runId, parseRolesHeader(userRoles));
     }
 
     # Returns the activity tree for a workflow run.
@@ -814,18 +669,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        http:Forbidden? roleErr = ensureWorkflowDetailAccess(userRoles);
-        if roleErr is http:Forbidden {
-            return roleErr;
-        }
-        management:ActivityTreeNode[]|error nodes = management:getActivityTree(workflowId, runId);
-        if nodes is error {
-            string msg = nodes.message();
-            return msg.includes("not found") || msg.includes("NOT_FOUND")
-                ? <http:NotFound>{body: errorBody("Workflow not found: " + workflowId)}
-                : <http:InternalServerError>{body: errorBody("Failed to get activity tree: " + msg)};
-        }
-        return {nodes: nodes.toJson()};
+        return opActivityTree(workflowId, runId, parseRolesHeader(userRoles));
     }
 
     # Returns the execution graph for rendering with D3.js or React Flow.
@@ -838,18 +682,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        http:Forbidden? roleErr = ensureWorkflowDetailAccess(userRoles);
-        if roleErr is http:Forbidden {
-            return roleErr;
-        }
-        management:ExecutionGraph|error graph = management:getExecutionGraph(workflowId, runId);
-        if graph is error {
-            string msg = graph.message();
-            return msg.includes("not found") || msg.includes("NOT_FOUND")
-                ? <http:NotFound>{body: errorBody("Workflow not found: " + workflowId)}
-                : <http:InternalServerError>{body: errorBody("Failed to get execution graph: " + msg)};
-        }
-        return graph.toJson();
+        return opExecutionGraph(workflowId, runId, parseRolesHeader(userRoles));
     }
 
     // ── Human Tasks — List & Count ────────────────────────────────────────────
@@ -886,33 +719,9 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             string? closeTimeFrom = (),
             string? closeTimeTo = ())
             returns json|http:InternalServerError {
-        management:HumanTaskSummary[]|error all = management:listAllHumanTasks(status,
-                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo);
-        if all is error {
-            return <http:InternalServerError>{body: errorBody("Failed to list human tasks: " + all.message())};
-        }
-        [string, string...]? callerRoles = parseRolesHeader(userRoles);
-        // Apply lambda-safe filters first
-        management:HumanTaskSummary[] preFiltered = all
-            .filter(t => parentWorkflowId is () || t.parentWorkflowId == parentWorkflowId)
-            .filter(t => parentWorkflowType is () || t.parentWorkflowType == parentWorkflowType)
-            .filter(t => taskName is () || t.taskName == taskName)
-            .filter(t => userRole is () || t.userRoles.some(r => r == userRole));
-        // Apply onlyMyTasks and canComplete in a foreach (avoids lambda isolation constraint
-        // on computed local variables in this Ballerina version)
-        management:HumanTaskSummary[] enriched = [];
-        foreach management:HumanTaskSummary t in preFiltered {
-            boolean hasMatchingRole = hasRoleIntersection(t.userRoles, callerRoles);
-            if !hasMatchingRole {
-                continue;
-            }
-            if onlyMyTasks {
-                // Visibility is already constrained to role-matching tasks.
-            }
-            t.canComplete = true;
-            enriched.push(t);
-        }
-        return paginateHumanTasks(enriched, clampLimit('limit, maxPageSize), pageToken).toJson();
+        return opListHumanTasks(status, parentWorkflowId, parentWorkflowType, taskName, userRole,
+                onlyMyTasks, 'limit, pageToken, startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo,
+                parseRolesHeader(userRoles));
     }
 
     # Returns count of pending human tasks (for UI badge).
@@ -923,18 +732,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:InternalServerError {
-        management:HumanTaskSummary[]|error pending = management:listAllHumanTasks("PENDING");
-        if pending is error {
-            return <http:InternalServerError>{body: errorBody("Failed to count pending tasks: " + pending.message())};
-        }
-        [string, string...]? callerRoles = parseRolesHeader(userRoles);
-        int visibleCount = 0;
-        foreach management:HumanTaskSummary t in pending {
-            if hasRoleIntersection(t.userRoles, callerRoles) {
-                visibleCount += 1;
-            }
-        }
-        return {count: visibleCount};
+        return opPendingHumanTaskCount(parseRolesHeader(userRoles));
     }
 
     // ── Human Tasks — Detail & Operations ────────────────────────────────────
@@ -948,18 +746,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        [string, string...]? callerRoles = parseRolesHeader(userRoles);
-        management:HumanTaskInfo|error info = management:getHumanTaskInfo(taskId);
-        if info is error {
-            string msg = info.message();
-            return msg.includes("not found") || msg.includes("NOT_FOUND")
-                ? <http:NotFound>{body: errorBody("Human task not found: " + taskId)}
-                : <http:InternalServerError>{body: errorBody(msg)};
-        }
-        if !hasRoleIntersection(info.userRoles, callerRoles) {
-            return <http:Forbidden>{body: errorBody("Unauthorized: caller is not allowed to access this task")};
-        }
-        return info.toJson();
+        return opGetHumanTask(taskId, parseRolesHeader(userRoles));
     }
 
     # Completes a human task with the given result.
@@ -974,15 +761,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-roles"} string? userRoles,
             @http:Payload map<json> body)
             returns json|http:NotFound|http:Forbidden|http:Conflict|http:UnprocessableEntity|http:InternalServerError {
-        [string, string...]? callerRoles = parseRolesHeader(userRoles);
-        if callerRoles is () {
-            return <http:Forbidden>{body: errorBody("Unauthorized: x-user-roles header is required")};
-        }
-        error? err = management:completeHumanTask(taskId, body["result"], callerRoles, userId);
-        if err is error {
-            return humanTaskErrorResponse(err);
-        }
-        return buildCompletionResponse(userId).toJson();
+        return opCompleteHumanTask(taskId, body["result"], parseRolesHeader(userRoles), userId);
     }
 
     # Fails/rejects a human task with a reason.
@@ -998,19 +777,8 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Payload map<json> body)
             returns json|http:BadRequest|http:NotFound|http:Forbidden|http:Conflict|http:UnprocessableEntity
                     |http:InternalServerError {
-        if body["reason"] is () {
-            return <http:BadRequest>{body: errorBody("reason is required")};
-        }
-        [string, string...]? callerRoles = parseRolesHeader(userRoles);
-        if callerRoles is () {
-            return <http:Forbidden>{body: errorBody("Unauthorized: x-user-roles header is required")};
-        }
         map<json>? details = body["details"] is map<json> ? <map<json>>body["details"] : ();
-        error? err = management:failHumanTask(taskId, body["reason"].toString(), details, callerRoles, userId);
-        if err is error {
-            return humanTaskErrorResponse(err);
-        }
-        return buildCompletionResponse(userId).toJson();
+        return opFailHumanTask(taskId, body["reason"], details, parseRolesHeader(userRoles), userId);
     }
 
     // Note: there is deliberately no cancel endpoint for human tasks. A task becomes
@@ -1045,25 +813,8 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             string? closeTimeFrom = (),
             string? closeTimeTo = ())
             returns json|http:InternalServerError {
-        management:ReviewActivitySummary[]|error all = management:listAllReviewActivities(status,
-                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo);
-        if all is error {
-            return <http:InternalServerError>{
-                body: errorBody("Failed to list review activities: " + all.message())};
-        }
-        [string, string...]? callerRoles = parseRolesHeader(userRoles);
-        management:ReviewActivitySummary[] preFiltered = all
-            .filter(t => parentWorkflowId is () || t.parentWorkflowId == parentWorkflowId)
-            .filter(t => taskName is () || t.taskName == taskName);
-        // Role visibility in a foreach (avoids the lambda isolation constraint on
-        // computed local variables in this Ballerina version — see the human-task route).
-        management:ReviewActivitySummary[] filtered = [];
-        foreach management:ReviewActivitySummary t in preFiltered {
-            if canAccessReviewActivity(t.userRoles, callerRoles) {
-                filtered.push(t);
-            }
-        }
-        return paginateReviewActivities(filtered, clampLimit('limit, maxPageSize), pageToken).toJson();
+        return opListReviewActivities(status, parentWorkflowId, taskName, 'limit, pageToken,
+                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, parseRolesHeader(userRoles));
     }
 
     # Returns detailed info for a single review activity.
@@ -1075,18 +826,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        management:ReviewActivityInfo|error info = management:getReviewActivityInfo(taskId);
-        if info is error {
-            string msg = info.message();
-            return msg.includes("not found") || msg.includes("NOT_FOUND")
-                ? <http:NotFound>{body: errorBody("Review activity not found: " + taskId)}
-                : <http:InternalServerError>{body: errorBody(msg)};
-        }
-        if !canAccessReviewActivity(info.userRoles, parseRolesHeader(userRoles)) {
-            return <http:Forbidden>{body: errorBody(
-                    "Unauthorized: caller is not allowed to access this review activity")};
-        }
-        return info.toJson();
+        return opGetReviewActivity(taskId, parseRolesHeader(userRoles));
     }
 
     // ── Review Activities — Decisions ──────────────────────────────────────────
@@ -1099,13 +839,8 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
     resource isolated function post review\-activities/[string taskId]/'proceed(
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
-        [string, string...]? callerRoles = parseRolesHeader(userRoles);
-        http:Forbidden? roleErr = reviewDecisionRoleError(callerRoles);
-        if roleErr is http:Forbidden { return roleErr; }
-        error? err = management:completeReviewActivity(taskId, {action: "proceed"}, callerRoles, userId);
-        if err is error { return reviewActivityErrorResponse(err); }
-        return buildReviewDecisionResponse("proceed", userId).toJson();
+            returns json|http:BadRequest|http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
+        return opDecideReviewActivity(taskId, "proceed", (), (), parseRolesHeader(userRoles), userId);
     }
 
     # Proceeds with modified input: runs the gated/failed activity with the replacement arguments.
@@ -1119,17 +854,9 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-roles"} string? userRoles,
             @http:Payload map<json> body)
             returns json|http:BadRequest|http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
-        if body["input"] !is map<json> {
-            return <http:BadRequest>{body: errorBody("input must be a JSON object")};
-        }
-        [string, string...]? callerRoles = parseRolesHeader(userRoles);
-        http:Forbidden? roleErr = reviewDecisionRoleError(callerRoles);
-        if roleErr is http:Forbidden { return roleErr; }
-        error? err = management:completeReviewActivity(taskId,
-                {action: "proceed-with-input", input: <map<anydata>>body["input"]},
-                callerRoles, userId);
-        if err is error { return reviewActivityErrorResponse(err); }
-        return buildReviewDecisionResponse("proceed-with-input", userId).toJson();
+        map<json>? input = body["input"] is map<json> ? <map<json>>body["input"] : ();
+        return opDecideReviewActivity(taskId, "proceed-with-input", input, (),
+                parseRolesHeader(userRoles), userId);
     }
 
     # Rejects: skips the gated activity, or permanently fails the failed one. Optional `feedback`
@@ -1143,202 +870,9 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
             @http:Payload map<json> body = {})
-            returns json|http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
-        [string, string...]? callerRoles = parseRolesHeader(userRoles);
-        http:Forbidden? roleErr = reviewDecisionRoleError(callerRoles);
-        if roleErr is http:Forbidden { return roleErr; }
+            returns json|http:BadRequest|http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
         string? feedback = body["feedback"] is string ? <string>body["feedback"] : ();
-        error? err = management:completeReviewActivity(taskId, {action: "reject", feedback: feedback},
-                callerRoles, userId);
-        if err is error { return reviewActivityErrorResponse(err); }
-        return buildReviewDecisionResponse("reject", userId).toJson();
+        return opDecideReviewActivity(taskId, "reject", (), feedback, parseRolesHeader(userRoles), userId);
     }
 
 };
-
-# Builds a `CompletionInfo` record stamped with the current UTC time and the
-# caller's user ID (falls back to `"unknown"` when the header is absent).
-# + userId - Optional caller identity; used as the `completedBy` field.
-# + return - A `CompletionInfo` record with `success`, `completedBy`, and `completedAt` fields.
-isolated function buildCompletionResponse(string? userId) returns CompletionInfo {
-    time:Utc now = time:utcNow();
-    return {success: true, completedBy: userId ?: "unknown", completedAt: time:utcToString(now)};
-}
-
-# Builds a `ReviewDecisionInfo` record stamped with the current UTC time and the
-# caller's user ID (falls back to `"unknown"` when the header is absent).
-# + decision - The review decision taken: `"proceed"`, `"proceed-with-input"`, or `"reject"`.
-# + userId - Optional caller identity; used as the `decidedBy` field.
-# + return - A `ReviewDecisionInfo` record with `success`, `decision`, `decidedBy`, and `decidedAt` fields.
-isolated function buildReviewDecisionResponse(string decision, string? userId) returns ReviewDecisionInfo {
-    time:Utc now = time:utcNow();
-    return {success: true, decision: decision, decidedBy: userId ?: "unknown", decidedAt: time:utcToString(now)};
-}
-
-isolated function errorBody(string message) returns map<json> {
-    return {"error": {"message": message}};
-}
-
-isolated function clampLimit(int requested, int maxAllowed) returns int {
-    if requested < 1 { return 20; }
-    return requested > maxAllowed ? maxAllowed : requested;
-}
-
-isolated function parseRolesHeader(string? rolesHeader) returns [string, string...]? {
-    if rolesHeader is () || rolesHeader.trim().length() == 0 { return (); }
-    string[] parts = re`,`.split(rolesHeader).map(r => r.trim()).filter(r => r.length() > 0);
-    if parts.length() == 0 { return (); }
-    return [parts[0], ...parts.slice(1)];
-}
-
-isolated function ensureWorkflowDetailAccess(string? rolesHeader) returns http:Forbidden? {
-    [string, string...]? callerRoles = parseRolesHeader(rolesHeader);
-    if callerRoles is () {
-        return <http:Forbidden>{body: errorBody("Unauthorized: x-user-roles header is required to view workflow details")};
-    }
-    return ();
-}
-
-# A review activity with declared roles requires a matching caller role (same rule as human
-# tasks). A review activity with no declared roles is visible to any caller by default;
-# when `reviewActivityAccessRole` is configured, the caller must hold that role instead.
-isolated function canAccessReviewActivity(string[] taskRoles, [string, string...]? callerRoles) returns boolean {
-    if taskRoles.length() > 0 {
-        return hasRoleIntersection(taskRoles, callerRoles);
-    }
-    string? requiredRole = reviewActivityAccessRole;
-    if requiredRole is string && requiredRole.trim().length() > 0 {
-        return callerRoles !is () && callerRoles.indexOf(requiredRole) != ();
-    }
-    return true;
-}
-
-# Guard for review activity decision routes: when `reviewActivityAccessRole` is configured,
-# the caller must hold it. Task-declared roles are enforced separately by the native
-# completion path against the task's memo.
-isolated function reviewDecisionRoleError([string, string...]? callerRoles) returns http:Forbidden? {
-    string? requiredRole = reviewActivityAccessRole;
-    if requiredRole is string && requiredRole.trim().length() > 0 {
-        if callerRoles is () || callerRoles.indexOf(requiredRole) is () {
-            return <http:Forbidden>{body: errorBody(
-                    "Unauthorized: the '" + requiredRole + "' role is required to decide review activities")};
-        }
-    }
-    return ();
-}
-
-isolated function hasRoleIntersection(string[] taskRoles, [string, string...]? callerRoles) returns boolean {
-    if callerRoles is () {
-        return false;
-    }
-    foreach string role in taskRoles {
-        if callerRoles.indexOf(role) != () {
-            return true;
-        }
-    }
-    return false;
-}
-
-isolated function paginateHumanTasks(management:HumanTaskSummary[] items, int 'limit, string? pageToken)
-        returns HumanTaskPage {
-    // Sort by (startTime asc, taskId asc) for a deterministic, stable order.
-    management:HumanTaskSummary[] sorted = from management:HumanTaskSummary t in items
-        order by t.startTime ascending, t.taskId ascending select t;
-    // Seek past the cursor item so page N+1 starts after the last item on page N.
-    management:HumanTaskSummary[] remaining = sorted;
-    if pageToken is string {
-        [string, string] cursor = decodeCursorToken(pageToken);
-        string cursorTime = cursor[0];
-        string cursorId = cursor[1];
-        if cursorTime != "" {
-            remaining = from management:HumanTaskSummary t in sorted
-                where t.startTime > cursorTime
-                    || (t.startTime == cursorTime && t.taskId > cursorId)
-                select t;
-        }
-    }
-    int count = remaining.length();
-    boolean hasMore = count > 'limit;
-    management:HumanTaskSummary[] pageItems = hasMore ? remaining.slice(0, 'limit) : remaining;
-    string? nextToken = ();
-    if hasMore {
-        management:HumanTaskSummary last = pageItems[pageItems.length() - 1];
-        nextToken = encodeCursorToken(last.startTime, last.taskId);
-    }
-    return {items: pageItems, nextPageToken: nextToken, hasMore: hasMore};
-}
-
-isolated function paginateReviewActivities(management:ReviewActivitySummary[] items, int 'limit, string? pageToken)
-        returns ReviewActivityPage {
-    management:ReviewActivitySummary[] sorted = from management:ReviewActivitySummary t in items
-        order by t.startTime ascending, t.taskId ascending select t;
-    management:ReviewActivitySummary[] remaining = sorted;
-    if pageToken is string {
-        [string, string] cursor = decodeCursorToken(pageToken);
-        string cursorTime = cursor[0];
-        string cursorId = cursor[1];
-        if cursorTime != "" {
-            remaining = from management:ReviewActivitySummary t in sorted
-                where t.startTime > cursorTime
-                    || (t.startTime == cursorTime && t.taskId > cursorId)
-                select t;
-        }
-    }
-    int count = remaining.length();
-    boolean hasMore = count > 'limit;
-    management:ReviewActivitySummary[] pageItems = hasMore ? remaining.slice(0, 'limit) : remaining;
-    string? nextToken = ();
-    if hasMore {
-        management:ReviewActivitySummary last = pageItems[pageItems.length() - 1];
-        nextToken = encodeCursorToken(last.startTime, last.taskId);
-    }
-    return {items: pageItems, nextPageToken: nextToken, hasMore: hasMore};
-}
-
-// Cursor format: "<ISO-8601 startTime>~<taskId>" — split on the FIRST "~" so a taskId
-// that contains "~" (e.g., when a parent workflow ID has one) is still decoded correctly.
-isolated function encodeCursorToken(string startTime, string taskId) returns string =>
-    startTime + "~" + taskId;
-
-isolated function decodeCursorToken(string token) returns [string, string] {
-    int? sep = token.indexOf("~");
-    if sep is int {
-        return [token.substring(0, sep), token.substring(sep + 1)];
-    }
-    return ["", ""];
-}
-
-isolated function humanTaskErrorResponse(error err)
-        returns http:NotFound|http:Forbidden|http:Conflict|http:UnprocessableEntity|http:InternalServerError {
-    string msg = err.message();
-    if msg.includes("not found") || msg.includes("NOT_FOUND") {
-        return <http:NotFound>{body: errorBody(msg)};
-    }
-    if msg.includes("Unauthorized") || msg.includes("not authorized") {
-        return <http:Forbidden>{body: errorBody(msg)};
-    }
-    if msg.includes("not running") || msg.includes("already completed") {
-        return <http:Conflict>{body: errorBody(msg)};
-    }
-    // A well-formed request whose payload does not match the task's expected type is semantically
-    // invalid → 422 Unprocessable Entity (ballerina-library#8866).
-    if msg.includes("Invalid payload") {
-        return <http:UnprocessableEntity>{body: errorBody(msg)};
-    }
-    return <http:InternalServerError>{body: errorBody(msg)};
-}
-
-isolated function reviewActivityErrorResponse(error err)
-        returns http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
-    string msg = err.message();
-    if msg.includes("not found") || msg.includes("NOT_FOUND") {
-        return <http:NotFound>{body: errorBody(msg)};
-    }
-    if msg.includes("Unauthorized") || msg.includes("not authorized") {
-        return <http:Forbidden>{body: errorBody(msg)};
-    }
-    if msg.includes("not running") || msg.includes("already completed") {
-        return <http:Conflict>{body: errorBody(msg)};
-    }
-    return <http:InternalServerError>{body: errorBody(msg)};
-}

@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking**: the management HTTP API moved from `ballerina/workflow.management`
+  to the new `ballerina/workflow.management.rest` module. `workflow.management` is
+  now a pure Ballerina API — importing it never starts a listener. To serve the
+  HTTP API, add `import ballerina/workflow.management.rest as _;` and move the
+  `[ballerina.workflow.management]` configurables (unchanged names) to
+  `[ballerina.workflow.management.rest]`. The endpoint contract is unchanged.
+  The HTTP-only types `CompletionInfo`, `ReviewDecisionInfo`, `HumanTaskPage`, and
+  `ReviewActivityPage` moved with the service; the unused `ManagementServiceConfig`
+  and `CorsConfig` types were removed.
+
 ### Added
 
 - Data-event waits are now visible: a workflow blocked on `wait dataEvents.<name>`

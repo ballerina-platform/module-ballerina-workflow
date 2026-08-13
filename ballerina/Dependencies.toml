@@ -452,7 +452,8 @@ modules = [
 	{org = "ballerina", packageName = "workflow", moduleName = "workflow"},
 	{org = "ballerina", packageName = "workflow", moduleName = "workflow.activity"},
 	{org = "ballerina", packageName = "workflow", moduleName = "workflow.internal"},
-	{org = "ballerina", packageName = "workflow", moduleName = "workflow.management"}
+	{org = "ballerina", packageName = "workflow", moduleName = "workflow.management"},
+	{org = "ballerina", packageName = "workflow", moduleName = "workflow.management.rest"}
 ]
 
 [[package]]

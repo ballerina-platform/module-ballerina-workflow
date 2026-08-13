@@ -243,34 +243,6 @@ public type ReviewActivityInfo record {|
 |};
 
 // ================================================================================
-// COMPLETION AUDIT
-// ================================================================================
-
-# Audit record returned by human task completion operations.
-#
-# + success - Always true on the success path
-# + completedBy - User ID extracted from the `x-user-id` request header
-# + completedAt - ISO-8601 timestamp of when the completion was processed
-public type CompletionInfo record {|
-    boolean success;
-    string completedBy;
-    string completedAt;
-|};
-
-# Audit record returned by review activity decision operations.
-#
-# + success - Always true on the success path
-# + decision - The decision taken: `"proceed"`, `"proceed-with-input"`, or `"reject"`
-# + decidedBy - User ID extracted from the `x-user-id` request header
-# + decidedAt - ISO-8601 timestamp of when the decision was processed
-public type ReviewDecisionInfo record {|
-    boolean success;
-    string decision;
-    string decidedBy;
-    string decidedAt;
-|};
-
-// ================================================================================
 // EXECUTION VISUALIZATION TYPES
 // ================================================================================
 
@@ -373,36 +345,6 @@ public type GraphEdge record {|
 |};
 
 // ================================================================================
-// HTTP SERVICE CONFIGURATION
-// ================================================================================
-
-# Configuration for the management HTTP service.
-#
-# + port - TCP port to listen on
-# + basePath - Base path prefix for all endpoints
-# + cors - Optional CORS configuration
-# + maxPageSize - Maximum allowed page size for list operations
-# + defaultPageSize - Default page size when the caller does not specify one
-public type ManagementServiceConfig record {|
-    int port = 8234;
-    string basePath = "/workflow-api";
-    CorsConfig? cors = ();
-    int maxPageSize = 100;
-    int defaultPageSize = 20;
-|};
-
-# CORS configuration for the management HTTP service.
-#
-# + allowOrigins - Allowed origins
-# + allowMethods - Allowed HTTP methods
-# + allowHeaders - Allowed request headers
-public type CorsConfig record {|
-    string[] allowOrigins = ["*"];
-    string[] allowMethods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"];
-    string[] allowHeaders = ["Content-Type", "x-user-id", "x-user-roles", "Authorization"];
-|};
-
-// ================================================================================
 // WORKFLOW INSTANCE TYPES
 // ================================================================================
 
@@ -446,28 +388,3 @@ public type WorkflowHandle record {|
     string runId;
 |};
 
-// ================================================================================
-// PAGINATED TASK TYPES
-// ================================================================================
-
-# Paginated list of human task summaries.
-#
-# + items - Human task summaries for this page
-# + nextPageToken - Opaque continuation token, or `()` on the last page
-# + hasMore - True when more pages follow
-public type HumanTaskPage record {|
-    HumanTaskSummary[] items;
-    string? nextPageToken;
-    boolean hasMore;
-|};
-
-# Paginated list of review activity summaries.
-#
-# + items - Review activity summaries for this page
-# + nextPageToken - Opaque continuation token, or `()` on the last page
-# + hasMore - True when more pages follow
-public type ReviewActivityPage record {|
-    ReviewActivitySummary[] items;
-    string? nextPageToken;
-    boolean hasMore;
-|};

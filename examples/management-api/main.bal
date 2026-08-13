@@ -64,6 +64,7 @@ import ballerina/http;
 import ballerina/io;
 import ballerina/workflow;
 import ballerina/workflow.management;
+import ballerina/workflow.management.rest as _;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 

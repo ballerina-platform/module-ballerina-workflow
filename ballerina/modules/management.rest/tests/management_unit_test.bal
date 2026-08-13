@@ -15,6 +15,7 @@
 // under the License.
 
 import ballerina/http;
+import ballerina/workflow.management;
 import ballerina/test;
 
 // ── Cursor token encode / decode ──────────────────────────────────────────────
@@ -60,8 +61,8 @@ function testDecodeCursorTokenTaskIdWithTilde() {
 
 // ── paginateHumanTasks ────────────────────────────────────────────────────────
 
-// Helper creates a minimal HumanTaskSummary for test data.
-function mkHumanTask(string taskId, string startTime) returns HumanTaskSummary =>
+// Helper creates a minimal management:HumanTaskSummary for test data.
+function mkHumanTask(string taskId, string startTime) returns management:HumanTaskSummary =>
     {taskId, taskName: "review", parentWorkflowId: "parent", parentWorkflowType: (),
      status: "PENDING", startTime, closeTime: (), userRoles: ["admin"]};
 
@@ -75,7 +76,7 @@ function testPaginateHumanTasksEmpty() {
 
 @test:Config {groups: ["unit"]}
 function testPaginateHumanTasksAllOnOnePage() {
-    HumanTaskSummary[] items = [
+    management:HumanTaskSummary[] items = [
         mkHumanTask("task-b", "2026-06-01T11:00:00Z"),
         mkHumanTask("task-a", "2026-06-01T10:00:00Z")
     ];
@@ -90,7 +91,7 @@ function testPaginateHumanTasksAllOnOnePage() {
 
 @test:Config {groups: ["unit"]}
 function testPaginateHumanTasksFirstPageHasMore() {
-    HumanTaskSummary[] items = [
+    management:HumanTaskSummary[] items = [
         mkHumanTask("task-a", "2026-06-01T10:00:00Z"),
         mkHumanTask("task-b", "2026-06-01T11:00:00Z"),
         mkHumanTask("task-c", "2026-06-01T12:00:00Z")
@@ -105,7 +106,7 @@ function testPaginateHumanTasksFirstPageHasMore() {
 
 @test:Config {groups: ["unit"]}
 function testPaginateHumanTasksSecondPageViaToken() {
-    HumanTaskSummary[] items = [
+    management:HumanTaskSummary[] items = [
         mkHumanTask("task-a", "2026-06-01T10:00:00Z"),
         mkHumanTask("task-b", "2026-06-01T11:00:00Z"),
         mkHumanTask("task-c", "2026-06-01T12:00:00Z")
@@ -120,7 +121,7 @@ function testPaginateHumanTasksSecondPageViaToken() {
 @test:Config {groups: ["unit"]}
 function testPaginateHumanTasksTiebreakByTaskId() {
     // Items with identical startTime are ordered lexicographically by taskId
-    HumanTaskSummary[] items = [
+    management:HumanTaskSummary[] items = [
         mkHumanTask("task-z", "2026-06-01T10:00:00Z"),
         mkHumanTask("task-a", "2026-06-01T10:00:00Z"),
         mkHumanTask("task-m", "2026-06-01T10:00:00Z")
@@ -135,7 +136,7 @@ function testPaginateHumanTasksTiebreakByTaskId() {
 function testPaginateHumanTasksCursorStabilityOnNewItem() {
     // A new (later) task inserted between page 1 and page 2 requests must NOT
     // cause page-1 items to re-appear on page 2.
-    HumanTaskSummary[] originalItems = [
+    management:HumanTaskSummary[] originalItems = [
         mkHumanTask("task-a", "2026-06-01T10:00:00Z"),
         mkHumanTask("task-b", "2026-06-01T11:00:00Z"),
         mkHumanTask("task-c", "2026-06-01T12:00:00Z")
@@ -144,7 +145,7 @@ function testPaginateHumanTasksCursorStabilityOnNewItem() {
     string? cursor = page1.nextPageToken;
 
     // Simulate a later task arriving before the next request
-    HumanTaskSummary[] updatedItems = [
+    management:HumanTaskSummary[] updatedItems = [
         mkHumanTask("task-a", "2026-06-01T10:00:00Z"),
         mkHumanTask("task-b", "2026-06-01T11:00:00Z"),
         mkHumanTask("task-c", "2026-06-01T12:00:00Z"),
@@ -152,7 +153,7 @@ function testPaginateHumanTasksCursorStabilityOnNewItem() {
     ];
     HumanTaskPage page2 = paginateHumanTasks(updatedItems, 2, cursor);
     // Page 2 must start after task-b (the last item on page 1)
-    HumanTaskSummary[] page1Dupes = page2.items.filter(t => t.taskId == "task-a" || t.taskId == "task-b");
+    management:HumanTaskSummary[] page1Dupes = page2.items.filter(t => t.taskId == "task-a" || t.taskId == "task-b");
     test:assertEquals(page1Dupes.length(), 0, "Page-1 items must not re-appear on page 2");
     test:assertEquals(page2.items[0].taskId, "task-c");
 }
@@ -161,7 +162,7 @@ function testPaginateHumanTasksCursorStabilityOnNewItem() {
 function testPaginateHumanTasksOldOffsetTokenRestartsFromBeginning() {
     // An old numeric offset token (e.g. "20") cannot be decoded as a cursor.
     // Pagination must restart from the beginning rather than crashing.
-    HumanTaskSummary[] items = [
+    management:HumanTaskSummary[] items = [
         mkHumanTask("task-a", "2026-06-01T10:00:00Z"),
         mkHumanTask("task-b", "2026-06-01T11:00:00Z")
     ];
@@ -172,7 +173,7 @@ function testPaginateHumanTasksOldOffsetTokenRestartsFromBeginning() {
 
 // ── paginateReviewActivities ────────────────────────────────────────────────────────
 
-function mkReviewActivity(string taskId, string startTime) returns ReviewActivitySummary =>
+function mkReviewActivity(string taskId, string startTime) returns management:ReviewActivitySummary =>
     {taskId, taskName: "retryOrder", activityName: "processOrder",
      parentWorkflowId: "parent", trigger: "ON_FAILURE",
      title: "Review failed activity: processOrder", status: "PENDING", startTime, closeTime: (),
@@ -188,7 +189,7 @@ function testPaginateReviewActivitiesEmpty() {
 
 @test:Config {groups: ["unit"]}
 function testPaginateReviewActivitiesFirstAndSecondPage() {
-    ReviewActivitySummary[] items = [
+    management:ReviewActivitySummary[] items = [
         mkReviewActivity("retry-b", "2026-06-01T11:00:00Z"),
         mkReviewActivity("retry-c", "2026-06-01T12:00:00Z"),
         mkReviewActivity("retry-a", "2026-06-01T10:00:00Z")
@@ -207,7 +208,7 @@ function testPaginateReviewActivitiesFirstAndSecondPage() {
 
 @test:Config {groups: ["unit"]}
 function testPaginateReviewActivitiesTiebreakByTaskId() {
-    ReviewActivitySummary[] items = [
+    management:ReviewActivitySummary[] items = [
         mkReviewActivity("retry-z", "2026-06-02T10:00:00Z"),
         mkReviewActivity("retry-a", "2026-06-02T10:00:00Z")
     ];

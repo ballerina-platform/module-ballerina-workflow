@@ -47,6 +47,7 @@ import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BObject;
 import io.ballerina.runtime.api.values.BString;
+import io.ballerina.runtime.api.values.BTypedesc;
 import io.ballerina.runtime.internal.values.FPValue;
 import io.temporal.activity.DynamicActivity;
 import io.temporal.api.common.v1.WorkflowExecution;
@@ -859,6 +860,29 @@ public final class WorkflowWorkerNative {
     public static Object registerHumanTask(BString taskName) {
         HUMANTASK_REGISTRY.add(taskName.getValue());
         LOGGER.debug("[WorkflowWorkerNative] Registered human task type: {}", taskName.getValue());
+        return true;
+    }
+
+    /**
+     * Registers {@code taskName} as a human task workflow type, optionally recording the expected
+     * completion result type. This is the binding of {@code wfInternal:registerHumanTask}; the
+     * compiler plugin passes the result type when it can determine it statically from the
+     * {@code awaitHumanTask} call site, which makes the completion-form schema available from
+     * module init — before the task has ever executed — for metadata publishing.
+     *
+     * @param taskName   the qualified task name ({@code <workflow>.<task>}, unprefixed)
+     * @param resultType the expected result type as a typedesc, or nil when unknown
+     * @return {@code true} on success
+     */
+    public static Object registerHumanTask(BString taskName, Object resultType) {
+        registerHumanTask(taskName);
+        if (resultType instanceof BTypedesc typedesc) {
+            // Result types are keyed by the Temporal workflow type (humantask-<wf>.<task>) so the
+            // lookups in awaitHumanTask/completeHumanTask, which see the prefixed child type, match.
+            String name = taskName.getValue();
+            String typeKey = name.startsWith(HUMANTASK_TYPE_PREFIX) ? name : HUMANTASK_TYPE_PREFIX + name;
+            registerHumanTaskResultType(typeKey, typedesc.getDescribingType());
+        }
         return true;
     }
 

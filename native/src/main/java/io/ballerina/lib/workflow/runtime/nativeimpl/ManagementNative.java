@@ -250,9 +250,10 @@ public final class ManagementNative {
 
     /**
      * Builds a JSON schema for workflow input based on the registered workflow function signature. Skips Context and
-     * events parameters and returns the schema for the actual data input parameters.
+     * events parameters and returns the schema for the actual data input parameters. Package-visible so
+     * {@link WorkflowMetadataNative} can reuse the derivation for metadata publishing.
      */
-    private static String deriveWorkflowInputSchema(BFunctionPointer processFunction) {
+    static String deriveWorkflowInputSchema(BFunctionPointer processFunction) {
         if (processFunction == null) {
             return TypesUtil.toJsonSchemaForParameters(new Parameter[0], 0, 0);
         }

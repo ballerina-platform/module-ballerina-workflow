@@ -46,7 +46,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
+import java.util.TreeMap;
 
 /**
  * Source modifier that transforms workflow process functions.
@@ -254,19 +254,32 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         // Collect qualified human task names ("workflowFunctionName.taskName") across every
         // workflow in this module. Qualification ensures uniqueness across workflows that
         // reuse the same short task name and matches the runtime qualification in awaitHumanTask.
-        // A sorted set is used for deterministic code generation across compiler runs.
-        Set<String> qualifiedHumanTaskNames = new TreeSet<>();
+        // A sorted map is used for deterministic code generation across compiler runs. The value
+        // is the result type source captured at the awaitHumanTask call site ("" when unknown or
+        // conflicting); when present it is re-emitted as a typedesc argument so the completion-form
+        // schema is registered at module init instead of lazily at first execution.
+        Map<String, String> qualifiedHumanTasks = new TreeMap<>();
         for (ProcessFunctionInfo processInfo : allProcessInfos) {
             for (String taskName : processInfo.humanTaskNames()) {
-                qualifiedHumanTaskNames.add(processInfo.functionName() + "." + taskName);
+                String qualifiedName = processInfo.functionName() + "." + taskName;
+                String typeSource = processInfo.humanTaskResultTypes().getOrDefault(taskName, "");
+                String existing = qualifiedHumanTasks.get(qualifiedName);
+                if (existing == null) {
+                    qualifiedHumanTasks.put(qualifiedName, typeSource);
+                } else if (!existing.equals(typeSource)) {
+                    qualifiedHumanTasks.put(qualifiedName, "");
+                }
             }
         }
-        for (String qualifiedName : qualifiedHumanTaskNames) {
+        for (Map.Entry<String, String> humanTask : qualifiedHumanTasks.entrySet()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
                     .append(":registerHumanTask(\"")
-                    .append(escapeBallerinaStringLiteral(qualifiedName))
-                    .append("\");")
-                    .append(System.lineSeparator());
+                    .append(escapeBallerinaStringLiteral(humanTask.getKey()))
+                    .append("\"");
+            if (!humanTask.getValue().isEmpty()) {
+                body.append(", ").append(humanTask.getValue());
+            }
+            body.append(");").append(System.lineSeparator());
         }
 
         // Register object-model durable agent declarations: identity + model first, then the
@@ -424,6 +437,9 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             for (Map.Entry<String, String> e : info.activityMap().entrySet()) {
                 addPrefixIfQualified(prefixes, e.getKey());
                 addPrefixIfQualified(prefixes, e.getValue());
+            }
+            for (String resultTypeSource : info.humanTaskResultTypes().values()) {
+                addPrefixIfQualified(prefixes, resultTypeSource);
             }
         }
         for (DurableAgentDeclInfo decl : agentDecls) {

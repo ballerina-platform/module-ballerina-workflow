@@ -78,8 +78,9 @@ public isolated function getAgentResponse(string agentId) returns string?|error 
 } external;
 
 # Lists all workflow types registered with this worker, for use in the workflow launcher UI.
-# Returns one entry per registered workflow function. The `inputSchema` field is `()` until
-# the compiler plugin generates JSON Schema at build time.
+# Returns one entry per registered workflow function. The `inputSchema` field is derived at
+# runtime from the registered workflow function's signature, or `()` when the workflow takes
+# no data input.
 #
 # ```ballerina
 # management:WorkflowDefinition[] defs = check management:listWorkflowDefinitions();

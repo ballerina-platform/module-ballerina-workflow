@@ -21,8 +21,9 @@
 # Describes a registered workflow type for use by the workflow launcher UI.
 #
 # + workflowType - Registered workflow function name (Temporal workflow type)
-# + inputSchema - JSON Schema of the workflow's input type for form rendering.
-#                 `()` until the compiler plugin generates this at build time.
+# + inputSchema - JSON Schema of the workflow's input type for form rendering, derived
+#                 at runtime from the registered workflow function's signature. `()` when
+#                 the workflow takes no data input.
 # + isActive - Whether this workflow type has an active registered worker
 # + workerCount - Number of workers currently registered for this workflow type
 public type WorkflowDefinition record {|
@@ -120,7 +121,8 @@ public type HumanTaskSummary record {|
 # + userRoles - Roles permitted to complete this task
 # + payload - Read-only context map rendered alongside the form
 # + createdAt - ISO-8601 timestamp stored in memo at task start
-# + formSchema - JSON Schema for the completion form (populated by compiler plugin; `()` until then)
+# + formSchema - JSON Schema for the completion form, derived from the task's result type
+#                and stored in the task's memo at creation time; `()` when unavailable
 # + completedBy - User ID of the person who completed the task, or `()` if not yet completed
 # + completedAt - ISO-8601 timestamp when the task was completed, or `()` if pending
 # + result - The value submitted when completing the task, or `()` if not yet completed

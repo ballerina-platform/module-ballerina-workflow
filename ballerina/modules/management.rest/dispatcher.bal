@@ -275,12 +275,16 @@ isolated function missingParam(string name) returns ManagementCommandResult {
     return {httpStatus: 400, body: errorBody(name + " is required")};
 }
 
+# The workflow metadata document type, re-exported from `workflow.management` so
+# integrations wiring this module into a control-plane bridge need only one import.
+public type WorkflowMetadata management:WorkflowMetadata;
+
 # Returns the workflow metadata document (see `management:getWorkflowMetadata`).
 # Re-exported here so integrations that wire this module into a control-plane bridge
 # can register the metadata provider and `executeManagementCommand` from one module.
 #
 # + return - The metadata document, or an error
-public isolated function getWorkflowMetadata() returns management:WorkflowMetadata|error {
+public isolated function getWorkflowMetadata() returns WorkflowMetadata|error {
     return management:getWorkflowMetadata();
 }
 

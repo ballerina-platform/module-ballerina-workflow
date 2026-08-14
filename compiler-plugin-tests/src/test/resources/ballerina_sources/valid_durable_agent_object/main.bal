@@ -38,9 +38,15 @@ isolated function priceLookup(string item) returns decimal|error {
     return 10.5d;
 }
 
+type OrderOutcome record {|
+    string summary;
+    int score;
+|};
+
 final workflow:DurableAgent orderAgent = check new ({
     systemPrompt: {role: "Order assistant", instructions: "Help the user place and track orders."},
     model: chatModel,
+    resultType: OrderOutcome,
     activities: [
         checkInventory,
         {activity: reserveStock, name: "reserve", requiresApproval: true}
@@ -51,7 +57,7 @@ final workflow:DurableAgent orderAgent = check new ({
         {name: "escalate", request: EscalationReq}
     ],
     humanTasks: [
-        {name: "approval", roles: "manager", title: "Approve the order"}
+        {name: "approval", roles: "manager", title: "Approve the order", timeout: {minutes: 30}}
     ],
     maxIter: 8
 });

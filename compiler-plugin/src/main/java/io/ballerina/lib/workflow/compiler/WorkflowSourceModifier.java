@@ -327,6 +327,8 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                 .append(", ").append(decl.modelSource())
                 .append(", ").append(decl.systemPromptSource())
                 .append(", ").append(decl.maxIterSource() != null ? decl.maxIterSource() : "16")
+                .append(", ").append(decl.inputTypeSource() != null ? decl.inputTypeSource() : "string")
+                .append(", ").append(decl.resultTypeSource() != null ? decl.resultTypeSource() : "()")
                 .append(");").append(System.lineSeparator());
         for (DurableAgentDeclInfo.ActivityDecl activity : decl.activities()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
@@ -334,12 +336,20 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                     .append(", \"").append(escapeBallerinaStringLiteral(activity.toolName()))
                     .append("\", ").append(activity.functionRefSource())
                     .append(", ").append(activity.metaSource() != null ? activity.metaSource() : "()")
+                    .append(", ").append(activity.bindingsSource() != null ? activity.bindingsSource() : "()")
                     .append(");").append(System.lineSeparator());
         }
-        for (String toolRef : decl.aiToolRefs()) {
+        for (DurableAgentDeclInfo.ToolRef toolRef : decl.aiToolRefs()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
                     .append(":registerDurableAgentTool(").append(agentNameLiteral)
-                    .append(", ").append(toolRef).append(");").append(System.lineSeparator());
+                    .append(", ").append(toolRef.refSource());
+            if (toolRef.approvalSource() != null) {
+                body.append(", requiresApproval = ").append(toolRef.approvalSource());
+            }
+            if (toolRef.rolesSource() != null) {
+                body.append(", userRoles = ").append(toolRef.rolesSource());
+            }
+            body.append(");").append(System.lineSeparator());
         }
         for (DurableAgentDeclInfo.EventDecl event : decl.events()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
@@ -369,19 +379,11 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         // Register the shared object-model runner as this agent's workflow (the agent's own
         // workflow type + its activity map incl. the built-in agent activities), and bind the
         // agent's identity to the object so its driver methods (run/getResult/...) resolve it.
-        String prefix = decl.workflowPrefix();
-        if (prefix != null) {
-            body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerDurableAgentRunner(").append(agentNameLiteral)
-                    .append(", ").append(prefix).append(":runDurableAgentObject, {")
-                    .append("\"").append(WorkflowConstants.LLM_CHAT_ACTIVITY).append("\": ")
-                    .append(prefix).append(":").append(WorkflowConstants.LLM_CHAT_ACTIVITY)
-                    .append(", \"").append(WorkflowConstants.GENERATE_ACTIVITY).append("\": ")
-                    .append(prefix).append(":").append(WorkflowConstants.GENERATE_ACTIVITY)
-                    .append(", \"").append(WorkflowConstants.EXECUTE_AGENT_TOOL_ACTIVITY).append("\": ")
-                    .append(prefix).append(":").append(WorkflowConstants.EXECUTE_AGENT_TOOL_ACTIVITY)
-                    .append("});").append(System.lineSeparator());
-        }
+        // The runner function and the built-in agent activities are captured natively at
+        // workflow-module init, so the generated code references only the agent name.
+        body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
+                .append(":registerDurableAgentRunner(").append(agentNameLiteral)
+                .append(");").append(System.lineSeparator());
         body.append("    ").append(decl.agentName()).append(".bindAgentName(")
                 .append(agentNameLiteral).append(");").append(System.lineSeparator());
     }
@@ -444,11 +446,20 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         }
         for (DurableAgentDeclInfo decl : agentDecls) {
             addPrefixIfQualified(prefixes, decl.modelSource());
+            // Collected from the parsed type nodes at analysis time — only genuine
+            // module-qualified references, never mapping keys or record fields.
+            prefixes.addAll(decl.typeRefPrefixes());
             for (DurableAgentDeclInfo.ActivityDecl activity : decl.activities()) {
                 addPrefixIfQualified(prefixes, activity.functionRefSource());
+                // The prefixes inside a bindings mapping are collected from its parsed nodes at
+                // analysis time and arrive in typeRefPrefixes: reading them off the raw source
+                // would take the mapping's first colon — the one after a key — for a qualifier,
+                // and miss the qualified values it is supposed to find.
             }
-            for (String toolRef : decl.aiToolRefs()) {
-                addPrefixIfQualified(prefixes, toolRef);
+            for (DurableAgentDeclInfo.ToolRef toolRef : decl.aiToolRefs()) {
+                addPrefixIfQualified(prefixes, toolRef.refSource());
+                addPrefixIfQualified(prefixes, toolRef.approvalSource());
+                addPrefixIfQualified(prefixes, toolRef.rolesSource());
             }
             for (DurableAgentDeclInfo.EventDecl event : decl.events()) {
                 addPrefixIfQualified(prefixes, event.requestTypeSource());

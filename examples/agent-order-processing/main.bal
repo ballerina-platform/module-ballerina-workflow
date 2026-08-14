@@ -53,21 +53,21 @@ final workflow:DurableAgent orderAgent = check new ({
 public function main() returns error? {
     // Start the agent with no initial query: it suspends durably until the first
     // chat message arrives. Every turn you want a reply from is driven via
-    // sendEvent, whose token correlates that turn's answer.
+    // sendData, whose token correlates that turn's answer.
     string agentId = check orderAgent.run("");
     io:println("Agent started with ID: " + agentId);
 
-    string turn1 = check orderAgent.sendEvent(agentId, "chat", "Is the laptop available?");
-    string reply1 = check orderAgent.waitForEventResult(agentId, turn1);
+    string turn1 = check orderAgent.sendData(agentId, "chat", "Is the laptop available?");
+    string reply1 = check orderAgent.waitForDataResult(agentId, turn1);
     io:println("Turn 1: " + reply1);
 
-    string turn2 = check orderAgent.sendEvent(agentId, "chat", "Please expedite the shipping");
-    string reply2 = check orderAgent.waitForEventResult(agentId, turn2);
+    string turn2 = check orderAgent.sendData(agentId, "chat", "Please expedite the shipping");
+    string reply2 = check orderAgent.waitForDataResult(agentId, turn2);
     io:println("Turn 2: " + reply2);
 
     // The model ends the conversation when the user says goodbye.
-    string turn3 = check orderAgent.sendEvent(agentId, "chat", "That's all, goodbye!");
-    string finalReply = check orderAgent.waitForEventResult(agentId, turn3);
+    string turn3 = check orderAgent.sendData(agentId, "chat", "That's all, goodbye!");
+    string finalReply = check orderAgent.waitForDataResult(agentId, turn3);
     io:println("Final: " + finalReply);
 
     string _ = check orderAgent.waitForResult(agentId);

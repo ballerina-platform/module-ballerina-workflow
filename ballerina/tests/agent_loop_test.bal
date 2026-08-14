@@ -15,16 +15,20 @@
 // under the License.
 
 // ============================================================================
-// Durable agent (imperative AgentContext) unit tests (IN_MEMORY mode)
+// Durable agent ReAct loop unit tests (IN_MEMORY mode)
 // ============================================================================
 //
 // The compiler plugin doesn't run on the workflow package itself, so these tests
-// register agents with `wfInternal:registerWorkflow` using the tools + built-in
-// activities map (mirroring the init code the plugin generates for user code).
-// The agent bodies use the real imperative API (ctx.registerActivity +
-// ctx.buildAndRun). The LLM is a scripted mock ai:ModelProvider; the full
-// durable loop runs against the embedded Temporal test server. Agents return no
-// value, so the final answer is observed via the recorded final response.
+// register agents with `wfInternal:registerAgentWorkflow` using the tools +
+// built-in activities map (mirroring the init code the plugin generates for
+// `workflow:DurableAgent` declarations). The agent bodies drive the module's
+// internal capability-registration functions (registerActivity + buildAndRun)
+// on the injected native context handle — the same calls the object-model
+// runner makes from an agent declaration — which keeps every loop knob (event
+// timeouts, wait caps, approval policy) testable. The LLM is a scripted mock
+// ai:ModelProvider; the full durable loop runs against the embedded Temporal
+// test server. Agents return no value, so the final answer is observed via the
+// recorded final response.
 // ============================================================================
 
 import ballerina/ai;
@@ -73,7 +77,7 @@ isolated client class MockModelProvider {
 
 final MockModelProvider mockAgentModel = new;
 
-// Turn driver for the object-model event API: sendEvent/waitForEventResult key on the
+// Turn driver for the object-model event API: sendData/waitForDataResult key on the
 // instance id, so one driver object exercises turns against any agent instance. Replaces
 // the removed workflow:updateAgent in these loop tests.
 final DurableAgent agentTurnDriver = check new ({
@@ -83,8 +87,8 @@ final DurableAgent agentTurnDriver = check new ({
 
 isolated function updateAgentTurn(string agentId, string eventName, anydata data)
         returns string|error {
-    string token = check agentTurnDriver.sendEvent(agentId, eventName, data);
-    return agentTurnDriver.waitForEventResult(agentId, token);
+    string token = check agentTurnDriver.sendData(agentId, eventName, data);
+    return agentTurnDriver.waitForDataResult(agentId, token);
 }
 
 isolated client class LoopingMockModelProvider {
@@ -154,32 +158,32 @@ type AgentOrderInput record {|
     string request;
 |};
 
-function stockAgent(AgentContext ctx, AgentOrderInput input) returns error? {
-    check ctx.registerActivity(checkStock);
-    check ctx.buildAndRun(input.request,
+function stockAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerActivity(ctx, checkStock);
+    check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "You are an inventory assistant."},
             model = mockAgentModel);
 }
 
-function chatStockAgent(AgentContext ctx, AgentOrderInput input) returns error? {
-    check ctx.registerActivity(checkStock);
-    check ctx.registerUpdateEvents("chat", string);
+function chatStockAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerActivity(ctx, checkStock);
+    check registerAgentEvent(ctx, "chat", string);
     // No initial prompt: the agent waits for one chat event.
-    check ctx.buildAndRun(systemPrompt = {role: "", instructions: "You are an inventory assistant."},
+    check buildAndRun(ctx, systemPrompt = {role: "", instructions: "You are an inventory assistant."},
             model = mockAgentModel);
 }
 
-function loopingAgent(AgentContext ctx, AgentOrderInput input) returns error? {
-    check ctx.registerActivity(checkStock);
-    check ctx.buildAndRun(input.request,
+function loopingAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerActivity(ctx, checkStock);
+    check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "Looping agent."},
             model = loopingAgentModel,
             maxIter = 2);
 }
 
-function unknownToolAgent(AgentContext ctx, AgentOrderInput input) returns error? {
-    check ctx.registerActivity(checkStock);
-    check ctx.buildAndRun(input.request,
+function unknownToolAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerActivity(ctx, checkStock);
+    check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "Unknown tool agent."},
             model = unknownToolAgentModel);
 }
@@ -217,9 +221,9 @@ isolated client class AiToolMockModelProvider {
 
 final AiToolMockModelProvider aiToolAgentModel = new;
 
-function priceAgent(AgentContext ctx, AgentOrderInput input) returns error? {
-    check ctx.registerAgentTool(lookupPrice);
-    check ctx.buildAndRun(input.request,
+function priceAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerAgentTool(ctx, lookupPrice);
+    check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "You are a pricing assistant."},
             model = aiToolAgentModel);
 }
@@ -260,11 +264,11 @@ isolated client class HumanTaskMockModelProvider {
 
 final HumanTaskMockModelProvider humanTaskAgentModel = new;
 
-function approvalAgent(AgentContext ctx, AgentOrderInput input) returns error? {
-    check ctx.registerActivity(checkStock);
-    check ctx.registerHumanTask("approveOrder", "APPROVER", ApprovalResult,
+function approvalAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerActivity(ctx, checkStock);
+    check registerHumanTask(ctx, "approveOrder", "APPROVER", ApprovalResult,
             title = "Approve order", description = "Ask a person to approve the order.");
-    check ctx.buildAndRun(input.request,
+    check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "You are an approval assistant."},
             model = humanTaskAgentModel);
 }
@@ -297,10 +301,10 @@ isolated client class EventToolMockModelProvider {
 
 final EventToolMockModelProvider eventToolAgentModel = new;
 
-function eventWaitingAgent(AgentContext ctx, AgentOrderInput input) returns error? {
-    check ctx.registerActivity(checkStock);
-    check ctx.registerUpdateEvents("approval", string);
-    check ctx.buildAndRun(input.request,
+function eventWaitingAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerActivity(ctx, checkStock);
+    check registerAgentEvent(ctx, "approval", string);
+    check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "You wait for events."},
             model = eventToolAgentModel);
 }
@@ -357,25 +361,25 @@ isolated client class ConversationMockModelProvider {
 
 final ConversationMockModelProvider conversationAgentModel = new;
 
-function conversationAgent(AgentContext ctx, AgentOrderInput input) returns error? {
-    check ctx.registerUpdateEvents("chat", string);
-    check ctx.buildAndRun(input.request,
+function conversationAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerAgentEvent(ctx, "chat", string);
+    check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "Chat with the user until they say bye."},
             model = conversationAgentModel, interaction = MULTI_EVENT, eventTimeout = {seconds: 60});
 }
 
 // MULTI_EVENT without the mandatory eventTimeout — must fail at registration.
-function unsafeConversationAgent(AgentContext ctx, AgentOrderInput input) returns error? {
-    check ctx.registerUpdateEvents("chat", string);
-    check ctx.buildAndRun(input.request,
+function unsafeConversationAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerAgentEvent(ctx, "chat", string);
+    check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "unsafe"},
             model = conversationAgentModel, interaction = MULTI_EVENT);
 }
 
 // Model that always waits — exercises the maxEventWaits safety cap.
-function cappedConversationAgent(AgentContext ctx, AgentOrderInput input) returns error? {
-    check ctx.registerUpdateEvents("chat", string);
-    check ctx.buildAndRun(input.request,
+function cappedConversationAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerAgentEvent(ctx, "chat", string);
+    check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "Chat forever."},
             model = conversationAgentModel, interaction = MULTI_EVENT, eventTimeout = {seconds: 60}, maxEventWaits = 2);
 }
@@ -409,9 +413,9 @@ isolated client class TimeoutMockModelProvider {
 
 final TimeoutMockModelProvider timeoutAgentModel = new;
 
-function timeoutAgent(AgentContext ctx, AgentOrderInput input) returns error? {
-    check ctx.registerUpdateEvents("approval", string);
-    check ctx.buildAndRun(input.request,
+function timeoutAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerAgentEvent(ctx, "approval", string);
+    check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "Wait for approval."},
             model = timeoutAgentModel, interaction = SINGLE_EVENT, eventTimeout = {seconds: 2});
 }
@@ -449,9 +453,9 @@ isolated client class ContextToolMockModelProvider {
 
 final ContextToolMockModelProvider contextToolAgentModel = new;
 
-function contextToolAgent(AgentContext ctx, AgentOrderInput input) returns error? {
-    check ctx.registerAgentTool(contextualLookup);
-    check ctx.buildAndRun(input.request,
+function contextToolAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerAgentTool(ctx, contextualLookup);
+    check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "Use your tools."},
             model = contextToolAgentModel);
 }
@@ -466,9 +470,9 @@ isolated class TestToolKit {
     }
 }
 
-function toolkitAgent(AgentContext ctx, AgentOrderInput input) returns error? {
-    check ctx.registerAgentTool(new TestToolKit());
-    check ctx.buildAndRun(input.request,
+function toolkitAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerAgentTool(ctx, new TestToolKit());
+    check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "You are a pricing assistant."},
             model = aiToolAgentModel);
 }
@@ -501,9 +505,9 @@ isolated client class SlowApprovalMockModelProvider {
 
 final SlowApprovalMockModelProvider slowApprovalAgentModel = new;
 
-function humanTaskTimeoutAgent(AgentContext ctx, AgentOrderInput input) returns error? {
-    check ctx.registerHumanTask("slowApproval", "APPROVER", ApprovalResult, timeout = {seconds: 2});
-    check ctx.buildAndRun(input.request,
+function humanTaskTimeoutAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerHumanTask(ctx, "slowApproval", "APPROVER", ApprovalResult, timeout = {seconds: 2});
+    check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "Get approval."},
             model = slowApprovalAgentModel);
 }
@@ -548,16 +552,16 @@ isolated client class AutoChatMockModelProvider {
 
 final AutoChatMockModelProvider autoChatModel = new;
 
-function autoConversationAgent(AgentContext ctx, AgentOrderInput input) returns error? {
-    check ctx.registerUpdateEvents("chat", string);
-    check ctx.buildAndRun(systemPrompt = {role: "", instructions: "Answer briefly."}, model = autoChatModel, interaction = MULTI_EVENT, eventTimeout = {seconds: 60});
+function autoConversationAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerAgentEvent(ctx, "chat", string);
+    check buildAndRun(ctx, systemPrompt = {role: "", instructions: "Answer briefly."}, model = autoChatModel, interaction = MULTI_EVENT, eventTimeout = {seconds: 60});
 }
 
 // Same behaviour with a short timeout: with no follow-up message the
 // conversation must end gracefully on its own.
-function shortTimeoutConversationAgent(AgentContext ctx, AgentOrderInput input) returns error? {
-    check ctx.registerUpdateEvents("chat", string);
-    check ctx.buildAndRun(systemPrompt = {role: "", instructions: "Answer briefly."}, model = autoChatModel, interaction = MULTI_EVENT, eventTimeout = {seconds: 2});
+function shortTimeoutConversationAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerAgentEvent(ctx, "chat", string);
+    check buildAndRun(ctx, systemPrompt = {role: "", instructions: "Answer briefly."}, model = autoChatModel, interaction = MULTI_EVENT, eventTimeout = {seconds: 2});
 }
 
 // ── Update drain on completion ───────────────────────────────────────────────
@@ -584,9 +588,9 @@ isolated client class EndAfterFirstChatMockModelProvider {
 
 final EndAfterFirstChatMockModelProvider endAfterFirstChatModel = new;
 
-function endingAgent(AgentContext ctx, AgentOrderInput input) returns error? {
-    check ctx.registerUpdateEvents("chat", string);
-    check ctx.buildAndRun(systemPrompt = {role: "", instructions: "End after the first reply."},
+function endingAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerAgentEvent(ctx, "chat", string);
+    check buildAndRun(ctx, systemPrompt = {role: "", instructions: "End after the first reply."},
             model = endAfterFirstChatModel, interaction = MULTI_EVENT, eventTimeout = {seconds: 60});
 }
 
@@ -603,37 +607,38 @@ function parkedPlainWorkflow(Context ctx, AgentOrderInput input,
 
 @test:BeforeSuite
 function setupAgentTests() returns error? {
-    // Mirrors the init code the compiler plugin generates: tools discovered from
-    // ctx.registerActivity plus the built-in llmChat/generate/executeAgentTool.
+    // Mirrors the init code the compiler plugin generates for agent declarations:
+    // the agent's activities plus the built-in llmChat/generate/executeAgentTool.
+    // AI tool pointers need no init-time registration here — the single-JVM test
+    // worker resolves them from the runtime registration the agent body performs.
     map<function> agentActivities = {
         "checkStock": checkStock,
         "llmChat": llmChat,
         "generate": generate,
         "executeAgentTool": executeAgentTool
     };
-    _ = check wfInternal:registerWorkflow(stockAgent, "stock-agent", agentActivities);
-    _ = check wfInternal:registerWorkflow(chatStockAgent, "chat-stock-agent", agentActivities);
-    _ = check wfInternal:registerWorkflow(loopingAgent, "looping-agent", agentActivities);
-    _ = check wfInternal:registerWorkflow(unknownToolAgent, "unknown-tool-agent", agentActivities);
-    _ = check wfInternal:registerWorkflow(priceAgent, "price-agent", agentActivities);
-    _ = check wfInternal:registerAgentTool("price-agent", lookupPrice);
-    _ = check wfInternal:registerWorkflow(approvalAgent, "approval-agent", agentActivities);
-    _ = check wfInternal:registerWorkflow(eventWaitingAgent, "event-waiting-agent", agentActivities);
-    _ = check wfInternal:registerWorkflow(conversationAgent, "conversation-agent", agentActivities);
-    _ = check wfInternal:registerWorkflow(unsafeConversationAgent, "unsafe-conversation-agent",
+    _ = check wfInternal:registerAgentWorkflow(stockAgent, "stockAgent", agentActivities);
+    _ = check wfInternal:registerAgentWorkflow(chatStockAgent, "chatStockAgent", agentActivities);
+    _ = check wfInternal:registerAgentWorkflow(loopingAgent, "loopingAgent", agentActivities);
+    _ = check wfInternal:registerAgentWorkflow(unknownToolAgent, "unknownToolAgent", agentActivities);
+    _ = check wfInternal:registerAgentWorkflow(priceAgent, "priceAgent", agentActivities);
+    _ = check wfInternal:registerAgentWorkflow(approvalAgent, "approvalAgent", agentActivities);
+    _ = check wfInternal:registerAgentWorkflow(eventWaitingAgent, "eventWaitingAgent", agentActivities);
+    _ = check wfInternal:registerAgentWorkflow(conversationAgent, "conversationAgent", agentActivities);
+    _ = check wfInternal:registerAgentWorkflow(unsafeConversationAgent, "unsafeConversationAgent",
             agentActivities);
-    _ = check wfInternal:registerWorkflow(cappedConversationAgent, "capped-conversation-agent",
+    _ = check wfInternal:registerAgentWorkflow(cappedConversationAgent, "cappedConversationAgent",
             agentActivities);
-    _ = check wfInternal:registerWorkflow(timeoutAgent, "timeout-agent", agentActivities);
-    _ = check wfInternal:registerWorkflow(contextToolAgent, "context-tool-agent", agentActivities);
-    _ = check wfInternal:registerWorkflow(toolkitAgent, "toolkit-agent", agentActivities);
-    _ = check wfInternal:registerWorkflow(humanTaskTimeoutAgent, "humantask-timeout-agent",
+    _ = check wfInternal:registerAgentWorkflow(timeoutAgent, "timeoutAgent", agentActivities);
+    _ = check wfInternal:registerAgentWorkflow(contextToolAgent, "contextToolAgent", agentActivities);
+    _ = check wfInternal:registerAgentWorkflow(toolkitAgent, "toolkitAgent", agentActivities);
+    _ = check wfInternal:registerAgentWorkflow(humanTaskTimeoutAgent, "humanTaskTimeoutAgent",
             agentActivities);
-    _ = check wfInternal:registerWorkflow(parkedPlainWorkflow, "parked-plain-workflow");
-    _ = check wfInternal:registerWorkflow(endingAgent, "ending-agent", agentActivities);
-    _ = check wfInternal:registerWorkflow(autoConversationAgent, "auto-conversation-agent",
+    _ = check wfInternal:registerWorkflow(parkedPlainWorkflow, "parkedPlainWorkflow");
+    _ = check wfInternal:registerAgentWorkflow(endingAgent, "endingAgent", agentActivities);
+    _ = check wfInternal:registerAgentWorkflow(autoConversationAgent, "autoConversationAgent",
             agentActivities);
-    _ = check wfInternal:registerWorkflow(shortTimeoutConversationAgent, "short-timeout-agent",
+    _ = check wfInternal:registerAgentWorkflow(shortTimeoutConversationAgent, "shortTimeoutConversationAgent",
             agentActivities);
 }
 
@@ -654,10 +659,7 @@ function waitForAgentResponse(string workflowId, string expected) returns boolea
 @test:Config {groups: ["unit"]}
 function testAgentToolRoundTrip() returns error? {
     map<anydata> input = {id: "agent-roundtrip-001", request: "Is the laptop in stock?"};
-    string|error runResult = run(stockAgent, input);
-    if runResult is error {
-        return; // No workflow server available — skip.
-    }
+    string runResult = check run(stockAgent, input);
     _ = check getWorkflowResult(runResult, 30);
     test:assertEquals(getAgentFinalResponse(runResult), "Stock check result: laptop is in stock",
             "Agent should complete a full LLM -> tool -> LLM round trip");
@@ -666,10 +668,7 @@ function testAgentToolRoundTrip() returns error? {
 @test:Config {groups: ["unit"]}
 function testAgentToolErrorFedBackToModel() returns error? {
     map<anydata> input = {id: "agent-tool-error-001", request: "This one should fail"};
-    string|error runResult = run(stockAgent, input);
-    if runResult is error {
-        return;
-    }
+    string runResult = check run(stockAgent, input);
     _ = check getWorkflowResult(runResult, 30);
     string? response = getAgentFinalResponse(runResult);
     test:assertTrue(response is string && response.includes("Inventory service unavailable"),
@@ -679,10 +678,7 @@ function testAgentToolErrorFedBackToModel() returns error? {
 @test:Config {groups: ["unit"]}
 function testAgentChatEventSeedsConversation() returns error? {
     map<anydata> input = {id: "agent-chat-001", request: "unused"};
-    string|error runResult = run(chatStockAgent, input);
-    if runResult is error {
-        return;
-    }
+    string runResult = check run(chatStockAgent, input);
     // The agent has no initial prompt, so it durably waits for the chat event.
     check sendData(chatStockAgent, runResult, "chat", "Check availability of laptop");
     _ = check getWorkflowResult(runResult, 30);
@@ -693,10 +689,7 @@ function testAgentChatEventSeedsConversation() returns error? {
 @test:Config {groups: ["unit"]}
 function testAgentMaxIterationsExceeded() returns error? {
     map<anydata> input = {id: "agent-maxiter-001", request: "loop forever"};
-    string|error runResult = run(loopingAgent, input);
-    if runResult is error {
-        return;
-    }
+    string runResult = check run(loopingAgent, input);
     anydata|error result = getWorkflowResult(runResult, 30);
     test:assertTrue(result is error, "Looping agent should fail after maxIterations");
     if result is error {
@@ -708,10 +701,7 @@ function testAgentMaxIterationsExceeded() returns error? {
 @test:Config {groups: ["unit"]}
 function testAgentUnknownToolFedBackToModel() returns error? {
     map<anydata> input = {id: "agent-unknown-tool-001", request: "use a bad tool"};
-    string|error runResult = run(unknownToolAgent, input);
-    if runResult is error {
-        return;
-    }
+    string runResult = check run(unknownToolAgent, input);
     _ = check getWorkflowResult(runResult, 30);
     string? response = getAgentFinalResponse(runResult);
     test:assertTrue(response is string && response.includes("unknown tool 'noSuchTool'"),
@@ -720,13 +710,10 @@ function testAgentUnknownToolFedBackToModel() returns error? {
 
 @test:Config {groups: ["unit"]}
 function testAgentAiToolThroughWrapper() returns error? {
-    // ai @ai:AgentTool functions registered via ctx.registerTools run through
+    // ai @ai:AgentTool functions registered by the agent run through
     // the built-in executeAgentTool activity wrapper.
     map<anydata> input = {id: "agent-aitool-001", request: "How much is the laptop?"};
-    string|error runResult = run(priceAgent, input);
-    if runResult is error {
-        return; // No workflow server available — skip.
-    }
+    string runResult = check run(priceAgent, input);
     _ = check getWorkflowResult(runResult, 30);
     test:assertEquals(getAgentFinalResponse(runResult), "Price info: laptop costs $999",
             "AI tool should execute durably through the executeAgentTool wrapper");
@@ -737,10 +724,7 @@ function testAgentHumanTaskTool() returns error? {
     // When the agent invokes a registered human task, a human-task sub-workflow
     // starts and the agent suspends until a person completes it.
     map<anydata> input = {id: "agent-humantask-001", request: "Approve order ORD-9"};
-    string|error runResult = run(approvalAgent, input);
-    if runResult is error {
-        return; // No workflow server available — skip.
-    }
+    string runResult = check run(approvalAgent, input);
     string workflowId = runResult;
     runtime:sleep(2);
 
@@ -772,10 +756,7 @@ function testAgentEventWaitTool() returns error? {
     // Events declared in the agent signature are advertised as wait-tools; the
     // agent suspends durably until the event arrives.
     map<anydata> input = {id: "agent-event-tool-001", request: "Wait for the approval event"};
-    string|error runResult = run(eventWaitingAgent, input);
-    if runResult is error {
-        return; // No workflow server available — skip.
-    }
+    string runResult = check run(eventWaitingAgent, input);
     string workflowId = runResult;
     runtime:sleep(2);
 
@@ -792,10 +773,7 @@ function testAgentMultiTurnConversation() returns error? {
     // the user says bye. Each turn's answer is observable via getAgentResponse
     // while the agent is still running.
     map<anydata> input = {id: "agent-conversation-001", request: "hello"};
-    string|error runResult = run(conversationAgent, input);
-    if runResult is error {
-        return; // No workflow server available — skip.
-    }
+    string runResult = check run(conversationAgent, input);
     string workflowId = runResult;
 
     test:assertTrue(waitForAgentResponse(workflowId, "Turn 1 answer"),
@@ -815,10 +793,7 @@ function testAgentMultiTurnConversation() returns error? {
 function testMultiEventRequiresTimeout() returns error? {
     // MULTI_EVENT without an eventTimeout must fail at registration (safety).
     map<anydata> input = {id: "agent-unsafe-conv-001", request: "hello"};
-    string|error runResult = run(unsafeConversationAgent, input);
-    if runResult is error {
-        return; // No workflow server available — skip.
-    }
+    string runResult = check run(unsafeConversationAgent, input);
     anydata|error result = getWorkflowResult(runResult, 30);
     test:assertTrue(result is error, "MULTI_EVENT without eventTimeout should fail the agent");
     if result is error {
@@ -831,10 +806,7 @@ function testMultiEventRequiresTimeout() returns error? {
 function testAgentMaxEventWaitsCap() returns error? {
     // The model waits forever; the maxEventWaits cap must end the agent.
     map<anydata> input = {id: "agent-capped-conv-001", request: "hello"};
-    string|error runResult = run(cappedConversationAgent, input);
-    if runResult is error {
-        return; // No workflow server available — skip.
-    }
+    string runResult = check run(cappedConversationAgent, input);
     string workflowId = runResult;
     runtime:sleep(2);
     check sendData(cappedConversationAgent, workflowId, "chat", "turn two");
@@ -854,10 +826,7 @@ function testAgentEventWaitTimeout() returns error? {
     // No approval event is ever sent; the wait times out and the timeout text is
     // fed back to the model, which wraps up gracefully.
     map<anydata> input = {id: "agent-event-timeout-001", request: "Wait for approval"};
-    string|error runResult = run(timeoutAgent, input);
-    if runResult is error {
-        return; // No workflow server available — skip.
-    }
+    string runResult = check run(timeoutAgent, input);
     _ = check getWorkflowResult(runResult, 30);
     string? response = getAgentFinalResponse(runResult);
     test:assertTrue(response is string && response.includes("Timed out waiting for event 'approval'"),
@@ -869,10 +838,7 @@ function testAgentContextTakingTool() returns error? {
     // Tools with an ai:Context first parameter execute via ai:executeTool, which
     // injects the context automatically.
     map<anydata> input = {id: "agent-ctx-tool-001", request: "Look up the laptop"};
-    string|error runResult = run(contextToolAgent, input);
-    if runResult is error {
-        return; // No workflow server available — skip.
-    }
+    string runResult = check run(contextToolAgent, input);
     _ = check getWorkflowResult(runResult, 30);
     test:assertEquals(getAgentFinalResponse(runResult), "Ctx result: ctx-tool saw: laptop",
             "ai:Context-taking tools should execute through ai:executeTool");
@@ -882,10 +848,7 @@ function testAgentContextTakingTool() returns error? {
 function testAgentToolkitTools() returns error? {
     // BaseToolKit implementations expand into their ToolConfigs.
     map<anydata> input = {id: "agent-toolkit-001", request: "How much is the laptop?"};
-    string|error runResult = run(toolkitAgent, input);
-    if runResult is error {
-        return; // No workflow server available — skip.
-    }
+    string runResult = check run(toolkitAgent, input);
     _ = check getWorkflowResult(runResult, 30);
     test:assertEquals(getAgentFinalResponse(runResult), "Price info: laptop costs $999",
             "Toolkit tools should register and execute like other AI tools");
@@ -897,10 +860,7 @@ function testAgentUpdateConversation() returns error? {
     // delivers the message and returns the answer of the turn that consumed it —
     // no polling required.
     map<anydata> input = {id: "agent-update-conv-001", request: "hello"};
-    string|error runResult = run(conversationAgent, input);
-    if runResult is error {
-        return; // No workflow server available — skip.
-    }
+    string runResult = check run(conversationAgent, input);
     string agentId = runResult;
 
     string reply1 = check updateAgentTurn(agentId, "chat", "how are you");
@@ -924,10 +884,7 @@ function testAgentUpdateStructuredResponse() returns error? {
     // With a record-typed T, the agent's textual answer is parsed as JSON and
     // coerced via updateAgent's dependently-typed return.
     map<anydata> input = {id: "agent-update-struct-001", request: "hello"};
-    string|error runResult = run(conversationAgent, input);
-    if runResult is error {
-        return; // No workflow server available — skip.
-    }
+    string runResult = check run(conversationAgent, input);
     string agentId = runResult;
 
     string statusJson = check updateAgentTurn(agentId, "chat", "give me json");
@@ -950,10 +907,7 @@ function testAgentAutoContinuesConversation() returns error? {
     // loop itself keeps the conversation open after each answer. Ending happens
     // explicitly via the built-in endConversation tool.
     map<anydata> input = {id: "agent-auto-conv-001", request: "unused"};
-    string|error runResult = run(autoConversationAgent, input);
-    if runResult is error {
-        return; // No workflow server available — skip.
-    }
+    string runResult = check run(autoConversationAgent, input);
     string agentId = runResult;
 
     string reply1 = check updateAgentTurn(agentId, "chat", "first");
@@ -976,10 +930,7 @@ function testAgentConversationEndsOnTimeout() returns error? {
     // No follow-up message after turn 1: the event timeout ends the conversation
     // gracefully (workflow completes without error, keeping the last answer).
     map<anydata> input = {id: "agent-timeout-conv-001", request: "unused"};
-    string|error runResult = run(shortTimeoutConversationAgent, input);
-    if runResult is error {
-        return; // No workflow server available — skip.
-    }
+    string runResult = check run(shortTimeoutConversationAgent, input);
     string agentId = runResult;
 
     string reply = check updateAgentTurn(agentId, "chat", "hello");
@@ -998,10 +949,7 @@ function testAgentDrainsPendingUpdatesOnCompletion() returns error? {
     // "workflow completed before the update completed", the unconsumed update is
     // drained with the agent's final response.
     map<anydata> input = {id: "agent-drain-001", request: "unused"};
-    string|error runResult = run(endingAgent, input);
-    if runResult is error {
-        return; // No workflow server available — skip.
-    }
+    string runResult = check run(endingAgent, input);
     string agentId = runResult;
     runtime:sleep(1);
 
@@ -1019,18 +967,15 @@ function testAgentDrainsPendingUpdatesOnCompletion() returns error? {
 
 @test:Config {groups: ["unit"]}
 function testUpdateAgentRejectsPlainWorkflow() returns error? {
-    // updateAgent only works for durable agents; plain workflows bind data
-    // imperatively, so there is no framework-owned response to correlate.
+    // Agent sendData turns only work for durable agents; plain workflows bind data
+    // imperatively (workflow:sendData), so there is no framework-owned response to correlate.
     map<anydata> input = {id: "update-plain-wf-001", request: "unused"};
-    string|error runResult = run(parkedPlainWorkflow, input);
-    if runResult is error {
-        return; // No workflow server available — skip.
-    }
+    string runResult = check run(parkedPlainWorkflow, input);
     string workflowId = runResult;
     runtime:sleep(1);
 
     string|error result = updateAgentTurn(workflowId, "go", "ping");
-    test:assertTrue(result is error, "updateAgent on a plain workflow should fail");
+    test:assertTrue(result is error, "An agent data-event turn sent to a plain workflow should fail");
     if result is error {
         test:assertTrue(result.message().includes("DurableAgent"),
                 "Error should mention agents-only support: " + result.message());
@@ -1045,10 +990,7 @@ function testUpdateAgentRejectsPlainWorkflow() returns error? {
 function testAgentHumanTaskTimeout() returns error? {
     // Nobody completes the task; the timeout error is fed back to the model.
     map<anydata> input = {id: "agent-ht-timeout-001", request: "Get approval for ORD-1"};
-    string|error runResult = run(humanTaskTimeoutAgent, input);
-    if runResult is error {
-        return; // No workflow server available — skip.
-    }
+    string runResult = check run(humanTaskTimeoutAgent, input);
     _ = check getWorkflowResult(runResult, 60);
     string? response = getAgentFinalResponse(runResult);
     test:assertTrue(response is string && response.includes("timed out"),

@@ -42,11 +42,11 @@ isolated function opListDefinitions() returns json|http:InternalServerError {
 
 isolated function opListWorkflows(string? status, string? workflowType, string? workflowId,
         string? startedBy, int 'limit, string? pageToken, string? startTimeFrom, string? startTimeTo,
-        string? closeTimeFrom, string? closeTimeTo) returns json|http:InternalServerError {
+        string? closeTimeFrom, string? closeTimeTo, string? taskQueue) returns json|http:InternalServerError {
     int effectiveLimit = clampLimit('limit, maxPageSize);
     management:WorkflowInstancePage|error page = management:listWorkflowInstances(
         status, workflowType, workflowId, startedBy, effectiveLimit, pageToken,
-            startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo);
+            startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
     if page is error {
         return <http:InternalServerError>{body: errorBody("Failed to list workflows: " + page.message())};
     }
@@ -113,6 +113,17 @@ isolated function opResumeWorkflow(string workflowId, string? runId)
     error? result = runId is string
         ? management:resumeWorkflowRun(workflowId, runId)
         : management:resumeWorkflow(workflowId);
+    if result is error {
+        string msg = result.message();
+        return msg.includes("not found")
+            ? <http:NotFound>{body: errorBody(msg)}
+            : <http:InternalServerError>{body: errorBody(msg)};
+    }
+    return {success: true};
+}
+
+isolated function opWakeWorkflow(string workflowId) returns json|http:NotFound|http:InternalServerError {
+    error? result = management:wakeAgent(workflowId);
     if result is error {
         string msg = result.message();
         return msg.includes("not found")
@@ -199,9 +210,9 @@ isolated function opExecutionGraph(string workflowId, string? runId, [string, st
 isolated function opListHumanTasks(string? status, string? parentWorkflowId, string? parentWorkflowType,
         string? taskName, string? userRole, boolean onlyMyTasks, int 'limit, string? pageToken,
         string? startTimeFrom, string? startTimeTo, string? closeTimeFrom, string? closeTimeTo,
-        [string, string...]? callerRoles) returns json|http:InternalServerError {
+        string? taskQueue, [string, string...]? callerRoles) returns json|http:InternalServerError {
     management:HumanTaskSummary[]|error all = management:listAllHumanTasks(status,
-            startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo);
+            startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
     if all is error {
         return <http:InternalServerError>{body: errorBody("Failed to list human tasks: " + all.message())};
     }
@@ -228,8 +239,9 @@ isolated function opListHumanTasks(string? status, string? parentWorkflowId, str
     return paginateHumanTasks(enriched, clampLimit('limit, maxPageSize), pageToken).toJson();
 }
 
-isolated function opPendingHumanTaskCount([string, string...]? callerRoles) returns json|http:InternalServerError {
-    management:HumanTaskSummary[]|error pending = management:listAllHumanTasks("PENDING");
+isolated function opPendingHumanTaskCount(string? taskQueue, [string, string...]? callerRoles)
+        returns json|http:InternalServerError {
+    management:HumanTaskSummary[]|error pending = management:listAllHumanTasks("PENDING", taskQueue = taskQueue);
     if pending is error {
         return <http:InternalServerError>{body: errorBody("Failed to count pending tasks: " + pending.message())};
     }
@@ -290,10 +302,10 @@ isolated function opFailHumanTask(string taskId, json? reason, map<json>? detail
 
 isolated function opListReviewActivities(string? status, string? parentWorkflowId, string? taskName,
         int 'limit, string? pageToken, string? startTimeFrom, string? startTimeTo,
-        string? closeTimeFrom, string? closeTimeTo, [string, string...]? callerRoles)
+        string? closeTimeFrom, string? closeTimeTo, string? taskQueue, [string, string...]? callerRoles)
         returns json|http:InternalServerError {
     management:ReviewActivitySummary[]|error all = management:listAllReviewActivities(status,
-            startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo);
+            startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
     if all is error {
         return <http:InternalServerError>{
             body: errorBody("Failed to list review activities: " + all.message())};

@@ -359,6 +359,25 @@ function testHumanTaskErrorResponseNotFound() {
 }
 
 @test:Config {groups: ["unit"]}
+function testHumanTaskErrorResponseForeignQueue() {
+    error err = error("Unauthorized: human task 'humantask-x' belongs to task queue 'other-q', " +
+        "which is served by a different integration");
+    HumanTaskErrorResp resp = humanTaskErrorResponse(err);
+    test:assertTrue(resp is http:Forbidden,
+        "A task served by a different integration should produce 403");
+}
+
+@test:Config {groups: ["unit"]}
+function testReviewErrorResponseForeignQueue() {
+    error err = error("Unauthorized: review activity 'reviewactivity-x' belongs to task queue 'other-q', " +
+        "which is served by a different integration");
+    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
+            reviewActivityErrorResponse(err);
+    test:assertTrue(resp is http:Forbidden,
+        "A review activity served by a different integration should produce 403");
+}
+
+@test:Config {groups: ["unit"]}
 function testHumanTaskErrorResponseForbidden() {
     error err = error("Unauthorized: caller role not in userRoles");
     HumanTaskErrorResp resp = humanTaskErrorResponse(err);

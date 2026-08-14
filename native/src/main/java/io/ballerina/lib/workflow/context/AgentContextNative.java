@@ -28,6 +28,7 @@ import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.utils.JsonUtils;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BArray;
+import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BHandle;
 import io.ballerina.runtime.api.values.BMap;
@@ -52,9 +53,11 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Native implementations backing the {@code workflow:AgentContext} client class and the durable agent loop.
+ * Native implementations backing the durable agent context and the durable agent loop. The context travels
+ * through Ballerina as a raw handle injected into the object-model runner workflow; there is no user-facing
+ * agent context API.
  * <p>
- * The imperative agent body registers capabilities on the context — workflow activities
+ * The runner registers the agent's declared capabilities on the context — workflow activities
  * ({@link #recordActivityTool}), AI tools ({@link #recordAiTool}), and human tasks
  * ({@link #recordHumanTaskTool}). The loop advertises them (plus one wait-tool per declared signature event) to the
  * model via {@link #getToolDefs} and dispatches invocations durably: activities and AI tools as Temporal activities
@@ -75,8 +78,58 @@ public final class AgentContextNative {
     private static final String KIND_HUMAN_TASK = "humantask";
     private static final String KIND_EVENT_PREFIX = "event:";
     private static final String KIND_END = "end";
+    private static final String KIND_SLEEP = "sleep";
+    private static final String SLEEP_TOOL = "sleep";
     private static final String EVENT_TOOL_PREFIX = "awaitEvent_";
     private static final String END_CONVERSATION_TOOL = "endConversation";
+    // Names of built-in tools published by getAgentToolDefs; user registrations must not
+    // shadow them, or the model would see duplicate definitions with diverging dispatch.
+    private static final java.util.Set<String> RESERVED_TOOL_NAMES =
+            java.util.Set.of(SLEEP_TOOL, END_CONVERSATION_TOOL);
+
+    private static BError reservedToolNameError(String name) {
+        return ErrorCreator.createError(StringUtils.fromString(
+                "The tool name '" + name + "' is reserved for a built-in agent tool"));
+    }
+
+    /**
+     * Rejects a capability name already taken on this agent context. Activities, AI tools, peers,
+     * and human tasks are all advertised to the model under this one name, which is also what
+     * dispatch keys on: a second registration would show the model two identical tools and
+     * silently shadow the first. The compiler plugin rejects the duplicates it can see in a
+     * declaration (WORKFLOW_150), but names registered on the context are not always statically
+     * known — this is the check that always runs.
+     *
+     * @param info the agent context state
+     * @param name the capability name being registered
+     * @return an error when the name is already registered, otherwise null
+     */
+    private static BError duplicateCapabilityError(AgentContextInfo info, String name) {
+        boolean taken = false;
+        for (ToolMeta tool : info.tools) {
+            if (tool.name().equals(name)) {
+                taken = true;
+                break;
+            }
+        }
+        // Each declared channel is advertised as its own wait-tool, so those generated names
+        // are taken as well even though no ToolMeta carries them.
+        if (!taken && info.eventNames != null) {
+            for (String eventName : info.eventNames) {
+                if (name.equals(EVENT_TOOL_PREFIX + eventName)) {
+                    taken = true;
+                    break;
+                }
+            }
+        }
+        if (!taken) {
+            return null;
+        }
+        return ErrorCreator.createError(StringUtils.fromString(
+                "Duplicate capability name '" + name + "' on agent '" + info.workflowType
+                        + "': activities, tools, human tasks, and events share one namespace, and '"
+                        + name + "' is already registered. Give the capability a different name."));
+    }
 
     // Interaction patterns (mirrors workflow:AgentInteractionPattern).
     private static final String MULTI_EVENT = "MULTI_EVENT";
@@ -288,13 +341,18 @@ public final class AgentContextNative {
             String activityName = name;
             String[] reviewRoles = info.approvalUserRoles;
             for (ToolMeta tool : info.tools) {
-                if (KIND_ACTIVITY.equals(tool.kind()) && tool.name().equals(name) && tool.activityName() != null) {
-                    activityName = tool.activityName();
-                    if (tool.reviewRoles().length > 0) {
-                        reviewRoles = tool.reviewRoles();
-                    }
-                    break;
+                if (!tool.name().equals(name)) {
+                    continue;
                 }
+                if (KIND_ACTIVITY.equals(tool.kind()) && tool.activityName() != null) {
+                    activityName = tool.activityName();
+                }
+                // Declared per-tool roles (activities and AI tools alike) override the
+                // agent-level approval roles.
+                if (tool.reviewRoles().length > 0) {
+                    reviewRoles = tool.reviewRoles();
+                }
+                break;
             }
             String qualifiedName = Workflow.getInfo().getWorkflowType() + "." + activityName;
 
@@ -356,6 +414,13 @@ public final class AgentContextNative {
             Map<String, Object> schema = parameterSchemaOf(fn, boundNames, activityName);
             // NoRetry arrives as nil; AutoRetry as a BMap; ManualRetry as the "MANUAL_RETRY" BString.
             Object policy = retryPolicy instanceof BMap || retryPolicy instanceof BString ? retryPolicy : null;
+            if (RESERVED_TOOL_NAMES.contains(toolName)) {
+                return reservedToolNameError(toolName);
+            }
+            BError duplicate = duplicateCapabilityError(info, toolName);
+            if (duplicate != null) {
+                return duplicate;
+            }
             info.tools.add(new ToolMeta(toolName, description, schema, KIND_ACTIVITY, activityName, bindings,
                     requiresApproval, policy, parseReviewRoles(userRolesArg)));
             return null;
@@ -403,6 +468,13 @@ public final class AgentContextNative {
             properties.put("query", query);
             schema.put("properties", properties);
             schema.put("required", java.util.List.of("query"));
+            if (RESERVED_TOOL_NAMES.contains(name.getValue())) {
+                return reservedToolNameError(name.getValue());
+            }
+            BError duplicate = duplicateCapabilityError(info, name.getValue());
+            if (duplicate != null) {
+                return duplicate;
+            }
             info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, kindSpec.getValue(),
                     null, null, requiresApproval, null, new String[0]));
             return null;
@@ -412,8 +484,35 @@ public final class AgentContextNative {
         }
     }
 
+    /**
+     * Durable, interruptible sleep for the built-in agent sleep tool: a workflow-side timer
+     * that ends early when the {@code __agent_wake} signal arrives (sent by the management
+     * API). The wake request is consumed so it interrupts exactly one sleep.
+     *
+     * @param handle the agent context handle (unused; the current workflow sleeps)
+     * @param millis how long to sleep
+     * @return true when the timer ran to completion, false when a wake interrupted it,
+     *         or a BError on failure
+     */
+    public static Object agentInterruptibleSleep(BHandle handle, long millis) {
+        try {
+            io.ballerina.lib.workflow.worker.WorkflowWorkerNative.awaitWhileSuspended();
+            boolean woken = Workflow.await(java.time.Duration.ofMillis(millis),
+                    io.ballerina.lib.workflow.worker.WorkflowWorkerNative::isWakeRequested);
+            if (woken) {
+                io.ballerina.lib.workflow.worker.WorkflowWorkerNative.clearWakeRequest();
+            }
+            return !woken;
+        } catch (io.temporal.worker.NonDeterministicException | io.temporal.failure.TemporalFailure e) {
+            throw e;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString("Agent sleep failed: " + e.getMessage()));
+        }
+    }
+
     public static Object recordAiTool(BHandle handle, BFunctionPointer fn, BString name, BString description,
-                                      Object parametersJson, boolean requiresApproval) {
+                                      Object parametersJson, boolean requiresApproval, Object userRolesArg,
+                                      boolean mcpTool) {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             Map<String, Object> schema;
@@ -422,9 +521,16 @@ public final class AgentContextNative {
             } else {
                 schema = parameterSchemaOf(fn);
             }
+            if (RESERVED_TOOL_NAMES.contains(name.getValue())) {
+                return reservedToolNameError(name.getValue());
+            }
+            BError duplicate = duplicateCapabilityError(info, name.getValue());
+            if (duplicate != null) {
+                return duplicate;
+            }
             info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, KIND_AI_TOOL,
-                    null, null, requiresApproval, null, new String[0]));
-            WorkflowWorkerNative.putAgentTool(info.workflowType, name.getValue(), fn);
+                    null, null, requiresApproval, null, parseReviewRoles(userRolesArg)));
+            WorkflowWorkerNative.putAgentTool(info.workflowType, name.getValue(), fn, mcpTool);
             return null;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -463,6 +569,13 @@ public final class AgentContextNative {
             Map<String, Object> schema = new LinkedHashMap<>();
             schema.put("type", "object");
             schema.put("additionalProperties", Boolean.TRUE);
+            if (RESERVED_TOOL_NAMES.contains(name)) {
+                return reservedToolNameError(name);
+            }
+            BError duplicate = duplicateCapabilityError(info, name);
+            if (duplicate != null) {
+                return duplicate;
+            }
             info.tools.add(new ToolMeta(name, descriptionStr, schema, KIND_HUMAN_TASK));
             info.humanTasks.put(name, new HumanTaskMeta(userRoles, titleStr, descriptionStr, resultType,
                     timeout instanceof BMap ? timeout : null));
@@ -513,6 +626,23 @@ public final class AgentContextNative {
                             + "end the conversation.",
                     schema, KIND_END));
         }
+        // Durable sleep is always available: the timer is a workflow-side operation
+        // (never an activity), so the agent survives restarts while sleeping.
+        Map<String, Object> sleepSchema = new LinkedHashMap<>();
+        sleepSchema.put("type", "object");
+        Map<String, Object> sleepProperties = new LinkedHashMap<>();
+        Map<String, Object> secondsProperty = new LinkedHashMap<>();
+        secondsProperty.put("type", "integer");
+        secondsProperty.put("description", "How long to sleep, in seconds");
+        secondsProperty.put("minimum", 1);
+        sleepProperties.put("seconds", secondsProperty);
+        sleepSchema.put("properties", sleepProperties);
+        sleepSchema.put("required", java.util.List.of("seconds"));
+        defs.add(toolDef(SLEEP_TOOL,
+                "Pauses this agent durably for the given number of seconds. The agent survives worker "
+                        + "restarts while sleeping and resumes exactly where it left off; a wake signal "
+                        + "from the management API ends the sleep early.",
+                sleepSchema, KIND_SLEEP));
         return StringUtils.fromString(TypesUtil.toJsonString(defs));
     }
 
@@ -572,6 +702,18 @@ public final class AgentContextNative {
         if (eventName.isEmpty() || eventName.contains(".") || eventName.contains("|")) {
             return ErrorCreator.createError(StringUtils.fromString(
                     "Invalid update channel name '" + eventName + "': must be non-empty and not contain '.' or '|'"));
+        }
+        // A channel is advertised to the model as a wait-tool, so it shares the capability
+        // namespace: a repeated channel would advertise that tool twice, and a channel whose
+        // wait-tool name is already taken would make dispatch ambiguous.
+        if (info.eventNames.contains(eventName)) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Duplicate data-event channel '" + eventName + "' on agent '" + info.workflowType
+                            + "': the channel is already registered."));
+        }
+        BError duplicate = duplicateCapabilityError(info, EVENT_TOOL_PREFIX + eventName);
+        if (duplicate != null) {
+            return duplicate;
         }
         info.eventNames.add(eventName);
         info.updateEvents.put(eventName, new Object[] {requestType, responseType});
@@ -705,6 +847,9 @@ public final class AgentContextNative {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Timed out waiting for the initial 'chat' event"));
             }
+            if (data instanceof BError) {
+                return data;
+            }
             Object ballerina = TypesUtil.convertJavaToBallerinaType(data);
             if (ballerina instanceof BString bStr) {
                 return bStr;
@@ -741,6 +886,9 @@ public final class AgentContextNative {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Timed out waiting for event '" + name + "'"));
             }
+            if (data instanceof BError) {
+                return data;
+            }
             return TypesUtil.convertJavaToBallerinaType(data);
         } catch (NonDeterministicException | TemporalFailure e) {
             throw e;
@@ -763,27 +911,43 @@ public final class AgentContextNative {
     private static Object awaitSignal(AgentContextInfo info, String eventName) throws Exception {
         info.eventWaitCount++;
         if (info.eventWaitCount > info.maxEventWaits) {
-            throw ApplicationFailure.newNonRetryableFailure(
-                    "Agent exceeded the maximum number of event waits (" + info.maxEventWaits
-                            + "). Configure ctx.setInteraction(...) to raise the limit.", "AGENT_EVENT_WAIT_LIMIT");
+            // Returned as a Ballerina error (not thrown): a Java failure crossing the
+            // Ballerina boundary loses its message. The loop recognizes this message
+            // prefix and fails the agent instead of feeding it to the model.
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Agent exceeded the maximum number of event waits (" + info.maxEventWaits + ")."));
         }
 
         CompletablePromise<SignalAwaitWrapper.SignalData> future = info.multiEvent
                 ? info.signalWrapper.takeSignalFuture(eventName)
                 : info.signalWrapper.getSignalFuture(eventName);
 
-        if (info.eventTimeoutMillis != null) {
-            boolean arrived = Workflow.await(Duration.ofMillis(info.eventTimeoutMillis),
-                    future::isCompleted);
-            if (!arrived) {
-                // Remove the abandoned FIFO waiter so a later signal is not consumed silently.
-                if (info.multiEvent) {
-                    info.signalWrapper.cancelWaiter(eventName, future);
+        // Publish the wait to the execution memo/history (as for workflow data-event waits in
+        // TemporalFutureValue) so diagrams can render where the agent is halted; cleared as soon
+        // as the wait unblocks. A buffered event that completes the wait instantly is skipped —
+        // the agent never actually blocked.
+        boolean tracked = !future.isCompleted();
+        if (tracked) {
+            WaitingEventsTracker.beginWait(eventName);
+        }
+        try {
+            if (info.eventTimeoutMillis != null) {
+                boolean arrived = Workflow.await(Duration.ofMillis(info.eventTimeoutMillis),
+                        future::isCompleted);
+                if (!arrived) {
+                    // Remove the abandoned FIFO waiter so a later signal is not consumed silently.
+                    if (info.multiEvent) {
+                        info.signalWrapper.cancelWaiter(eventName, future);
+                    }
+                    return TimedOut.INSTANCE;
                 }
-                return TimedOut.INSTANCE;
+            } else {
+                Workflow.await(future::isCompleted);
             }
-        } else {
-            Workflow.await(future::isCompleted);
+        } finally {
+            if (tracked) {
+                WaitingEventsTracker.endWait(eventName);
+            }
         }
 
         SignalAwaitWrapper.SignalData signalData = future.get();

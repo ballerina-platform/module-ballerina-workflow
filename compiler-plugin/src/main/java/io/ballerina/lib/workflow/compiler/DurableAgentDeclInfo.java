@@ -27,12 +27,15 @@ import java.util.List;
  * re-references the same symbols (model variable, activity/tool functions, types).
  *
  * @param agentName          the module-level variable name — the agent's stable identity
- * @param workflowPrefix     the import prefix of the workflow module in the declaring document
  * @param modelSource        source text of the {@code model} config expression
  * @param systemPromptSource source text of the {@code systemPrompt} config expression
  * @param maxIterSource      source text of the {@code maxIter} config expression, or null for default
+ * @param inputTypeSource    source text of the {@code inputType} config expression, or null for default
+ * @param resultTypeSource   source text of the {@code resultType} config expression, or null for default
+ * @param typeRefPrefixes    module prefixes of qualified references inside the input/result type
+ *                           expressions, collected from the parsed nodes at analysis time
  * @param activities         declared activity capabilities
- * @param aiToolRefs         source refs of {@code @ai:AgentTool} function tools
+ * @param aiToolRefs         declared AI tools: the tool ref plus optional ToolDecl gating args
  * @param events             declared event channels
  * @param humanTasks         declared human tasks
  * @param peers              declared peer agents (model-driven delegation)
@@ -40,12 +43,14 @@ import java.util.List;
  * @since 0.9.0
  */
 public record DurableAgentDeclInfo(String agentName,
-                                   String workflowPrefix,
                                    String modelSource,
                                    String systemPromptSource,
                                    String maxIterSource,
+                                   String inputTypeSource,
+                                   String resultTypeSource,
+                                   List<String> typeRefPrefixes,
                                    List<ActivityDecl> activities,
-                                   List<String> aiToolRefs,
+                                   List<ToolRef> aiToolRefs,
                                    List<EventDecl> events,
                                    List<HumanTaskDecl> humanTasks,
                                    List<PeerDecl> peers) {
@@ -53,6 +58,7 @@ public record DurableAgentDeclInfo(String agentName,
     public DurableAgentDeclInfo {
         activities = List.copyOf(activities);
         aiToolRefs = List.copyOf(aiToolRefs);
+        typeRefPrefixes = List.copyOf(typeRefPrefixes);
         events = List.copyOf(events);
         humanTasks = List.copyOf(humanTasks);
         peers = List.copyOf(peers);
@@ -66,8 +72,21 @@ public record DurableAgentDeclInfo(String agentName,
      * @param functionRefSource source text of the activity function reference
      * @param metaSource        source text of a json metadata mapping (description, gating,
      *                          retry policy), or null when there is none
+     * @param bindingsSource    source text of the {@code bindings} mapping fixing arguments at
+     *                          registration (e.g. a client), or null when there is none
      */
-    public record ActivityDecl(String toolName, String functionRefSource, String metaSource) { }
+    public record ActivityDecl(String toolName, String functionRefSource, String metaSource,
+                               String bindingsSource) { }
+
+    /**
+     * A declared AI tool: the tool reference and the optional ToolDecl gating expressions,
+     * kept as separate sources so import-prefix collection can inspect each one.
+     *
+     * @param refSource      the tool reference source (function/config/toolkit variable)
+     * @param approvalSource the {@code requiresApproval} expression source, or null
+     * @param rolesSource    the {@code userRoles} expression source, or null
+     */
+    public record ToolRef(String refSource, String approvalSource, String rolesSource) { }
 
     /**
      * A declared event channel.

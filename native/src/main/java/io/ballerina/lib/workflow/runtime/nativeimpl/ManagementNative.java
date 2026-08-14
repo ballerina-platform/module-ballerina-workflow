@@ -224,14 +224,21 @@ public final class ManagementNative {
 
             for (String workflowType : WorkflowWorkerNative.getProcessRegistry().keySet()) {
                 BFunctionPointer processFn = WorkflowWorkerNative.getProcessRegistry().get(workflowType);
-                String inputSchema = deriveWorkflowInputSchema(processFn);
-
-                BMap<BString, Object> def = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
-                                                                           "WorkflowDefinition");
                 String displayType = workflowType.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX) ?
                                      workflowType.substring(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length()) :
                                      workflowType;
+                // Workflows and durable agents list as one set of startable definitions: an
+                // agent's input schema comes from its declared inputType (the shared runner's
+                // signature is an internal envelope), everything else is identical.
+                boolean agentType = WorkflowWorkerNative.isAgentWorkflowType(workflowType);
+                String inputSchema = agentType
+                        ? DurableAgentNative.startInputSchema(displayType)
+                        : deriveWorkflowInputSchema(processFn);
+
+                BMap<BString, Object> def = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
+                                                                           "WorkflowDefinition");
                 def.put(StringUtils.fromString("workflowType"), StringUtils.fromString(displayType));
+                def.put(StringUtils.fromString("kind"), StringUtils.fromString(agentType ? "AGENT" : "WORKFLOW"));
                 def.put(StringUtils.fromString("inputSchema"),
                         inputSchema != null ? StringUtils.fromString(inputSchema) : null);
                 // All registered workflow types have an active worker (this worker)
@@ -324,6 +331,27 @@ public final class ManagementNative {
      * @param workflowId the workflow ID to suspend
      * @return {@code null} on success, or a Ballerina error
      */
+    /**
+     * Wakes a durable agent instance out of its built-in sleep tool by sending the
+     * {@code __agent_wake} signal. Harmless when the instance is not sleeping.
+     *
+     * @param workflowId the agent instance ID
+     * @return null on success, or a BError when the instance is not found
+     */
+    public static Object wakeAgent(BString workflowId) {
+        try {
+            boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(workflowId.getValue(),
+                    io.ballerina.lib.workflow.worker.WorkflowWorkerNative.AGENT_WAKE_SIGNAL_NAME, null);
+            if (!delivered) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Failed to wake agent: workflow not found: " + workflowId.getValue()));
+            }
+            return null;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString("Failed to wake agent: " + e.getMessage()));
+        }
+    }
+
     public static Object suspendWorkflow(BString workflowId) {
         try {
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(workflowId.getValue(),
@@ -419,7 +447,7 @@ public final class ManagementNative {
      * @return a Ballerina {@code HumanTaskSummary[]} or an error
      */
     public static Object listAllHumanTasks(Object status, Object startTimeFrom, Object startTimeTo,
-                                           Object closeTimeFrom, Object closeTimeTo) {
+                                           Object closeTimeFrom, Object closeTimeTo, Object taskQueue) {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
@@ -434,6 +462,7 @@ public final class ManagementNative {
             addTimeClause(clauses, startTimeTo, "StartTime", "<=");
             addTimeClause(clauses, closeTimeFrom, "CloseTime", ">=");
             addTimeClause(clauses, closeTimeTo, "CloseTime", "<=");
+            addTaskQueueClause(clauses, taskQueue);
             String query = String.join(" AND ", clauses);
 
             RecordType summaryType = (RecordType) ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
@@ -557,6 +586,10 @@ public final class ManagementNative {
                                                                           "HumanTaskInfo");
             record.put(StringUtils.fromString("taskId"), StringUtils.fromString(taskIdStr));
             record.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+            record.put(StringUtils.fromString("namespace"),
+                       StringUtils.fromString(client.getOptions().getNamespace()));
+            record.put(StringUtils.fromString("taskQueue"),
+                       StringUtils.fromString(response.getExecutionConfig().getTaskQueue().getName()));
             record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentId));
             record.put(StringUtils.fromString("status"), StringUtils.fromString(statusStr));
             record.put(StringUtils.fromString("startTime"), StringUtils.fromString(startTime));
@@ -744,6 +777,11 @@ public final class ManagementNative {
                                                                       "HumanTaskSummary");
         record.put(StringUtils.fromString("taskId"), StringUtils.fromString(wfId));
         record.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+        // Identify the owning integration: callers in a shared namespace (project) route
+        // follow-up operations to the integration serving this task queue.
+        record.put(StringUtils.fromString("namespace"),
+                   StringUtils.fromString(client.getOptions().getNamespace()));
+        record.put(StringUtils.fromString("taskQueue"), StringUtils.fromString(wfInfo.getTaskQueue()));
         record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentId));
         record.put(StringUtils.fromString("parentWorkflowType"),
                    parentWorkflowType != null ? StringUtils.fromString(parentWorkflowType) : null);
@@ -979,6 +1017,22 @@ public final class ManagementNative {
 
             WorkflowExecutionInfo execInfo = resp.getWorkflowExecutionInfo();
 
+            // Decisions must go to the integration serving the task's queue: the reviewer
+            // roles and forms are configured there, not here. Reads stay namespace-wide.
+            String owningQueue = resp.getExecutionConfig().getTaskQueue().getName();
+            String localQueue = WorkflowWorkerNative.getTaskQueue();
+            if (localQueue == null || localQueue.isBlank()) {
+                // Fail closed: without a configured local queue, ownership cannot be verified.
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Unauthorized: the local task queue is not configured; cannot verify that review "
+                                + "activity '" + taskWorkflowId + "' belongs to this integration"));
+            }
+            if (!localQueue.equals(owningQueue)) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Unauthorized: review activity '" + taskWorkflowId + "' belongs to task queue '"
+                                + owningQueue + "', which is served by a different integration"));
+            }
+
             WorkflowExecutionStatus execStatus = execInfo.getStatus();
             if (execStatus != WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING) {
                 return ErrorCreator.createError(StringUtils.fromString(
@@ -1124,7 +1178,7 @@ public final class ManagementNative {
      * @return a Ballerina {@code ReviewActivitySummary[]} or an error
      */
     public static Object listAllReviewActivities(Object status, Object startTimeFrom, Object startTimeTo,
-                                           Object closeTimeFrom, Object closeTimeTo) {
+                                           Object closeTimeFrom, Object closeTimeTo, Object taskQueue) {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
@@ -1138,6 +1192,7 @@ public final class ManagementNative {
             addTimeClause(clauses, startTimeTo, "StartTime", "<=");
             addTimeClause(clauses, closeTimeFrom, "CloseTime", ">=");
             addTimeClause(clauses, closeTimeTo, "CloseTime", "<=");
+            addTaskQueueClause(clauses, taskQueue);
             String query = String.join(" AND ", clauses);
 
             RecordType summaryType = (RecordType) ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
@@ -1264,6 +1319,10 @@ public final class ManagementNative {
                                                                           "ReviewActivityInfo");
             record.put(StringUtils.fromString("taskId"), StringUtils.fromString(taskIdStr));
             record.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+            record.put(StringUtils.fromString("namespace"),
+                       StringUtils.fromString(client.getOptions().getNamespace()));
+            record.put(StringUtils.fromString("taskQueue"),
+                       StringUtils.fromString(response.getExecutionConfig().getTaskQueue().getName()));
             record.put(StringUtils.fromString("activityName"), StringUtils.fromString(activityName));
             record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentId));
             record.put(StringUtils.fromString("trigger"), StringUtils.fromString(trigger));
@@ -1372,6 +1431,9 @@ public final class ManagementNative {
                                                                       "ReviewActivitySummary");
         record.put(StringUtils.fromString("taskId"), StringUtils.fromString(wfId));
         record.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+        record.put(StringUtils.fromString("namespace"),
+                   StringUtils.fromString(client.getOptions().getNamespace()));
+        record.put(StringUtils.fromString("taskQueue"), StringUtils.fromString(wfInfo.getTaskQueue()));
         record.put(StringUtils.fromString("activityName"), StringUtils.fromString(activityName));
         record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentId));
         record.put(StringUtils.fromString("trigger"), StringUtils.fromString(trigger));
@@ -1495,7 +1557,19 @@ public final class ManagementNative {
             }
 
             WorkflowStub stub = client.newUntypedWorkflowStub(type, optBuilder.build());
-            Object javaInput = input != null ? TypesUtil.convertBallerinaToJavaType(input) : null;
+            Object javaInput;
+            if (WorkflowWorkerNative.isAgentWorkflowType(type)) {
+                // Starting a durable agent goes through the same endpoint as a workflow: the
+                // posted input is mapped onto the agent's declared inputType and wrapped in
+                // the runner envelope the shared runner workflow expects.
+                Object envelope = DurableAgentNative.buildStartRunInput(workflowType.getValue(), input);
+                if (envelope instanceof BError inputError) {
+                    return inputError;
+                }
+                javaInput = envelope;
+            } else {
+                javaInput = input != null ? TypesUtil.convertBallerinaToJavaType(input) : null;
+            }
             WorkflowExecution execution = stub.start(javaInput);
 
             BMap<BString, Object> handle = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
@@ -1523,7 +1597,8 @@ public final class ManagementNative {
     @SuppressWarnings("unchecked")
     public static Object listWorkflowInstances(Object status, Object workflowType, Object workflowId, Object startedBy,
                                                long limit, Object pageToken, Object startTimeFrom, Object startTimeTo,
-                                               Object closeTimeFrom, Object closeTimeTo) {
+                                               Object closeTimeFrom, Object closeTimeTo,
+                                               Object taskQueue) {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
@@ -1563,6 +1638,7 @@ public final class ManagementNative {
             addTimeClause(clauses, startTimeTo, "StartTime", "<=");
             addTimeClause(clauses, closeTimeFrom, "CloseTime", ">=");
             addTimeClause(clauses, closeTimeTo, "CloseTime", "<=");
+            addTaskQueueClause(clauses, taskQueue);
 
             String query = String.join(" AND ", clauses);
             int pageSize = (int) Math.min(limit, 100);
@@ -1637,6 +1713,10 @@ public final class ManagementNative {
                                          rawType.substring(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length()) :
                                          rawType;
                     summary.put(StringUtils.fromString("workflowType"), StringUtils.fromString(displayType));
+                    summary.put(StringUtils.fromString("namespace"),
+                                StringUtils.fromString(client.getOptions().getNamespace()));
+                    summary.put(StringUtils.fromString("taskQueue"),
+                                StringUtils.fromString(wfInfo.getTaskQueue()));
                     summary.put(StringUtils.fromString("status"), StringUtils.fromString(displayStatus));
 
                     Timestamp st = wfInfo.getStartTime();
@@ -2015,6 +2095,19 @@ public final class ManagementNative {
                     case EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED -> {
                         var attrs = event.getWorkflowExecutionSignaledEventAttributes();
                         String sigName = attrs.getSignalName();
+                        // A workflow-to-agent sendData travels as the __agent_event transport
+                        // signal whose envelope carries the actual channel name — decode it so
+                        // the channel's WAITING node completes under its own name instead of a
+                        // bogus node named after the transport signal.
+                        if (WorkflowWorkerNative.AGENT_EVENT_SIGNAL_NAME.equals(sigName)) {
+                            Object envelope = decodeFirstPayload(attrs.getInput(), dc);
+                            if (envelope instanceof Map<?, ?> eventMap
+                                    && eventMap.get("eventName") != null) {
+                                sigName = String.valueOf(eventMap.get("eventName"));
+                            } else {
+                                break;
+                            }
+                        }
                         if (!isInternalSignal(sigName)) {
                             // Ballerina surfaces Temporal signals as data events (workflow:sendData
                             // -> `wait dataEvents.<name>`), so the node type says DATA, not SIGNAL.
@@ -2031,6 +2124,40 @@ public final class ManagementNative {
                                 nodeByEventId.put(eid, node);
                                 nodeOrder.add(eid);
                             }
+                        }
+                    }
+
+                    case EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED -> {
+                        // A durable agent's data events can also arrive as Temporal updates
+                        // (DurableAgent.sendData -> the agentSendData dynamic update handler).
+                        // Mirror the SIGNALED handling: a published wait for the event channel
+                        // completes in place; an unawaited (buffered) event gets its own node.
+                        var attrs = event.getWorkflowExecutionUpdateAcceptedEventAttributes();
+                        var input = attrs.getAcceptedRequest().getInput();
+                        if (!WorkflowWorkerNative.AGENT_SEND_DATA_UPDATE.equals(input.getName())
+                                || input.getArgs().getPayloadsCount() == 0) {
+                            break;
+                        }
+                        String updEventName;
+                        try {
+                            updEventName = dc.fromPayload(input.getArgs().getPayloads(0),
+                                    String.class, String.class);
+                        } catch (Exception e) {
+                            break;
+                        }
+                        if (updEventName == null) {
+                            break;
+                        }
+                        var pending = pendingDataNodes.remove(updEventName);
+                        if (pending != null) {
+                            pending.put("status", "COMPLETED");
+                            pending.put("endTime", ts);
+                        } else {
+                            var node = newNode(eid, updEventName, "DATA", ts);
+                            node.put("status", "COMPLETED");
+                            node.put("endTime", ts);
+                            nodeByEventId.put(eid, node);
+                            nodeOrder.add(eid);
                         }
                     }
 
@@ -2347,6 +2474,14 @@ public final class ManagementNative {
      * {@code <field> <op> "<iso8601>"}  (e.g. {@code StartTime >= "2026-06-01T00:00:00Z"}). The value is stripped of
      * any embedded double-quotes to prevent query injection.
      */
+    // Scopes a visibility query to one integration's task queue. Callers within the same
+    // namespace (project) share visibility; the TaskQueue attribute separates integrations.
+    private static void addTaskQueueClause(List<String> clauses, Object taskQueue) {
+        if (taskQueue instanceof BString queue && !queue.getValue().isBlank()) {
+            clauses.add("TaskQueue = '" + queue.getValue().replace("'", "''") + "'");
+        }
+    }
+
     private static void addTimeClause(List<String> clauses, Object param, String field, String op) {
         if (param instanceof BString bs && !bs.getValue().isBlank()) {
             String value = bs.getValue().replace("\\", "\\\\").replace("\"", "");

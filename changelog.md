@@ -38,6 +38,63 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   OAuth scope enforcement per operation class via `enforceScopes` and the
   `scopeWorkflowView/Manage`, `scopeHumanTaskView/Manage` configurables. Basic auth
   now defaults the audit user ID to the authenticated username.
+- Declared agent activities honor `bindings`: arguments fixed at registration (typically a
+  client the model cannot supply) are carried from the declaration through to the
+  registration, so a connection-based activity can be exposed as an agent tool by binding
+  its client to a module-level variable.
+- Compile-time guards for durable agent declarations: a tool that declares an
+  `@ai:AgentTool` authorization requirement is rejected (durable agents do not run the
+  `ai:Agent` loop that acquires tokens and validates scopes), capability names must be
+  constant strings (the name drives both the designer rendering and the Temporal
+  registration), and an activity is rejected when a parameter the model cannot supply
+  is left without a `bindings` entry.
+
+### Fixed
+
+- Duplicate capability names in a durable agent now fail at startup. Activities, tools,
+  events, human tasks, and peers share one namespace per agent — the name is the tool the
+  model calls, and for a human task also the Temporal workflow type — but a second
+  registration used to replace the first silently. Registration now rejects a name that is
+  already claimed, both at module init (where the declaration registers) and on the agent
+  context (where names the compiler plugin cannot see are registered), so the conflict
+  surfaces even where the WORKFLOW_150 compile-time check cannot reach.
+
+## [0.8.1] - 2026-08-03
+
+### Added
+
+- Durable agents can declare a `resultType`: as the reasoning loop concludes, one more
+  durable model call converts the outcome into that type, and `getResult`/`waitForResult`
+  return the typed value instead of the final text.
+- Durable sleep for agents: agents can pause on a workflow-side timer, and a sleeping
+  agent can be woken early through the management API (`POST /workflows/{id}/wake`),
+  which cancels the pending sleep.
+- Management API task-queue scoping for namespaces shared by multiple integrations
+  (a project): human-task, review-activity, and workflow-instance listings (and the
+  pending count) accept an optional `taskQueue` filter, every list/detail result
+  carries `namespace` and `taskQueue` identifying its owning integration, and task
+  mutations (complete/fail/decide) are rejected with 403 when the task is served by
+  a different integration's task queue.
+- `ToolDecl` gating is honored end to end for durable agent tools: the compiler plugin
+  forwards `{tool: x, requiresApproval: true, userRoles: ...}` entries to the registration,
+  every tool shape (`@ai:AgentTool` function, `ai:ToolConfig`, `ai:BaseToolKit`) is accepted
+  on the declaration, and AI-tool approval reviews use the declared reviewer roles.
+
+### Changed
+
+- Timeout fields across the module (`sleep`, human tasks, approval config, event timeouts)
+  now use a module-owned `workflow:Duration` record, structurally identical to
+  `time:Duration` (existing values remain assignable).
+- The module builds against the latest `ballerina/ai` and `ballerina/mcp` releases.
+
+### Fixed
+
+- Reading a durable agent's result no longer reports the instance as permanently busy:
+  the read checks the instance status instead of relying on a short result timeout.
+
+## [0.8.0] - 2026-07-24
+
+### Added
 
 - Data-event waits are now visible: a workflow blocked on `wait dataEvents.<name>`
   publishes the awaited event names to the execution memo (`wfWaitingEvents`),
@@ -80,12 +137,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Durable agent drivers: `agent.run(query, input)` starts an instance durably and
   always returns the instance ID (a top-level start from services; a **true Temporal
   child workflow** from inside a `@workflow:Workflow`, so sub-agents' lifecycles are
-  tied to the caller). Non-blocking reads (`getResult`/`getEventResult`) return the
+  tied to the caller). Non-blocking reads (`getResult`/`getDataResult`) return the
   value or a `workflow:AgentBusyError` while the agent is still working; blocking
-  reads (`waitForResult`/`waitForEventResult`) suspend durably inside workflows and
-  are crash-resumable from services. `sendEvent(instanceId, eventName, data)` sends
+  reads (`waitForResult`/`waitForDataResult`) suspend durably inside workflows and
+  are crash-resumable from services. `sendData(instanceId, eventName, data)` sends
   one turn and returns a correlation token — a Temporal Update from services
-  (rediscoverable via `getPendingAgentUpdates`), a deterministic reply-correlated
+  (rediscoverable via `getPendingAgentEvents`), a deterministic reply-correlated
   signal from inside workflows. Model-driven peer delegations run the peer agent as
   a child workflow, synchronously or asynchronously with the reply delivered on a
   declared callback event channel; peers honor `requiresApproval` via `PRE_RUN`
@@ -215,6 +272,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Generated JSON schemas no longer list optional record fields (declared with `?`) as
   `required`.
 
+
+### Fixed
+
+- The management listener is initialized only when the management API is enabled
+  (`enableManagementApi`); previously the port was opened unconditionally.
+- Starting and listing workflows and durable agents is unified in the management API:
+  agents carry `kind: "AGENT"` and a `startInputSchema`, and both start through the
+  same endpoint.
 
 ## [0.5.0] - 2026-06-18
 
@@ -402,7 +467,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - `isReplaying()` for replay detection
   - `getWorkflowId()` and `getWorkflowType()` for workflow metadata
 - `createInstance()` function to start workflow instances
-- `sendEvent()` function for signal-based communication
+- `sendData()` function for signal-based communication
 - `registerProcess()` function for singleton worker registration
 - Compiler plugin with validator and code modifier:
   - Validates `@Activity` functions are called via `ctx->callActivity()`

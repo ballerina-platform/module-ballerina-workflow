@@ -465,10 +465,11 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             string? startTimeFrom = (),
             string? startTimeTo = (),
             string? closeTimeFrom = (),
-            string? closeTimeTo = ())
+            string? closeTimeTo = (),
+            string? taskQueue = ())
             returns json|http:InternalServerError {
         return opListWorkflows(status, workflowType, workflowId, startedBy, 'limit, pageToken,
-                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo);
+                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
     }
 
     # Starts a new workflow instance.
@@ -510,6 +511,19 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             @http:Header {name: "x-user-roles"} string? userRoles)
             returns json|http:NotFound|http:InternalServerError {
         return opSuspendWorkflow(workflowId, ());
+    }
+
+    # Wakes a durable agent out of its built-in sleep tool (ends the sleep early).
+    # Harmless when the instance is not sleeping.
+    # + workflowId - The agent instance ID.
+    # + userId - Optional caller identity from the `x-user-id` header.
+    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
+    # + return - `{success: true}` on success, a not-found error, or an internal server error.
+    resource isolated function post workflows/[string workflowId]/wake(
+            @http:Header {name: "x-user-id"} string? userId,
+            @http:Header {name: "x-user-roles"} string? userRoles)
+            returns json|http:NotFound|http:InternalServerError {
+        return opWakeWorkflow(workflowId);
     }
 
     # Resumes the latest suspended run of a workflow.
@@ -734,11 +748,12 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             string? startTimeFrom = (),
             string? startTimeTo = (),
             string? closeTimeFrom = (),
-            string? closeTimeTo = ())
+            string? closeTimeTo = (),
+            string? taskQueue = ())
             returns json|http:InternalServerError {
         return opListHumanTasks(status, parentWorkflowId, parentWorkflowType, taskName, userRole,
                 onlyMyTasks, 'limit, pageToken, startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo,
-                parseRolesHeader(userRoles));
+                taskQueue, parseRolesHeader(userRoles));
     }
 
     # Returns count of pending human tasks (for UI badge).
@@ -747,9 +762,10 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
     # + return - `{count: N}` JSON object, or an internal server error.
     resource isolated function get human\-tasks/pending\-count(
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
+            @http:Header {name: "x-user-roles"} string? userRoles,
+            string? taskQueue = ())
             returns json|http:InternalServerError {
-        return opPendingHumanTaskCount(parseRolesHeader(userRoles));
+        return opPendingHumanTaskCount(taskQueue, parseRolesHeader(userRoles));
     }
 
     // ── Human Tasks — Detail & Operations ────────────────────────────────────
@@ -828,10 +844,12 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             string? startTimeFrom = (),
             string? startTimeTo = (),
             string? closeTimeFrom = (),
-            string? closeTimeTo = ())
+            string? closeTimeTo = (),
+            string? taskQueue = ())
             returns json|http:InternalServerError {
         return opListReviewActivities(status, parentWorkflowId, taskName, 'limit, pageToken,
-                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, parseRolesHeader(userRoles));
+                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue,
+                parseRolesHeader(userRoles));
     }
 
     # Returns detailed info for a single review activity.

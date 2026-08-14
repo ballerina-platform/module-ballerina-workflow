@@ -175,6 +175,14 @@ task ballerinaTest {
                     "Integration tests failed: ${failed} of ${total} tests failed. " +
                     "See ${project.projectDir}/target/report/test_results.json for details.")
             }
+            // A run that discovered no tests is a failure, not a pass: a wedged Temporal
+            // server (module init fails before any test runs) or a discovery regression
+            // would otherwise turn the whole suite into a silent no-op.
+            if (total == 0) {
+                throw new GradleException(
+                    "Integration tests did not run: 0 tests were discovered/executed. " +
+                    "Check the Temporal dev server and the bal test output above.")
+            }
         } else {
             logger.warn("Test results file not found: ${testResultFile}")
         }

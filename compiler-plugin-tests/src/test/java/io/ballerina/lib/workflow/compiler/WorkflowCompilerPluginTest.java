@@ -929,6 +929,17 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "valid")
+    public void testValidDurableAgentToolDecls() {
+        // The `tools` capability accepts every declared shape: a bare @ai:AgentTool function,
+        // ToolDecl mappings gating a function or an ai:ToolConfig (requiresApproval/userRoles
+        // forwarded as named registration arguments), and toolkit/config variable references.
+        DiagnosticResult diagnosticResult = getDiagnosticResult("valid_durable_agent_tool_decls");
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for declared agent tools in all shapes. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "valid")
     public void testValidDurableAgentExplicitNew() {
         // The explicit `check new workflow:DurableAgent({...})` constructor form must be
         // recognized and registered the same as the implicit `check new ({...})` form.
@@ -951,6 +962,148 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "invalid")
+    public void testInvalidDurableAgentFactoryInit() {
+        // A factory-call initializer hides the config from the compiler: without the
+        // WORKFLOW_151 error the agent would compile cleanly, never be registered at
+        // module init, and fail at runtime on its first run().
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_factory_init");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_151);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentNamedArgs() {
+        // Named constructor arguments are legal Ballerina against init(*DurableAgentConfig)
+        // but are not the inline mapping form the registration generator reads.
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_named_args");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_151);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentWildcardBinding() {
+        // A wildcard binding has no stable variable name to register the agent under.
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_wildcard_binding");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_151);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentAliasNotFinal() {
+        // Detection is semantic: a DurableAgent declared through a type alias is still
+        // subject to the placement rules and cannot silently escape them.
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_alias_not_final");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_149);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentSendDataChannels() {
+        // sendData call sites are validated against the agent's declared channels:
+        // an undeclared channel is WORKFLOW_152; keeping the correlation token of a
+        // one-way channel (no response type) is WORKFLOW_153.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_durable_agent_send_data");
+        // Two undeclared channels (positional + named-argument form) and two kept one-way
+        // tokens (direct + through a type alias); the discarded sends stay clean.
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_152").size(), 2,
+                "Both undeclared-channel sends should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_153").size(), 2,
+                "Both kept one-way tokens should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        Assert.assertEquals(diagnosticResult.errorCount(), 4,
+                "Exactly the four misuses should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "valid")
+    public void testValidDurableAgentRunInput() {
+        // Query-only runs, matching typed payloads (positional and named), inline
+        // constructors (runtime-checked), and explicit nil all compile clean.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("valid_durable_agent_run_input");
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for valid run inputs. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentRunInput() {
+        // A payload with the default string inputType (the query IS the input), a payload
+        // for a no-input agent, a mistyped payload, and a mistyped named argument.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_durable_agent_run_input");
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_154").size(), 4,
+                "All four run-input misuses should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        Assert.assertEquals(diagnosticResult.errorCount(), 4,
+                "Exactly the four misuses should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidHumanTaskNameNotConstant() {
+        // Capability names drive the designer and the Temporal registration, so they must be
+        // compile-time constant strings: an interpolated agent-task name and a variable
+        // workflow-task name are each flagged; a non-interpolated template passes.
+        DiagnosticResult diagnosticResult = getDiagnosticResult(
+                "invalid_human_task_name_not_constant");
+        List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_156");
+        Assert.assertEquals(diags.size(), 2,
+                "Expected 2 WORKFLOW_156 errors for the non-constant names. Errors: "
+                        + diagnosticResult.errors());
+        Assert.assertEquals(diagnosticResult.errorCount(), 2,
+                "Expected the name errors to be the only compiler errors. Errors: "
+                        + diagnosticResult.errors());
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentActivityWithConnection() {
+        // A parameter the model cannot supply is rejected unless 'bindings' fixes it at
+        // registration: the bare reference, the ActivityDecl entry, an empty bindings map, a
+        // non-data rest parameter, and bindings that leave that rest parameter unbound are all
+        // flagged, while the fully bound entry and the data-only activity pass.
+        DiagnosticResult diagnosticResult = getDiagnosticResult(
+                "invalid_durable_agent_activity_connection");
+        List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_157");
+        Assert.assertEquals(diags.size(), 5,
+                "Expected 5 WORKFLOW_157 errors for the unusable activity parameters. Errors: "
+                        + diagnosticResult.errors());
+        Assert.assertEquals(diagnosticResult.errorCount(), 5,
+                "Expected the activity errors to be the only compiler errors. Errors: "
+                        + diagnosticResult.errors());
+
+        // The message has to name the parameter and its type, or it does not say what to bind.
+        // The type is rendered fully qualified (ballerina/http:<version>:Client), so the
+        // assertion pins the name and the type's tail rather than a version-specific string.
+        long clientDiags = diags.stream()
+                .map(Diagnostic::message)
+                .filter(message -> message.contains("parameter connection of type")
+                        && message.contains(":Client,"))
+                .count();
+        Assert.assertEquals(clientDiags, 3,
+                "Expected the client-parameter errors to name 'connection' and its type. Errors: "
+                        + diagnosticResult.errors());
+        long restDiags = diags.stream()
+                .map(Diagnostic::message)
+                .filter(message -> message.contains("parameter targets of type")
+                        && message.contains(":Client[],"))
+                .count();
+        Assert.assertEquals(restDiags, 2,
+                "Expected the rest-parameter errors to name 'targets' and its type. Errors: "
+                        + diagnosticResult.errors());
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentToolAuth() {
+        // @ai:AgentTool auth is enforced by the ai:Agent run loop only — a durable agent
+        // declaring such a tool (bare or as a ToolDecl) is rejected; un-authed tools pass.
+        DiagnosticResult diagnosticResult = getDiagnosticResult(
+                "invalid_durable_agent_tool_auth");
+        List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_155");
+        Assert.assertEquals(diags.size(), 2,
+                "Expected 2 WORKFLOW_155 errors for the auth-annotated tools. Errors: "
+                        + diagnosticResult.errors());
+        Assert.assertEquals(diagnosticResult.errorCount(), 2,
+                "Expected the auth errors to be the only compiler errors. Errors: "
+                        + diagnosticResult.errors());
+    }
+
+    @Test(groups = "invalid")
     public void testInvalidDurableAgentDuplicateNames() {
         // "approval" is used by an activity, an event, and a human task — one flat namespace,
         // so the second and third uses are each flagged.
@@ -959,6 +1112,21 @@ public class WorkflowCompilerPluginTest {
         List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_150");
         Assert.assertEquals(diags.size(), 2,
                 "Expected 2 WORKFLOW_150 errors for the duplicate capability names. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentDuplicateHumanTaskNames() {
+        // Two human tasks of one agent named "approve": the name is the task's identity, so the
+        // second declaration is rejected instead of silently shadowing the first.
+        DiagnosticResult diagnosticResult = getDiagnosticResult(
+                "invalid_durable_agent_duplicate_human_tasks");
+        List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_150");
+        Assert.assertEquals(diags.size(), 1,
+                "Expected 1 WORKFLOW_150 error for the duplicate human task name. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        Assert.assertEquals(diagnosticResult.errorCount(), 1,
+                "Expected the duplicate name to be the only compiler error. Errors: "
                         + getDiagnosticMessages(diagnosticResult));
     }
 

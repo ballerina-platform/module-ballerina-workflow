@@ -71,7 +71,7 @@ type TypedResponse http:Created|http:BadRequest|http:NotFound|http:Forbidden|htt
 # Executes a management operation and returns the REST-equivalent result.
 #
 # Operations: `definitions.list`, `instances.list`, `instances.start`, `instances.get`,
-# `instances.suspend`, `instances.resume`, `instances.terminate`, `instances.cancel`,
+# `instances.suspend`, `instances.resume`, `instances.wake`, `instances.terminate`, `instances.cancel`,
 # `instances.history`, `instances.activityTree`, `instances.executionGraph`,
 # `humanTasks.list`, `humanTasks.pendingCount`, `humanTasks.get`, `humanTasks.complete`,
 # `humanTasks.fail`, `reviewActivities.list`, `reviewActivities.get`,
@@ -103,7 +103,7 @@ public isolated function executeManagementCommand(ManagementCommand command) ret
                     strParam(params, "startedBy"), intParam(params, "limit", 20),
                     strParam(params, "pageToken"), strParam(params, "startTimeFrom"),
                     strParam(params, "startTimeTo"), strParam(params, "closeTimeFrom"),
-                    strParam(params, "closeTimeTo")));
+                    strParam(params, "closeTimeTo"), strParam(params, "taskQueue")));
         }
         "instances.start" => {
             // The params map carries the same keys as the REST body
@@ -130,6 +130,13 @@ public isolated function executeManagementCommand(ManagementCommand command) ret
                 return missingParam("workflowId");
             }
             return toCommandResult(opResumeWorkflow(workflowId, strParam(params, "runId")));
+        }
+        "instances.wake" => {
+            string workflowId = strParam(params, "workflowId") ?: "";
+            if workflowId == "" {
+                return missingParam("workflowId");
+            }
+            return toCommandResult(opWakeWorkflow(workflowId));
         }
         "instances.terminate" => {
             string workflowId = strParam(params, "workflowId") ?: "";
@@ -174,10 +181,10 @@ public isolated function executeManagementCommand(ManagementCommand command) ret
                     boolParam(params, "onlyMyTasks"), intParam(params, "limit", 20),
                     strParam(params, "pageToken"), strParam(params, "startTimeFrom"),
                     strParam(params, "startTimeTo"), strParam(params, "closeTimeFrom"),
-                    strParam(params, "closeTimeTo"), callerRoles));
+                    strParam(params, "closeTimeTo"), strParam(params, "taskQueue"), callerRoles));
         }
         "humanTasks.pendingCount" => {
-            return toCommandResult(opPendingHumanTaskCount(callerRoles));
+            return toCommandResult(opPendingHumanTaskCount(strParam(params, "taskQueue"), callerRoles));
         }
         "humanTasks.get" => {
             string taskId = strParam(params, "taskId") ?: "";
@@ -206,7 +213,8 @@ public isolated function executeManagementCommand(ManagementCommand command) ret
                     strParam(params, "parentWorkflowId"), strParam(params, "taskName"),
                     intParam(params, "limit", 20), strParam(params, "pageToken"),
                     strParam(params, "startTimeFrom"), strParam(params, "startTimeTo"),
-                    strParam(params, "closeTimeFrom"), strParam(params, "closeTimeTo"), callerRoles));
+                    strParam(params, "closeTimeFrom"), strParam(params, "closeTimeTo"),
+                    strParam(params, "taskQueue"), callerRoles));
         }
         "reviewActivities.get" => {
             string taskId = strParam(params, "taskId") ?: "";

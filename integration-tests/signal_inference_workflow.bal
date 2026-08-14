@@ -15,13 +15,13 @@
 // under the License.
 
 // ================================================================================
-// SIGNAL INFERENCE WORKFLOW - Tests for optional signalName in sendEvent
+// SIGNAL INFERENCE WORKFLOW - Tests for optional signalName in sendData
 // ================================================================================
 // 
 // These workflows test the optional signalName feature:
 // 1. Single signal workflow - signal name should be inferred
 // 2. Distinct types workflow - signal name inferred by type matching
-// 3. Workflow with no events - tests sendEvent to workflow without signals
+// 3. Workflow with no events - tests sendData to workflow without signals
 //
 // ================================================================================
 

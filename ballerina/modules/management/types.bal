@@ -21,13 +21,17 @@
 # Describes a registered workflow type for use by the workflow launcher UI.
 #
 # + workflowType - Registered workflow function name (Temporal workflow type)
-# + inputSchema - JSON Schema of the workflow's input type for form rendering, derived
-#                 at runtime from the registered workflow function's signature. `()` when
-#                 the workflow takes no data input.
+# + kind - What the definition starts: a `@workflow:Workflow` function (`WORKFLOW`)
+#          or a `workflow:DurableAgent` declaration (`AGENT`). Both start through the
+#          same endpoint and list as one set of definitions
+# + inputSchema - JSON Schema of the start input for form rendering: a workflow's
+#                 input parameters, or an agent's declared `inputType`. `()` when the
+#                 schema is unavailable or the agent declares no input
 # + isActive - Whether this workflow type has an active registered worker
 # + workerCount - Number of workers currently registered for this workflow type
 public type WorkflowDefinition record {|
     string workflowType;
+    string kind = "WORKFLOW";
     string? inputSchema;
     boolean isActive;
     int workerCount;
@@ -95,6 +99,10 @@ public type HumanTaskGroup record {|
 public type HumanTaskSummary record {|
     string taskId;
     string taskName;
+    # The Temporal namespace the task lives in (the project scope)
+    string namespace?;
+    # The task queue of the integration serving this task; route mutations there
+    string taskQueue?;
     string parentWorkflowId;
     string? parentWorkflowType;
     string status;
@@ -121,12 +129,15 @@ public type HumanTaskSummary record {|
 # + userRoles - Roles permitted to complete this task
 # + payload - Read-only context map rendered alongside the form
 # + createdAt - ISO-8601 timestamp stored in memo at task start
-# + formSchema - JSON Schema for the completion form, derived from the task's result type
-#                and stored in the task's memo at creation time; `()` when unavailable
+# + formSchema - JSON Schema for the completion form (populated by compiler plugin; `()` until then)
 # + completedBy - User ID of the person who completed the task, or `()` if not yet completed
 # + completedAt - ISO-8601 timestamp when the task was completed, or `()` if pending
 # + result - The value submitted when completing the task, or `()` if not yet completed
 public type HumanTaskInfo record {|
+    # The Temporal namespace the task lives in (the project scope)
+    string namespace?;
+    # The task queue of the integration serving this task; route mutations there
+    string taskQueue?;
     string taskId;
     string taskName;
     string parentWorkflowId;
@@ -186,6 +197,10 @@ public type ReviewDecision record {|
 public type ReviewActivitySummary record {|
     string taskId;
     string taskName;
+    # The Temporal namespace the task lives in (the project scope)
+    string namespace?;
+    # The task queue of the integration serving this task; route mutations there
+    string taskQueue?;
     string activityName;
     string parentWorkflowId;
     string trigger;
@@ -225,6 +240,10 @@ public type ReviewActivitySummary record {|
 # + decidedBy - User ID of the person who submitted the decision, or `()` if pending
 # + decidedAt - ISO-8601 timestamp when the decision was submitted, or `()` if pending
 public type ReviewActivityInfo record {|
+    # The Temporal namespace the task lives in (the project scope)
+    string namespace?;
+    # The task queue of the integration serving this task; route mutations there
+    string taskQueue?;
     string taskId;
     string taskName;
     string activityName;
@@ -242,6 +261,34 @@ public type ReviewActivityInfo record {|
     string createdAt;
     string? decidedBy;
     string? decidedAt;
+|};
+
+// ================================================================================
+// COMPLETION AUDIT
+// ================================================================================
+
+# Audit record returned by human task completion operations.
+#
+# + success - Always true on the success path
+# + completedBy - User ID extracted from the `x-user-id` request header
+# + completedAt - ISO-8601 timestamp of when the completion was processed
+public type CompletionInfo record {|
+    boolean success;
+    string completedBy;
+    string completedAt;
+|};
+
+# Audit record returned by review activity decision operations.
+#
+# + success - Always true on the success path
+# + decision - The decision taken: `"proceed"`, `"proceed-with-input"`, or `"reject"`
+# + decidedBy - User ID extracted from the `x-user-id` request header
+# + decidedAt - ISO-8601 timestamp of when the decision was processed
+public type ReviewDecisionInfo record {|
+    boolean success;
+    string decision;
+    string decidedBy;
+    string decidedAt;
 |};
 
 // ================================================================================
@@ -347,6 +394,36 @@ public type GraphEdge record {|
 |};
 
 // ================================================================================
+// HTTP SERVICE CONFIGURATION
+// ================================================================================
+
+# Configuration for the management HTTP service.
+#
+# + port - TCP port to listen on
+# + basePath - Base path prefix for all endpoints
+# + cors - Optional CORS configuration
+# + maxPageSize - Maximum allowed page size for list operations
+# + defaultPageSize - Default page size when the caller does not specify one
+public type ManagementServiceConfig record {|
+    int port = 8234;
+    string basePath = "/workflow-api";
+    CorsConfig? cors = ();
+    int maxPageSize = 100;
+    int defaultPageSize = 20;
+|};
+
+# CORS configuration for the management HTTP service.
+#
+# + allowOrigins - Allowed origins
+# + allowMethods - Allowed HTTP methods
+# + allowHeaders - Allowed request headers
+public type CorsConfig record {|
+    string[] allowOrigins = ["*"];
+    string[] allowMethods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"];
+    string[] allowHeaders = ["Content-Type", "x-user-id", "x-user-roles", "Authorization"];
+|};
+
+// ================================================================================
 // WORKFLOW INSTANCE TYPES
 // ================================================================================
 
@@ -361,6 +438,10 @@ public type GraphEdge record {|
 # + closeTime - ISO-8601 timestamp when it ended, or `()` if still running
 # + input - Workflow input as JSON, or `()` if not available
 public type WorkflowInstanceSummary record {|
+    # The Temporal namespace the task lives in (the project scope)
+    string namespace?;
+    # The task queue of the integration serving this task; route mutations there
+    string taskQueue?;
     string workflowId;
     string runId;
     string workflowType;
@@ -390,3 +471,28 @@ public type WorkflowHandle record {|
     string runId;
 |};
 
+// ================================================================================
+// PAGINATED TASK TYPES
+// ================================================================================
+
+# Paginated list of human task summaries.
+#
+# + items - Human task summaries for this page
+# + nextPageToken - Opaque continuation token, or `()` on the last page
+# + hasMore - True when more pages follow
+public type HumanTaskPage record {|
+    HumanTaskSummary[] items;
+    string? nextPageToken;
+    boolean hasMore;
+|};
+
+# Paginated list of review activity summaries.
+#
+# + items - Review activity summaries for this page
+# + nextPageToken - Opaque continuation token, or `()` on the last page
+# + hasMore - True when more pages follow
+public type ReviewActivityPage record {|
+    ReviewActivitySummary[] items;
+    string? nextPageToken;
+    boolean hasMore;
+|};

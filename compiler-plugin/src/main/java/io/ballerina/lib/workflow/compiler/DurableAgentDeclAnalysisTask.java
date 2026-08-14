@@ -20,21 +20,27 @@ package io.ballerina.lib.workflow.compiler;
 
 import io.ballerina.compiler.api.SemanticModel;
 import io.ballerina.compiler.api.symbols.ClassSymbol;
+import io.ballerina.compiler.api.symbols.FunctionSymbol;
+import io.ballerina.compiler.api.symbols.FunctionTypeSymbol;
 import io.ballerina.compiler.api.symbols.ModuleSymbol;
+import io.ballerina.compiler.api.symbols.ParameterSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.api.symbols.VariableSymbol;
+import io.ballerina.compiler.syntax.tree.AnnotationNode;
 import io.ballerina.compiler.syntax.tree.CaptureBindingPatternNode;
 import io.ballerina.compiler.syntax.tree.CheckExpressionNode;
 import io.ballerina.compiler.syntax.tree.ExplicitNewExpressionNode;
 import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
+import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.ImplicitNewExpressionNode;
 import io.ballerina.compiler.syntax.tree.ListConstructorExpressionNode;
 import io.ballerina.compiler.syntax.tree.MappingConstructorExpressionNode;
 import io.ballerina.compiler.syntax.tree.MappingFieldNode;
+import io.ballerina.compiler.syntax.tree.ModulePartNode;
 import io.ballerina.compiler.syntax.tree.ModuleVariableDeclarationNode;
 import io.ballerina.compiler.syntax.tree.Node;
 import io.ballerina.compiler.syntax.tree.PositionalArgumentNode;
@@ -44,6 +50,7 @@ import io.ballerina.compiler.syntax.tree.SpecificFieldNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.compiler.syntax.tree.TypeDescriptorNode;
 import io.ballerina.compiler.syntax.tree.VariableDeclarationNode;
+import io.ballerina.projects.Document;
 import io.ballerina.projects.DocumentId;
 import io.ballerina.projects.plugins.AnalysisTask;
 import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
@@ -62,8 +69,11 @@ import java.util.Set;
  * Analysis task for object-model durable agent declarations:
  * {@code final workflow:DurableAgent x = new ({...})}.
  * <p>
- * Enforces placement (module-level and {@code final} — {@code WORKFLOW_149}) and capability name
- * uniqueness across events/tools/activities/human tasks/peers ({@code WORKFLOW_150}), and extracts
+ * Enforces placement (module-level and {@code final} — {@code WORKFLOW_149}), a statically readable
+ * declaration shape — a named variable initialized inline with either constructor form,
+ * {@code new ({...})} or {@code new workflow:DurableAgent({...})} ({@code WORKFLOW_151}) — and
+ * capability name uniqueness across events/tools/activities/human tasks/peers
+ * ({@code WORKFLOW_150}), and extracts
  * the constructor config into a {@link DurableAgentDeclInfo} so {@link WorkflowSourceModifier}
  * can generate the module-init registration.
  *
@@ -107,20 +117,24 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
 
         if (!(varDecl.typedBindingPattern().bindingPattern()
                 instanceof CaptureBindingPatternNode capturePattern)) {
+            // A wildcard/destructuring binding has no stable name to register the agent under.
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_151, varDecl.location());
             return;
         }
         String agentName = capturePattern.variableName().text();
-        String workflowPrefix = typeDesc instanceof QualifiedNameReferenceNode qualifiedName
-                ? qualifiedName.modulePrefix().text() : null;
 
         Optional<MappingConstructorExpressionNode> configOpt =
                 findConfigMapping(varDecl.initializer().orElse(null));
         if (configOpt.isEmpty()) {
+            // The initializer is not an inline `new ({...})` (factory call, variable reference,
+            // conditional, named constructor arguments, ...) — the config cannot be read at
+            // compile time, so no module-init registration can be generated. Without this
+            // error the agent would compile cleanly and fail at runtime on its first run().
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_151, varDecl.location());
             return;
         }
 
-        DurableAgentDeclInfo declInfo = extractDeclInfo(agentName, workflowPrefix, configOpt.get(),
-                context);
+        DurableAgentDeclInfo declInfo = extractDeclInfo(agentName, configOpt.get(), context);
         storeDeclInfo(context.documentId(), declInfo);
     }
 
@@ -129,17 +143,27 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
      * {@code DurableAgent} class.
      */
     private boolean isDurableAgentVariable(TypeDescriptorNode typeDesc, SemanticModel semanticModel) {
-        String typeName = typeDesc instanceof QualifiedNameReferenceNode qualifiedName
-                ? qualifiedName.identifier().text()
-                : typeDesc.kind() == SyntaxKind.SIMPLE_NAME_REFERENCE ? typeDesc.toSourceCode().strip() : null;
-        if (!DURABLE_AGENT_CLASS.equals(typeName)) {
+        // Only name references can denote the DurableAgent class (directly or via a type
+        // alias); resolution is semantic so aliases don't silently escape the validation.
+        if (!(typeDesc instanceof QualifiedNameReferenceNode)
+                && typeDesc.kind() != SyntaxKind.SIMPLE_NAME_REFERENCE) {
             return false;
         }
-        Optional<Symbol> symbolOpt = semanticModel.symbol(typeDesc);
-        if (symbolOpt.isEmpty()) {
+        return isDurableAgentSymbol(semanticModel.symbol(typeDesc).orElse(null));
+    }
+
+    /**
+     * Returns {@code true} when the given symbol (a type reference, the class itself, or a
+     * variable) resolves — through any chain of type aliases — to the workflow module's
+     * {@code DurableAgent} class. Shared with {@link DurableAgentDataCallValidatorTask}.
+     *
+     * @param symbol the resolved symbol, or {@code null}
+     * @return whether the symbol denotes a {@code workflow:DurableAgent}
+     */
+    static boolean isDurableAgentSymbol(Symbol symbol) {
+        if (symbol == null) {
             return false;
         }
-        Symbol symbol = symbolOpt.get();
         TypeSymbol typeSymbol = null;
         if (symbol.kind() == SymbolKind.TYPE && symbol instanceof TypeSymbol ts) {
             typeSymbol = ts;
@@ -148,7 +172,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         } else if (symbol instanceof VariableSymbol variableSymbol) {
             typeSymbol = variableSymbol.typeDescriptor();
         }
-        if (typeSymbol instanceof TypeReferenceTypeSymbol typeRef) {
+        while (typeSymbol instanceof TypeReferenceTypeSymbol typeRef) {
             typeSymbol = typeRef.typeDescriptor();
         }
         if (!(typeSymbol instanceof ClassSymbol classSymbol)) {
@@ -194,14 +218,17 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
      * Extracts the declaration info from the constructor config mapping and checks capability
      * name uniqueness across the flat namespace.
      */
-    private DurableAgentDeclInfo extractDeclInfo(String agentName, String workflowPrefix,
+    private DurableAgentDeclInfo extractDeclInfo(String agentName,
                                                  MappingConstructorExpressionNode config,
                                                  SyntaxNodeAnalysisContext context) {
         String modelSource = null;
         String systemPromptSource = null;
         String maxIterSource = null;
+        String inputTypeSource = null;
+        String resultTypeSource = null;
+        List<String> typeRefPrefixes = new ArrayList<>();
         List<DurableAgentDeclInfo.ActivityDecl> activities = new ArrayList<>();
-        List<String> aiToolRefs = new ArrayList<>();
+        List<DurableAgentDeclInfo.ToolRef> aiToolRefs = new ArrayList<>();
         List<DurableAgentDeclInfo.EventDecl> events = new ArrayList<>();
         List<DurableAgentDeclInfo.HumanTaskDecl> humanTasks = new ArrayList<>();
         List<DurableAgentDeclInfo.PeerDecl> peers = new ArrayList<>();
@@ -219,7 +246,16 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 case "model" -> modelSource = value.toSourceCode().strip();
                 case "systemPrompt" -> systemPromptSource = value.toSourceCode().strip();
                 case "maxIter" -> maxIterSource = value.toSourceCode().strip();
-                case "activities" -> extractActivities(value, activities, seenNames, agentName, context);
+                case "inputType" -> {
+                    inputTypeSource = value.toSourceCode().strip();
+                    collectQualifiedPrefixes(value, typeRefPrefixes);
+                }
+                case "resultType" -> {
+                    resultTypeSource = value.toSourceCode().strip();
+                    collectQualifiedPrefixes(value, typeRefPrefixes);
+                }
+                case "activities" ->
+                        extractActivities(value, activities, seenNames, agentName, typeRefPrefixes, context);
                 case "tools" -> extractTools(value, aiToolRefs, seenNames, agentName, context);
                 case "events" -> extractEvents(value, events, seenNames, agentName, context);
                 case "humanTasks" -> extractHumanTasks(value, humanTasks, seenNames, agentName, context);
@@ -230,12 +266,13 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             }
         }
 
-        return new DurableAgentDeclInfo(agentName, workflowPrefix, modelSource, systemPromptSource,
-                maxIterSource, activities, aiToolRefs, events, humanTasks, peers);
+        return new DurableAgentDeclInfo(agentName, modelSource, systemPromptSource,
+                maxIterSource, inputTypeSource, resultTypeSource, typeRefPrefixes, activities, aiToolRefs,
+                events, humanTasks, peers);
     }
 
     private void extractActivities(ExpressionNode value, List<DurableAgentDeclInfo.ActivityDecl> activities,
-                                   Set<String> seenNames, String agentName,
+                                   Set<String> seenNames, String agentName, List<String> typeRefPrefixes,
                                    SyntaxNodeAnalysisContext context) {
         if (!(value instanceof ListConstructorExpressionNode list)) {
             return;
@@ -247,21 +284,25 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 String refSource = member.toSourceCode().strip();
                 String toolName = simpleName(refSource);
                 checkUnique(toolName, seenNames, agentName, member.location(), context);
-                activities.add(new DurableAgentDeclInfo.ActivityDecl(toolName, refSource, null));
+                checkActivityParametersAreData(member, toolName, agentName, Set.of(), context);
+                activities.add(new DurableAgentDeclInfo.ActivityDecl(toolName, refSource, null, null));
             } else if (member instanceof MappingConstructorExpressionNode declMapping) {
-                extractActivityDecl(declMapping, activities, seenNames, agentName, context);
+                extractActivityDecl(declMapping, activities, seenNames, agentName, typeRefPrefixes, context);
             }
         }
     }
 
     private void extractActivityDecl(MappingConstructorExpressionNode declMapping,
                                      List<DurableAgentDeclInfo.ActivityDecl> activities,
-                                     Set<String> seenNames, String agentName,
+                                     Set<String> seenNames, String agentName, List<String> typeRefPrefixes,
                                      SyntaxNodeAnalysisContext context) {
         String functionRefSource = null;
         String explicitName = null;
         StringBuilder meta = new StringBuilder();
         Location nameLocation = declMapping.location();
+        Node activityRefNode = null;
+        Set<String> boundParameters = Set.of();
+        String bindingsSource = null;
         for (MappingFieldNode declField : declMapping.fields()) {
             if (!(declField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
                 continue;
@@ -269,14 +310,24 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             String key = sf.fieldName().toSourceCode().strip();
             ExpressionNode declValue = sf.valueExpr().get();
             switch (key) {
-                case "activity" -> functionRefSource = declValue.toSourceCode().strip();
+                case "activity" -> {
+                    functionRefSource = declValue.toSourceCode().strip();
+                    activityRefNode = declValue;
+                }
                 case "name" -> {
                     explicitName = stringLiteralValue(declValue);
                     nameLocation = declValue.location();
                 }
                 // bindings may hold client objects, which are not json — they stay out of the
-                // metadata and are re-emitted separately when activity binding support lands.
-                case "bindings" -> { }
+                // metadata and are emitted as their own argument of the registration.
+                case "bindings" -> {
+                    // Emitted verbatim into the generated registration: bound client objects
+                    // reference their module-level variables, which are in scope there, so the
+                    // prefixes of any qualified reference inside must travel with it.
+                    bindingsSource = declValue.toSourceCode().strip();
+                    boundParameters = boundParameterNames(declValue);
+                    collectQualifiedPrefixes(declValue, typeRefPrefixes);
+                }
                 default -> appendMetaField(meta, key, declValue.toSourceCode().strip());
             }
         }
@@ -285,12 +336,31 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         }
         String toolName = explicitName != null ? explicitName : simpleName(functionRefSource);
         checkUnique(toolName, seenNames, agentName, nameLocation, context);
+        checkActivityParametersAreData(activityRefNode == null ? declMapping : activityRefNode,
+                toolName, agentName, boundParameters, context);
         activities.add(new DurableAgentDeclInfo.ActivityDecl(toolName, functionRefSource,
-                meta.isEmpty() ? null : "{" + meta + "}"));
+                meta.isEmpty() ? null : "{" + meta + "}", bindingsSource));
     }
 
-    private void extractTools(ExpressionNode value, List<String> aiToolRefs, Set<String> seenNames,
-                              String agentName, SyntaxNodeAnalysisContext context) {
+    // Collects the module prefixes of qualified references anywhere inside a type
+    // expression (generics, unions, nested types) from the parsed node — unlike a textual
+    // scan, this cannot mistake mapping keys or record fields for module prefixes.
+    private void collectQualifiedPrefixes(Node node, List<String> out) {
+        if (node instanceof io.ballerina.compiler.syntax.tree.QualifiedNameReferenceNode qualified) {
+            String prefix = qualified.modulePrefix().text().strip();
+            if (!prefix.isEmpty() && !out.contains(prefix)) {
+                out.add(prefix);
+            }
+        }
+        if (node instanceof io.ballerina.compiler.syntax.tree.NonTerminalNode nonTerminal) {
+            for (Node child : nonTerminal.children()) {
+                collectQualifiedPrefixes(child, out);
+            }
+        }
+    }
+
+    private void extractTools(ExpressionNode value, List<DurableAgentDeclInfo.ToolRef> aiToolRefs,
+                              Set<String> seenNames, String agentName, SyntaxNodeAnalysisContext context) {
         if (!(value instanceof ListConstructorExpressionNode list)) {
             return;
         }
@@ -299,7 +369,39 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     || member.kind() == SyntaxKind.QUALIFIED_NAME_REFERENCE) {
                 String refSource = member.toSourceCode().strip();
                 checkUnique(simpleName(refSource), seenNames, agentName, member.location(), context);
-                aiToolRefs.add(refSource);
+                checkToolAuthUnsupported(member, agentName, context);
+                aiToolRefs.add(new DurableAgentDeclInfo.ToolRef(refSource, null, null));
+            } else if (member instanceof MappingConstructorExpressionNode toolDecl) {
+                // A ToolDecl entry: {tool: <ref>, requiresApproval: ..., userRoles: ...}. The
+                // gating fields pass through to the registration call as named arguments.
+                String toolRef = null;
+                String approvalSource = null;
+                String rolesSource = null;
+                Node toolRefNode = null;
+                for (MappingFieldNode field : toolDecl.fields()) {
+                    if (!(field instanceof SpecificFieldNode specificField)
+                            || specificField.valueExpr().isEmpty()) {
+                        continue;
+                    }
+                    String fieldName = specificField.fieldName().toSourceCode().strip();
+                    String valueSource = specificField.valueExpr().get().toSourceCode().strip();
+                    switch (fieldName) {
+                        case "tool" -> {
+                            toolRef = valueSource;
+                            toolRefNode = specificField.valueExpr().get();
+                        }
+                        case "requiresApproval" -> approvalSource = valueSource;
+                        case "userRoles" -> rolesSource = valueSource;
+                        default -> {
+                        }
+                    }
+                }
+                if (toolRef == null) {
+                    continue;
+                }
+                checkUnique(simpleName(toolRef), seenNames, agentName, member.location(), context);
+                checkToolAuthUnsupported(toolRefNode, agentName, context);
+                aiToolRefs.add(new DurableAgentDeclInfo.ToolRef(toolRef, approvalSource, rolesSource));
             }
             // ai:ToolConfig / toolkit constructor expressions carry their functions by value and
             // need no module-init registration; their names are not statically resolvable here.
@@ -319,7 +421,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             String name = null;
             String requestSource = null;
             String responseSource = null;
-            String cardinality = "SINGLE_EVENT";
+            String cardinality = "MULTI_EVENT";
             Location nameLocation = eventMapping.location();
             for (MappingFieldNode eventField : eventMapping.fields()) {
                 if (!(eventField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
@@ -331,6 +433,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     case "name" -> {
                         name = stringLiteralValue(fieldValue);
                         nameLocation = fieldValue.location();
+                        if (name == null) {
+                            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_156,
+                                    fieldValue.location(), "data-event channel");
+                        }
                     }
                     case "request" -> requestSource = fieldValue.toSourceCode().strip();
                     case "response" -> responseSource = fieldValue.toSourceCode().strip();
@@ -373,11 +479,13 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     case "name" -> {
                         name = stringLiteralValue(fieldValue);
                         nameLocation = fieldValue.location();
+                        if (name == null) {
+                            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_156,
+                                    fieldValue.location(), "human task");
+                        }
                     }
-                    // The result typedesc travels separately (it is not json); the timeout stays
-                    // out of the metadata until task timeouts land on the runner.
+                    // The result typedesc travels separately (it is not json).
                     case "resultType" -> resultTypeSource = fieldValue.toSourceCode().strip();
-                    case "timeout" -> { }
                     default -> appendMetaField(meta, key, fieldValue.toSourceCode().strip());
                 }
             }
@@ -430,6 +538,152 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         }
     }
 
+    // @ai:AgentTool 'auth' (OAuth scopes / Agent-ID config) is enforced by the ai:Agent run
+    // loop, which the durable agent does not use — reject the declaration instead of running
+    // the tool unauthenticated. Full support is tracked in ballerina-library#8978. Annotation
+    // attachment values are not compile-time constants, so after resolving the reference
+    // through the semantic model, the check reads the annotation syntactically from the
+    // function's definition (located by the symbol's position, so qualified references and
+    // same-name collisions resolve correctly). Definitions outside the current package
+    // cannot be inspected syntactically and are skipped.
+    private void checkToolAuthUnsupported(Node toolRefNode, String agentName,
+                                          SyntaxNodeAnalysisContext context) {
+        if (toolRefNode == null) {
+            return;
+        }
+        java.util.Optional<Symbol> symbol = context.semanticModel().symbol(toolRefNode);
+        if (symbol.isEmpty() || symbol.get().kind() != SymbolKind.FUNCTION
+                || symbol.get().getLocation().isEmpty()) {
+            return;
+        }
+        Location definition = symbol.get().getLocation().get();
+        FunctionDefinitionNode functionDef = findFunctionDefinition(context, definition);
+        if (functionDef == null || functionDef.metadata().isEmpty()) {
+            return;
+        }
+        for (AnnotationNode annotation : functionDef.metadata().get().annotations()) {
+            if (!isAiAgentToolAnnotation(context, annotation) || annotation.annotValue().isEmpty()) {
+                continue;
+            }
+            for (MappingFieldNode field : annotation.annotValue().get().fields()) {
+                if (field instanceof SpecificFieldNode specificField
+                        && "auth".equals(specificField.fieldName().toSourceCode().strip())) {
+                    reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_155,
+                            toolRefNode.location(), functionDef.functionName().text(), agentName);
+                    return;
+                }
+            }
+        }
+    }
+
+    // Locates the function definition node holding the given symbol location (the symbol's
+    // position is its name token) across all modules of the current package.
+    private FunctionDefinitionNode findFunctionDefinition(SyntaxNodeAnalysisContext context,
+                                                          Location definition) {
+        String fileName = definition.lineRange().fileName();
+        int line = definition.lineRange().startLine().line();
+        for (io.ballerina.projects.Module module : context.currentPackage().modules()) {
+            for (DocumentId documentId : module.documentIds()) {
+                Document document = module.document(documentId);
+                if (!document.name().endsWith(fileName)) {
+                    continue;
+                }
+                ModulePartNode root = document.syntaxTree().rootNode();
+                for (Node member : root.members()) {
+                    if (member instanceof FunctionDefinitionNode functionDef
+                            && functionDef.functionName().lineRange().startLine().line() == line) {
+                        return functionDef;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    // Resolves the annotation reference and requires ballerina/ai's AgentTool — alias imports
+    // resolve correctly, and unrelated annotations that happen to be named AgentTool (or to
+    // carry an auth field) do not match.
+    private boolean isAiAgentToolAnnotation(SyntaxNodeAnalysisContext context, AnnotationNode annotation) {
+        java.util.Optional<Symbol> symbol = context.semanticModel().symbol(annotation);
+        if (symbol.isEmpty() || !(symbol.get()
+                instanceof io.ballerina.compiler.api.symbols.AnnotationSymbol annotationSymbol)) {
+            return false;
+        }
+        return annotationSymbol.getName().map("AgentTool"::equals).orElse(false)
+                && annotationSymbol.getModule()
+                        .map(module -> "ai".equals(module.id().moduleName())
+                                && "ballerina".equals(module.id().orgName()))
+                        .orElse(false);
+    }
+
+    // An agent invokes an activity with arguments the model produces, so every parameter the
+    // model has to fill must be data. Client objects and other non-data parameters are only
+    // usable when fixed at registration through 'bindings' — reject the declaration instead of
+    // generating an agent whose tool can never be called. A parameter named by 'bindings' is
+    // supplied at registration and is therefore not the model's to produce.
+    private void checkActivityParametersAreData(Node activityRefNode, String toolName, String agentName,
+                                                Set<String> boundParameters,
+                                                SyntaxNodeAnalysisContext context) {
+        if (boundParameters == null) {
+            // The bindings are not a mapping constructor, so which parameters they supply is
+            // not knowable here; nothing can be shown to be unbound.
+            return;
+        }
+        java.util.Optional<Symbol> symbol = context.semanticModel().symbol(activityRefNode);
+        if (symbol.isEmpty() || !(symbol.get() instanceof FunctionSymbol functionSymbol)) {
+            return;
+        }
+        FunctionTypeSymbol typeDescriptor = functionSymbol.typeDescriptor();
+        for (ParameterSymbol parameter : typeDescriptor.params().orElse(List.of())) {
+            if (reportNonDataParameter(parameter, activityRefNode, toolName, agentName,
+                    boundParameters, context)) {
+                return;
+            }
+        }
+        // A rest parameter is filled by the model too, so the same rule applies to it.
+        typeDescriptor.restParam().ifPresent(restParam -> reportNonDataParameter(
+                restParam, activityRefNode, toolName, agentName, boundParameters, context));
+    }
+
+    // Reports WORKFLOW_157 for a parameter the model can neither produce nor have bound,
+    // returning whether it did.
+    private boolean reportNonDataParameter(ParameterSymbol parameter, Node activityRefNode, String toolName,
+                                           String agentName, Set<String> boundParameters,
+                                           SyntaxNodeAnalysisContext context) {
+        TypeSymbol type = parameter.typeDescriptor();
+        String parameterName = parameter.getName().orElse("?");
+        if (boundParameters.contains(parameterName)
+                || WorkflowPluginUtils.isSubtypeOfAnydata(type, context.semanticModel())) {
+            return false;
+        }
+        reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_157, activityRefNode.location(),
+                toolName, agentName, parameterName, type.signature(),
+                activityRefNode.toSourceCode().strip(), parameterName);
+        return true;
+    }
+
+    /**
+     * The parameter names a {@code bindings} mapping supplies at registration.
+     *
+     * <p>Only a mapping constructor states its keys statically. When the bindings arrive as
+     * anything else — a variable reference, say — no parameter can be shown to be unbound, so
+     * every parameter counts as bound rather than reporting a conflict that may not exist.
+     */
+    private static Set<String> boundParameterNames(ExpressionNode bindings) {
+        if (!(bindings instanceof MappingConstructorExpressionNode mapping)) {
+            return null;
+        }
+        Set<String> names = new HashSet<>();
+        for (MappingFieldNode field : mapping.fields()) {
+            if (field instanceof SpecificFieldNode specificField) {
+                String key = specificField.fieldName().toSourceCode().strip();
+                names.add(key.length() > 1 && key.startsWith("\"") && key.endsWith("\"")
+                        ? key.substring(1, key.length() - 1) : key);
+            }
+        }
+        return names;
+    }
+
     private void checkUnique(String name, Set<String> seenNames, String agentName, Location location,
                              SyntaxNodeAnalysisContext context) {
         if (name == null || name.isEmpty()) {
@@ -452,14 +706,26 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
      * plain string literal (template or computed names are not statically resolvable).
      */
     private static String stringLiteralValue(ExpressionNode expression) {
-        if (expression.kind() != SyntaxKind.STRING_LITERAL) {
-            return null;
+        if (expression.kind() == SyntaxKind.STRING_LITERAL) {
+            String text = expression.toSourceCode().strip();
+            if (text.length() >= 2 && text.startsWith("\"") && text.endsWith("\"")) {
+                return text.substring(1, text.length() - 1);
+            }
+            return text;
         }
-        String text = expression.toSourceCode().strip();
-        if (text.length() >= 2 && text.startsWith("\"") && text.endsWith("\"")) {
-            return text.substring(1, text.length() - 1);
+        // A string template without interpolations is also a compile-time constant.
+        if (expression.kind() == SyntaxKind.STRING_TEMPLATE_EXPRESSION) {
+            String text = expression.toSourceCode().strip();
+            int open = text.indexOf('`');
+            int close = text.lastIndexOf('`');
+            if (open >= 0 && close > open) {
+                String content = text.substring(open + 1, close);
+                if (!content.contains("${")) {
+                    return content;
+                }
+            }
         }
-        return text;
+        return null;
     }
 
     private static String simpleName(String refSource) {

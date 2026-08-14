@@ -27,6 +27,7 @@ import io.ballerina.runtime.api.Environment;
 import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.creators.TypeCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
+import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BArray;
 import io.ballerina.runtime.api.values.BError;
@@ -43,6 +44,7 @@ import io.temporal.client.WorkflowUpdateStage;
 import io.temporal.workflow.Workflow;
 import io.temporal.workflow.WorkflowLocal;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -88,17 +90,39 @@ public final class DurableAgentNative {
         private final BObject model;
         private final Object systemPrompt;
         private final long maxIter;
+        // The agent's workflow input typedesc: string (the query text is the input, the
+        // default), another data type (structured run input), or null (no-input agent).
+        private final BTypedesc inputType;
+        private final BTypedesc resultType;
         private final Map<String, ActivityDecl> activities = new LinkedHashMap<>();
-        private final Map<String, BFunctionPointer> tools = new LinkedHashMap<>();
+        private final Map<String, ToolDeclEntry> tools = new LinkedHashMap<>();
         private final Map<String, EventDecl> events = new LinkedHashMap<>();
         private final Map<String, Object> humanTasks = new LinkedHashMap<>();
         private final Map<String, PeerDecl> peers = new LinkedHashMap<>();
+        // Every capability name claimed on this agent, mapped to the kind that claimed it.
+        // Capabilities are keyed by name in their own maps, so an unchecked duplicate would
+        // silently replace the earlier declaration instead of failing.
+        private final Map<String, String> capabilityKinds = new LinkedHashMap<>();
 
-        AgentDecl(String agentName, BObject model, Object systemPrompt, long maxIter) {
+        /**
+         * Claims {@code name} in this agent's flat capability namespace.
+         *
+         * @param name the capability name
+         * @param kind the capability kind claiming it, for the error message
+         * @return the kind already holding the name, or null when the claim succeeds
+         */
+        String claimCapabilityName(String name, String kind) {
+            return capabilityKinds.putIfAbsent(name, kind);
+        }
+
+        AgentDecl(String agentName, BObject model, Object systemPrompt, long maxIter, BTypedesc inputType,
+                  BTypedesc resultType) {
             this.agentName = agentName;
             this.model = model;
             this.systemPrompt = systemPrompt;
             this.maxIter = maxIter;
+            this.inputType = inputType;
+            this.resultType = resultType;
         }
 
         public String agentName() {
@@ -117,11 +141,24 @@ public final class DurableAgentNative {
             return maxIter;
         }
 
+        /**
+         * The agent's workflow input typedesc, or {@code null} for a no-input agent.
+         *
+         * @return the declared input typedesc
+         */
+        public BTypedesc inputType() {
+            return inputType;
+        }
+
+        public BTypedesc resultType() {
+            return resultType;
+        }
+
         public Map<String, ActivityDecl> activities() {
             return activities;
         }
 
-        public Map<String, BFunctionPointer> tools() {
+        public Map<String, ToolDeclEntry> tools() {
             return tools;
         }
 
@@ -152,10 +189,22 @@ public final class DurableAgentNative {
      *
      * @param toolName the tool name advertised to the model
      * @param function the @workflow:Activity function
-     * @param meta     the declaration metadata (description, bindings, gating, retry policy) as
+     * @param meta     the declaration metadata (description, gating, retry policy) as
      *                 a Ballerina value
+     * @param bindings the arguments fixed at registration (e.g. a client), or nil
      */
-    public record ActivityDecl(String toolName, BFunctionPointer function, Object meta) { }
+    public record ActivityDecl(String toolName, BFunctionPointer function, Object meta,
+                               Object bindings) { }
+
+    /**
+     * A declared AI tool of a durable agent.
+     *
+     * @param toolName the tool name advertised to the model
+     * @param tool     the tool function
+     * @param meta     the declaration metadata (description, parameters schema, gating) as a
+     *                 json value, decoded by the runner
+     */
+    public record ToolDeclEntry(String toolName, BFunctionPointer tool, Object meta) { }
 
     /**
      * A declared event channel.
@@ -185,13 +234,17 @@ public final class DurableAgentNative {
      * @param model        the ai:ModelProvider
      * @param systemPrompt the system prompt value (role + instructions)
      * @param maxIter      the per-turn reasoning iteration cap
+     * @param inputType    the agent's workflow input typedesc: string (query text), another
+     *                     data type (structured run input), or null (no-input agent)
      * @return true on success, or a BError when the name is already registered
      */
     public static Object registerDurableAgentDecl(BString agentName, BObject model, Object systemPrompt,
-                                                  long maxIter) {
+                                                  long maxIter, Object inputType, Object resultType) {
         String name = agentName.getValue();
         AgentDecl existing = AGENT_DECL_REGISTRY.putIfAbsent(name,
-                new AgentDecl(name, model, systemPrompt, maxIter));
+                new AgentDecl(name, model, systemPrompt, maxIter,
+                        inputType instanceof BTypedesc typedesc ? typedesc : null,
+                        resultType instanceof BTypedesc resultTypedesc ? resultTypedesc : null));
         if (existing != null) {
             return ErrorCreator.createError(StringUtils.fromString(
                     "A durable agent named '" + name + "' is already registered"));
@@ -210,13 +263,18 @@ public final class DurableAgentNative {
      * @return true on success, or a BError when the agent is unknown
      */
     public static Object registerDurableAgentActivity(BString agentName, BString toolName,
-                                                      BFunctionPointer function, Object meta) {
+                                                      BFunctionPointer function, Object meta,
+                                                      Object bindings) {
         AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName.getValue());
         if (decl == null) {
             return unknownAgentError(agentName.getValue());
         }
+        Object duplicate = duplicateCapabilityError(decl, toolName.getValue(), "an activity");
+        if (duplicate != null) {
+            return duplicate;
+        }
         decl.activities().put(toolName.getValue(),
-                new ActivityDecl(toolName.getValue(), function, meta));
+                new ActivityDecl(toolName.getValue(), function, meta, bindings));
         return true;
     }
 
@@ -236,6 +294,10 @@ public final class DurableAgentNative {
         if (decl == null) {
             return unknownAgentError(agentName.getValue());
         }
+        Object duplicate = duplicateCapabilityError(decl, eventName.getValue(), "a data-event channel");
+        if (duplicate != null) {
+            return duplicate;
+        }
         decl.events().put(eventName.getValue(),
                 new EventDecl(eventName.getValue(), request, response, cardinality.getValue()));
         return true;
@@ -254,6 +316,10 @@ public final class DurableAgentNative {
         AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName.getValue());
         if (decl == null) {
             return unknownAgentError(agentName.getValue());
+        }
+        Object duplicate = duplicateCapabilityError(decl, taskName.getValue(), "a human task");
+        if (duplicate != null) {
+            return duplicate;
         }
         decl.humanTasks().put(taskName.getValue(), new HumanTaskDeclEntry(meta, resultType));
         return true;
@@ -302,50 +368,94 @@ public final class DurableAgentNative {
      * @param tool      the tool function
      * @return true on success, or a BError when the agent is unknown
      */
-    public static Object registerDurableAgentTool(BString agentName, BString toolName, BFunctionPointer tool) {
+    public static Object registerDurableAgentTool(BString agentName, BString toolName, BFunctionPointer tool,
+                                                  Object meta) {
         AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName.getValue());
         if (decl == null) {
             return unknownAgentError(agentName.getValue());
         }
-        decl.tools().put(toolName.getValue(), tool);
+        Object duplicate = duplicateCapabilityError(decl, toolName.getValue(), "a tool");
+        if (duplicate != null) {
+            return duplicate;
+        }
+        decl.tools().put(toolName.getValue(), new ToolDeclEntry(toolName.getValue(), tool, meta));
+        boolean mcpTool = meta instanceof io.ballerina.runtime.api.values.BMap<?, ?> metaMap
+                && Boolean.TRUE.equals(metaMap.get(io.ballerina.runtime.api.utils.StringUtils.fromString("isMcp")));
         WorkflowWorkerNative.putAgentTool(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + agentName.getValue(),
-                toolName.getValue(), tool);
+                toolName.getValue(), tool, mcpTool);
         return true;
+    }
+
+    // The shared object-model runner and the built-in agent activities, handed over once at
+    // workflow-module init (setObjectRunner). Captured natively so that generated user code
+    // wires an agent by name alone and no runner machinery appears in the public API.
+    private static volatile BFunctionPointer objectRunner;
+    private static volatile Map<BString, Object> builtinAgentActivities;
+
+    /**
+     * Captures the shared object-model runner function and the built-in agent activities
+     * (llmChat/generate/executeAgentTool). Called exactly once from the workflow module's own
+     * {@code init()}, which always runs before any user-module registration.
+     *
+     * @param runner            the shared runner function
+     * @param builtinActivities the built-in agent activities keyed by activity name
+     */
+    public static void setObjectRunner(BFunctionPointer runner, BMap<BString, Object> builtinActivities) {
+        Map<BString, Object> builtins = new LinkedHashMap<>();
+        for (Map.Entry<BString, Object> builtin : builtinActivities.entrySet()) {
+            builtins.put(builtin.getKey(), builtin.getValue());
+        }
+        objectRunner = runner;
+        builtinAgentActivities = Collections.unmodifiableMap(builtins);
     }
 
     /**
      * Registers the shared object-model runner as the agent's workflow: the agent gets its own
      * workflow type ({@code workflow-<agentName>}), whose activities are the agent's declared
      * activity functions plus the built-in agent activities (llmChat/generate/executeAgentTool).
-     * This reuses the whole function-based agent substrate — adapter dispatch, model/tool
-     * registries, and management views key on the same workflow type.
+     * Adapter dispatch, model/tool registries, and management views key on the same workflow
+     * type; the type is flagged so the adapter injects the native agent context handle. The
+     * runner and built-ins were captured at workflow-module init ({@link #setObjectRunner}).
      *
-     * @param env               the Ballerina runtime environment
-     * @param agentName         the agent name
-     * @param runner            the shared runner function (workflow:runDurableAgentObject)
-     * @param builtinActivities the built-in agent activities keyed by activity name
+     * @param env       the Ballerina runtime environment
+     * @param agentName the agent name
      * @return true on success, or a BError
      */
-    public static Object registerDurableAgentRunner(Environment env, BString agentName, BFunctionPointer runner,
-                                                    BMap<BString, Object> builtinActivities) {
+    public static Object registerDurableAgentRunner(Environment env, BString agentName) {
         AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName.getValue());
         if (decl == null) {
             return unknownAgentError(agentName.getValue());
         }
+        BFunctionPointer runner = objectRunner;
+        Map<BString, Object> builtins = builtinAgentActivities;
+        if (runner == null || builtins == null) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "The durable agent runner is not initialized. The workflow module failed to initialize."));
+        }
         BMap<BString, Object> activities = ValueCreator.createMapValue();
-        for (Map.Entry<BString, Object> builtin : builtinActivities.entrySet()) {
+        for (Map.Entry<BString, Object> builtin : builtins.entrySet()) {
             activities.put(builtin.getKey(), builtin.getValue());
         }
         for (ActivityDecl activity : decl.activities().values()) {
-            activities.put(StringUtils.fromString(activity.toolName()), activity.function());
+            BString toolName = StringUtils.fromString(activity.toolName());
+            // A declared activity must not shadow a built-in agent activity
+            // (llmChat/generate/executeAgentTool) — overwriting the entry would make the
+            // loop's internal calls invoke the user function instead.
+            if (activities.containsKey(toolName)) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Agent '" + agentName.getValue() + "' declares an activity named '"
+                                + activity.toolName() + "', which collides with a built-in agent activity."
+                                + " Rename the function or give the activity a different tool name."));
+            }
+            activities.put(toolName, activity.function());
         }
-        return WorkflowWorkerNative.registerWorkflow(env, runner, agentName, activities);
+        return WorkflowWorkerNative.registerAgentWorkflow(env, runner, agentName, activities);
     }
 
     /**
      * Returns the run spec of a declared agent as a {@code DurableAgentRunSpec} record: everything
-     * the object-model runner needs to register capabilities on its AgentContext and start the
-     * ReAct loop.
+     * the object-model runner needs to register capabilities on the native agent context and
+     * start the ReAct loop.
      *
      * @param agentName the agent name
      * @return the DurableAgentRunSpec record, or a BError when the agent is unknown
@@ -365,6 +475,7 @@ public final class DurableAgentNative {
                 fields.put("toolName", StringUtils.fromString(activity.toolName()));
                 fields.put("activity", activity.function());
                 fields.put("meta", activity.meta());
+                fields.put("bindings", activity.bindings());
                 activities.append(ValueCreator.createRecordValue(
                         ModuleUtils.getModule(), ACTIVITY_SPEC_RECORD, fields));
             }
@@ -372,10 +483,11 @@ public final class DurableAgentNative {
             BMap<BString, Object> toolProbe = ValueCreator.createRecordValue(
                     ModuleUtils.getModule(), TOOL_SPEC_RECORD);
             BArray tools = ValueCreator.createArrayValue(TypeCreator.createArrayType(toolProbe.getType()));
-            for (Map.Entry<String, BFunctionPointer> tool : decl.tools().entrySet()) {
+            for (Map.Entry<String, ToolDeclEntry> tool : decl.tools().entrySet()) {
                 Map<String, Object> fields = new HashMap<>();
                 fields.put("toolName", StringUtils.fromString(tool.getKey()));
-                fields.put("tool", tool.getValue());
+                fields.put("tool", tool.getValue().tool());
+                fields.put("meta", tool.getValue().meta());
                 tools.append(ValueCreator.createRecordValue(
                         ModuleUtils.getModule(), TOOL_SPEC_RECORD, fields));
             }
@@ -425,6 +537,9 @@ public final class DurableAgentNative {
             spec.put("systemPrompt", decl.systemPrompt());
             spec.put("maxIter", decl.maxIter());
             spec.put("model", decl.model());
+            if (decl.resultType() != null) {
+                spec.put("resultType", decl.resultType());
+            }
             spec.put("activities", activities);
             spec.put("tools", tools);
             spec.put("events", events);
@@ -455,14 +570,20 @@ public final class DurableAgentNative {
         if (agentName == null) {
             return unboundAgentError("run");
         }
-        if (AGENT_DECL_REGISTRY.get(agentName) == null) {
+        AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName);
+        if (decl == null) {
             return unknownAgentError(agentName);
+        }
+        Object validatedInput = validateRunInput(decl, input);
+        if (validatedInput instanceof BError) {
+            return validatedInput;
         }
         String workflowType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + agentName;
         Map<String, Object> runInput = new HashMap<>();
         runInput.put("agentName", agentName);
         runInput.put("query", query.getValue());
-        runInput.put("input", input == null ? null : TypesUtil.convertBallerinaToJavaType(input));
+        runInput.put("input", validatedInput == null ? null
+                : TypesUtil.convertBallerinaToJavaType(validatedInput));
 
         if (isInsideWorkflow()) {
             return WorkflowContextNative.startDurableAgentChild(agentName, runInput);
@@ -485,6 +606,110 @@ public final class DurableAgentNative {
                         "Failed to start durable agent '" + agentName + "': " + e.getMessage()));
             }
         });
+    }
+
+    /**
+     * Validates the {@code run} input payload against the agent's declared {@code inputType} and
+     * returns the converted value, so declared record defaults are filled exactly as on the
+     * management-API start path. The compiler plugin rejects statically decidable mismatches;
+     * this covers dynamic values.
+     *
+     * @param decl  the agent declaration
+     * @param input the run input payload (a Ballerina value, or null)
+     * @return the input converted to the declared type ({@code null} when omitted), or a BError
+     *         describing the mismatch
+     */
+    private static Object validateRunInput(AgentDecl decl, Object input) {
+        BTypedesc inputType = decl.inputType();
+        if (input == null) {
+            return null; // Omitting the input is always allowed; the query alone starts the run.
+        }
+        if (inputType == null) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Durable agent '" + decl.agentName() + "' declares no input (inputType is ()); "
+                            + "remove the 'input' argument"));
+        }
+        Type describing = io.ballerina.runtime.api.utils.TypeUtils.getImpliedType(
+                inputType.getDescribingType());
+        if (describing.getTag() == io.ballerina.runtime.api.types.TypeTags.STRING_TAG) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Durable agent '" + decl.agentName() + "' declares inputType 'string': the query "
+                            + "text is the input — declare a data inputType to pass a structured payload"));
+        }
+        try {
+            return io.ballerina.runtime.api.utils.ValueUtils.convert(input, describing);
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "The 'input' argument does not match durable agent '" + decl.agentName()
+                            + "'s declared inputType: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Builds the runner envelope for a management-API start of a durable agent, mapping the
+     * posted input onto the declared {@code inputType}: a {@code string} input type makes the
+     * posted string the query; another data type makes the validated payload the structured
+     * run input; a no-input agent rejects any payload.
+     *
+     * @param agentName the agent name (the unprefixed workflow type)
+     * @param input     the posted input (a Ballerina value, or null)
+     * @return the runner envelope as a Java map, or a BError for an input mismatch
+     */
+    public static Object buildStartRunInput(String agentName, Object input) {
+        AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName);
+        if (decl == null) {
+            return unknownAgentError(agentName);
+        }
+        String query = "";
+        Object payload = null;
+        BTypedesc inputType = decl.inputType();
+        if (input != null) {
+            if (inputType == null) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Durable agent '" + agentName + "' declares no input (inputType is ()); "
+                                + "start it without an input"));
+            }
+            Type describing = io.ballerina.runtime.api.utils.TypeUtils.getImpliedType(
+                    inputType.getDescribingType());
+            if (describing.getTag() == io.ballerina.runtime.api.types.TypeTags.STRING_TAG) {
+                if (!(input instanceof BString queryInput)) {
+                    return ErrorCreator.createError(StringUtils.fromString(
+                            "Durable agent '" + agentName + "' declares inputType 'string': the input "
+                                    + "must be the query text"));
+                }
+                query = queryInput.getValue();
+            } else {
+                Object converted;
+                try {
+                    converted = io.ballerina.runtime.api.utils.ValueUtils.convert(input, describing);
+                } catch (Exception e) {
+                    return ErrorCreator.createError(StringUtils.fromString(
+                            "The input does not match durable agent '" + agentName
+                                    + "'s declared inputType: " + e.getMessage()));
+                }
+                payload = TypesUtil.convertBallerinaToJavaType(converted);
+            }
+        }
+        Map<String, Object> runInput = new HashMap<>();
+        runInput.put("agentName", agentName);
+        runInput.put("query", query);
+        runInput.put("input", payload);
+        return runInput;
+    }
+
+    /**
+     * Returns the JSON schema of a declared agent's management-start input, derived from its
+     * {@code inputType}, or {@code null} when the agent declares no input or is unknown.
+     *
+     * @param agentName the agent name (the unprefixed workflow type)
+     * @return the input JSON schema, or null
+     */
+    public static String startInputSchema(String agentName) {
+        AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName);
+        if (decl == null || decl.inputType() == null) {
+            return null;
+        }
+        return TypesUtil.toJsonSchema(decl.inputType().getDescribingType());
     }
 
     // -----------------------------------------------------------------------------------------
@@ -542,11 +767,17 @@ public final class DurableAgentNative {
                 if (blocking) {
                     raw = stub.getResult(Object.class);
                 } else {
-                    try {
-                        raw = stub.getResult(1, TimeUnit.MILLISECONDS, Object.class);
-                    } catch (java.util.concurrent.TimeoutException e) {
+                    // A tiny getResult timeout is unreliable for completed runs (the server
+                    // round trip alone exceeds it), so check the execution status instead:
+                    // still running means busy, any closed status has its result available.
+                    io.temporal.api.enums.v1.WorkflowExecutionStatus status = stub.describe().getStatus();
+                    if (status == io.temporal.api.enums.v1.WorkflowExecutionStatus
+                                .WORKFLOW_EXECUTION_STATUS_RUNNING
+                            || status == io.temporal.api.enums.v1.WorkflowExecutionStatus
+                                .WORKFLOW_EXECUTION_STATUS_CONTINUED_AS_NEW) {
                         return createAgentBusyError(instanceId);
                     }
+                    raw = stub.getResult(Object.class);
                 }
                 Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(raw);
                 return TypesUtil.cloneWithType(ballerinaResult, typedesc.getDescribingType());
@@ -563,17 +794,17 @@ public final class DurableAgentNative {
     }
 
     /**
-     * Non-blocking event-turn read ({@code DurableAgent.getEventResult}): the turn's response if
+     * Non-blocking event-turn read ({@code DurableAgent.getDataResult}): the turn's response if
      * it is ready, or a {@code workflow:AgentBusyError} while unanswered.
      *
      * @param env        the Ballerina runtime environment
      * @param self       the DurableAgent object
      * @param instanceId the agent instance ID
-     * @param token      the sendEvent correlation token
+     * @param token      the sendData correlation token
      * @param typedesc   the expected response type descriptor
      * @return the typed response, an AgentBusyError, or a BError
      */
-    public static Object getEventResult(Environment env, BObject self, BString instanceId, BString token,
+    public static Object getDataResult(Environment env, BObject self, BString instanceId, BString token,
                                         BTypedesc typedesc) {
         if (isInsideWorkflow()) {
             return readEventReplyInWorkflow(instanceId.getValue(), token.getValue(), typedesc, false);
@@ -582,18 +813,18 @@ public final class DurableAgentNative {
     }
 
     /**
-     * Blocking event-turn read ({@code DurableAgent.waitForEventResult}): waits until the turn is
+     * Blocking event-turn read ({@code DurableAgent.waitForDataResult}): waits until the turn is
      * answered. Inside a workflow this durably suspends on the reply signal; from a service it
      * blocks on the update result, which lives in history and is re-fetchable after a crash.
      *
      * @param env        the Ballerina runtime environment
      * @param self       the DurableAgent object
      * @param instanceId the agent instance ID
-     * @param token      the sendEvent correlation token
+     * @param token      the sendData correlation token
      * @param typedesc   the expected response type descriptor
      * @return the typed response, or a BError
      */
-    public static Object waitForEventResult(Environment env, BObject self, BString instanceId, BString token,
+    public static Object waitForDataResult(Environment env, BObject self, BString instanceId, BString token,
                                             BTypedesc typedesc) {
         if (isInsideWorkflow()) {
             return readEventReplyInWorkflow(instanceId.getValue(), token.getValue(), typedesc, true);
@@ -615,6 +846,10 @@ public final class DurableAgentNative {
         AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName.getValue());
         if (decl == null) {
             return unknownAgentError(agentName.getValue());
+        }
+        Object duplicate = duplicateCapabilityError(decl, peerName.getValue(), "a peer agent");
+        if (duplicate != null) {
+            return duplicate;
         }
         decl.peers().put(peerName.getValue(),
                 new PeerDecl(peerName.getValue(), targetAgent.getValue(), meta));
@@ -653,7 +888,7 @@ public final class DurableAgentNative {
     }
 
     // -----------------------------------------------------------------------------------------
-    // Event turns (sendEvent / getEventResult / waitForEventResult)
+    // Event turns (sendData / getDataResult / waitForDataResult)
     // -----------------------------------------------------------------------------------------
 
     /**
@@ -677,7 +912,7 @@ public final class DurableAgentNative {
     }
 
     /**
-     * Sends an event turn to a running agent instance ({@code DurableAgent.sendEvent}) and
+     * Sends an event turn to a running agent instance ({@code DurableAgent.sendData}) and
      * returns a correlation token. From a service the turn rides a Temporal Update (the token is
      * the update ID — durable, crash-recoverable via the pending-updates query). From inside a
      * workflow updates are unavailable, so the turn is delivered as a deterministic external
@@ -691,7 +926,7 @@ public final class DurableAgentNative {
      * @param data       the payload
      * @return the correlation token as a Ballerina string, or a BError
      */
-    public static Object sendEvent(Environment env, BObject self, BString instanceId, BString eventName,
+    public static Object sendData(Environment env, BObject self, BString instanceId, BString eventName,
                                    Object data) {
         Object javaData = data == null ? null : TypesUtil.convertBallerinaToJavaType(data);
         String instance = instanceId.getValue();
@@ -732,8 +967,23 @@ public final class DurableAgentNative {
                     return ErrorCreator.createError(StringUtils.fromString("Workflow client not initialized"));
                 }
                 WorkflowStub stub = client.newUntypedWorkflowStub(instance);
+                // Reject non-agent targets before sending: the update handler's validator also
+                // rejects them, but the embedded test server can report acceptance-stage
+                // rejections only at result-read time, which would surface as a confusing
+                // "update not found" much later.
+                try {
+                    String targetType = stub.describe().getWorkflowType();
+                    if (WorkflowWorkerNative.isRegisteredWorkflowType(targetType)
+                            && !WorkflowWorkerNative.isAgentWorkflowType(targetType)) {
+                        return ErrorCreator.createError(StringUtils.fromString(
+                                "sendData turns are only supported for workflow:DurableAgent instances; '"
+                                        + instance + "' is a regular workflow — use workflow:sendData instead"));
+                    }
+                } catch (Exception ignore) {
+                    // The target may live on another worker; the handler-side validator decides.
+                }
                 UpdateOptions<Object> options = UpdateOptions.newBuilder(Object.class)
-                        .setUpdateName(WorkflowWorkerNative.AGENT_UPDATE_NAME)
+                        .setUpdateName(WorkflowWorkerNative.AGENT_SEND_DATA_UPDATE)
                         .setWaitForStage(WorkflowUpdateStage.ACCEPTED)
                         .build();
                 WorkflowUpdateHandle<Object> handle = stub.startUpdate(options, event, javaData);
@@ -876,5 +1126,32 @@ public final class DurableAgentNative {
     private static Object unknownAgentError(String agentName) {
         return ErrorCreator.createError(StringUtils.fromString(
                 "Unknown durable agent '" + agentName + "': the agent declaration was not registered"));
+    }
+
+    /**
+     * Claims a capability name on the agent, or returns the error to fail startup with.
+     *
+     * <p>Events, tools, activities, human tasks, and peers share one flat namespace per agent:
+     * the name is what the model calls, what dispatch keys on, and — for a human task — the
+     * Temporal workflow type of the task. These registrations run from module init, so rejecting
+     * a duplicate here fails the program at startup rather than letting one declaration silently
+     * replace the other. The compiler plugin reports the same conflict as WORKFLOW_150 wherever
+     * it can see it; this check also covers what it cannot (a declaration compiled elsewhere, or
+     * a plugin that did not run).
+     *
+     * @param decl the agent declaration
+     * @param name the capability name being registered
+     * @param kind the capability kind, for the error message
+     * @return an error when the name is already claimed, otherwise null
+     */
+    private static Object duplicateCapabilityError(AgentDecl decl, String name, String kind) {
+        String claimedBy = decl.claimCapabilityName(name, kind);
+        if (claimedBy == null) {
+            return null;
+        }
+        return ErrorCreator.createError(StringUtils.fromString(
+                "Duplicate capability name '" + name + "' in durable agent '" + decl.agentName()
+                        + "': declared as " + kind + " and as " + claimedBy + ". Events, tools, activities, "
+                        + "human tasks, and peers share one flat namespace — give one of them a different name."));
     }
 }

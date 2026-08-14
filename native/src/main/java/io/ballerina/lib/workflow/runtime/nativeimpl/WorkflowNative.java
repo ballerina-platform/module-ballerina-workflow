@@ -270,22 +270,22 @@ public final class WorkflowNative {
         });
     }
 
-                /**
-     * Backs {@code workflow:getPendingAgentUpdates}: queries the agent workflow for the updates it has
-     * accepted but not yet answered, so callers can rediscover in-flight turns after a crash and fetch
-     * their answers via {@link #getAgentUpdateResult}.
+    /**
+     * Backs {@code workflow:getPendingAgentEvents}: queries the agent workflow for the data events it has
+     * accepted but not yet answered, so callers can rediscover in-flight event turns after a crash and
+     * fetch their answers via {@code DurableAgent.getDataResult}/{@code waitForDataResult}.
      *
      * @param env     the runtime environment
      * @param agentId the agent's workflow ID
-     * @return a Ballerina {@code PendingAgentUpdate[]}, or a Ballerina error
+     * @return a Ballerina {@code PendingAgentEvent[]}, or a Ballerina error
      */
-    public static Object getPendingAgentUpdates(Environment env, BString agentId) {
+    public static Object getPendingAgentEvents(Environment env, BString agentId) {
         String agentIdStr = agentId.getValue();
         // Inside a workflow the blocking query RPC must run off the workflow thread and be
         // replay-deterministic, so it is routed through a built-in implicit activity like the
         // other client verbs (run, sendData, getWorkflowResult, getWorkflowInfo).
         if (isInsideWorkflow()) {
-            return getPendingAgentUpdatesAsImplicitActivity(agentIdStr);
+            return getPendingAgentEventsAsImplicitActivity(agentIdStr);
         }
         return env.yieldAndRun(() -> {
             CompletableFuture<Object> balFuture = new CompletableFuture<>();
@@ -299,14 +299,14 @@ public final class WorkflowNative {
                         return;
                     }
                     WorkflowStub stub = client.newUntypedWorkflowStub(agentIdStr);
-                    Object raw = stub.query(WorkflowWorkerNative.PENDING_AGENT_UPDATES_QUERY, Object.class);
-                    balFuture.complete(buildPendingAgentUpdates(raw));
+                    Object raw = stub.query(WorkflowWorkerNative.PENDING_AGENT_EVENTS_QUERY, Object.class);
+                    balFuture.complete(buildPendingAgentEvents(raw));
                 } catch (Exception e) {
                     Throwable cause = e.getCause();
                     String message = cause != null && cause.getMessage() != null
                             ? cause.getMessage() : e.getMessage();
                     balFuture.complete(ErrorCreator.createError(StringUtils.fromString(
-                            "Failed to list pending updates for agent '" + agentIdStr + "': " + message)));
+                            "Failed to list pending events for agent '" + agentIdStr + "': " + message)));
                 }
             });
 
@@ -315,20 +315,21 @@ public final class WorkflowNative {
     }
 
     /**
-     * Converts the raw pending-updates query payload (a list of {@code {updateId, eventName}} maps) into a
-     * Ballerina {@code PendingAgentUpdate[]} value.
+     * Converts the raw pending-events query payload (a list of {@code {updateId, eventName}} maps — the
+     * wire keys keep the historical update terminology for compatibility with running instances) into a
+     * Ballerina {@code PendingAgentEvent[]} value.
      */
-    private static BArray buildPendingAgentUpdates(Object raw) {
+    private static BArray buildPendingAgentEvents(Object raw) {
         RecordType pendingType = (RecordType) ValueCreator.createRecordValue(
-                ModuleUtils.getModule(), "PendingAgentUpdate").getType();
+                ModuleUtils.getModule(), "PendingAgentEvent").getType();
         BArray result = ValueCreator.createArrayValue(TypeCreator.createArrayType(pendingType));
         if (raw instanceof List<?> entries) {
             for (Object entry : entries) {
                 if (entry instanceof Map<?, ?> pendingEntry) {
                     BMap<BString, Object> record = ValueCreator.createRecordValue(
-                            ModuleUtils.getModule(), "PendingAgentUpdate");
-                    record.put(StringUtils.fromString("updateId"), StringUtils.fromString(
-                            String.valueOf(pendingEntry.get("updateId"))));
+                            ModuleUtils.getModule(), "PendingAgentEvent");
+                    record.put(StringUtils.fromString("token"), StringUtils.fromString(
+                            String.valueOf(pendingEntry.get("token"))));
                     record.put(StringUtils.fromString("eventName"), StringUtils.fromString(
                             String.valueOf(pendingEntry.get("eventName"))));
                     result.append(record);
@@ -339,20 +340,20 @@ public final class WorkflowNative {
     }
 
     /**
-     * Routes a {@code workflow:getPendingAgentUpdates} call through a built-in implicit activity when invoked
+     * Routes a {@code workflow:getPendingAgentEvents} call through a built-in implicit activity when invoked
      * from inside a workflow, keeping the blocking query RPC off the workflow thread and replay-deterministic.
      */
-    private static Object getPendingAgentUpdatesAsImplicitActivity(String agentId) {
+    private static Object getPendingAgentEventsAsImplicitActivity(String agentId) {
         try {
             WorkflowWorkerNative.awaitWhileSuspended();
             io.temporal.workflow.ActivityStub stub = Workflow.newUntypedActivityStub(
                     buildImplicitActivityOptions(DEFAULT_IMPLICIT_ACTIVITY_TIMEOUT));
             List<?> raw = stub.execute(
-                    WorkflowWorkerNative.BallerinaActivityAdapter.BUILTIN_PENDING_AGENT_UPDATES,
+                    WorkflowWorkerNative.BallerinaActivityAdapter.BUILTIN_PENDING_AGENT_EVENTS,
                     List.class, agentId);
-            return buildPendingAgentUpdates(raw);
+            return buildPendingAgentEvents(raw);
         } catch (Exception e) {
-            return handleImplicitActivityError(e, "Failed to list pending updates for agent '" + agentId + "': ");
+            return handleImplicitActivityError(e, "Failed to list pending events for agent '" + agentId + "': ");
         }
     }
 
@@ -925,6 +926,23 @@ public final class WorkflowNative {
                     GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS).describeWorkflowExecution(req);
 
             WorkflowExecutionInfo execInfo = resp.getWorkflowExecutionInfo();
+
+            // Completions must go to the integration serving the task's queue: the user
+            // roles and form schemas are configured there, not here. Reads stay
+            // namespace-wide so a shared project console can still list everything.
+            String owningQueue = resp.getExecutionConfig().getTaskQueue().getName();
+            String localQueue = io.ballerina.lib.workflow.worker.WorkflowWorkerNative.getTaskQueue();
+            if (localQueue == null || localQueue.isBlank()) {
+                // Fail closed: without a configured local queue, ownership cannot be verified.
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Unauthorized: the local task queue is not configured; cannot verify that human task '"
+                                + taskWorkflowId + "' belongs to this integration"));
+            }
+            if (!localQueue.equals(owningQueue)) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Unauthorized: human task '" + taskWorkflowId + "' belongs to task queue '"
+                                + owningQueue + "', which is served by a different integration"));
+            }
 
             // 0. Status check — reject tasks that are no longer running
             WorkflowExecutionStatus execStatus = execInfo.getStatus();

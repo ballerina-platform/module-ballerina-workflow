@@ -204,6 +204,40 @@ public enum WorkflowDiagnostic {
     WORKFLOW_150("WORKFLOW_150",
             "Duplicate capability name '%s' in durable agent '%s': events, tools, activities, human "
                     + "tasks, and peers share one flat namespace",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_151("WORKFLOW_151",
+            "A 'workflow:DurableAgent' must be assigned to a named variable and initialized inline "
+                    + "with 'new ({...})' or 'new workflow:DurableAgent({...})': the agent and its "
+                    + "capabilities (activities, tools, events, and human tasks) are registered from "
+                    + "this declaration at startup, and every worker replica must derive the same "
+                    + "registration deterministically",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_152("WORKFLOW_152",
+            "Durable agent '%s' declares no data-event channel named '%s'",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_153("WORKFLOW_153",
+            "Data-event channel '%s' of durable agent '%s' is one-way (no 'response' type is "
+                    + "declared), so the send produces no readable turn result: discard the "
+                    + "correlation token with '_ = ...' or declare a 'response' type on the channel",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_154("WORKFLOW_154",
+            "The 'input' argument of 'run' does not match durable agent '%s': %s",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_155("WORKFLOW_155",
+            "Tool '%s' of durable agent '%s' declares an authorization requirement "
+                    + "(@ai:AgentTool auth), which durable agents do not support yet: the tool "
+                    + "would run without token acquisition or scope validation",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_156("WORKFLOW_156",
+            "The %s name must be a constant string: templates with interpolations or computed "
+                    + "expressions are not allowed, since the name drives the designer rendering "
+                    + "and the Temporal registration",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_157("WORKFLOW_157",
+            "Activity '%s' of durable agent '%s' takes parameter '%s' of type '%s', which is not "
+                    + "data the model can supply: fix the argument at registration by declaring the "
+                    + "activity as '{activity: %s, bindings: {%s: <value>}}', or expose an activity "
+                    + "whose parameters are all data",
             DiagnosticSeverity.ERROR);
 
     private final String code;

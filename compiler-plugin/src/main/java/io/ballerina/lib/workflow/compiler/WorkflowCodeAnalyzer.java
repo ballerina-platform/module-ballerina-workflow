@@ -19,8 +19,6 @@
 package io.ballerina.lib.workflow.compiler;
 
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
-import io.ballerina.lib.workflow.compiler.descriptor.WorkflowDescriptorBuilder;
-import io.ballerina.lib.workflow.compiler.descriptor.WorkflowDescriptorStore;
 import io.ballerina.projects.plugins.CodeAnalysisContext;
 import io.ballerina.projects.plugins.CodeAnalyzer;
 
@@ -37,12 +35,6 @@ import io.ballerina.projects.plugins.CodeAnalyzer;
  * @since 0.1.0
  */
 public class WorkflowCodeAnalyzer extends CodeAnalyzer {
-
-    private final WorkflowDescriptorStore descriptorStore;
-
-    public WorkflowCodeAnalyzer(WorkflowDescriptorStore descriptorStore) {
-        this.descriptorStore = descriptorStore;
-    }
 
     @Override
     public void init(CodeAnalysisContext analysisContext) {
@@ -65,8 +57,5 @@ public class WorkflowCodeAnalyzer extends CodeAnalyzer {
         analysisContext.addSyntaxNodeAnalysisTask(new ChildWorkflowCallValidatorTask(),
                 SyntaxKind.REMOTE_METHOD_CALL_ACTION);
 
-        // Build the Workflow Definition Descriptor (workflow.def.json) — needs the live
-        // semantic model, so it runs here; the lifecycle listener packs the bytes later.
-        analysisContext.addCompilationAnalysisTask(new WorkflowDescriptorBuilder(descriptorStore));
     }
 }

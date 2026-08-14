@@ -387,7 +387,8 @@ public final class WorkflowContextNative {
      */
     private static String deriveReviewInputSchema(String fullActivityName, Map<String, Object> activityArgs) {
         try {
-            BFunctionPointer fn = WorkflowWorkerNative.getActivityRegistry().get(fullActivityName);
+            io.ballerina.lib.workflow.worker.WorkflowFunctionRef fn =
+                    WorkflowWorkerNative.getActivityRegistry().get(fullActivityName);
             if (fn != null && fn.getType() instanceof FunctionType funcType) {
                 Parameter[] allParams = funcType.getParameters();
                 List<Parameter> dataParams = new ArrayList<>();

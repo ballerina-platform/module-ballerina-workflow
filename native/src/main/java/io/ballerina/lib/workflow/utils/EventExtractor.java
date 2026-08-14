@@ -79,8 +79,18 @@ public final class EventExtractor {
         if (processFunction == null) {
             return Collections.emptyList();
         }
+        return extractEvents(processFunction.getType(), processName);
+    }
 
-        Type funcType = processFunction.getType();
+    /**
+     * Extracts event information from a workflow function's type — the form used for
+     * descriptor-registered symbol references, which carry the function type without a pointer.
+     *
+     * @param funcType    the workflow function's type
+     * @param processName the name of the process (for error messages)
+     * @return list of EventInfo objects, empty if no events found
+     */
+    public static List<EventInfo> extractEvents(Type funcType, String processName) {
         if (!(funcType instanceof FunctionType functionType)) {
             return Collections.emptyList();
         }
@@ -308,8 +318,17 @@ public final class EventExtractor {
         if (processFunction == null) {
             return null;
         }
+        return getEventsRecordType(processFunction.getType());
+    }
 
-        Type funcType = processFunction.getType();
+    /**
+     * Gets the events record type from a workflow function's type — the form used for
+     * descriptor-registered symbol references.
+     *
+     * @param funcType the workflow function's type
+     * @return the events RecordType, or null if no events parameter found
+     */
+    public static RecordType getEventsRecordType(Type funcType) {
         if (!(funcType instanceof FunctionType functionType)) {
             return null;
         }
@@ -451,8 +470,17 @@ public final class EventExtractor {
         if (processFunction == null) {
             return false;
         }
+        return hasContextParameter(processFunction.getType());
+    }
 
-        Type funcType = processFunction.getType();
+    /**
+     * Checks whether the first parameter is a workflow Context — the form used for
+     * descriptor-registered symbol references.
+     *
+     * @param funcType the workflow function's type
+     * @return true if the first parameter is Context
+     */
+    public static boolean hasContextParameter(Type funcType) {
         if (!(funcType instanceof FunctionType functionType)) {
             return false;
         }

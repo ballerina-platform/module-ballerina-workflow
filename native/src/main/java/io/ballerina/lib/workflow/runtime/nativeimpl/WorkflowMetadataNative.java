@@ -32,7 +32,6 @@ import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BArray;
-import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
 
@@ -91,8 +90,10 @@ public final class WorkflowMetadataNative {
 
     private static BArray buildDefinitions() {
         BArray definitions = ValueCreator.createArrayValue(JSON_ARRAY_TYPE);
-        Map<String, BFunctionPointer> processRegistry = new TreeMap<>(WorkflowWorkerNative.getProcessRegistry());
-        for (Map.Entry<String, BFunctionPointer> entry : processRegistry.entrySet()) {
+        Map<String, io.ballerina.lib.workflow.worker.WorkflowFunctionRef> processRegistry =
+                new TreeMap<>(WorkflowWorkerNative.getProcessRegistry());
+        for (Map.Entry<String, io.ballerina.lib.workflow.worker.WorkflowFunctionRef> entry
+                : processRegistry.entrySet()) {
             String displayType = stripPrefix(entry.getKey(), WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX);
             BMap<BString, Object> def = ValueCreator.createMapValue(JSON_MAP_TYPE);
             def.put(StringUtils.fromString("workflowType"), StringUtils.fromString(displayType));
@@ -186,8 +187,10 @@ public final class WorkflowMetadataNative {
 
     private static BArray buildActivities() {
         BArray activities = ValueCreator.createArrayValue(JSON_ARRAY_TYPE);
-        Map<String, BFunctionPointer> activityRegistry = new TreeMap<>(WorkflowWorkerNative.getActivityRegistry());
-        for (Map.Entry<String, BFunctionPointer> entry : activityRegistry.entrySet()) {
+        Map<String, io.ballerina.lib.workflow.worker.WorkflowFunctionRef> activityRegistry =
+                new TreeMap<>(WorkflowWorkerNative.getActivityRegistry());
+        for (Map.Entry<String, io.ballerina.lib.workflow.worker.WorkflowFunctionRef> entry
+                : activityRegistry.entrySet()) {
             String qualified = stripPrefix(entry.getKey(), WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX);
             int separator = qualified.indexOf('.');
             String workflowType = separator > 0 ? qualified.substring(0, separator) : "";
@@ -208,7 +211,7 @@ public final class WorkflowMetadataNative {
      * activity's {@code proceed-with-input} form uses: one property per data parameter,
      * skipping typedescs and client objects, honoring parameter defaults.
      */
-    private static String deriveActivityInputSchema(BFunctionPointer fn) {
+    private static String deriveActivityInputSchema(io.ballerina.lib.workflow.worker.WorkflowFunctionRef fn) {
         if (fn == null || !(fn.getType() instanceof FunctionType funcType)) {
             return null;
         }

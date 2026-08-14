@@ -76,25 +76,10 @@
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
     </Match>
 
-    <!-- The descriptor store is intentionally shared between the analyzer (builder) and the
-         lifecycle listener (pack task) — the same hand-off the ICP bridge's swagger-pack uses. -->
-    <Match>
-        <Class name="io.ballerina.lib.workflow.compiler.WorkflowCodeAnalyzer"/>
-        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
-    </Match>
-
+    <!-- build() returns null to mean "this package declares no workflows" — a zero-length
+         array would be indistinguishable from an empty descriptor document. -->
     <Match>
         <Class name="io.ballerina.lib.workflow.compiler.descriptor.WorkflowDescriptorBuilder"/>
-        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
-    </Match>
-
-    <Match>
-        <Class name="io.ballerina.lib.workflow.compiler.descriptor.DescriptorLifecycleListener"/>
-        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
-    </Match>
-
-    <Match>
-        <Class name="io.ballerina.lib.workflow.compiler.descriptor.DescriptorPackLifecycleTask"/>
-        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Bug pattern="PZLA_PREFER_ZERO_LENGTH_ARRAYS"/>
     </Match>
 </FindBugsFilter>

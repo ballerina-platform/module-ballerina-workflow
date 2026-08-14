@@ -18,8 +18,10 @@
 
 package io.ballerina.lib.workflow.compiler;
 
-import io.ballerina.projects.JBallerinaBackend;
-import io.ballerina.projects.JvmTarget;
+import io.ballerina.lib.workflow.compiler.descriptor.WorkflowDescriptorBuilder;
+import io.ballerina.projects.DocumentId;
+import io.ballerina.projects.Module;
+import io.ballerina.projects.ModuleId;
 import io.ballerina.projects.PackageCompilation;
 import io.ballerina.projects.ProjectEnvironmentBuilder;
 import io.ballerina.projects.directory.BuildProject;
@@ -33,15 +35,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 
 /**
- * Tests that the compiler plugin builds the Workflow Definition Descriptor and packs it into
- * the generated executable JAR as {@code workflow.def.json}, with the expected canonical
- * content (golden comparison) and a checksum computed over the canonical bytes.
+ * Tests the Workflow Definition Descriptor: the builder's canonical document (golden
+ * comparison, checksum, determinism) and the generated registration hand-off — the source
+ * modifier embeds the document as data in a single {@code registerWorkflowDescriptor} call,
+ * replacing the former per-workflow {@code registerWorkflow}/{@code registerHumanTask} codegen.
  *
  * @since 0.9.0
  */
@@ -55,17 +55,12 @@ public class WorkflowDescriptorTest {
             .toAbsolutePath();
     private static final Pattern CHECKSUM_PATTERN = Pattern.compile("\"checksum\":\"sha256:[0-9a-f]{64}\"");
 
-    static {
-        // JBallerinaBackend's interop validation resolves the runtime JAR through this property.
-        System.setProperty("ballerina.home", DISTRIBUTION_PATH.toString());
-    }
-
     @Test
-    public void testDescriptorPackedIntoExecutableJar() throws IOException {
-        String descriptor = buildAndExtractDescriptor("descriptor_generation");
+    public void testDescriptorMatchesGolden() throws IOException {
+        String descriptor = buildDescriptor("descriptor_generation");
 
-        Matcher checksum = CHECKSUM_PATTERN.matcher(descriptor);
-        Assert.assertTrue(checksum.find(), "Descriptor has no sha256 checksum: " + descriptor);
+        Assert.assertTrue(CHECKSUM_PATTERN.matcher(descriptor).find(),
+                "Descriptor has no sha256 checksum: " + descriptor);
 
         Path goldenPath = GOLDEN_DIRECTORY.resolve("descriptor_generation.json");
         if (!Files.exists(goldenPath)) {
@@ -76,33 +71,61 @@ public class WorkflowDescriptorTest {
         }
         String golden = Files.readString(goldenPath, StandardCharsets.UTF_8).strip();
         Assert.assertEquals(descriptor, golden,
-                "Packed descriptor does not match the golden document");
+                "Descriptor does not match the golden document");
     }
 
     @Test
     public void testDescriptorIsDeterministic() throws IOException {
-        String first = buildAndExtractDescriptor("descriptor_generation");
-        String second = buildAndExtractDescriptor("descriptor_generation");
-        Assert.assertEquals(first, second, "Descriptor must be byte-stable across builds");
+        Assert.assertEquals(buildDescriptor("descriptor_generation"),
+                buildDescriptor("descriptor_generation"),
+                "Descriptor must be byte-stable across builds");
     }
 
-    private String buildAndExtractDescriptor(String packageName) throws IOException {
-        Path projectDirPath = RESOURCE_DIRECTORY.resolve(packageName);
-        BuildProject project = BuildProject.load(getEnvironmentBuilder(), projectDirPath);
+    @Test
+    public void testGeneratedRegistrationEmbedsDescriptor() {
+        BuildProject project = loadProject("descriptor_generation");
         project.currentPackage().runCodeGenAndModifyPlugins();
         PackageCompilation compilation = project.currentPackage().getCompilation();
         Assert.assertEquals(compilation.diagnosticResult().errorCount(), 0,
                 "Compilation errors: " + compilation.diagnosticResult().diagnostics());
 
-        Path execJar = Files.createTempDirectory("wf-descriptor-test").resolve(packageName + ".jar");
-        JBallerinaBackend backend = JBallerinaBackend.from(compilation, JvmTarget.JAVA_21);
-        backend.emit(JBallerinaBackend.OutputType.EXEC, execJar);
+        String modifiedSources = allSourcesOf(project);
+        Assert.assertTrue(modifiedSources.contains(":registerWorkflowDescriptor(\""),
+                "Generated registration must hand the descriptor to the runtime as data");
+        Assert.assertFalse(modifiedSources.contains(":registerWorkflow("),
+                "Per-workflow registerWorkflow codegen must be gone");
+        Assert.assertFalse(modifiedSources.contains(":registerHumanTask("),
+                "Per-task registerHumanTask codegen must be gone");
+        // The embedded document carries the structural facts the runtime registers from.
+        Assert.assertTrue(modifiedSources.contains("expenseApproval")
+                        && modifiedSources.contains("managerApproval"),
+                "The embedded descriptor must describe the package's workflows");
+    }
 
-        try (ZipFile jar = new ZipFile(execJar.toFile())) {
-            ZipEntry entry = jar.getEntry("workflow.def.json");
-            Assert.assertNotNull(entry, "workflow.def.json not packed into " + execJar);
-            return new String(jar.getInputStream(entry).readAllBytes(), StandardCharsets.UTF_8);
+    private String buildDescriptor(String packageName) {
+        BuildProject project = loadProject(packageName);
+        PackageCompilation compilation = project.currentPackage().getCompilation();
+        Assert.assertEquals(compilation.diagnosticResult().errorCount(), 0,
+                "Compilation errors: " + compilation.diagnosticResult().diagnostics());
+        byte[] descriptor = WorkflowDescriptorBuilder.build(project.currentPackage(), compilation);
+        Assert.assertNotNull(descriptor, "The package declares workflows; a descriptor must be built");
+        return new String(descriptor, StandardCharsets.UTF_8);
+    }
+
+    private static String allSourcesOf(BuildProject project) {
+        StringBuilder sources = new StringBuilder();
+        for (ModuleId moduleId : project.currentPackage().moduleIds()) {
+            Module module = project.currentPackage().module(moduleId);
+            for (DocumentId documentId : module.documentIds()) {
+                sources.append(module.document(documentId).syntaxTree().toSourceCode());
+            }
         }
+        return sources.toString();
+    }
+
+    private static BuildProject loadProject(String packageName) {
+        Path projectDirPath = RESOURCE_DIRECTORY.resolve(packageName);
+        return BuildProject.load(getEnvironmentBuilder(), projectDirPath);
     }
 
     private static ProjectEnvironmentBuilder getEnvironmentBuilder() {

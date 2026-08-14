@@ -20,6 +20,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- **Descriptor-driven registration (zero metadata codegen)**: the compiler plugin no
+  longer generates per-workflow `registerWorkflow`/`registerHumanTask` calls. The
+  generated module-init function hands the canonical descriptor document to the
+  runtime in a single data-only `registerWorkflowDescriptor` call; when the worker
+  starts, the runtime registers every described workflow, activity, and human task
+  and resolves the implementation functions by their recorded module coordinates
+  (symbol references invoked through `Runtime.callFunction` with a concurrent-safe
+  strand). Direct pointer registration remains supported for durable-agent runners
+  and programmatic use. Only runtime values stay generated: module-level client
+  connections and durable-agent declarations.
 - **Workflow Definition Descriptor (WDD)**: the compiler plugin now generates a
   versioned, OpenAPI-style definition file describing every workflow component in
   the package — workflows, activities (input and output), human tasks (completion

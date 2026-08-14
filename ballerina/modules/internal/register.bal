@@ -99,6 +99,22 @@ public isolated function registerConnection(string name, object {} connection)
     name: "registerConnection"
 } external;
 
+# Hands the build-time workflow descriptor (workflow.def.json) to the runtime as data.
+#
+# This is an **internal** function: the compiler plugin embeds the canonical descriptor
+# document in the generated `__registerWorkflowsAndStart()` so the runtime can register
+# every described workflow, activity, and human task and resolve the implementation
+# functions by their recorded coordinates when the worker starts. This single data-only
+# call replaces the former per-workflow `registerWorkflow`/`registerHumanTask` codegen.
+#
+# + descriptorJson - The canonical descriptor document
+# + return - `true` on success, or an error when the document is not valid JSON
+public isolated function registerWorkflowDescriptor(string descriptorJson)
+        returns boolean|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowDescriptorNative",
+    name: "registerWorkflowDescriptor"
+} external;
+
 # Registers a human task type so that the workflow worker can route child workflows
 # whose type equals `taskName` to the built-in human task handler.
 #

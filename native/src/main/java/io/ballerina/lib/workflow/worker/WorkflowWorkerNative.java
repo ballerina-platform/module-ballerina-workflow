@@ -42,12 +42,12 @@ import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.utils.ValueUtils;
+import io.ballerina.runtime.api.values.BArray;
 import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BObject;
 import io.ballerina.runtime.api.values.BString;
-import io.ballerina.runtime.internal.values.FPValue;
 import io.temporal.activity.DynamicActivity;
 import io.temporal.api.common.v1.WorkflowExecution;
 import io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest;
@@ -192,10 +192,11 @@ public final class WorkflowWorkerNative {
     private static final AtomicBoolean configListenerRegistered = new AtomicBoolean(false);
     // Static registry to store service objects accessible during workflow execution
     private static final Map<String, BObject> SERVICE_REGISTRY = new ConcurrentHashMap<>();
-    // Static registry to store activity implementations (activity name to BFunctionPointer)
-    private static final Map<String, BFunctionPointer> ACTIVITY_REGISTRY = new ConcurrentHashMap<>();
-    // Static registry to store process functions (workflow type to BFunctionPointer)
-    private static final Map<String, BFunctionPointer> PROCESS_REGISTRY = new ConcurrentHashMap<>();
+    // Static registry to store activity implementations (activity name to function ref:
+    // a captured pointer or a symbol reference from the packed workflow descriptor)
+    private static final Map<String, WorkflowFunctionRef> ACTIVITY_REGISTRY = new ConcurrentHashMap<>();
+    // Static registry to store process functions (workflow type to function ref)
+    private static final Map<String, WorkflowFunctionRef> PROCESS_REGISTRY = new ConcurrentHashMap<>();
     // Static registry to store event names per process (process name to list of event names)
     private static final Map<String, List<String>> EVENT_REGISTRY = new ConcurrentHashMap<>();
     /**
@@ -384,19 +385,23 @@ public final class WorkflowWorkerNative {
     }
 
     /**
-     * Module initialization - called by Ballerina runtime. Captures the Runtime from Environment for later use. The
-     * Module reference is obtained from ModuleUtils (set during initModule()).
+     * Captures the Ballerina runtime and the workflow module reference at worker
+     * initialization — the workflow module's own {@code init()} runs this through
+     * {@code initSingletonWorker}/{@code initInMemoryWorker}, so both are available before
+     * any workflow registration or invocation. (Historically these were captured in
+     * {@code registerWorkflow}; descriptor-registered programs never call it.)
      *
      * @param env the Ballerina runtime environment
      */
-    public static void init(Environment env) {
-        workflowModule = ModuleUtils.getModule();
-        if (workflowModule == null) {
-            throw new IllegalStateException(
-                    "ModuleUtils.getModule() returned null in WorkflowWorkerNative.init; " +
-                            "ensure the Ballerina module has been initialized before the runtime starts.");
+    private static void captureRuntime(Environment env) {
+        synchronized (WorkflowWorkerNative.class) {
+            if (ballerinaRuntime == null) {
+                ballerinaRuntime = env.getRuntime();
+            }
+            if (workflowModule == null) {
+                workflowModule = ModuleUtils.getModule();
+            }
         }
-        ballerinaRuntime = env.getRuntime();
     }
 
     /**
@@ -418,6 +423,7 @@ public final class WorkflowWorkerNative {
      */
     @SuppressWarnings("unchecked")
     public static Object initSingletonWorker(
+            Environment env,
             BString url,
             BString namespace,
             BString workerTaskQueue,
@@ -429,6 +435,7 @@ public final class WorkflowWorkerNative {
             BString caCert,
             BMap<BString, Object> defaultRetryPolicy) {
 
+        captureRuntime(env);
         suppressTemporalLogs();
 
         if (!initialized.compareAndSet(false, true)) {
@@ -556,7 +563,8 @@ public final class WorkflowWorkerNative {
      *
      * @return null on success, error on failure
      */
-    public static Object initInMemoryWorker() {
+    public static Object initInMemoryWorker(Environment env) {
+        captureRuntime(env);
         suppressTemporalLogs();
 
         if (!initialized.compareAndSet(false, true)) {
@@ -667,7 +675,8 @@ public final class WorkflowWorkerNative {
 
             // Atomically register — putIfAbsent returns the existing value (non-null) if
             // a workflow with this name is already registered, null if insertion succeeded.
-            BFunctionPointer existing = PROCESS_REGISTRY.putIfAbsent(workflowType, workflowFunction);
+            WorkflowFunctionRef existing = PROCESS_REGISTRY.putIfAbsent(workflowType,
+                    WorkflowFunctionRef.of(workflowFunction));
             if (existing != null) {
                 return ErrorCreator.createError(
                         StringUtils.fromString("Workflow with name '" + workflowType + "' is already registered"));
@@ -680,7 +689,7 @@ public final class WorkflowWorkerNative {
                 for (BString activityName : activityMap.getKeys()) {
                     BFunctionPointer activityFunc = activityMap.get(activityName);
                     String fullActivityName = workflowType + "." + activityName.getValue();
-                    ACTIVITY_REGISTRY.put(fullActivityName, activityFunc);
+                    ACTIVITY_REGISTRY.put(fullActivityName, WorkflowFunctionRef.of(activityFunc));
                     LOGGER.debug("Registered activity: {}", fullActivityName);
                 }
             }
@@ -732,6 +741,141 @@ public final class WorkflowWorkerNative {
     }
 
     /**
+     * Registers the workflows, activities, and human tasks described by the packed workflow
+     * descriptor ({@code workflow.def.json}, generated by the compiler plugin) as symbol
+     * references. Idempotent: names already registered directly keep their registration.
+     */
+    private static void registerFromDescriptor() {
+        Object descriptorDoc =
+                io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowDescriptorNative.readPackedDescriptor();
+        if (!(descriptorDoc instanceof BMap<?, ?> document)) {
+            return;
+        }
+        Object workflows = document.get(StringUtils.fromString("workflows"));
+        if (!(workflows instanceof BArray workflowArray)) {
+            return;
+        }
+        for (long i = 0; i < workflowArray.getLength(); i++) {
+            if (workflowArray.get(i) instanceof BMap<?, ?> workflow) {
+                registerDescriptorWorkflow(workflow);
+            }
+        }
+    }
+
+    private static void registerDescriptorWorkflow(BMap<?, ?> workflow) {
+        String name = stringField(workflow, "name");
+        if (name == null) {
+            return;
+        }
+        String workflowType = WORKFLOW_TYPE_PREFIX + name;
+        WorkflowFunctionRef ref = symbolRefOf(workflow.get(StringUtils.fromString("function")));
+        if (ref == null) {
+            LOGGER.warn("Descriptor workflow '{}' could not be resolved to a function symbol; skipping", name);
+        } else if (PROCESS_REGISTRY.putIfAbsent(workflowType, ref) == null) {
+            LOGGER.debug("Registered workflow from descriptor: {}", workflowType);
+            List<EventInfo> events = EventExtractor.extractEvents(ref.getType(), workflowType);
+            if (!events.isEmpty()) {
+                List<String> eventNames = new ArrayList<>();
+                for (EventInfo event : events) {
+                    eventNames.add(event.fieldName());
+                }
+                EVENT_REGISTRY.put(workflowType, eventNames);
+            }
+        }
+
+        Object activities = workflow.get(StringUtils.fromString("activities"));
+        if (activities instanceof BArray activityArray) {
+            for (long i = 0; i < activityArray.getLength(); i++) {
+                if (!(activityArray.get(i) instanceof BMap<?, ?> activity)) {
+                    continue;
+                }
+                String activityName = stringField(activity, "name");
+                if (activityName == null) {
+                    continue;
+                }
+                WorkflowFunctionRef activityRef =
+                        symbolRefOf(activity.get(StringUtils.fromString("function")));
+                if (activityRef == null) {
+                    LOGGER.warn("Descriptor activity '{}.{}' could not be resolved to a function symbol; skipping",
+                            name, activityName);
+                    continue;
+                }
+                ACTIVITY_REGISTRY.putIfAbsent(workflowType + "." + activityName, activityRef);
+            }
+        }
+
+        Object humanTasks = workflow.get(StringUtils.fromString("humanTasks"));
+        if (humanTasks instanceof BArray taskArray) {
+            for (long i = 0; i < taskArray.getLength(); i++) {
+                if (taskArray.get(i) instanceof BMap<?, ?> task) {
+                    String taskName = stringField(task, "name");
+                    if (taskName != null) {
+                        HUMANTASK_REGISTRY.add(name + "." + taskName);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Builds a symbol reference from a descriptor {@code function} binding
+     * ({@code {module: "org/mod", version: "<major>", name: "fn"}}), resolving the function's
+     * type through the module's value creator — the same lookup {@code Runtime.callFunction}
+     * uses to invoke it later.
+     */
+    private static WorkflowFunctionRef symbolRefOf(Object functionField) {
+        if (!(functionField instanceof BMap<?, ?> fn)) {
+            return null;
+        }
+        String moduleQName = stringField(fn, "module");
+        String version = stringField(fn, "version");
+        String functionName = stringField(fn, "name");
+        if (moduleQName == null || version == null || functionName == null) {
+            return null;
+        }
+        int slash = moduleQName.indexOf('/');
+        if (slash <= 0 || slash == moduleQName.length() - 1) {
+            return null;
+        }
+        Module module = new Module(moduleQName.substring(0, slash), moduleQName.substring(slash + 1), version);
+        FunctionType functionType = lookupFunctionType(module, functionName);
+        if (functionType == null) {
+            return null;
+        }
+        return WorkflowFunctionRef.symbolic(module, functionName, functionType);
+    }
+
+    /**
+     * Resolves a module-level function's type through the module's generated value creator —
+     * mirroring {@code BalRuntime.callFunction}'s lookup, including the testable-module
+     * fallback that {@code bal test} runs need.
+     */
+    private static FunctionType lookupFunctionType(Module module, String functionName) {
+        try {
+            return io.ballerina.runtime.internal.values.ValueCreator.getValueCreator(
+                    io.ballerina.runtime.internal.values.ValueCreator.getLookupKey(
+                            module.getOrg(), module.getName(), module.getMajorVersion(), false))
+                    .getFunctionType(functionName);
+        } catch (RuntimeException e) {
+            try {
+                return io.ballerina.runtime.internal.values.ValueCreator.getValueCreator(
+                        io.ballerina.runtime.internal.values.ValueCreator.getLookupKey(
+                                module.getOrg(), module.getName(), module.getMajorVersion(), true))
+                        .getFunctionType(functionName);
+            } catch (RuntimeException inner) {
+                LOGGER.warn("Function '{}' not found in module {} ({}): {}", functionName, module,
+                        inner.getClass().getSimpleName(), inner.getMessage());
+                return null;
+            }
+        }
+    }
+
+    private static String stringField(BMap<?, ?> map, String field) {
+        Object value = map.get(StringUtils.fromString(field));
+        return value instanceof BString bString ? bString.getValue() : null;
+    }
+
+    /**
      * Returns whether the given (already {@code workflow-}-prefixed) type is registered on this
      * worker as a durable agent workflow.
      *
@@ -769,6 +913,13 @@ public final class WorkflowWorkerNative {
             LOGGER.debug("Singleton worker already started");
             return null;
         }
+
+        // Register everything the packed workflow descriptor (workflow.def.json) describes —
+        // workflows, their activities, and human tasks — as symbol references resolved from
+        // the descriptor's coordinates. Runs before the worker starts polling so every
+        // described type is routable; direct registrations (module tests, agent runners)
+        // already in the registries take precedence.
+        registerFromDescriptor();
 
         try {
             LOGGER.debug("Starting singleton worker for task queue: {}", taskQueue);
@@ -1005,7 +1156,7 @@ public final class WorkflowWorkerNative {
      *
      * @return the activity registry map
      */
-    public static Map<String, BFunctionPointer> getActivityRegistry() {
+    public static Map<String, WorkflowFunctionRef> getActivityRegistry() {
         return Collections.unmodifiableMap(ACTIVITY_REGISTRY);
     }
 
@@ -1014,7 +1165,7 @@ public final class WorkflowWorkerNative {
      *
      * @return the process registry map
      */
-    public static Map<String, BFunctionPointer> getProcessRegistry() {
+    public static Map<String, WorkflowFunctionRef> getProcessRegistry() {
         return Collections.unmodifiableMap(PROCESS_REGISTRY);
     }
 
@@ -1885,7 +2036,7 @@ public final class WorkflowWorkerNative {
                 }
 
                 // First check for a registered process function
-                BFunctionPointer processFunction = PROCESS_REGISTRY.get(workflowType);
+                WorkflowFunctionRef processFunction = PROCESS_REGISTRY.get(workflowType);
 
                 // Fall back to service registry for backward compatibility
                 BObject templateService = SERVICE_REGISTRY.get(workflowType);
@@ -1934,7 +2085,8 @@ public final class WorkflowWorkerNative {
                 // take the native agent context handle as their first argument; regular workflows
                 // may declare a leading workflow:Context parameter.
                 boolean hasAgentContext = AGENT_WORKFLOW_TYPES.contains(workflowType);
-                boolean hasContext = !hasAgentContext && EventExtractor.hasContextParameter(processFunction);
+                boolean hasContext = !hasAgentContext && processFunction != null
+                        && EventExtractor.hasContextParameter(processFunction.getType());
                 boolean hasFirstCtxParam = hasContext || hasAgentContext;
 
                 // Convert workflow arguments to match expected parameter types.
@@ -1942,6 +2094,7 @@ public final class WorkflowWorkerNative {
                 // but the workflow function expects specific record types (e.g. OrderRequest).
                 if (processFunction != null && workflowArgs.length > 0) {
                     FunctionType funcType = (FunctionType) processFunction.getType();
+                    // (ref.getType() is the declared function type on both registration paths)
                     Parameter[] params = funcType.getParameters();
                     int startIdx = hasFirstCtxParam ? 1 : 0;
                     for (int i = 0; i < workflowArgs.length; i++) {
@@ -1961,7 +2114,7 @@ public final class WorkflowWorkerNative {
 
                 // Check if the process function expects an events record parameter
                 RecordType eventsRecordType = processFunction != null ?
-                                              EventExtractor.getEventsRecordType(processFunction) : null;
+                                              EventExtractor.getEventsRecordType(processFunction.getType()) : null;
                 boolean hasEvents = eventsRecordType != null;
 
                 // Build arguments array with Context and Events as needed
@@ -2007,9 +2160,8 @@ public final class WorkflowWorkerNative {
 
                 // Use process function if available (new singleton pattern)
                 if (processFunction != null) {
-                    // Call the function directly
-                    FPValue fpValue = (FPValue) processFunction;
-                    fpValue.metadata = new StrandMetadata(true, fpValue.metadata.properties());
+                    // Invoke via the ref: a captured pointer, or a descriptor symbol reference
+                    // resolved through Runtime.callFunction — both with a concurrent-safe strand.
                     result = processFunction.call(ballerinaRuntime, ballerinaArgs);
                 } else {
                     // Fall back to service object (backward compatibility)
@@ -2409,7 +2561,7 @@ public final class WorkflowWorkerNative {
             }
 
             // Look up the registered Ballerina function for this activity
-            BFunctionPointer activityFunction = ACTIVITY_REGISTRY.get(activityName);
+            WorkflowFunctionRef activityFunction = ACTIVITY_REGISTRY.get(activityName);
             if (activityFunction == null) {
                 String errorMsg = "Activity not registered: " + activityName +
                         ". Available activities: " + ACTIVITY_REGISTRY.keySet();
@@ -2466,7 +2618,7 @@ public final class WorkflowWorkerNative {
             }
 
             // Find the last parameter that is present in the map so we can
-            // omit trailing absent params (FPValue.call fills defaults for those).
+            // omit trailing absent params (the invocation fills defaults for those).
             // Exception: if a typedesc parameter is present, we must pass *all*
             // data params positionally, otherwise the appended typedesc value
             // would land in the slot of an omitted trailing data param.
@@ -2547,9 +2699,7 @@ public final class WorkflowWorkerNative {
                 ballerinaArgs = argsWithTypedesc;
             }
 
-            // Execute the Ballerina activity function
-            FPValue fpValue = (FPValue) activityFunction;
-            fpValue.metadata = new StrandMetadata(true, fpValue.metadata.properties());
+            // Execute the Ballerina activity function (pointer or descriptor symbol reference)
             Object result = activityFunction.call(ballerinaRuntime, ballerinaArgs);
 
             // Always throw ApplicationFailure when the activity returns a BError so that

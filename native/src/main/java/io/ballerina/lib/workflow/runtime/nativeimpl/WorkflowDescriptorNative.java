@@ -18,8 +18,11 @@
 
 package io.ballerina.lib.workflow.runtime.nativeimpl;
 
+import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.utils.JsonUtils;
+import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BError;
+import io.ballerina.runtime.api.values.BString;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -36,8 +39,11 @@ import java.io.InputStream;
  */
 public final class WorkflowDescriptorNative {
 
-    /** The fixed JAR entry name written by the compiler plugin's pack task. */
+    /** The fixed classpath entry of the packed descriptor (a generated package resource). */
     public static final String DESCRIPTOR_RESOURCE = "workflow.def.json";
+
+    /** Physical package resources land under this prefix; probed as a fallback. */
+    private static final String RESOURCES_PREFIX = "resources/";
 
     private static final Object LOCK = new Object();
     private static volatile boolean loaded;
@@ -66,9 +72,35 @@ public final class WorkflowDescriptorNative {
     }
 
     /**
+     * Registers the workflow descriptor handed over by the compiler plugin's generated code —
+     * the document embedded as data in {@code __registerWorkflowsAndStart}. Generated sources
+     * travel through every compilation mode (build, run, and test), so this is the runtime's
+     * primary descriptor source; the packed classpath resource backs external tooling and
+     * programs built by the same plugin (byte-identical content). The binding of
+     * {@code wfInternal:registerWorkflowDescriptor}.
+     *
+     * @param descriptorJson the canonical descriptor document
+     * @return {@code true} on success, or a Ballerina error when the document is not valid JSON
+     */
+    public static Object registerWorkflowDescriptor(BString descriptorJson) {
+        try {
+            Object parsed = JsonUtils.parse(descriptorJson.getValue());
+            synchronized (LOCK) {
+                cachedDescriptor = parsed;
+                loaded = true;
+            }
+            return true;
+        } catch (BError e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Invalid workflow descriptor document: " + e.getMessage()));
+        }
+    }
+
+    /**
      * Test seam: installs a descriptor document as if it had been read from the packed
-     * resource. {@code bal test} runs never produce an executable JAR, so the module's own
-     * tests inject the document this way; passing {@code null} restores the not-packed state.
+     * resource. {@code bal test} runs of this module have neither an executable JAR nor
+     * plugin-generated registration, so the module's own tests inject the document this way;
+     * passing {@code null} restores the not-packed state.
      *
      * @param descriptor the descriptor document, or {@code null} to clear
      */
@@ -92,7 +124,15 @@ public final class WorkflowDescriptorNative {
     }
 
     private static Object readFrom(ClassLoader classLoader) {
-        try (InputStream inputStream = classLoader.getResourceAsStream(DESCRIPTOR_RESOURCE)) {
+        Object parsed = readEntry(classLoader, DESCRIPTOR_RESOURCE);
+        if (parsed == null) {
+            parsed = readEntry(classLoader, RESOURCES_PREFIX + DESCRIPTOR_RESOURCE);
+        }
+        return parsed;
+    }
+
+    private static Object readEntry(ClassLoader classLoader, String resourcePath) {
+        try (InputStream inputStream = classLoader.getResourceAsStream(resourcePath)) {
             if (inputStream == null) {
                 return null;
             }

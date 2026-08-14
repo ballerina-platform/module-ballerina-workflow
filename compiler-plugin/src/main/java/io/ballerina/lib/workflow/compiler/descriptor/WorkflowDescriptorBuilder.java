@@ -58,8 +58,7 @@ import io.ballerina.projects.DocumentId;
 import io.ballerina.projects.Module;
 import io.ballerina.projects.ModuleId;
 import io.ballerina.projects.Package;
-import io.ballerina.projects.plugins.AnalysisTask;
-import io.ballerina.projects.plugins.CompilationAnalysisContext;
+import io.ballerina.projects.PackageCompilation;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -74,9 +73,8 @@ import java.util.TreeMap;
  * Builds the Workflow Definition Descriptor ({@code workflow.def.json}) from the compiled
  * package: every workflow with its input, events, activities (input and output), human tasks
  * (result form) and review activities, plus every durable-agent declaration's static structure.
- * Runs as a compilation analysis task because schema generation needs the live semantic model;
- * the resulting canonical bytes are handed to {@link DescriptorPackLifecycleTask} through the
- * {@link WorkflowDescriptorStore} for packing once the JAR exists.
+ * Invoked by {@link WorkflowDescriptorGenerator}, which packs the canonical bytes as a package
+ * resource — present in the executable JAR, the BALA, and {@code bal test} runs alike.
  *
  * <p>Captures only the structural facts — what registers with the Temporal runtime, plus
  * schemas. Expression-valued instance parameters (roles, titles, retry counts, timeouts,
@@ -84,21 +82,24 @@ import java.util.TreeMap;
  *
  * @since 0.9.0
  */
-public class WorkflowDescriptorBuilder implements AnalysisTask<CompilationAnalysisContext> {
+public final class WorkflowDescriptorBuilder {
 
     public static final String DESCRIPTOR_VERSION = "1.0";
 
     private static final String DURABLE_AGENT_TYPE = "DurableAgent";
 
-    private final WorkflowDescriptorStore store;
-
-    public WorkflowDescriptorBuilder(WorkflowDescriptorStore store) {
-        this.store = store;
+    private WorkflowDescriptorBuilder() {
     }
 
-    @Override
-    public void perform(CompilationAnalysisContext context) {
-        Package currentPackage = context.currentPackage();
+    /**
+     * Builds the descriptor's canonical bytes for a package.
+     *
+     * @param currentPackage the package being compiled
+     * @param compilation    its compilation (for semantic models)
+     * @return the canonical descriptor bytes, or {@code null} when the package declares no
+     *         workflows or agents
+     */
+    public static byte[] build(Package currentPackage, PackageCompilation compilation) {
         String major = majorVersion(currentPackage.packageVersion().value().toString());
 
         Map<String, Map<String, Object>> workflows = new TreeMap<>();
@@ -106,7 +107,7 @@ public class WorkflowDescriptorBuilder implements AnalysisTask<CompilationAnalys
 
         for (ModuleId moduleId : currentPackage.moduleIds()) {
             Module module = currentPackage.module(moduleId);
-            SemanticModel semanticModel = context.compilation().getSemanticModel(moduleId);
+            SemanticModel semanticModel = compilation.getSemanticModel(moduleId);
             String moduleQName = currentPackage.packageOrg().value() + "/" + module.moduleName().toString();
             for (DocumentId documentId : module.documentIds()) {
                 ModulePartNode root = module.document(documentId).syntaxTree().rootNode();
@@ -130,8 +131,7 @@ public class WorkflowDescriptorBuilder implements AnalysisTask<CompilationAnalys
         }
 
         if (workflows.isEmpty() && agents.isEmpty()) {
-            store.setDescriptorBytes(null);
-            return;
+            return null;
         }
 
         Map<String, Object> document = new LinkedHashMap<>();
@@ -144,14 +144,14 @@ public class WorkflowDescriptorBuilder implements AnalysisTask<CompilationAnalys
         document.put("workflows", new ArrayList<>(workflows.values()));
         document.put("agents", new ArrayList<>(agents.values()));
 
-        store.setDescriptorBytes(DescriptorJson.withChecksum(document));
+        return DescriptorJson.withChecksum(document);
     }
 
     // ------------------------------------------------------------------
     // Workflows
     // ------------------------------------------------------------------
 
-    private Map<String, Object> buildWorkflowEntry(FunctionDefinitionNode fnDef, SemanticModel semanticModel,
+    private static Map<String, Object> buildWorkflowEntry(FunctionDefinitionNode fnDef, SemanticModel semanticModel,
                                                    String moduleQName, String major) {
         Optional<Symbol> symbol = semanticModel.symbol(fnDef);
         if (symbol.isEmpty() || symbol.get().kind() != SymbolKind.FUNCTION) {
@@ -193,7 +193,7 @@ public class WorkflowDescriptorBuilder implements AnalysisTask<CompilationAnalys
         return entry;
     }
 
-    private boolean isEventsRecord(RecordTypeSymbol record) {
+    private static boolean isEventsRecord(RecordTypeSymbol record) {
         Map<String, RecordFieldSymbol> fields = record.fieldDescriptors();
         if (fields.isEmpty()) {
             return false;
@@ -207,7 +207,7 @@ public class WorkflowDescriptorBuilder implements AnalysisTask<CompilationAnalys
         return true;
     }
 
-    private List<Object> buildWorkflowEvents(RecordTypeSymbol eventsRecord) {
+    private static List<Object> buildWorkflowEvents(RecordTypeSymbol eventsRecord) {
         List<Object> events = new ArrayList<>();
         if (eventsRecord == null) {
             return events;
@@ -229,7 +229,7 @@ public class WorkflowDescriptorBuilder implements AnalysisTask<CompilationAnalys
         return events;
     }
 
-    private List<Object> buildHumanTasks(Map<String, TypeSymbol> humanTaskResults) {
+    private static List<Object> buildHumanTasks(Map<String, TypeSymbol> humanTaskResults) {
         List<Object> tasks = new ArrayList<>();
         for (Map.Entry<String, TypeSymbol> entry : humanTaskResults.entrySet()) {
             Map<String, Object> task = new LinkedHashMap<>();
@@ -240,7 +240,7 @@ public class WorkflowDescriptorBuilder implements AnalysisTask<CompilationAnalys
         return tasks;
     }
 
-    private List<Object> buildReviewActivities(Map<String, Set<String>> reviewedActivities) {
+    private static List<Object> buildReviewActivities(Map<String, Set<String>> reviewedActivities) {
         List<Object> reviews = new ArrayList<>();
         for (Map.Entry<String, Set<String>> entry : reviewedActivities.entrySet()) {
             Map<String, Object> review = new LinkedHashMap<>();
@@ -264,7 +264,7 @@ public class WorkflowDescriptorBuilder implements AnalysisTask<CompilationAnalys
      * and via {@code ctx->callActivity}), {@code awaitHumanTask} sites with their statically
      * declared result types, and activities gated by a {@code HumanReview} retry policy.
      */
-    private final class WorkflowBodyCollector extends NodeVisitor {
+    private static final class WorkflowBodyCollector extends NodeVisitor {
 
         private final SemanticModel semanticModel;
         final Map<String, Map<String, Object>> activities = new TreeMap<>();
@@ -468,7 +468,7 @@ public class WorkflowDescriptorBuilder implements AnalysisTask<CompilationAnalys
     // Durable agents
     // ------------------------------------------------------------------
 
-    private Map<String, Object> buildAgentEntry(ModuleVariableDeclarationNode varDecl,
+    private static Map<String, Object> buildAgentEntry(ModuleVariableDeclarationNode varDecl,
                                                 SemanticModel semanticModel) {
         Optional<Symbol> symbol = semanticModel.symbol(varDecl);
         if (symbol.isEmpty() || !(symbol.get() instanceof VariableSymbol varSymbol)) {
@@ -522,7 +522,7 @@ public class WorkflowDescriptorBuilder implements AnalysisTask<CompilationAnalys
         return agent;
     }
 
-    private boolean isDurableAgentType(TypeSymbol type) {
+    private static boolean isDurableAgentType(TypeSymbol type) {
         if (!(type instanceof io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol ref)) {
             return false;
         }
@@ -535,7 +535,7 @@ public class WorkflowDescriptorBuilder implements AnalysisTask<CompilationAnalys
                 .orElse(false);
     }
 
-    private MappingConstructorExpressionNode agentConfigMapping(ModuleVariableDeclarationNode varDecl) {
+    private static MappingConstructorExpressionNode agentConfigMapping(ModuleVariableDeclarationNode varDecl) {
         if (varDecl.initializer().isEmpty()) {
             return null;
         }
@@ -557,7 +557,7 @@ public class WorkflowDescriptorBuilder implements AnalysisTask<CompilationAnalys
     }
 
     /** Resolves a {@code typedesc} config expression (e.g. {@code OrderInput}) to a typed slot. */
-    private Map<String, Object> typedescSlot(SemanticModel semanticModel, ExpressionNode expression,
+    private static Map<String, Object> typedescSlot(SemanticModel semanticModel, ExpressionNode expression,
                                              Map<String, Object> fallback) {
         Optional<TypeSymbol> typeOpt = semanticModel.typeOf(expression);
         if (typeOpt.isEmpty()) {
@@ -574,7 +574,7 @@ public class WorkflowDescriptorBuilder implements AnalysisTask<CompilationAnalys
         return fallback;
     }
 
-    private List<Object> buildAgentEvents(SemanticModel semanticModel, ExpressionNode value) {
+    private static List<Object> buildAgentEvents(SemanticModel semanticModel, ExpressionNode value) {
         Map<String, Map<String, Object>> events = new TreeMap<>();
         for (MappingConstructorExpressionNode mapping : mappingsOf(value)) {
             String name = null;
@@ -612,7 +612,7 @@ public class WorkflowDescriptorBuilder implements AnalysisTask<CompilationAnalys
         return new ArrayList<>(events.values());
     }
 
-    private List<Object> buildAgentHumanTasks(SemanticModel semanticModel, ExpressionNode value) {
+    private static List<Object> buildAgentHumanTasks(SemanticModel semanticModel, ExpressionNode value) {
         Map<String, Map<String, Object>> tasks = new TreeMap<>();
         for (MappingConstructorExpressionNode mapping : mappingsOf(value)) {
             String name = null;
@@ -640,7 +640,7 @@ public class WorkflowDescriptorBuilder implements AnalysisTask<CompilationAnalys
         return new ArrayList<>(tasks.values());
     }
 
-    private void collectAgentActivities(SemanticModel semanticModel, ExpressionNode value,
+    private static void collectAgentActivities(SemanticModel semanticModel, ExpressionNode value,
                                         Map<String, Map<String, Object>> tools) {
         if (!(value instanceof ListConstructorExpressionNode list)) {
             return;
@@ -703,7 +703,7 @@ public class WorkflowDescriptorBuilder implements AnalysisTask<CompilationAnalys
         }
     }
 
-    private void collectAgentTools(SemanticModel semanticModel, ExpressionNode value,
+    private static void collectAgentTools(SemanticModel semanticModel, ExpressionNode value,
                                    Map<String, Map<String, Object>> tools) {
         if (!(value instanceof ListConstructorExpressionNode list)) {
             return;
@@ -742,7 +742,7 @@ public class WorkflowDescriptorBuilder implements AnalysisTask<CompilationAnalys
         }
     }
 
-    private void collectAgentPeers(ExpressionNode value, Map<String, Map<String, Object>> tools) {
+    private static void collectAgentPeers(ExpressionNode value, Map<String, Map<String, Object>> tools) {
         for (MappingConstructorExpressionNode mapping : mappingsOf(value)) {
             String name = null;
             for (MappingFieldNode field : mapping.fields()) {
@@ -761,7 +761,7 @@ public class WorkflowDescriptorBuilder implements AnalysisTask<CompilationAnalys
         }
     }
 
-    private List<MappingConstructorExpressionNode> mappingsOf(ExpressionNode value) {
+    private static List<MappingConstructorExpressionNode> mappingsOf(ExpressionNode value) {
         List<MappingConstructorExpressionNode> mappings = new ArrayList<>();
         if (value instanceof ListConstructorExpressionNode list) {
             for (Node member : list.expressions()) {

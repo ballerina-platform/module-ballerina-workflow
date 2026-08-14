@@ -368,10 +368,12 @@ service class ManagementGatewayInterceptor {
             http:Request req)
             returns http:Unauthorized|http:Forbidden|http:NextService|error? {
 
-        http:Forbidden? scopeErr = applyCallerIdentity(req, path.length() > 0 ? path[0] : "");
-        if scopeErr is http:Forbidden {
-            return scopeErr;
+        CallerIdentity|http:Forbidden identity = resolveCallerIdentity(req,
+                path.length() > 0 ? path[0] : "", defaultIdentityConfig());
+        if identity is http:Forbidden {
+            return identity;
         }
+        ctx.set(CALLER_IDENTITY_CTX_KEY, identity);
 
         // API key auth (no built-in Ballerina HTTP handler)
         if enableApiKey {
@@ -397,20 +399,33 @@ service class ManagementGatewayInterceptor {
 #
 # + operation - Dot-qualified operation name (see `management:executeManagementCommand`)
 # + params - Operation parameters, keyed like the route's query/path/body parameters
-# + userId - The caller's user ID from the `x-user-id` header
-# + rolesHeader - The caller's comma-separated roles from the `x-user-roles` header
+# + ctx - The request context carrying the caller identity the gateway interceptor resolved
 # + return - The operation's REST response
 isolated function executeToResponse(string operation, map<json> params,
-        string? userId, string? rolesHeader) returns http:Response {
+        http:RequestContext ctx) returns http:Response {
+    CallerIdentity identity = callerIdentityOf(ctx);
     management:ManagementCommandResult result = management:executeManagementCommand({
         operation: operation,
         params: params,
-        identity: {userId: userId, roles: rolesFromHeader(rolesHeader)}
+        identity: {userId: identity.userId, roles: identity.roles}
     });
     http:Response response = new;
     response.statusCode = result.httpStatus;
     response.setJsonPayload(result.body);
     return response;
+}
+
+# Reads the caller identity the gateway interceptor stored in the request context.
+#
+# + ctx - The request context
+# + return - The resolved identity; anonymous (no user, no roles) when absent —
+#            the interceptor runs on every request, so absence is defensive only
+isolated function callerIdentityOf(http:RequestContext ctx) returns CallerIdentity {
+    if !ctx.hasKey(CALLER_IDENTITY_CTX_KEY) {
+        return {};
+    }
+    CallerIdentity|error identity = ctx.getWithType(CALLER_IDENTITY_CTX_KEY);
+    return identity is CallerIdentity ? identity : {};
 }
 
 isolated function errorBody(string message) returns map<json> {
@@ -448,16 +463,14 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
     // ── Definitions ──────────────────────────────────────────────────────────
 
     resource isolated function get definitions(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
-        return executeToResponse("definitions.list", {}, userId, userRoles);
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse("definitions.list", {}, ctx);
     }
 
     // ── Workflow Instances — List & Start ─────────────────────────────────────
 
     resource isolated function get workflows(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles,
+            http:RequestContext ctx,
             string? status = (),
             string? workflowType = (),
             string? workflowId = (),
@@ -481,14 +494,13 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             closeTimeFrom: closeTimeFrom,
             closeTimeTo: closeTimeTo,
             taskQueue: taskQueue
-        }, userId, userRoles);
+        }, ctx);
     }
 
     resource isolated function post workflows(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles,
+            http:RequestContext ctx,
             @http:Payload map<json> body) returns http:Response {
-        return executeToResponse("instances.start", body, userId, userRoles);
+        return executeToResponse("instances.start", body, ctx);
     }
 
     // ── Workflow Instance — Latest Run ───────────────────────────────────────
@@ -496,125 +508,106 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
     // The {runId} variants below pin the request to an exact run.
 
     resource isolated function get workflows/[string workflowId](
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
-        return executeToResponse("instances.get", {workflowId: workflowId}, userId, userRoles);
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse("instances.get", {workflowId: workflowId}, ctx);
     }
 
     resource isolated function post workflows/[string workflowId]/suspend(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
-        return executeToResponse("instances.suspend", {workflowId: workflowId}, userId, userRoles);
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse("instances.suspend", {workflowId: workflowId}, ctx);
     }
 
     resource isolated function post workflows/[string workflowId]/wake(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
-        return executeToResponse("instances.wake", {workflowId: workflowId}, userId, userRoles);
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse("instances.wake", {workflowId: workflowId}, ctx);
     }
 
     resource isolated function post workflows/[string workflowId]/resume(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
-        return executeToResponse("instances.resume", {workflowId: workflowId}, userId, userRoles);
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse("instances.resume", {workflowId: workflowId}, ctx);
     }
 
     resource isolated function post workflows/[string workflowId]/terminate(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles,
+            http:RequestContext ctx,
             @http:Payload map<json>? body = ()) returns http:Response {
         map<json> params = {workflowId: workflowId};
         if body is map<json> && body["reason"] is string {
             params["reason"] = body["reason"];
         }
-        return executeToResponse("instances.terminate", params, userId, userRoles);
+        return executeToResponse("instances.terminate", params, ctx);
     }
 
     resource isolated function post workflows/[string workflowId]/cancel(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
-        return executeToResponse("instances.cancel", {workflowId: workflowId}, userId, userRoles);
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse("instances.cancel", {workflowId: workflowId}, ctx);
     }
 
     resource isolated function get workflows/[string workflowId]/history(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
-        return executeToResponse("instances.history", {workflowId: workflowId}, userId, userRoles);
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse("instances.history", {workflowId: workflowId}, ctx);
     }
 
     resource isolated function get workflows/[string workflowId]/activity\-tree(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
-        return executeToResponse("instances.activityTree", {workflowId: workflowId}, userId, userRoles);
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse("instances.activityTree", {workflowId: workflowId}, ctx);
     }
 
     resource isolated function get workflows/[string workflowId]/execution\-graph(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
-        return executeToResponse("instances.executionGraph", {workflowId: workflowId}, userId, userRoles);
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse("instances.executionGraph", {workflowId: workflowId}, ctx);
     }
 
     // ── Workflow Instance — Run-pinned ───────────────────────────────────────
 
     resource isolated function get workflows/[string workflowId]/[string runId](
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
-        return executeToResponse("instances.get", {workflowId: workflowId, runId: runId}, userId, userRoles);
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse("instances.get", {workflowId: workflowId, runId: runId}, ctx);
     }
 
     resource isolated function post workflows/[string workflowId]/[string runId]/suspend(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
-        return executeToResponse("instances.suspend", {workflowId: workflowId, runId: runId}, userId, userRoles);
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse("instances.suspend", {workflowId: workflowId, runId: runId}, ctx);
     }
 
     resource isolated function post workflows/[string workflowId]/[string runId]/resume(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
-        return executeToResponse("instances.resume", {workflowId: workflowId, runId: runId}, userId, userRoles);
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse("instances.resume", {workflowId: workflowId, runId: runId}, ctx);
     }
 
     resource isolated function post workflows/[string workflowId]/[string runId]/terminate(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles,
+            http:RequestContext ctx,
             @http:Payload map<json>? body = ()) returns http:Response {
         map<json> params = {workflowId: workflowId, runId: runId};
         if body is map<json> && body["reason"] is string {
             params["reason"] = body["reason"];
         }
-        return executeToResponse("instances.terminate", params, userId, userRoles);
+        return executeToResponse("instances.terminate", params, ctx);
     }
 
     resource isolated function post workflows/[string workflowId]/[string runId]/cancel(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
-        return executeToResponse("instances.cancel", {workflowId: workflowId, runId: runId}, userId, userRoles);
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse("instances.cancel", {workflowId: workflowId, runId: runId}, ctx);
     }
 
     resource isolated function get workflows/[string workflowId]/[string runId]/history(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
-        return executeToResponse("instances.history", {workflowId: workflowId, runId: runId}, userId, userRoles);
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse("instances.history", {workflowId: workflowId, runId: runId}, ctx);
     }
 
     resource isolated function get workflows/[string workflowId]/[string runId]/activity\-tree(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
-        return executeToResponse("instances.activityTree", {workflowId: workflowId, runId: runId}, userId, userRoles);
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse("instances.activityTree", {workflowId: workflowId, runId: runId}, ctx);
     }
 
     resource isolated function get workflows/[string workflowId]/[string runId]/execution\-graph(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
-        return executeToResponse("instances.executionGraph", {workflowId: workflowId, runId: runId},
-                userId, userRoles);
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse("instances.executionGraph", {workflowId: workflowId, runId: runId}, ctx);
     }
 
     // ── Human Tasks ──────────────────────────────────────────────────────────
 
     resource isolated function get human\-tasks(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles,
+            http:RequestContext ctx,
             string? status = (),
             string? parentWorkflowId = (),
             string? parentWorkflowType = (),
@@ -642,39 +635,34 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             closeTimeFrom: closeTimeFrom,
             closeTimeTo: closeTimeTo,
             taskQueue: taskQueue
-        }, userId, userRoles);
+        }, ctx);
     }
 
     resource isolated function get human\-tasks/pending\-count(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles,
+            http:RequestContext ctx,
             string? taskQueue = ()) returns http:Response {
-        return executeToResponse("humanTasks.pendingCount", {taskQueue: taskQueue}, userId, userRoles);
+        return executeToResponse("humanTasks.pendingCount", {taskQueue: taskQueue}, ctx);
     }
 
     resource isolated function get human\-tasks/[string taskId](
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
-        return executeToResponse("humanTasks.get", {taskId: taskId}, userId, userRoles);
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse("humanTasks.get", {taskId: taskId}, ctx);
     }
 
     resource isolated function post human\-tasks/[string taskId]/complete(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles,
+            http:RequestContext ctx,
             @http:Payload map<json> body) returns http:Response {
-        return executeToResponse("humanTasks.complete", {taskId: taskId, result: body["result"]},
-                userId, userRoles);
+        return executeToResponse("humanTasks.complete", {taskId: taskId, result: body["result"]}, ctx);
     }
 
     resource isolated function post human\-tasks/[string taskId]/'fail(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles,
+            http:RequestContext ctx,
             @http:Payload map<json> body) returns http:Response {
         map<json> params = {taskId: taskId, reason: body["reason"]};
         if body["details"] is map<json> {
             params["details"] = body["details"];
         }
-        return executeToResponse("humanTasks.fail", params, userId, userRoles);
+        return executeToResponse("humanTasks.fail", params, ctx);
     }
 
     // Note: there is deliberately no cancel endpoint for human tasks. A task becomes
@@ -684,8 +672,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
     // ── Review Activities ────────────────────────────────────────────────────
 
     resource isolated function get review\-activities(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles,
+            http:RequestContext ctx,
             string? status = (),
             string? parentWorkflowId = (),
             string? taskName = (),
@@ -707,42 +694,37 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             closeTimeFrom: closeTimeFrom,
             closeTimeTo: closeTimeTo,
             taskQueue: taskQueue
-        }, userId, userRoles);
+        }, ctx);
     }
 
     resource isolated function get review\-activities/[string taskId](
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
-        return executeToResponse("reviewActivities.get", {taskId: taskId}, userId, userRoles);
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse("reviewActivities.get", {taskId: taskId}, ctx);
     }
 
     resource isolated function post review\-activities/[string taskId]/'proceed(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
-        return executeToResponse("reviewActivities.decide", {taskId: taskId, action: "proceed"},
-                userId, userRoles);
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse("reviewActivities.decide", {taskId: taskId, action: "proceed"}, ctx);
     }
 
     resource isolated function post review\-activities/[string taskId]/proceed\-with\-input(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles,
+            http:RequestContext ctx,
             @http:Payload map<json> body) returns http:Response {
         map<json> params = {taskId: taskId, action: "proceed-with-input"};
         if body["input"] is map<json> {
             params["input"] = body["input"];
         }
-        return executeToResponse("reviewActivities.decide", params, userId, userRoles);
+        return executeToResponse("reviewActivities.decide", params, ctx);
     }
 
     resource isolated function post review\-activities/[string taskId]/'reject(
-            @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles,
+            http:RequestContext ctx,
             @http:Payload map<json> body = {}) returns http:Response {
         map<json> params = {taskId: taskId, action: "reject"};
         if body["feedback"] is string {
             params["feedback"] = body["feedback"];
         }
-        return executeToResponse("reviewActivities.decide", params, userId, userRoles);
+        return executeToResponse("reviewActivities.decide", params, ctx);
     }
 
 };

@@ -87,32 +87,33 @@ function testScopeRulePerOperationClass() {
 }
 
 @test:Config {groups: ["unit"]}
-function testBasicAuthUserDefaulting() returns error? {
-    // "ops:s3cret!" base64-encoded; basic auth is enabled in this module's defaults.
+function testBasicAuthUserDefaulting() {
+    // "ops:s3cret!" base64-encoded; the module's default configuration (basic auth
+    // enabled, no token scheme) drives resolution here via defaultIdentityConfig().
     http:Request req = new;
     req.setHeader("Authorization", "Basic b3BzOnMzY3JldCE=");
-    http:Forbidden? result = applyCallerIdentity(req, "workflows");
-    test:assertTrue(result is ());
-    test:assertEquals(check req.getHeader("x-user-id"), "ops");
+    CallerIdentity|http:Forbidden identity =
+            resolveCallerIdentity(req, "workflows", defaultIdentityConfig());
+    test:assertEquals(identity, <CallerIdentity>{userId: "ops", roles: []});
 
-    // An explicit x-user-id is never overwritten by the basic-auth default.
+    // A forwarded x-user-id is never overridden by the basic-auth default.
     http:Request explicit = new;
     explicit.setHeader("Authorization", "Basic b3BzOnMzY3JldCE=");
     explicit.setHeader("x-user-id", "audit-user");
-    _ = applyCallerIdentity(explicit, "workflows");
-    test:assertEquals(check explicit.getHeader("x-user-id"), "audit-user");
+    CallerIdentity|http:Forbidden explicitIdentity =
+            resolveCallerIdentity(explicit, "workflows", defaultIdentityConfig());
+    test:assertEquals(explicitIdentity, <CallerIdentity>{userId: "audit-user", roles: []});
 }
 
 @test:Config {groups: ["unit"]}
-function testNoTokenModeLeavesHeadersUntouched() returns error? {
-    // JWT/OAuth2 are disabled in the test configuration, so bearer requests keep
-    // whatever identity headers the (trusted) gateway forwarded.
+function testNoTokenModeUsesForwardedIdentity() {
+    // JWT/OAuth2 are disabled in the test configuration, so bearer requests resolve
+    // to whatever identity headers the (trusted) gateway forwarded.
     http:Request req = new;
     req.setHeader("Authorization", "Bearer some-opaque-token");
     req.setHeader("x-user-id", "gateway-user");
     req.setHeader("x-user-roles", "approver");
-    http:Forbidden? result = applyCallerIdentity(req, "workflows");
-    test:assertTrue(result is ());
-    test:assertEquals(check req.getHeader("x-user-id"), "gateway-user");
-    test:assertEquals(check req.getHeader("x-user-roles"), "approver");
+    CallerIdentity|http:Forbidden identity =
+            resolveCallerIdentity(req, "workflows", defaultIdentityConfig());
+    test:assertEquals(identity, <CallerIdentity>{userId: "gateway-user", roles: ["approver"]});
 }

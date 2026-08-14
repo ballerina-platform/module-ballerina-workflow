@@ -21,14 +21,17 @@ import ballerina/lang.array;
 // ================================================================================
 // CALLER IDENTITY
 // ================================================================================
-// Where the caller's identity (user ID + roles) comes from depends on the auth
-// scheme:
+// The gateway interceptor resolves the caller's identity ONCE per request and sets
+// it into the `http:RequestContext` (spec §8.1.11) under CALLER_IDENTITY_CTX_KEY;
+// resources read the typed value from the context — the request itself is never
+// mutated. Where the identity comes from depends on the auth scheme:
 //
 //   API key / basic auth  → trusted-gateway mode: the x-user-id / x-user-roles
-//                           headers, as today (basic auth additionally defaults
-//                           the user ID to the authenticated username).
+//                           headers are read as forwarded identity (basic auth
+//                           additionally defaults the user ID to the
+//                           authenticated username).
 //   JWT / OAuth2 (JWT     → token mode: identity is extracted from the token's
-//   access tokens)          claims and OVERWRITES the x-user-* headers, so a
+//   access tokens)          claims and REPLACES any forwarded headers, so a
 //                           client cannot spoof another identity alongside a
 //                           valid token. `trustForwardedIdentity = true` restores
 //                           header precedence for gateway-behind-OAuth topologies.
@@ -74,87 +77,144 @@ configurable string scopeHumanTaskView = "humantask:view";
 # Implies `scopeHumanTaskView` for the human-task routes.
 configurable string scopeHumanTaskManage = "humantask:manage";
 
-# Resolves the caller's identity onto the x-user-* headers and enforces scopes.
-# Called from the gateway interceptor for every request.
+# The caller's resolved identity. The gateway interceptor sets it into the request
+# context; resources read it from there (see `callerIdentityOf`).
 #
-# + req - The request; its identity headers are rewritten in token mode
+# + userId - The caller's user ID, or `()` when no scheme established one
+# + roles - The caller's role names; empty when none were established
+type CallerIdentity record {|
+    string? userId = ();
+    string[] roles = [];
+|};
+
+# The request-context key the resolved `CallerIdentity` is stored under.
+const string CALLER_IDENTITY_CTX_KEY = "workflowCallerIdentity";
+
+# The configuration snapshot driving caller-identity resolution. The gateway
+# interceptor fills it from the module's configurables (`defaultIdentityConfig`);
+# tests construct it directly so every auth mode (basic, JWT, OAuth2-opaque,
+# trusted-forwarding, scope enforcement) is exercisable in one test run even though
+# the configurables are fixed at module init.
+#
+# + basicAuthEnabled - Whether basic auth is enabled (drives the audit-user default)
+# + tokenAuthEnabled - Whether a token scheme (JWT or OAuth2) is enabled (token mode)
+# + trustForwardedIdentity - Whether forwarded x-user-* headers beat token claims
+# + enforceScopes - Whether OAuth scopes gate operation classes
+# + userIdClaim - Claim (dotted path) holding the user ID
+# + rolesClaim - Claim (dotted path) holding the roles
+type CallerIdentityConfig record {|
+    boolean basicAuthEnabled;
+    boolean tokenAuthEnabled;
+    boolean trustForwardedIdentity;
+    boolean enforceScopes;
+    string userIdClaim;
+    string rolesClaim;
+|};
+
+# The identity-resolution configuration built from the module's configurables.
+# + return - The configuration the gateway interceptor resolves identities with
+isolated function defaultIdentityConfig() returns CallerIdentityConfig => {
+    basicAuthEnabled: enableBasicAuth,
+    tokenAuthEnabled: enableJwtAuth || enableOAuth,
+    trustForwardedIdentity,
+    enforceScopes,
+    userIdClaim,
+    rolesClaim
+};
+
+# Resolves the caller's identity from the request and enforces scopes. Called from
+# the gateway interceptor, which stores the result in the request context; the
+# request itself is never mutated.
+#
+# + req - The request
 # + firstSegment - The first path segment under the service base path, used to
 #                  classify the operation for scope enforcement
-# + return - A `403` when scope enforcement is on and the token lacks the
-#            required scope; otherwise `()`
-isolated function applyCallerIdentity(http:Request req, string firstSegment) returns http:Forbidden? {
-    applyBasicAuthUserDefault(req);
+# + cfg - The identity-resolution configuration
+# + return - The resolved identity, or a `403` when scope enforcement is on and
+#            the token lacks the required scope
+isolated function resolveCallerIdentity(http:Request req, string firstSegment,
+        CallerIdentityConfig cfg) returns CallerIdentity|http:Forbidden {
+    boolean hasForwardedUser = req.hasHeader(USER_ID_HEADER);
+    boolean hasForwardedRoles = req.hasHeader(USER_ROLES_HEADER);
+    CallerIdentity identity = forwardedIdentity(req);
 
-    if !(enableJwtAuth || enableOAuth) {
-        return ();
+    if cfg.basicAuthEnabled && identity.userId is () {
+        string? basicUser = basicAuthUsername(req);
+        if basicUser is string {
+            identity.userId = basicUser;
+        }
+    }
+
+    if !cfg.tokenAuthEnabled {
+        return identity;
     }
     string? token = bearerToken(req);
     if token is () {
-        return ();
+        return identity;
     }
     [jwt:Header, jwt:Payload]|jwt:Error decoded = jwt:decode(token);
     if decoded is jwt:Error {
-        // An opaque (non-JWT) access token: no claims to extract. Headers are kept
-        // only in trusted-forwarding mode; otherwise they are dropped so a caller
-        // cannot pair an opaque token with spoofed identity headers.
-        if !trustForwardedIdentity {
-            removeIdentityHeaders(req);
-        }
-        return ();
+        // An opaque (non-JWT) access token: no claims to extract. Forwarded identity
+        // is honored only in trusted-forwarding mode; otherwise it is discarded so a
+        // caller cannot pair a valid token with spoofed identity headers.
+        return cfg.trustForwardedIdentity ? identity : <CallerIdentity>{};
     }
     map<json> claims = claimsOf(decoded[1]);
 
-    if !(trustForwardedIdentity && req.hasHeader(USER_ID_HEADER)) {
-        json? userId = claimAt(claims, userIdClaim);
-        if userId is string && userId.trim().length() > 0 {
-            req.setHeader(USER_ID_HEADER, userId);
-        } else {
-            req.removeHeader(USER_ID_HEADER);
-        }
+    if !(cfg.trustForwardedIdentity && hasForwardedUser) {
+        json? userId = claimAt(claims, cfg.userIdClaim);
+        identity.userId = userId is string && userId.trim().length() > 0 ? userId : ();
     }
-    if !(trustForwardedIdentity && req.hasHeader(USER_ROLES_HEADER)) {
-        string[]? roles = stringArrayFromClaim(claimAt(claims, rolesClaim));
-        if roles is string[] && roles.length() > 0 {
-            req.setHeader(USER_ROLES_HEADER, string:'join(",", ...roles));
-        } else {
-            req.removeHeader(USER_ROLES_HEADER);
-        }
+    if !(cfg.trustForwardedIdentity && hasForwardedRoles) {
+        string[]? roles = stringArrayFromClaim(claimAt(claims, cfg.rolesClaim));
+        identity.roles = roles is string[] ? roles : [];
     }
 
-    if enforceScopes && !scopeAllowed(req.method, firstSegment, scopesOf(claims)) {
+    if cfg.enforceScopes && !scopeAllowed(req.method, firstSegment, scopesOf(claims)) {
         return <http:Forbidden>{body: errorBody(
                 "Insufficient scope: the token does not permit this operation")};
     }
-    return ();
+    return identity;
 }
 
 const string USER_ID_HEADER = "x-user-id";
 const string USER_ROLES_HEADER = "x-user-roles";
 
-// Defaults x-user-id to the basic-auth username when basic auth is enabled and the
-// header is absent. The declarative auth layer still validates the credentials; this
-// only fills the audit identity (completedBy/decidedBy/startedBy) that would
-// otherwise read "unknown".
-isolated function applyBasicAuthUserDefault(http:Request req) {
-    if !enableBasicAuth || req.hasHeader(USER_ID_HEADER) {
-        return;
-    }
+# Reads the identity a trusted gateway forwarded via the x-user-* headers.
+#
+# + req - The request
+# + return - The forwarded identity; fields are absent/empty when not forwarded
+isolated function forwardedIdentity(http:Request req) returns CallerIdentity {
+    string|http:HeaderNotFoundError userId = req.getHeader(USER_ID_HEADER);
+    string|http:HeaderNotFoundError roles = req.getHeader(USER_ROLES_HEADER);
+    return {
+        userId: userId is string && userId.trim().length() > 0 ? userId : (),
+        roles: roles is string ? rolesFromHeader(roles) : []
+    };
+}
+
+// Extracts the basic-auth username for the audit identity (completedBy/decidedBy/
+// startedBy that would otherwise read "unknown"). The declarative auth layer still
+// validates the credentials; callers gate this on basic auth being enabled and on
+// no identity having been forwarded.
+isolated function basicAuthUsername(http:Request req) returns string? {
     string|http:HeaderNotFoundError authHeader = req.getHeader("Authorization");
     if authHeader !is string || !authHeader.startsWith("Basic ") {
-        return;
+        return ();
     }
     byte[]|error rawCredentials = array:fromBase64(authHeader.substring(6).trim());
     if rawCredentials is error {
-        return;
+        return ();
     }
     string|error credentials = string:fromBytes(rawCredentials);
     if credentials is error {
-        return;
+        return ();
     }
     int? separator = credentials.indexOf(":");
     if separator is int && separator > 0 {
-        req.setHeader(USER_ID_HEADER, credentials.substring(0, separator));
+        return credentials.substring(0, separator);
     }
+    return ();
 }
 
 isolated function bearerToken(http:Request req) returns string? {
@@ -164,21 +224,6 @@ isolated function bearerToken(http:Request req) returns string? {
         return token.length() > 0 ? token : ();
     }
     return ();
-}
-
-isolated function removeIdentityHeaders(http:Request req) {
-    if req.hasHeader(USER_ID_HEADER) {
-        error? result = req.removeHeader(USER_ID_HEADER);
-        if result is error {
-            // Unreachable: hasHeader was checked.
-        }
-    }
-    if req.hasHeader(USER_ROLES_HEADER) {
-        error? result = req.removeHeader(USER_ROLES_HEADER);
-        if result is error {
-            // Unreachable: hasHeader was checked.
-        }
-    }
 }
 
 isolated function claimsOf(jwt:Payload payload) returns map<json> {

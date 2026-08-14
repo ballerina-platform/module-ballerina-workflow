@@ -44,14 +44,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   management operation as a command and returns `{httpStatus, body}` byte-identical
   to the corresponding REST response; the REST resources and the dispatcher share
   one implementation. `getWorkflowMetadata` is re-exported from the same module.
-- Token-based caller identity for the management REST API: with JWT/OAuth2 auth,
-  the caller's user ID and roles are extracted from the bearer token's claims
-  (configurable `userIdClaim`, `rolesClaim` with dotted-path support) and override
-  the `x-user-id`/`x-user-roles` headers so identity cannot be spoofed alongside a
-  valid token (`trustForwardedIdentity = true` restores header precedence). Optional
-  OAuth scope enforcement per operation class via `enforceScopes` and the
-  `scopeWorkflowView/Manage`, `scopeHumanTaskView/Manage` configurables. Basic auth
-  now defaults the audit user ID to the authenticated username.
+- Token-based caller identity for the management REST API: the gateway interceptor
+  resolves the caller's identity once per request and stores it in the
+  `http:RequestContext` (spec §8.1.11), where every resource reads it — requests are
+  never mutated. With JWT/OAuth2 auth, the user ID and roles are extracted from the
+  bearer token's claims (configurable `userIdClaim`, `rolesClaim` with dotted-path
+  support) and replace any forwarded `x-user-id`/`x-user-roles` headers so identity
+  cannot be spoofed alongside a valid token (`trustForwardedIdentity = true` restores
+  header precedence). Optional OAuth scope enforcement per operation class via
+  `enforceScopes` and the `scopeWorkflowView/Manage`, `scopeHumanTaskView/Manage`
+  configurables. Basic auth defaults the audit user ID to the authenticated username.
 - Declared agent activities honor `bindings`: arguments fixed at registration (typically a
   client the model cannot supply) are carried from the declaration through to the
   registration, so a connection-based activity can be exposed as an agent tool by binding

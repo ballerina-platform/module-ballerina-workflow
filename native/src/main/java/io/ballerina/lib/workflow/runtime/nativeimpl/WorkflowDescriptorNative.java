@@ -65,6 +65,20 @@ public final class WorkflowDescriptorNative {
         return cachedDescriptor;
     }
 
+    /**
+     * Test seam: installs a descriptor document as if it had been read from the packed
+     * resource. {@code bal test} runs never produce an executable JAR, so the module's own
+     * tests inject the document this way; passing {@code null} restores the not-packed state.
+     *
+     * @param descriptor the descriptor document, or {@code null} to clear
+     */
+    public static void setPackedDescriptorForTesting(Object descriptor) {
+        synchronized (LOCK) {
+            cachedDescriptor = descriptor;
+            loaded = true;
+        }
+    }
+
     private static Object readResource() {
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         if (classLoader == null) {

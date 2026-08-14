@@ -37,9 +37,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `management:getWorkflowMetadata()` — a startup-complete metadata document
   (definitions with input schemas, human tasks with completion-form schemas,
   activities with input schemas, the review-action vocabulary, and durable-agent
-  declarations) for control planes to publish. The compiler plugin now registers
-  the `awaitHumanTask` result type it can determine statically, so completion-form
-  schemas are available before a task first runs.
+  declarations) for control planes to publish. Completion-form schemas are read
+  from the packed workflow descriptor before a task first runs; the registry
+  takes over once the task has executed.
 - `rest:executeManagementCommand()` in `workflow.management.rest` — executes any
   management operation as a command and returns `{httpStatus, body}` byte-identical
   to the corresponding REST response; the REST resources and the dispatcher share

@@ -31,14 +31,10 @@ import java.util.Set;
  * @param functionName  the name of the process function
  * @param activityMap   map of activity function names to their references
  * @param humanTaskNames set of task names passed to {@code ctx->awaitHumanTask}
- * @param humanTaskResultTypes map of task name to the source text of the result type declared at
- *                             its {@code awaitHumanTask} call site; a task is absent when its type
- *                             could not be determined statically, and mapped to {@code ""} when
- *                             different call sites of the same task declared different types
  * @since 0.1.0
  */
 public record ProcessFunctionInfo(String functionName, Map<String, String> activityMap,
-                                  Set<String> humanTaskNames, Map<String, String> humanTaskResultTypes) {
+                                  Set<String> humanTaskNames) {
 
     /**
      * Creates a new ProcessFunctionInfo with defensive copies of the supplied collections
@@ -47,12 +43,10 @@ public record ProcessFunctionInfo(String functionName, Map<String, String> activ
      * @param functionName  the name of the process function
      * @param activityMap   map of activity function names to their references
      * @param humanTaskNames set of task names found at awaitHumanTask call sites
-     * @param humanTaskResultTypes map of task name to statically determined result type source
      */
     public ProcessFunctionInfo {
         activityMap = Map.copyOf(activityMap);
         humanTaskNames = Set.copyOf(humanTaskNames);
-        humanTaskResultTypes = Map.copyOf(humanTaskResultTypes);
     }
 
     /**
@@ -88,15 +82,4 @@ public record ProcessFunctionInfo(String functionName, Map<String, String> activ
         return Collections.unmodifiableSet(humanTaskNames);
     }
 
-    /**
-     * Gets the map of human task names to the source text of the result type declared at their
-     * {@code awaitHumanTask} call sites. Only tasks whose result type could be captured
-     * statically appear; a value of {@code ""} marks conflicting declarations.
-     *
-     * @return unmodifiable map of task name to result type source text
-     */
-    @Override
-    public Map<String, String> humanTaskResultTypes() {
-        return Collections.unmodifiableMap(humanTaskResultTypes);
-    }
 }

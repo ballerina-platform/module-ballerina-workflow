@@ -121,10 +121,67 @@ public final class WorkflowMetadataNative {
     private static BMap<BString, Object> buildHumanTaskEntry(String displayName, Type resultType) {
         BMap<BString, Object> task = ValueCreator.createMapValue(JSON_MAP_TYPE);
         task.put(StringUtils.fromString("name"), StringUtils.fromString(displayName));
-        String resultSchema = resultType != null ? TypesUtil.toJsonSchema(resultType) : null;
+        // The registry knows the result type once the task has executed (lazy registration in
+        // awaitHumanTask); before that, the completion-form schema comes from the packed
+        // workflow descriptor, which the compiler plugin generated at build time.
+        String resultSchema = resultType != null ? TypesUtil.toJsonSchema(resultType)
+                : descriptorHumanTaskSchema(displayName);
         task.put(StringUtils.fromString("resultSchema"),
                 resultSchema != null ? StringUtils.fromString(resultSchema) : null);
         return task;
+    }
+
+    /**
+     * Looks up a human task's completion-form schema in the packed workflow descriptor
+     * ({@code workflow.def.json}). The descriptor nests tasks under their workflow with short
+     * names; the registry's display name is the qualified {@code <workflow>.<task>}.
+     *
+     * @param displayName the qualified task name
+     * @return the schema serialized as a JSON string, or {@code null} when no descriptor is
+     *         packed, the task is not described, or its result slot carries no schema
+     */
+    private static String descriptorHumanTaskSchema(String displayName) {
+        int separator = displayName.indexOf('.');
+        if (separator <= 0) {
+            return null;
+        }
+        String workflowName = displayName.substring(0, separator);
+        String taskName = displayName.substring(separator + 1);
+        Object descriptor = WorkflowDescriptorNative.readPackedDescriptor();
+        if (!(descriptor instanceof BMap<?, ?> document)) {
+            return null;
+        }
+        Object workflows = document.get(StringUtils.fromString("workflows"));
+        if (!(workflows instanceof BArray workflowArray)) {
+            return null;
+        }
+        for (long i = 0; i < workflowArray.getLength(); i++) {
+            if (!(workflowArray.get(i) instanceof BMap<?, ?> workflow)
+                    || !nameEquals(workflow, workflowName)) {
+                continue;
+            }
+            Object tasks = workflow.get(StringUtils.fromString("humanTasks"));
+            if (!(tasks instanceof BArray taskArray)) {
+                return null;
+            }
+            for (long j = 0; j < taskArray.getLength(); j++) {
+                if (taskArray.get(j) instanceof BMap<?, ?> task && nameEquals(task, taskName)) {
+                    Object result = task.get(StringUtils.fromString("result"));
+                    if (result instanceof BMap<?, ?> slot) {
+                        Object schema = slot.get(StringUtils.fromString("schema"));
+                        return schema != null ? StringUtils.getJsonString(schema) : null;
+                    }
+                    return null;
+                }
+            }
+            return null;
+        }
+        return null;
+    }
+
+    private static boolean nameEquals(BMap<?, ?> entry, String expected) {
+        Object name = entry.get(StringUtils.fromString("name"));
+        return name instanceof BString bName && bName.getValue().equals(expected);
     }
 
     private static BArray buildActivities() {

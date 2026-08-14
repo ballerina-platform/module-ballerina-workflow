@@ -108,14 +108,8 @@ public isolated function registerConnection(string name, object {} connection)
 #
 # + taskName - The task name passed to `awaitHumanTask`; used directly as the
 #              Temporal child workflow type
-# + resultType - The expected completion result type of the task, passed when the
-#                compiler plugin can determine it statically from the `awaitHumanTask`
-#                call site's declared result. Registering it makes the completion-form
-#                JSON schema available from module init — before the task first runs —
-#                for workflow-metadata publishing. `()` keeps the lazy behavior: the
-#                type is recorded when the task first executes.
 # + return - `true` on success (idempotent for the same name), or an error
-public isolated function registerHumanTask(string taskName, typedesc<anydata>? resultType = ())
+public isolated function registerHumanTask(string taskName)
         returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
     name: "registerHumanTask"

@@ -14,19 +14,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import ballerina/jballerina.java;
 import ballerina/test;
 import ballerina/workflow.internal as wfInternal;
 import ballerina/workflow.management;
 
-// Exercises management:getWorkflowMetadata(): the document must be complete from the
-// registries alone — no workflow execution — including the human-task completion-form
-// schema registered eagerly via registerHumanTask(name, typedesc), which is the path
-// the compiler plugin generates when it can determine the result type statically.
-
-type MetaApproval record {|
-    boolean approved;
-    string comment?;
-|};
+// Exercises management:getWorkflowMetadata(): the document must be complete before any
+// workflow has executed — definitions and activity schemas from the registries, and the
+// human-task completion-form schema from the packed workflow descriptor
+// (workflow.def.json), which the compiler plugin generates at build time. `bal test`
+// never packs a descriptor, so the tests inject one through the test seam.
 
 type MetaInput record {|
     string requestId;
@@ -40,11 +37,43 @@ function metaFixtureActivity(string requestId, int retries = 3) returns string {
     return requestId;
 }
 
+// The descriptor document the compiler plugin would pack for this fixture — only the
+// parts the metadata assembly reads (the human-task result slots).
+final json & readonly metaFixtureDescriptor = {
+    descriptorVersion: "1.0",
+    package: {org: "test", name: "meta_fixture", version: "0.1.0"},
+    workflows: [
+        {
+            name: "metaFixtureWorkflow",
+            kind: "WORKFLOW",
+            humanTasks: [
+                {
+                    name: "approve",
+                    result: {
+                        'type: "MetaApproval",
+                        schema: {
+                            'type: "object",
+                            properties: {approved: {'type: "boolean"}, comment: {'type: "string"}},
+                            required: ["approved"]
+                        }
+                    }
+                }
+            ]
+        }
+    ],
+    agents: []
+};
+
+function setPackedWorkflowDescriptor(json? descriptor) = @java:Method {
+    'class: "io.ballerina.lib.workflow.test.TestNatives"
+} external;
+
 @test:Config {groups: ["unit"]}
 function testWorkflowMetadataCompleteAtRegistration() returns error? {
     _ = check wfInternal:registerWorkflow(metaFixtureWorkflow, "metaFixtureWorkflow",
             {"metaFixtureActivity": metaFixtureActivity});
-    _ = check wfInternal:registerHumanTask("metaFixtureWorkflow.approve", MetaApproval);
+    _ = check wfInternal:registerHumanTask("metaFixtureWorkflow.approve");
+    setPackedWorkflowDescriptor(metaFixtureDescriptor);
 
     management:WorkflowMetadata meta = check management:getWorkflowMetadata();
 
@@ -59,12 +88,20 @@ function testWorkflowMetadataCompleteAtRegistration() returns error? {
     test:assertTrue(defSchema.includes("requestId") && defSchema.includes("amount"),
         "The definition input schema must describe the workflow's data parameter, got: " + defSchema);
 
+    // The completion-form schema comes from the packed descriptor — before the task
+    // has ever executed (the registry learns the type only at first execution).
     management:HumanTaskMeta[] tasks =
             meta.humanTasks.filter(t => t.name == "metaFixtureWorkflow.approve");
     test:assertEquals(tasks.length(), 1, "The registered human task must appear in humanTasks");
     string resultSchema = tasks[0].resultSchema ?: "";
     test:assertTrue(resultSchema.includes("approved"),
-        "The completion-form schema must be available before the task first runs, got: " + resultSchema);
+        "The completion-form schema must come from the packed descriptor, got: " + resultSchema);
+
+    // The descriptor itself is served verbatim under the `descriptor` field.
+    json? descriptor = meta.descriptor;
+    test:assertTrue(descriptor !is (), "The packed descriptor must be served in the metadata");
+    json descriptorVersion = check (<json>descriptor).descriptorVersion;
+    test:assertEquals(descriptorVersion, "1.0");
 
     management:ActivityMeta[] activities = meta.activities
         .filter(a => a.workflowType == "metaFixtureWorkflow" && a.name == "metaFixtureActivity");
@@ -74,18 +111,23 @@ function testWorkflowMetadataCompleteAtRegistration() returns error? {
         "The activity input schema must describe its data parameters, got: " + activitySchema);
     test:assertFalse(activitySchema.includes("\"required\":[\"requestId\",\"retries\"]"),
         "Defaultable activity parameters must not be required in the schema");
+
+    setPackedWorkflowDescriptor(());
 }
 
-// A human task registered WITHOUT a typedesc keeps the lazy behavior: it appears in the
-// document with a nil resultSchema until it first executes.
+// A human task the descriptor does not describe keeps the lazy behavior: it appears in
+// the document with a nil resultSchema until it first executes.
 @test:Config {groups: ["unit"]}
 function testWorkflowMetadataLazyHumanTaskHasNoSchema() returns error? {
     _ = check wfInternal:registerHumanTask("metaFixtureWorkflow.lazyTask");
+    setPackedWorkflowDescriptor(metaFixtureDescriptor);
 
     management:WorkflowMetadata meta = check management:getWorkflowMetadata();
     management:HumanTaskMeta[] tasks =
             meta.humanTasks.filter(t => t.name == "metaFixtureWorkflow.lazyTask");
     test:assertEquals(tasks.length(), 1);
     test:assertEquals(tasks[0].resultSchema, (),
-        "A task registered without a result type must have a nil resultSchema until first execution");
+        "A task the descriptor does not describe must have a nil resultSchema until first execution");
+
+    setPackedWorkflowDescriptor(());
 }

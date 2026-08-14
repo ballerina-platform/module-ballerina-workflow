@@ -33,7 +33,6 @@ import io.ballerina.compiler.syntax.tree.PositionalArgumentNode;
 import io.ballerina.compiler.syntax.tree.RemoteMethodCallActionNode;
 import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
-import io.ballerina.compiler.syntax.tree.VariableDeclarationNode;
 import io.ballerina.projects.DocumentId;
 import io.ballerina.projects.plugins.AnalysisTask;
 import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
@@ -76,13 +75,12 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
         // Collect activity calls and human task names within this workflow function
         Map<String, String> activityMap = new LinkedHashMap<>();
         Set<String> humanTaskNames = new LinkedHashSet<>();
-        Map<String, String> humanTaskResultTypes = new LinkedHashMap<>();
         ActivityCallCollector collector =
-                new ActivityCallCollector(context, activityMap, humanTaskNames, humanTaskResultTypes);
+                new ActivityCallCollector(context, activityMap, humanTaskNames);
         functionNode.functionBody().accept(collector);
 
         ProcessFunctionInfo processInfo =
-                new ProcessFunctionInfo(functionName, activityMap, humanTaskNames, humanTaskResultTypes);
+                new ProcessFunctionInfo(functionName, activityMap, humanTaskNames);
         addToModifierContext(context.documentId(), processInfo);
     }
 
@@ -123,15 +121,13 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
         private final SemanticModel semanticModel;
         private final Map<String, String> activityMap;
         private final Set<String> humanTaskNames;
-        private final Map<String, String> humanTaskResultTypes;
 
         ActivityCallCollector(SyntaxNodeAnalysisContext context, Map<String, String> activityMap,
-                              Set<String> humanTaskNames, Map<String, String> humanTaskResultTypes) {
+                              Set<String> humanTaskNames) {
             this.context = context;
             this.semanticModel = context.semanticModel();
             this.activityMap = activityMap;
             this.humanTaskNames = humanTaskNames;
-            this.humanTaskResultTypes = humanTaskResultTypes;
         }
 
         @Override
@@ -199,7 +195,6 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
                                 info, remoteCallNode.location()));
                     } else {
                         humanTaskNames.add(taskName);
-                        recordHumanTaskResultType(taskName, remoteCallNode);
                     }
                 }
             }
@@ -207,41 +202,6 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
             remoteCallNode.arguments().forEach(arg -> arg.accept(this));
         }
 
-        /**
-         * Captures the result type declared at an {@code awaitHumanTask} call site so it can be
-         * registered at module init (making the completion-form schema available before the task
-         * first runs). The type is taken syntactically from the enclosing variable declaration —
-         * {@code ApprovalDecision d = check ctx->awaitHumanTask(...)} — and only when the declared
-         * type is a plain (possibly qualified) type reference, since the captured source is
-         * re-emitted as a typedesc argument in generated code. Any other shape (unions, inline
-         * records, assignments to existing variables) falls back to the lazy first-execution
-         * registration. Conflicting declarations across call sites of the same task map to
-         * {@code ""}, which the modifier treats as "unknown".
-         */
-        private void recordHumanTaskResultType(String taskName, RemoteMethodCallActionNode remoteCallNode) {
-            String typeSource = null;
-            Node parent = remoteCallNode.parent();
-            while (parent != null
-                    && (parent.kind() == SyntaxKind.CHECK_ACTION || parent.kind() == SyntaxKind.CHECK_EXPRESSION)) {
-                parent = parent.parent();
-            }
-            if (parent instanceof VariableDeclarationNode varDecl) {
-                Node typeDesc = varDecl.typedBindingPattern().typeDescriptor();
-                if (typeDesc.kind() == SyntaxKind.SIMPLE_NAME_REFERENCE
-                        || typeDesc.kind() == SyntaxKind.QUALIFIED_NAME_REFERENCE) {
-                    typeSource = typeDesc.toSourceCode().trim();
-                }
-            }
-            if (typeSource == null) {
-                return;
-            }
-            String existing = humanTaskResultTypes.get(taskName);
-            if (existing == null) {
-                humanTaskResultTypes.put(taskName, typeSource);
-            } else if (!existing.equals(typeSource)) {
-                humanTaskResultTypes.put(taskName, "");
-            }
-        }
 
         /**
          * Extracts the literal {@code taskName} value from the arguments of a

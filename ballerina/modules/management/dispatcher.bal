@@ -15,17 +15,16 @@
 // under the License.
 
 import ballerina/http;
-import ballerina/workflow.management;
 
 // ================================================================================
 // MANAGEMENT COMMAND DISPATCHER
 // ================================================================================
 // Executes management operations delivered as commands — e.g. tunneled from a
 // control plane through the ICP runtime bridge — WITHOUT going through HTTP.
-// Every operation runs the exact same code path as its REST resource (the shared
-// op functions in operations.bal), so a command result's body is byte-identical
-// to the corresponding REST response body, and `httpStatus` matches the status
-// code the REST API would have returned.
+// Every operation runs the exact same code path the workflow.management.rest
+// resources delegate to (the shared op functions in operations.bal), so a command
+// result's body is byte-identical to the corresponding REST response body, and
+// `httpStatus` matches the status code the REST API would have returned.
 
 # Identity of the caller a management command executes on behalf of. Carries the
 # same values the REST API reads from the `x-user-id` and `x-user-roles` headers,
@@ -283,18 +282,7 @@ isolated function missingParam(string name) returns ManagementCommandResult {
     return {httpStatus: 400, body: errorBody(name + " is required")};
 }
 
-# The workflow metadata document type, re-exported from `workflow.management` so
-# integrations wiring this module into a control-plane bridge need only one import.
-public type WorkflowMetadata management:WorkflowMetadata;
 
-# Returns the workflow metadata document (see `management:getWorkflowMetadata`).
-# Re-exported here so integrations that wire this module into a control-plane bridge
-# can register the metadata provider and `executeManagementCommand` from one module.
-#
-# + return - The metadata document, or an error
-public isolated function getWorkflowMetadata() returns WorkflowMetadata|error {
-    return management:getWorkflowMetadata();
-}
 
 isolated function rolesFromIdentity(CommandIdentity identity) returns [string, string...]? {
     string[] roles = identity.roles;

@@ -16,7 +16,6 @@
 
 import ballerina/http;
 import ballerina/time;
-import ballerina/workflow.management;
 
 // ================================================================================
 // MANAGEMENT OPERATIONS
@@ -28,10 +27,20 @@ import ballerina/workflow.management;
 // what guarantees a command result is byte-identical to the corresponding REST
 // response body.
 
+# Maximum number of items returned per page in list operations.
+configurable int maxPageSize = 100;
+
+# Optional role required to view or decide review activities that declare no roles of
+# their own (failure reviews are created without role restrictions today). By default
+# (`()`), such review activities are visible to any caller; set a role name to restrict
+# them to callers holding that role. Review activities that do declare roles always
+# require a matching caller role, regardless of this setting.
+configurable string? reviewActivityAccessRole = ();
+
 // ── Definitions ───────────────────────────────────────────────────────────────
 
 isolated function opListDefinitions() returns json|http:InternalServerError {
-    management:WorkflowDefinition[]|error defs = management:listWorkflowDefinitions();
+    WorkflowDefinition[]|error defs = listWorkflowDefinitions();
     if defs is error {
         return <http:InternalServerError>{body: errorBody("Failed to list definitions: " + defs.message())};
     }
@@ -44,7 +53,7 @@ isolated function opListWorkflows(string? status, string? workflowType, string? 
         string? startedBy, int 'limit, string? pageToken, string? startTimeFrom, string? startTimeTo,
         string? closeTimeFrom, string? closeTimeTo, string? taskQueue) returns json|http:InternalServerError {
     int effectiveLimit = clampLimit('limit, maxPageSize);
-    management:WorkflowInstancePage|error page = management:listWorkflowInstances(
+    WorkflowInstancePage|error page = listWorkflowInstances(
         status, workflowType, workflowId, startedBy, effectiveLimit, pageToken,
             startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
     if page is error {
@@ -66,7 +75,7 @@ isolated function opStartWorkflow(map<json> body, string? userId)
     json? input = body["input"];
     string? wfId = body["workflowId"] is string ? <string>body["workflowId"] : ();
     int? timeout = body["timeoutSeconds"] is int ? <int>body["timeoutSeconds"] : ();
-    management:WorkflowHandle|error wfHandle = management:startWorkflowByType(wfType, input, wfId, timeout, userId);
+    WorkflowHandle|error wfHandle = startWorkflowByType(wfType, input, wfId, timeout, userId);
     if wfHandle is error {
         return <http:InternalServerError>{body: errorBody("Failed to start workflow: " + wfHandle.message())};
     }
@@ -79,9 +88,9 @@ isolated function opGetWorkflow(string workflowId, string? runId, [string, strin
     if roleErr is http:Forbidden {
         return roleErr;
     }
-    management:WorkflowExecutionInfo|error info = runId is string
-        ? management:getWorkflowInfoForRun(workflowId, runId)
-        : management:getWorkflowInfo(workflowId);
+    WorkflowExecutionInfo|error info = runId is string
+        ? getWorkflowInfoForRun(workflowId, runId)
+        : getWorkflowInfo(workflowId);
     if info is error {
         string msg = info.message();
         if msg.includes("not found") || msg.includes("NOT_FOUND") {
@@ -97,8 +106,8 @@ isolated function opGetWorkflow(string workflowId, string? runId, [string, strin
 isolated function opSuspendWorkflow(string workflowId, string? runId)
         returns json|http:NotFound|http:InternalServerError {
     error? result = runId is string
-        ? management:suspendWorkflowRun(workflowId, runId)
-        : management:suspendWorkflow(workflowId);
+        ? suspendWorkflowRun(workflowId, runId)
+        : suspendWorkflow(workflowId);
     if result is error {
         string msg = result.message();
         return msg.includes("not found")
@@ -111,8 +120,8 @@ isolated function opSuspendWorkflow(string workflowId, string? runId)
 isolated function opResumeWorkflow(string workflowId, string? runId)
         returns json|http:NotFound|http:InternalServerError {
     error? result = runId is string
-        ? management:resumeWorkflowRun(workflowId, runId)
-        : management:resumeWorkflow(workflowId);
+        ? resumeWorkflowRun(workflowId, runId)
+        : resumeWorkflow(workflowId);
     if result is error {
         string msg = result.message();
         return msg.includes("not found")
@@ -123,7 +132,7 @@ isolated function opResumeWorkflow(string workflowId, string? runId)
 }
 
 isolated function opWakeWorkflow(string workflowId) returns json|http:NotFound|http:InternalServerError {
-    error? result = management:wakeAgent(workflowId);
+    error? result = wakeAgent(workflowId);
     if result is error {
         string msg = result.message();
         return msg.includes("not found")
@@ -135,7 +144,7 @@ isolated function opWakeWorkflow(string workflowId) returns json|http:NotFound|h
 
 isolated function opTerminateWorkflow(string workflowId, string? runId, string? reason)
         returns json|http:NotFound|http:InternalServerError {
-    error? result = management:terminateWorkflow(workflowId, runId ?: "", reason);
+    error? result = terminateWorkflow(workflowId, runId ?: "", reason);
     if result is error {
         string msg = result.message();
         return msg.includes("not found") || msg.includes("NOT_FOUND")
@@ -147,7 +156,7 @@ isolated function opTerminateWorkflow(string workflowId, string? runId, string? 
 
 isolated function opCancelWorkflow(string workflowId, string? runId)
         returns json|http:NotFound|http:InternalServerError {
-    error? result = management:cancelWorkflow(workflowId, runId ?: "");
+    error? result = cancelWorkflow(workflowId, runId ?: "");
     if result is error {
         string msg = result.message();
         return msg.includes("not found") || msg.includes("NOT_FOUND")
@@ -163,7 +172,7 @@ isolated function opWorkflowHistory(string workflowId, string? runId, [string, s
     if roleErr is http:Forbidden {
         return roleErr;
     }
-    management:HistoryEvent[]|error events = management:getWorkflowHistory(workflowId, runId ?: "");
+    HistoryEvent[]|error events = getWorkflowHistory(workflowId, runId ?: "");
     if events is error {
         string msg = events.message();
         return msg.includes("not found") || msg.includes("NOT_FOUND")
@@ -179,7 +188,7 @@ isolated function opActivityTree(string workflowId, string? runId, [string, stri
     if roleErr is http:Forbidden {
         return roleErr;
     }
-    management:ActivityTreeNode[]|error nodes = management:getActivityTree(workflowId, runId ?: "");
+    ActivityTreeNode[]|error nodes = getActivityTree(workflowId, runId ?: "");
     if nodes is error {
         string msg = nodes.message();
         return msg.includes("not found") || msg.includes("NOT_FOUND")
@@ -195,7 +204,7 @@ isolated function opExecutionGraph(string workflowId, string? runId, [string, st
     if roleErr is http:Forbidden {
         return roleErr;
     }
-    management:ExecutionGraph|error graph = management:getExecutionGraph(workflowId, runId ?: "");
+    ExecutionGraph|error graph = getExecutionGraph(workflowId, runId ?: "");
     if graph is error {
         string msg = graph.message();
         return msg.includes("not found") || msg.includes("NOT_FOUND")
@@ -211,21 +220,21 @@ isolated function opListHumanTasks(string? status, string? parentWorkflowId, str
         string? taskName, string? userRole, boolean onlyMyTasks, int 'limit, string? pageToken,
         string? startTimeFrom, string? startTimeTo, string? closeTimeFrom, string? closeTimeTo,
         string? taskQueue, [string, string...]? callerRoles) returns json|http:InternalServerError {
-    management:HumanTaskSummary[]|error all = management:listAllHumanTasks(status,
+    HumanTaskSummary[]|error all = listAllHumanTasks(status,
             startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
     if all is error {
         return <http:InternalServerError>{body: errorBody("Failed to list human tasks: " + all.message())};
     }
     // Apply lambda-safe filters first
-    management:HumanTaskSummary[] preFiltered = all
+    HumanTaskSummary[] preFiltered = all
         .filter(t => parentWorkflowId is () || t.parentWorkflowId == parentWorkflowId)
         .filter(t => parentWorkflowType is () || t.parentWorkflowType == parentWorkflowType)
         .filter(t => taskName is () || t.taskName == taskName)
         .filter(t => userRole is () || t.userRoles.some(r => r == userRole));
     // Apply onlyMyTasks and canComplete in a foreach (avoids lambda isolation constraint
     // on computed local variables in this Ballerina version)
-    management:HumanTaskSummary[] enriched = [];
-    foreach management:HumanTaskSummary t in preFiltered {
+    HumanTaskSummary[] enriched = [];
+    foreach HumanTaskSummary t in preFiltered {
         boolean hasMatchingRole = hasRoleIntersection(t.userRoles, callerRoles);
         if !hasMatchingRole {
             continue;
@@ -241,12 +250,12 @@ isolated function opListHumanTasks(string? status, string? parentWorkflowId, str
 
 isolated function opPendingHumanTaskCount(string? taskQueue, [string, string...]? callerRoles)
         returns json|http:InternalServerError {
-    management:HumanTaskSummary[]|error pending = management:listAllHumanTasks("PENDING", taskQueue = taskQueue);
+    HumanTaskSummary[]|error pending = listAllHumanTasks("PENDING", taskQueue = taskQueue);
     if pending is error {
         return <http:InternalServerError>{body: errorBody("Failed to count pending tasks: " + pending.message())};
     }
     int visibleCount = 0;
-    foreach management:HumanTaskSummary t in pending {
+    foreach HumanTaskSummary t in pending {
         if hasRoleIntersection(t.userRoles, callerRoles) {
             visibleCount += 1;
         }
@@ -256,7 +265,7 @@ isolated function opPendingHumanTaskCount(string? taskQueue, [string, string...]
 
 isolated function opGetHumanTask(string taskId, [string, string...]? callerRoles)
         returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-    management:HumanTaskInfo|error info = management:getHumanTaskInfo(taskId);
+    HumanTaskInfo|error info = getHumanTaskInfo(taskId);
     if info is error {
         string msg = info.message();
         return msg.includes("not found") || msg.includes("NOT_FOUND")
@@ -274,7 +283,7 @@ isolated function opCompleteHumanTask(string taskId, json result, [string, strin
     if callerRoles is () {
         return <http:Forbidden>{body: errorBody("Unauthorized: x-user-roles header is required")};
     }
-    error? err = management:completeHumanTask(taskId, result, callerRoles, userId);
+    error? err = completeHumanTask(taskId, result, callerRoles, userId);
     if err is error {
         return humanTaskErrorResponse(err);
     }
@@ -291,7 +300,7 @@ isolated function opFailHumanTask(string taskId, json? reason, map<json>? detail
     if callerRoles is () {
         return <http:Forbidden>{body: errorBody("Unauthorized: x-user-roles header is required")};
     }
-    error? err = management:failHumanTask(taskId, reason.toString(), details, callerRoles, userId);
+    error? err = failHumanTask(taskId, reason.toString(), details, callerRoles, userId);
     if err is error {
         return humanTaskErrorResponse(err);
     }
@@ -304,19 +313,19 @@ isolated function opListReviewActivities(string? status, string? parentWorkflowI
         int 'limit, string? pageToken, string? startTimeFrom, string? startTimeTo,
         string? closeTimeFrom, string? closeTimeTo, string? taskQueue, [string, string...]? callerRoles)
         returns json|http:InternalServerError {
-    management:ReviewActivitySummary[]|error all = management:listAllReviewActivities(status,
+    ReviewActivitySummary[]|error all = listAllReviewActivities(status,
             startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
     if all is error {
         return <http:InternalServerError>{
             body: errorBody("Failed to list review activities: " + all.message())};
     }
-    management:ReviewActivitySummary[] preFiltered = all
+    ReviewActivitySummary[] preFiltered = all
         .filter(t => parentWorkflowId is () || t.parentWorkflowId == parentWorkflowId)
         .filter(t => taskName is () || t.taskName == taskName);
     // Role visibility in a foreach (avoids the lambda isolation constraint on
     // computed local variables in this Ballerina version — see the human-task op).
-    management:ReviewActivitySummary[] filtered = [];
-    foreach management:ReviewActivitySummary t in preFiltered {
+    ReviewActivitySummary[] filtered = [];
+    foreach ReviewActivitySummary t in preFiltered {
         if canAccessReviewActivity(t.userRoles, callerRoles) {
             filtered.push(t);
         }
@@ -326,7 +335,7 @@ isolated function opListReviewActivities(string? status, string? parentWorkflowI
 
 isolated function opGetReviewActivity(string taskId, [string, string...]? callerRoles)
         returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-    management:ReviewActivityInfo|error info = management:getReviewActivityInfo(taskId);
+    ReviewActivityInfo|error info = getReviewActivityInfo(taskId);
     if info is error {
         string msg = info.message();
         return msg.includes("not found") || msg.includes("NOT_FOUND")
@@ -347,7 +356,7 @@ isolated function opDecideReviewActivity(string taskId, string action, map<json>
     if roleErr is http:Forbidden {
         return roleErr;
     }
-    management:ReviewDecision decision;
+    ReviewDecision decision;
     if action == "proceed" {
         decision = {action: "proceed"};
     } else if action == "proceed-with-input" {
@@ -360,7 +369,7 @@ isolated function opDecideReviewActivity(string taskId, string action, map<json>
     } else {
         return <http:BadRequest>{body: errorBody("Unknown review decision action: " + action)};
     }
-    error? err = management:completeReviewActivity(taskId, decision, callerRoles, userId);
+    error? err = completeReviewActivity(taskId, decision, callerRoles, userId);
     if err is error {
         return reviewActivityErrorResponse(err);
     }
@@ -453,19 +462,19 @@ isolated function hasRoleIntersection(string[] taskRoles, [string, string...]? c
     return false;
 }
 
-isolated function paginateHumanTasks(management:HumanTaskSummary[] items, int 'limit, string? pageToken)
+isolated function paginateHumanTasks(HumanTaskSummary[] items, int 'limit, string? pageToken)
         returns HumanTaskPage {
     // Sort by (startTime asc, taskId asc) for a deterministic, stable order.
-    management:HumanTaskSummary[] sorted = from management:HumanTaskSummary t in items
+    HumanTaskSummary[] sorted = from HumanTaskSummary t in items
         order by t.startTime ascending, t.taskId ascending select t;
     // Seek past the cursor item so page N+1 starts after the last item on page N.
-    management:HumanTaskSummary[] remaining = sorted;
+    HumanTaskSummary[] remaining = sorted;
     if pageToken is string {
         [string, string] cursor = decodeCursorToken(pageToken);
         string cursorTime = cursor[0];
         string cursorId = cursor[1];
         if cursorTime != "" {
-            remaining = from management:HumanTaskSummary t in sorted
+            remaining = from HumanTaskSummary t in sorted
                 where t.startTime > cursorTime
                     || (t.startTime == cursorTime && t.taskId > cursorId)
                 select t;
@@ -473,26 +482,26 @@ isolated function paginateHumanTasks(management:HumanTaskSummary[] items, int 'l
     }
     int count = remaining.length();
     boolean hasMore = count > 'limit;
-    management:HumanTaskSummary[] pageItems = hasMore ? remaining.slice(0, 'limit) : remaining;
+    HumanTaskSummary[] pageItems = hasMore ? remaining.slice(0, 'limit) : remaining;
     string? nextToken = ();
     if hasMore {
-        management:HumanTaskSummary last = pageItems[pageItems.length() - 1];
+        HumanTaskSummary last = pageItems[pageItems.length() - 1];
         nextToken = encodeCursorToken(last.startTime, last.taskId);
     }
     return {items: pageItems, nextPageToken: nextToken, hasMore: hasMore};
 }
 
-isolated function paginateReviewActivities(management:ReviewActivitySummary[] items, int 'limit, string? pageToken)
+isolated function paginateReviewActivities(ReviewActivitySummary[] items, int 'limit, string? pageToken)
         returns ReviewActivityPage {
-    management:ReviewActivitySummary[] sorted = from management:ReviewActivitySummary t in items
+    ReviewActivitySummary[] sorted = from ReviewActivitySummary t in items
         order by t.startTime ascending, t.taskId ascending select t;
-    management:ReviewActivitySummary[] remaining = sorted;
+    ReviewActivitySummary[] remaining = sorted;
     if pageToken is string {
         [string, string] cursor = decodeCursorToken(pageToken);
         string cursorTime = cursor[0];
         string cursorId = cursor[1];
         if cursorTime != "" {
-            remaining = from management:ReviewActivitySummary t in sorted
+            remaining = from ReviewActivitySummary t in sorted
                 where t.startTime > cursorTime
                     || (t.startTime == cursorTime && t.taskId > cursorId)
                 select t;
@@ -500,10 +509,10 @@ isolated function paginateReviewActivities(management:ReviewActivitySummary[] it
     }
     int count = remaining.length();
     boolean hasMore = count > 'limit;
-    management:ReviewActivitySummary[] pageItems = hasMore ? remaining.slice(0, 'limit) : remaining;
+    ReviewActivitySummary[] pageItems = hasMore ? remaining.slice(0, 'limit) : remaining;
     string? nextToken = ();
     if hasMore {
-        management:ReviewActivitySummary last = pageItems[pageItems.length() - 1];
+        ReviewActivitySummary last = pageItems[pageItems.length() - 1];
         nextToken = encodeCursorToken(last.startTime, last.taskId);
     }
     return {items: pageItems, nextPageToken: nextToken, hasMore: hasMore};

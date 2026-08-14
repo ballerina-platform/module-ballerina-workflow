@@ -16,6 +16,7 @@
 
 import ballerina/http;
 import ballerina/lang.runtime;
+import ballerina/workflow.management;
 
 // All configurable variables are scoped to [ballerina.workflow.management.rest] in Config.toml.
 //
@@ -33,10 +34,10 @@ import ballerina/lang.runtime;
 //   basicAuthUsername    = "ops"
 //   basicAuthPassword    = "s3cret!"
 //
-// Every resource below is a thin HTTP adapter over the shared operation functions in
-// operations.bal — the same functions `executeManagementCommand` (dispatcher.bal)
-// executes, which is what keeps a command result byte-identical to the corresponding
-// REST response.
+// Every resource below is a thin HTTP adapter over `management:executeManagementCommand`:
+// it maps the route to the operation name, packs the query/path/body parameters, carries
+// the caller identity from the x-user-* headers, and relays the {httpStatus, body} result.
+// One execution path serves HTTP and command callers alike, so the two can never drift.
 
 // Validates the management API configuration so any misconfiguration causes a
 // descriptive error at startup rather than a silent runtime failure, and then starts
@@ -64,9 +65,6 @@ public configurable boolean enableManagementApi = false;
 # TCP port the management service listens on.
 # Default is 8234.
 public configurable int port = 8234;
-
-# Maximum number of items returned per page in list operations.
-configurable int maxPageSize = 100;
 
 # Enables HTTPS on the listener.
 # Suitable for external deployments; leave `false` for K8s-internal services
@@ -131,9 +129,6 @@ configurable boolean enableBasicAuth = true;
 # Tokens are validated against the JWKS endpoint specified by `jwksUrl`.
 # When `true`, `jwtIssuer`, `jwtAudience`, and `jwksUrl` must all be non-empty
 # or the program panics at startup.
-#
-# **Note:** Full JWT signature verification requires the `ballerina/jwt` module.
-# The current implementation performs a presence and format check only.
 configurable boolean enableJwtAuth = false;
 
 # Expected issuer (`iss`) claim value for JWT validation.
@@ -151,9 +146,6 @@ configurable string jwksUrl = "";
 # Enables OAuth2 Bearer token authentication via token introspection.
 # When `true`, `oauth2IntrospectionUrl` must be non-empty or the program
 # panics at startup.
-#
-# **Note:** The OAuth2 introspection HTTP call is not yet implemented.
-# The config is validated at startup; add an HTTP client for production use.
 configurable boolean enableOAuth = false;
 
 # OAuth2 token introspection endpoint URL.
@@ -171,13 +163,6 @@ configurable string apiKeyHeader = "x-api-key";
 # Expected API key value.
 # Required when `enableApiKey = true`.
 configurable string apiKeyValue = "";
-
-# Optional role required to view or decide review activities that declare no roles of
-# their own (failure reviews are created without role restrictions today). By default
-# (`()`), such review activities are visible to any caller; set a role name to restrict
-# them to callers holding that role in `x-user-roles`. Review activities that do declare
-# roles always require a matching caller role, regardless of this setting.
-configurable string? reviewActivityAccessRole = ();
 
 # Validates the management API configuration at module startup.
 # Called from this module's `init()`.
@@ -407,6 +392,42 @@ service class ManagementGatewayInterceptor {
     }
 }
 
+# Executes one management operation on behalf of the request's caller and maps the
+# result to the HTTP response: the operation's status code and body, verbatim.
+#
+# + operation - Dot-qualified operation name (see `management:executeManagementCommand`)
+# + params - Operation parameters, keyed like the route's query/path/body parameters
+# + userId - The caller's user ID from the `x-user-id` header
+# + rolesHeader - The caller's comma-separated roles from the `x-user-roles` header
+# + return - The operation's REST response
+isolated function executeToResponse(string operation, map<json> params,
+        string? userId, string? rolesHeader) returns http:Response {
+    management:ManagementCommandResult result = management:executeManagementCommand({
+        operation: operation,
+        params: params,
+        identity: {userId: userId, roles: rolesFromHeader(rolesHeader)}
+    });
+    http:Response response = new;
+    response.statusCode = result.httpStatus;
+    response.setJsonPayload(result.body);
+    return response;
+}
+
+isolated function errorBody(string message) returns map<json> {
+    return {"error": {"message": message}};
+}
+
+# Splits the comma-separated `x-user-roles` header into role names.
+#
+# + rolesHeader - The header value, or `()` when absent
+# + return - The role names; empty when the header is absent or blank
+isolated function rolesFromHeader(string? rolesHeader) returns string[] {
+    if rolesHeader is () || rolesHeader.trim().length() == 0 {
+        return [];
+    }
+    return re `,`.split(rolesHeader).map(r => r.trim()).filter(r => r.length() > 0);
+}
+
 // Service value — attached to `mgmtListener` at base path `/workflow` by
 // startManagementService(), which the module `init()` invokes. Kept as a service
 // *value* (not a service declaration bound to a module listener) so this module fully
@@ -419,40 +440,21 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
 } service object http:InterceptableService {
 
     # Returns the interceptor pipeline for this service.
-    # + return - The `ManagementGatewayInterceptor` that enforces the API master switch and API key auth.
+    # + return - The `ManagementGatewayInterceptor` that enforces caller identity and API key auth.
     public function createInterceptors() returns ManagementGatewayInterceptor {
         return new ManagementGatewayInterceptor();
     }
 
     // ── Definitions ──────────────────────────────────────────────────────────
 
-    # Lists all registered workflow types with schema and worker info.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - List of workflow definitions as JSON, or an internal server error.
     resource isolated function get definitions(
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:InternalServerError {
-        return opListDefinitions();
+            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
+        return executeToResponse("definitions.list", {}, userId, userRoles);
     }
 
     // ── Workflow Instances — List & Start ─────────────────────────────────────
 
-    # Lists workflow instances with optional status/type/id/time filters and pagination.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + status - Filter by workflow status (e.g. `RUNNING`, `COMPLETED`).
-    # + workflowType - Filter by workflow type name.
-    # + workflowId - Filter by workflow ID prefix.
-    # + startedBy - Filter by starter user ID captured from `x-user-id` on workflow start.
-    # + limit - Maximum number of results to return (capped at `maxPageSize`).
-    # + pageToken - Pagination cursor from a previous response.
-    # + startTimeFrom - Optional ISO-8601 lower bound on workflow start time.
-    # + startTimeTo - Optional ISO-8601 upper bound on workflow start time.
-    # + closeTimeFrom - Optional ISO-8601 lower bound on workflow close time.
-    # + closeTimeTo - Optional ISO-8601 upper bound on workflow close time.
-    # + return - Paginated workflow instances as JSON, or an internal server error.
     resource isolated function get workflows(
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
@@ -466,274 +468,150 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             string? startTimeTo = (),
             string? closeTimeFrom = (),
             string? closeTimeTo = (),
-            string? taskQueue = ())
-            returns json|http:InternalServerError {
-        return opListWorkflows(status, workflowType, workflowId, startedBy, 'limit, pageToken,
-                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
+            string? taskQueue = ()) returns http:Response {
+        return executeToResponse("instances.list", {
+            status: status,
+            workflowType: workflowType,
+            workflowId: workflowId,
+            startedBy: startedBy,
+            'limit: 'limit,
+            pageToken: pageToken,
+            startTimeFrom: startTimeFrom,
+            startTimeTo: startTimeTo,
+            closeTimeFrom: closeTimeFrom,
+            closeTimeTo: closeTimeTo,
+            taskQueue: taskQueue
+        }, userId, userRoles);
     }
 
-    # Starts a new workflow instance.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + body - Request body containing `workflowType`, optional `input`, `workflowId`, and `timeoutSeconds`.
-    # + return - Created workflow handle as JSON, a bad request error if `workflowType` is missing, or an internal server error.
     resource isolated function post workflows(
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
-            @http:Payload map<json> body)
-            returns http:Created|http:BadRequest|http:InternalServerError {
-        return opStartWorkflow(body, userId);
+            @http:Payload map<json> body) returns http:Response {
+        return executeToResponse("instances.start", body, userId, userRoles);
     }
 
     // ── Workflow Instance — Latest Run ───────────────────────────────────────
     // These routes omit {runId} and always target the latest (or currently-active) run.
     // The {runId} variants below pin the request to an exact run.
 
-    # Returns execution info for the latest run of a workflow.
-    # + workflowId - The workflow instance ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - Workflow execution info as JSON, a not-found error, or an internal server error.
     resource isolated function get workflows/[string workflowId](
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        return opGetWorkflow(workflowId, (), parseRolesHeader(userRoles));
+            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
+        return executeToResponse("instances.get", {workflowId: workflowId}, userId, userRoles);
     }
 
-    # Suspends the latest active run of a workflow.
-    # + workflowId - The workflow instance ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - `{success: true}` on success, a not-found error, or an internal server error.
     resource isolated function post workflows/[string workflowId]/suspend(
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:InternalServerError {
-        return opSuspendWorkflow(workflowId, ());
+            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
+        return executeToResponse("instances.suspend", {workflowId: workflowId}, userId, userRoles);
     }
 
-    # Wakes a durable agent out of its built-in sleep tool (ends the sleep early).
-    # Harmless when the instance is not sleeping.
-    # + workflowId - The agent instance ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - `{success: true}` on success, a not-found error, or an internal server error.
     resource isolated function post workflows/[string workflowId]/wake(
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:InternalServerError {
-        return opWakeWorkflow(workflowId);
+            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
+        return executeToResponse("instances.wake", {workflowId: workflowId}, userId, userRoles);
     }
 
-    # Resumes the latest suspended run of a workflow.
-    # + workflowId - The workflow instance ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - `{success: true}` on success, a not-found error, or an internal server error.
     resource isolated function post workflows/[string workflowId]/resume(
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:InternalServerError {
-        return opResumeWorkflow(workflowId, ());
+            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
+        return executeToResponse("instances.resume", {workflowId: workflowId}, userId, userRoles);
     }
 
-    # Terminates the latest run of a workflow immediately.
-    # + workflowId - The workflow instance ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + body - Optional request body with a `reason` string.
-    # + return - `{success: true}` on success, a not-found error, or an internal server error.
     resource isolated function post workflows/[string workflowId]/terminate(
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
-            @http:Payload map<json>? body = ())
-            returns json|http:NotFound|http:InternalServerError {
-        string? reason = body is map<json> && body["reason"] is string
-                ? <string>(<map<json>>body)["reason"] : ();
-        return opTerminateWorkflow(workflowId, (), reason);
+            @http:Payload map<json>? body = ()) returns http:Response {
+        map<json> params = {workflowId: workflowId};
+        if body is map<json> && body["reason"] is string {
+            params["reason"] = body["reason"];
+        }
+        return executeToResponse("instances.terminate", params, userId, userRoles);
     }
 
-    # Requests graceful cancellation of the latest run of a workflow.
-    # + workflowId - The workflow instance ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - `{success: true}` on success, a not-found error, or an internal server error.
     resource isolated function post workflows/[string workflowId]/cancel(
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:InternalServerError {
-        return opCancelWorkflow(workflowId, ());
+            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
+        return executeToResponse("instances.cancel", {workflowId: workflowId}, userId, userRoles);
     }
 
-    # Returns all execution history events for the latest run of a workflow.
-    # + workflowId - The workflow instance ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - History events as JSON, a not-found error, or an internal server error.
     resource isolated function get workflows/[string workflowId]/history(
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        return opWorkflowHistory(workflowId, (), parseRolesHeader(userRoles));
+            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
+        return executeToResponse("instances.history", {workflowId: workflowId}, userId, userRoles);
     }
 
-    # Returns the activity tree for the latest run of a workflow.
-    # + workflowId - The workflow instance ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - Activity tree nodes as JSON, a not-found error, or an internal server error.
     resource isolated function get workflows/[string workflowId]/activity\-tree(
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        return opActivityTree(workflowId, (), parseRolesHeader(userRoles));
+            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
+        return executeToResponse("instances.activityTree", {workflowId: workflowId}, userId, userRoles);
     }
 
-    # Returns the execution graph for the latest run of a workflow.
-    # + workflowId - The workflow instance ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - Execution graph as JSON, a not-found error, or an internal server error.
     resource isolated function get workflows/[string workflowId]/execution\-graph(
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        return opExecutionGraph(workflowId, (), parseRolesHeader(userRoles));
+            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
+        return executeToResponse("instances.executionGraph", {workflowId: workflowId}, userId, userRoles);
     }
 
-    // ── Workflow Instance — Detail ────────────────────────────────────────────
+    // ── Workflow Instance — Run-pinned ───────────────────────────────────────
 
-    # Returns execution info for a specific workflow run.
-    # + workflowId - The workflow instance ID.
-    # + runId - The specific run ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - Workflow execution info as JSON, a not-found error, or an internal server error.
     resource isolated function get workflows/[string workflowId]/[string runId](
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        return opGetWorkflow(workflowId, runId, parseRolesHeader(userRoles));
+            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
+        return executeToResponse("instances.get", {workflowId: workflowId, runId: runId}, userId, userRoles);
     }
 
-    // ── Workflow Lifecycle Operations ─────────────────────────────────────────
-
-    # Suspends a running workflow.
-    # + workflowId - The workflow instance ID.
-    # + runId - The specific run ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - `{success: true}` on success, a not-found error, or an internal server error.
     resource isolated function post workflows/[string workflowId]/[string runId]/suspend(
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:InternalServerError {
-        return opSuspendWorkflow(workflowId, runId);
+            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
+        return executeToResponse("instances.suspend", {workflowId: workflowId, runId: runId}, userId, userRoles);
     }
 
-    # Resumes a suspended workflow.
-    # + workflowId - The workflow instance ID.
-    # + runId - The specific run ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - `{success: true}` on success, a not-found error, or an internal server error.
     resource isolated function post workflows/[string workflowId]/[string runId]/resume(
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:InternalServerError {
-        return opResumeWorkflow(workflowId, runId);
+            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
+        return executeToResponse("instances.resume", {workflowId: workflowId, runId: runId}, userId, userRoles);
     }
 
-    # Terminates a workflow immediately.
-    # + workflowId - The workflow instance ID.
-    # + runId - The specific run ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + body - Optional request body with a `reason` string.
-    # + return - `{success: true}` on success, a not-found error, or an internal server error.
     resource isolated function post workflows/[string workflowId]/[string runId]/terminate(
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
-            @http:Payload map<json>? body = ())
-            returns json|http:NotFound|http:InternalServerError {
-        string? reason = body is map<json> && body["reason"] is string
-                ? <string>(<map<json>>body)["reason"] : ();
-        return opTerminateWorkflow(workflowId, runId, reason);
+            @http:Payload map<json>? body = ()) returns http:Response {
+        map<json> params = {workflowId: workflowId, runId: runId};
+        if body is map<json> && body["reason"] is string {
+            params["reason"] = body["reason"];
+        }
+        return executeToResponse("instances.terminate", params, userId, userRoles);
     }
 
-    # Requests graceful cancellation of a workflow.
-    # + workflowId - The workflow instance ID.
-    # + runId - The specific run ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - `{success: true}` on success, a not-found error, or an internal server error.
     resource isolated function post workflows/[string workflowId]/[string runId]/cancel(
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:InternalServerError {
-        return opCancelWorkflow(workflowId, runId);
+            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
+        return executeToResponse("instances.cancel", {workflowId: workflowId, runId: runId}, userId, userRoles);
     }
 
-    // ── Workflow Execution Visualization ─────────────────────────────────────
-
-    # Returns all execution history events for a workflow run.
-    # + workflowId - The workflow instance ID.
-    # + runId - The specific run ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - History events as JSON, a not-found error, or an internal server error.
     resource isolated function get workflows/[string workflowId]/[string runId]/history(
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        return opWorkflowHistory(workflowId, runId, parseRolesHeader(userRoles));
+            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
+        return executeToResponse("instances.history", {workflowId: workflowId, runId: runId}, userId, userRoles);
     }
 
-    # Returns the activity tree for a workflow run.
-    # + workflowId - The workflow instance ID.
-    # + runId - The specific run ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - Activity tree nodes as JSON, a not-found error, or an internal server error.
     resource isolated function get workflows/[string workflowId]/[string runId]/activity\-tree(
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        return opActivityTree(workflowId, runId, parseRolesHeader(userRoles));
+            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
+        return executeToResponse("instances.activityTree", {workflowId: workflowId, runId: runId}, userId, userRoles);
     }
 
-    # Returns the execution graph for rendering with D3.js or React Flow.
-    # + workflowId - The workflow instance ID.
-    # + runId - The specific run ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - Execution graph as JSON, a not-found error, or an internal server error.
     resource isolated function get workflows/[string workflowId]/[string runId]/execution\-graph(
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        return opExecutionGraph(workflowId, runId, parseRolesHeader(userRoles));
+            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
+        return executeToResponse("instances.executionGraph", {workflowId: workflowId, runId: runId},
+                userId, userRoles);
     }
 
-    // ── Human Tasks — List & Count ────────────────────────────────────────────
+    // ── Human Tasks ──────────────────────────────────────────────────────────
 
-    # Lists human tasks with optional filters and pagination.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + status - Filter by task status (e.g. `PENDING`, `COMPLETED`).
-    # + parentWorkflowId - Filter by parent workflow ID.
-    # + parentWorkflowType - Filter by parent workflow type.
-    # + taskName - Filter by task name.
-    # + userRole - Filter to tasks assigned to this role.
-    # + onlyMyTasks - When `true`, returns only tasks assigned to the calling user.
-    # + limit - Maximum number of results to return (capped at `maxPageSize`).
-    # + pageToken - Pagination cursor from a previous response.
-    # + startTimeFrom - Optional ISO-8601 lower bound on task start time.
-    # + startTimeTo - Optional ISO-8601 upper bound on task start time.
-    # + closeTimeFrom - Optional ISO-8601 lower bound on task close time.
-    # + closeTimeTo - Optional ISO-8601 upper bound on task close time.
-    # + return - Paginated human tasks as JSON, or an internal server error.
     resource isolated function get human\-tasks(
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
@@ -749,90 +627,62 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             string? startTimeTo = (),
             string? closeTimeFrom = (),
             string? closeTimeTo = (),
-            string? taskQueue = ())
-            returns json|http:InternalServerError {
-        return opListHumanTasks(status, parentWorkflowId, parentWorkflowType, taskName, userRole,
-                onlyMyTasks, 'limit, pageToken, startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo,
-                taskQueue, parseRolesHeader(userRoles));
+            string? taskQueue = ()) returns http:Response {
+        return executeToResponse("humanTasks.list", {
+            status: status,
+            parentWorkflowId: parentWorkflowId,
+            parentWorkflowType: parentWorkflowType,
+            taskName: taskName,
+            userRole: userRole,
+            onlyMyTasks: onlyMyTasks,
+            'limit: 'limit,
+            pageToken: pageToken,
+            startTimeFrom: startTimeFrom,
+            startTimeTo: startTimeTo,
+            closeTimeFrom: closeTimeFrom,
+            closeTimeTo: closeTimeTo,
+            taskQueue: taskQueue
+        }, userId, userRoles);
     }
 
-    # Returns count of pending human tasks (for UI badge).
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - `{count: N}` JSON object, or an internal server error.
     resource isolated function get human\-tasks/pending\-count(
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
-            string? taskQueue = ())
-            returns json|http:InternalServerError {
-        return opPendingHumanTaskCount(taskQueue, parseRolesHeader(userRoles));
+            string? taskQueue = ()) returns http:Response {
+        return executeToResponse("humanTasks.pendingCount", {taskQueue: taskQueue}, userId, userRoles);
     }
 
-    // ── Human Tasks — Detail & Operations ────────────────────────────────────
-
-    # Returns detailed info for a single human task.
-    # + taskId - The human task workflow ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - Human task detail as JSON, a not-found error, or an internal server error.
     resource isolated function get human\-tasks/[string taskId](
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        return opGetHumanTask(taskId, parseRolesHeader(userRoles));
+            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
+        return executeToResponse("humanTasks.get", {taskId: taskId}, userId, userRoles);
     }
 
-    # Completes a human task with the given result.
-    # + taskId - The human task workflow ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + body - Request body containing the task `result`.
-    # + return - Completion info as JSON, or a not-found, forbidden, conflict, unprocessable-entity (invalid
-    #            payload), or internal server error.
     resource isolated function post human\-tasks/[string taskId]/complete(
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
-            @http:Payload map<json> body)
-            returns json|http:NotFound|http:Forbidden|http:Conflict|http:UnprocessableEntity|http:InternalServerError {
-        return opCompleteHumanTask(taskId, body["result"], parseRolesHeader(userRoles), userId);
+            @http:Payload map<json> body) returns http:Response {
+        return executeToResponse("humanTasks.complete", {taskId: taskId, result: body["result"]},
+                userId, userRoles);
     }
 
-    # Fails/rejects a human task with a reason.
-    # + taskId - The human task workflow ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + body - Request body containing the `reason` string and optional `details` object.
-    # + return - Completion info as JSON, or a bad request, not-found, forbidden, conflict, unprocessable-entity
-    #            (invalid payload), or internal server error.
     resource isolated function post human\-tasks/[string taskId]/'fail(
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
-            @http:Payload map<json> body)
-            returns json|http:BadRequest|http:NotFound|http:Forbidden|http:Conflict|http:UnprocessableEntity
-                    |http:InternalServerError {
-        map<json>? details = body["details"] is map<json> ? <map<json>>body["details"] : ();
-        return opFailHumanTask(taskId, body["reason"], details, parseRolesHeader(userRoles), userId);
+            @http:Payload map<json> body) returns http:Response {
+        map<json> params = {taskId: taskId, reason: body["reason"]};
+        if body["details"] is map<json> {
+            params["details"] = body["details"];
+        }
+        return executeToResponse("humanTasks.fail", params, userId, userRoles);
     }
 
     // Note: there is deliberately no cancel endpoint for human tasks. A task becomes
     // CANCELED only internally, when its parent workflow closes; admins can terminate
     // the task workflow (TERMINATED) via the workflow terminate endpoint instead.
 
-    // ── Review Activities — List & Detail ────────────────────────────────────
+    // ── Review Activities ────────────────────────────────────────────────────
 
-    # Lists review activities with optional filters and pagination.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + status - Filter by task status (e.g. `PENDING`, `COMPLETED`).
-    # + parentWorkflowId - Filter by parent workflow ID.
-    # + taskName - Filter by task name.
-    # + limit - Maximum number of results to return (capped at `maxPageSize`).
-    # + pageToken - Pagination cursor from a previous response.
-    # + startTimeFrom - Optional ISO-8601 lower bound on task start time.
-    # + startTimeTo - Optional ISO-8601 upper bound on task start time.
-    # + closeTimeFrom - Optional ISO-8601 lower bound on task close time.
-    # + closeTimeTo - Optional ISO-8601 upper bound on task close time.
-    # + return - Paginated review activities as JSON, or an internal server error.
     resource isolated function get review\-activities(
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
@@ -845,69 +695,54 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             string? startTimeTo = (),
             string? closeTimeFrom = (),
             string? closeTimeTo = (),
-            string? taskQueue = ())
-            returns json|http:InternalServerError {
-        return opListReviewActivities(status, parentWorkflowId, taskName, 'limit, pageToken,
-                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue,
-                parseRolesHeader(userRoles));
+            string? taskQueue = ()) returns http:Response {
+        return executeToResponse("reviewActivities.list", {
+            status: status,
+            parentWorkflowId: parentWorkflowId,
+            taskName: taskName,
+            'limit: 'limit,
+            pageToken: pageToken,
+            startTimeFrom: startTimeFrom,
+            startTimeTo: startTimeTo,
+            closeTimeFrom: closeTimeFrom,
+            closeTimeTo: closeTimeTo,
+            taskQueue: taskQueue
+        }, userId, userRoles);
     }
 
-    # Returns detailed info for a single review activity.
-    # + taskId - The review activity workflow ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - Review activity detail as JSON, a not-found error, or an internal server error.
     resource isolated function get review\-activities/[string taskId](
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-        return opGetReviewActivity(taskId, parseRolesHeader(userRoles));
+            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
+        return executeToResponse("reviewActivities.get", {taskId: taskId}, userId, userRoles);
     }
 
-    // ── Review Activities — Decisions ──────────────────────────────────────────
-
-    # Proceeds: runs the gated activity, or reruns the failed one, with the original input.
-    # + taskId - The review activity workflow ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + return - Review decision info as JSON, or a not-found, forbidden, conflict, or internal server error.
     resource isolated function post review\-activities/[string taskId]/'proceed(
             @http:Header {name: "x-user-id"} string? userId,
-            @http:Header {name: "x-user-roles"} string? userRoles)
-            returns json|http:BadRequest|http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
-        return opDecideReviewActivity(taskId, "proceed", (), (), parseRolesHeader(userRoles), userId);
+            @http:Header {name: "x-user-roles"} string? userRoles) returns http:Response {
+        return executeToResponse("reviewActivities.decide", {taskId: taskId, action: "proceed"},
+                userId, userRoles);
     }
 
-    # Proceeds with modified input: runs the gated/failed activity with the replacement arguments.
-    # + taskId - The review activity workflow ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + body - Request body containing the replacement `input` object.
-    # + return - Review decision info as JSON, or a bad request, not-found, forbidden, conflict, or internal server error.
     resource isolated function post review\-activities/[string taskId]/proceed\-with\-input(
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
-            @http:Payload map<json> body)
-            returns json|http:BadRequest|http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
-        map<json>? input = body["input"] is map<json> ? <map<json>>body["input"] : ();
-        return opDecideReviewActivity(taskId, "proceed-with-input", input, (),
-                parseRolesHeader(userRoles), userId);
+            @http:Payload map<json> body) returns http:Response {
+        map<json> params = {taskId: taskId, action: "proceed-with-input"};
+        if body["input"] is map<json> {
+            params["input"] = body["input"];
+        }
+        return executeToResponse("reviewActivities.decide", params, userId, userRoles);
     }
 
-    # Rejects: skips the gated activity, or permanently fails the failed one. Optional `feedback`
-    # in the body is relayed to the caller (e.g. surfaced in the failure message).
-    # + taskId - The review activity workflow ID.
-    # + userId - Optional caller identity from the `x-user-id` header.
-    # + userRoles - Optional comma-separated roles from the `x-user-roles` header.
-    # + body - Optional request body containing a `feedback` string.
-    # + return - Review decision info as JSON, or a not-found, forbidden, conflict, or internal server error.
     resource isolated function post review\-activities/[string taskId]/'reject(
             @http:Header {name: "x-user-id"} string? userId,
             @http:Header {name: "x-user-roles"} string? userRoles,
-            @http:Payload map<json> body = {})
-            returns json|http:BadRequest|http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
-        string? feedback = body["feedback"] is string ? <string>body["feedback"] : ();
-        return opDecideReviewActivity(taskId, "reject", (), feedback, parseRolesHeader(userRoles), userId);
+            @http:Payload map<json> body = {}) returns http:Response {
+        map<json> params = {taskId: taskId, action: "reject"};
+        if body["feedback"] is string {
+            params["feedback"] = body["feedback"];
+        }
+        return executeToResponse("reviewActivities.decide", params, userId, userRoles);
     }
 
 };

@@ -78,6 +78,10 @@ public final class WorkflowMetadataNative {
             root.put(StringUtils.fromString("activities"), buildActivities());
             root.put(StringUtils.fromString("reviewActions"), buildReviewActions());
             root.put(StringUtils.fromString("agents"), buildAgents());
+            // The build-time Workflow Definition Descriptor (workflow.def.json), when packed:
+            // the canonical, versioned, checksummed description of the same structures. Null
+            // when the program was built without one (older plugin, or no executable JAR).
+            root.put(StringUtils.fromString("descriptor"), WorkflowDescriptorNative.readPackedDescriptor());
             return root;
         } catch (Exception e) {
             return ErrorCreator.createError(

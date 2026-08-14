@@ -20,6 +20,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- **Workflow Definition Descriptor (WDD)**: the compiler plugin now generates a
+  versioned, OpenAPI-style definition file describing every workflow component in
+  the package — workflows, activities (input and output), human tasks (completion
+  forms), review activities, events, and durable agents — with embedded JSON
+  Schemas, and packs it into the executable JAR as the fixed-name resource
+  `workflow.def.json`. Every schema-bearing position is a typed slot: the resolved
+  Ballerina type is always recorded, and the JSON Schema is emitted per
+  representability tier (exact for closed anydata shapes, permissive + `lossy` for
+  open anydata, omitted for `xml`/`error`/behavioral types). The document is
+  canonical JSON with a SHA-256 content checksum, so consumers can persist, diff,
+  and audit definitions over time. The packed descriptor is served under the
+  `descriptor` field of `management:getWorkflowMetadata()` (nil when the program
+  was built without one, e.g. under `bal test`). The meta-schema lives in
+  `docs/spec/`.
 - `management:getWorkflowMetadata()` — a startup-complete metadata document
   (definitions with input schemas, human tasks with completion-form schemas,
   activities with input schemas, the review-action vocabulary, and durable-agent

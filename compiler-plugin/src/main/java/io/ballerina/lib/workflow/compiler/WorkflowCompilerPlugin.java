@@ -18,6 +18,8 @@
 
 package io.ballerina.lib.workflow.compiler;
 
+import io.ballerina.lib.workflow.compiler.descriptor.DescriptorLifecycleListener;
+import io.ballerina.lib.workflow.compiler.descriptor.WorkflowDescriptorStore;
 import io.ballerina.projects.plugins.CompilerPlugin;
 import io.ballerina.projects.plugins.CompilerPluginContext;
 
@@ -40,10 +42,19 @@ public class WorkflowCompilerPlugin extends CompilerPlugin {
 
     @Override
     public void init(CompilerPluginContext pluginContext) {
-        // Add code analyzer for validation of @Workflow and @Activity function signatures
-        pluginContext.addCodeAnalyzer(new WorkflowCodeAnalyzer());
-        
+        // Shared between the descriptor builder (needs the semantic model, so it runs during
+        // compilation analysis) and the lifecycle task that packs workflow.def.json into the
+        // generated JAR once code generation has completed.
+        WorkflowDescriptorStore descriptorStore = new WorkflowDescriptorStore();
+
+        // Add code analyzer for validation of @Workflow and @Activity function signatures,
+        // plus the workflow-descriptor builder
+        pluginContext.addCodeAnalyzer(new WorkflowCodeAnalyzer(descriptorStore));
+
         // Add code modifier for workflow transformations
         pluginContext.addCodeModifier(new WorkflowCodeModifier(pluginContext.userData()));
+
+        // Pack the built descriptor into the generated JAR
+        pluginContext.addCompilerLifecycleListener(new DescriptorLifecycleListener(descriptorStore));
     }
 }

@@ -86,6 +86,11 @@ public type AgentMeta record {|
 # + activities - Registered activities with input schemas
 # + reviewActions - The static review-activity decision vocabulary
 # + agents - Declared durable agents
+# + descriptor - The build-time Workflow Definition Descriptor (`workflow.def.json`) packed
+#                into the running program by the compiler plugin: the canonical, versioned,
+#                checksummed description of the same structures with embedded JSON Schemas.
+#                `()` when the program was built without one (older plugin, or a run that
+#                never produced an executable JAR, such as `bal test`)
 public type WorkflowMetadata record {|
     string metadataVersion;
     WorkflowDefinitionMeta[] definitions;
@@ -93,6 +98,7 @@ public type WorkflowMetadata record {|
     ActivityMeta[] activities;
     string[] reviewActions;
     AgentMeta[] agents;
+    json? descriptor = ();
 |};
 
 # Returns the workflow metadata document for this program: registered workflow

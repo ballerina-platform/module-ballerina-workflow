@@ -90,16 +90,24 @@ public class WorkflowDescriptorTest {
                 "Compilation errors: " + compilation.diagnosticResult().diagnostics());
 
         String modifiedSources = allSourcesOf(project);
-        Assert.assertTrue(modifiedSources.contains(":registerWorkflowDescriptor(\""),
+        String marker = ":registerWorkflowDescriptor(\"";
+        int start = modifiedSources.indexOf(marker);
+        Assert.assertTrue(start >= 0,
                 "Generated registration must hand the descriptor to the runtime as data");
         Assert.assertFalse(modifiedSources.contains(":registerWorkflow("),
                 "Per-workflow registerWorkflow codegen must be gone");
         Assert.assertFalse(modifiedSources.contains(":registerHumanTask("),
                 "Per-task registerHumanTask codegen must be gone");
-        // The embedded document carries the structural facts the runtime registers from.
-        Assert.assertTrue(modifiedSources.contains("expenseApproval")
-                        && modifiedSources.contains("managerApproval"),
-                "The embedded descriptor must describe the package's workflows");
+        // The embedded string literal itself must carry the structural facts the runtime
+        // registers from — the workflow names elsewhere in the sources don't count.
+        int literalStart = start + marker.length();
+        int literalEnd = modifiedSources.indexOf("\");", literalStart);
+        Assert.assertTrue(literalEnd > literalStart, "Embedded descriptor literal not terminated");
+        String embedded = modifiedSources.substring(literalStart, literalEnd);
+        Assert.assertTrue(embedded.contains("expenseApproval") && embedded.contains("managerApproval")
+                        && embedded.contains("descriptorVersion"),
+                "The embedded descriptor must describe the package's workflows, got: "
+                        + embedded.substring(0, Math.min(200, embedded.length())));
     }
 
     private String buildDescriptor(String packageName) {

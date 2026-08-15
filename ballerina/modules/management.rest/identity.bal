@@ -154,9 +154,16 @@ isolated function resolveCallerIdentity(http:Request req, string firstSegment,
     }
     [jwt:Header, jwt:Payload]|jwt:Error decoded = jwt:decode(token);
     if decoded is jwt:Error {
-        // An opaque (non-JWT) access token: no claims to extract. Forwarded identity
-        // is honored only in trusted-forwarding mode; otherwise it is discarded so a
-        // caller cannot pair a valid token with spoofed identity headers.
+        // An opaque (non-JWT) access token: no claims to extract. When scope enforcement
+        // is on, an opaque token cannot prove its scopes here, so it is rejected rather
+        // than silently skipping the check the deployment asked for. (Scope-checking
+        // opaque tokens requires introspection — not decode — and is not supported yet.)
+        if cfg.enforceScopes {
+            return <http:Forbidden>{body: errorBody(
+                    "Scope enforcement requires a JWT access token; opaque tokens are not supported")};
+        }
+        // Forwarded identity is honored only in trusted-forwarding mode; otherwise it is
+        // discarded so a caller cannot pair a valid token with spoofed identity headers.
         return cfg.trustForwardedIdentity ? identity : <CallerIdentity>{};
     }
     map<json> claims = claimsOf(decoded[1]);

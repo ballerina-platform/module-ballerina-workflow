@@ -171,51 +171,51 @@ function setupTests() returns error? {
     // generates registerWorkflow calls at module init time in real applications.
     
     // Basic process registration
-    _ = check wfInternal:registerWorkflow(testProcessFunction, "test-process");
+    _ = check registerWorkflowForTest(testProcessFunction, "test-process");
     
     // Process with activities
     map<function> activities1 = {
         "testActivityFunction": testActivityFunction,
         "testActivityFunction2": testActivityFunction2
     };
-    _ = check wfInternal:registerWorkflow(processWithActivities, "process-with-activities", activities1);
+    _ = check registerWorkflowForTest(processWithActivities, "process-with-activities", activities1);
     
     // Process with events (named record type)
-    _ = check wfInternal:registerWorkflow(processWithEvents, "process-with-events");
+    _ = check registerWorkflowForTest(processWithEvents, "process-with-events");
     
     // Process with single event
-    _ = check wfInternal:registerWorkflow(processWithContextAndEvents, "process-single-event");
+    _ = check registerWorkflowForTest(processWithContextAndEvents, "process-single-event");
     
     // Process without events (to verify empty events list)
-    _ = check wfInternal:registerWorkflow(testProcessFunction, "no-events-process");
+    _ = check registerWorkflowForTest(testProcessFunction, "no-events-process");
     
     // Process with both activities and events
     map<function> activities2 = {
         "testActivityFunction": testActivityFunction
     };
-    _ = check wfInternal:registerWorkflow(processWithEvents, "process-activities-events", activities2);
+    _ = check registerWorkflowForTest(processWithEvents, "process-activities-events", activities2);
     
     // Inline record event processes
-    _ = check wfInternal:registerWorkflow(processWithInlineEvents, "inline-multi-events");
-    _ = check wfInternal:registerWorkflow(processWithSingleInlineEvent, "inline-single-event");
-    _ = check wfInternal:registerWorkflow(processWithMixedInlineEvents, "inline-mixed-events");
-    _ = check wfInternal:registerWorkflow(processWithInlineEventsNoContext, "inline-no-context");
+    _ = check registerWorkflowForTest(processWithInlineEvents, "inline-multi-events");
+    _ = check registerWorkflowForTest(processWithSingleInlineEvent, "inline-single-event");
+    _ = check registerWorkflowForTest(processWithMixedInlineEvents, "inline-mixed-events");
+    _ = check registerWorkflowForTest(processWithInlineEventsNoContext, "inline-no-context");
     
     // Inline record with activities
     map<function> activities3 = {
         "testActivityFunction": testActivityFunction,
         "testActivityFunction2": testActivityFunction2
     };
-    _ = check wfInternal:registerWorkflow(processWithInlineEvents, "inline-with-activities", activities3);
+    _ = check registerWorkflowForTest(processWithInlineEvents, "inline-with-activities", activities3);
     
     // Process for run tests
-    _ = check wfInternal:registerWorkflow(simpleWorkflowProcess, "simple-workflow");
+    _ = check registerWorkflowForTest(simpleWorkflowProcess, "simple-workflow");
 
     // Process with dependently-typed external activity
     map<function> dependentActivities = {
         "testDependentActivity": testDependentActivity
     };
-    _ = check wfInternal:registerWorkflow(processWithDependentActivity, "dependent-activity-process",
+    _ = check registerWorkflowForTest(processWithDependentActivity, "dependent-activity-process",
             dependentActivities);
 
     // Start the in-memory workflow runtime after all registrations are done.
@@ -245,7 +245,7 @@ function testRegisterProcess() returns error? {
 function testRegisterProcessDuplicate() returns error? {
     // Attempt to register a process with the same name that was already registered
     // This should fail because "test-process" was registered in @BeforeSuite
-    boolean|error result = wfInternal:registerWorkflow(testProcessFunction, "test-process");
+    boolean|error result = registerWorkflowForTest(testProcessFunction, "test-process");
     test:assertTrue(result is error, "Duplicate registration should fail");
 }
 
@@ -608,7 +608,7 @@ function workflowWithRetryFailingActivity(Context ctx, string input) returns str
 function testGetWorkflowResultStatusCompleted() returns error? {
     // Register the simple workflow used in this test (idempotent — safe if already registered).
     // Use a unique name to avoid clashing with registrations done in @BeforeSuite.
-    _ = check wfInternal:registerWorkflow(simpleWorkflowProcess, "simple-workflow-status-test");
+    _ = check registerWorkflowForTest(simpleWorkflowProcess, "simple-workflow-status-test");
 
     map<string> input = {id: "test-status-completed-001"};
     string|error runResult = run(simpleWorkflowProcess, input);
@@ -629,7 +629,7 @@ function testGetWorkflowResultStatusCompleted() returns error? {
 @test:Config {groups: ["unit"]}
 function testGetWorkflowResultWorkflowType() returns error? {
     // Verify that getWorkflowResult populates workflowType correctly.
-    _ = check wfInternal:registerWorkflow(simpleWorkflowProcess, "simple-workflow-type-test");
+    _ = check registerWorkflowForTest(simpleWorkflowProcess, "simple-workflow-type-test");
 
     map<string> input = {id: "test-type-001"};
     string|error runResult = run(simpleWorkflowProcess, input);
@@ -650,7 +650,7 @@ function testGetWorkflowResultStatusFailedOnActivityError() returns error? {
     // Verify that when an activity returns a Ballerina error the workflow is marked FAILED
     // (not COMPLETED) in Temporal, and getWorkflowResult reflects status="FAILED".
     map<function> activities = {"alwaysFailingActivity": alwaysFailingActivity};
-    _ = check wfInternal:registerWorkflow(workflowWithFailingActivity,
+    _ = check registerWorkflowForTest(workflowWithFailingActivity,
             "workflow-failing-activity-test", activities);
 
     map<string> input = {id: "test-activity-fail-001", input: "trigger"};
@@ -689,7 +689,7 @@ function testActivityInvocationsTrackedOnSuccess() returns error? {
         "testActivityFunction": testActivityFunction,
         "testActivityFunction2": testActivityFunction2
     };
-    _ = check wfInternal:registerWorkflow(workflowWithTwoActivities,
+    _ = check registerWorkflowForTest(workflowWithTwoActivities,
             "workflow-two-activities-test", activities);
 
     map<string> input = {id: "test-invocations-001", input: "hello"};
@@ -736,7 +736,7 @@ function testActivityInvocationsShowRetriesOnFailure() returns error? {
     // Register a workflow that calls a failing activity with retryOnError=true, maxRetries=2.
     // The activity always fails, so Temporal retries it (total 3 attempts: 1 initial + 2 retries).
     map<function> activities = {"alwaysFailingActivity": alwaysFailingActivity};
-    _ = check wfInternal:registerWorkflow(workflowWithRetryFailingActivity,
+    _ = check registerWorkflowForTest(workflowWithRetryFailingActivity,
             "workflow-retry-failing-test", activities);
 
     map<string> input = {id: "test-retry-fail-001", input: "trigger"};
@@ -785,7 +785,7 @@ function testActivityInvocationsOnSingleFailNoRetry() returns error? {
     // When retryOnError=false (default), the activity fails once with attempt=1.
     // Re-use the existing workflowWithFailingActivity process.
     map<function> activities = {"alwaysFailingActivity": alwaysFailingActivity};
-    _ = check wfInternal:registerWorkflow(workflowWithFailingActivity,
+    _ = check registerWorkflowForTest(workflowWithFailingActivity,
             "workflow-single-fail-invocations-test", activities);
 
     map<string> input = {id: "test-single-fail-inv-001", input: "trigger"};
@@ -890,7 +890,7 @@ function workflowWithManualRetryFail(Context ctx, string orderId) returns string
 function testManualRetryWorkflowCreatesReviewActivity() returns error? {
     // Register the workflow that uses ManualRetry.
     map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
-    _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
+    _ = check registerWorkflowForTest(workflowWithManualRetry,
             "workflow-manual-retry-test", activities);
 
     map<string> input = {id: "test-manual-retry-001", orderId: "ORD-MR-001"};
@@ -924,7 +924,7 @@ function testManualRetryWorkflowCreatesReviewActivity() returns error? {
 @test:Config {groups: ["unit"]}
 function testManualReviewActivityInfoContainsCorrectMetadata() returns error? {
     map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
-    _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
+    _ = check registerWorkflowForTest(workflowWithManualRetry,
             "workflow-manual-retry-info-test", activities);
 
     map<string> input = {id: "test-manual-retry-info-001", orderId: "ORD-MR-002"};
@@ -962,7 +962,7 @@ function testCompleteReviewActivityWithProceed() returns error? {
     // eventually fail again (because the activity always fails), creating another
     // retry task. We verify the workflow is still running after the first decision.
     map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
-    _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
+    _ = check registerWorkflowForTest(workflowWithManualRetry,
             "workflow-manual-retry-complete-test", activities);
 
     map<string> input = {id: "test-manual-retry-complete-001", orderId: "ORD-MR-003"};
@@ -998,7 +998,7 @@ function testCompleteReviewActivityWithReject() returns error? {
     // Complete a retry task with action="fail" — the workflow should surface the
     // original error and transition to FAILED.
     map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
-    _ = check wfInternal:registerWorkflow(workflowWithManualRetryFail,
+    _ = check registerWorkflowForTest(workflowWithManualRetryFail,
             "workflow-manual-retry-fail-test", activities);
 
     map<string> input = {id: "test-manual-retry-fail-001", orderId: "ORD-MR-004"};
@@ -1033,7 +1033,7 @@ function testCompleteReviewActivityWithProceedWithInput() returns error? {
     // We test the retry-with-input path by substituting input that makes it succeed.
     // (Here the activity always fails so we just verify the signal is accepted.)
     map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
-    _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
+    _ = check registerWorkflowForTest(workflowWithManualRetry,
             "workflow-manual-retry-input-test", activities);
 
     map<string> input = {id: "test-manual-retry-input-001", orderId: "ORD-MR-005"};
@@ -1061,7 +1061,7 @@ function testCompleteReviewActivityWithProceedWithInput() returns error? {
 function testCompleteReviewActivityUnauthorizedRole() returns error? {
     // Attempt to complete a retry task with a caller role not in the permitted set.
     map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
-    _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
+    _ = check registerWorkflowForTest(workflowWithManualRetry,
             "workflow-manual-retry-auth-test", activities);
 
     map<string> input = {id: "test-manual-retry-auth-001", orderId: "ORD-MR-006"};
@@ -1093,7 +1093,7 @@ function testCompleteReviewActivityUnauthorizedRole() returns error? {
 @test:Config {groups: ["unit"]}
 function testListAllReviewActivitiesReturnsCreatedTask() returns error? {
     map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
-    _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
+    _ = check registerWorkflowForTest(workflowWithManualRetry,
             "workflow-list-all-retry-test", activities);
 
     map<string> input = {id: "test-list-all-retry-001", orderId: "ORD-MR-007"};

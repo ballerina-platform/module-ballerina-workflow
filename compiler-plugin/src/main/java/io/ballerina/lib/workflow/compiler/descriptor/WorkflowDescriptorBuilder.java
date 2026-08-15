@@ -73,8 +73,10 @@ import java.util.TreeMap;
  * Builds the Workflow Definition Descriptor ({@code workflow.def.json}) from the compiled
  * package: every workflow with its input, events, activities (input and output), human tasks
  * (result form) and review activities, plus every durable-agent declaration's static structure.
- * Invoked by {@link WorkflowDescriptorGenerator}, which packs the canonical bytes as a package
- * resource — present in the executable JAR, the BALA, and {@code bal test} runs alike.
+ * Built once by {@link WorkflowDescriptorGenerator} (which packs the canonical bytes into
+ * build artifacts) and once by the source modifier (which embeds the same bytes as data in the
+ * generated registration — the only carrier that reaches {@code bal test} runs). The build is
+ * deterministic, so the two documents are byte-identical.
  *
  * <p>Captures only the structural facts — what registers with the Temporal runtime, plus
  * schemas. Expression-valued instance parameters (roles, titles, retry counts, timeouts,
@@ -100,6 +102,22 @@ public final class WorkflowDescriptorBuilder {
      *         workflows or agents
      */
     public static byte[] build(Package currentPackage, PackageCompilation compilation) {
+        return build(currentPackage, compilation, null);
+    }
+
+    /**
+     * Builds the descriptor, reporting every name collision — a workflow or agent whose simple
+     * name is already claimed by another declaration in the package. The descriptor (and the
+     * runtime registry it feeds) is keyed by simple name, so a colliding declaration would be
+     * silently dropped; the collision consumer lets the caller surface a diagnostic instead.
+     *
+     * @param currentPackage the package being compiled
+     * @param compilation    its compilation (for semantic models)
+     * @param onCollision    invoked with a description of each dropped duplicate, or {@code null}
+     * @return the canonical descriptor bytes, or {@code null} when nothing is declared
+     */
+    public static byte[] build(Package currentPackage, PackageCompilation compilation,
+                               java.util.function.Consumer<String> onCollision) {
         String major = majorVersion(currentPackage.packageVersion().value().toString());
 
         Map<String, Map<String, Object>> workflows = new TreeMap<>();
@@ -118,12 +136,24 @@ public final class WorkflowDescriptorBuilder {
                         Map<String, Object> entry =
                                 buildWorkflowEntry(fnDef, semanticModel, moduleQName, major);
                         if (entry != null) {
-                            workflows.put((String) entry.get("name"), entry);
+                            String name = (String) entry.get("name");
+                            if ((workflows.putIfAbsent(name, entry) != null || agents.containsKey(name))
+                                    && onCollision != null) {
+                                onCollision.accept("workflow '" + name + "' in module '" + moduleQName
+                                        + "' collides with another workflow or agent of the same name;"
+                                        + " workflow names must be unique across the package");
+                            }
                         }
                     } else if (member instanceof ModuleVariableDeclarationNode varDecl) {
                         Map<String, Object> agent = buildAgentEntry(varDecl, semanticModel);
                         if (agent != null) {
-                            agents.put((String) agent.get("name"), agent);
+                            String name = (String) agent.get("name");
+                            if ((agents.putIfAbsent(name, agent) != null || workflows.containsKey(name))
+                                    && onCollision != null) {
+                                onCollision.accept("agent '" + name + "' in module '" + moduleQName
+                                        + "' collides with another workflow or agent of the same name;"
+                                        + " agent names must be unique across the package");
+                            }
                         }
                     }
                 }
@@ -167,7 +197,7 @@ public final class WorkflowDescriptorBuilder {
 
         List<ParameterSymbol> inputParams = new ArrayList<>();
         RecordTypeSymbol eventsRecord = null;
-        for (ParameterSymbol param : fnSymbol.typeDescriptor().params().orElse(List.of())) {
+        for (ParameterSymbol param : dataParameters(fnSymbol.typeDescriptor().params().orElse(List.of()))) {
             TypeSymbol effective = DescriptorSchemaGen.dereference(param.typeDescriptor(), 0);
             if (effective == null) {
                 continue;
@@ -450,10 +480,17 @@ public final class WorkflowDescriptorBuilder {
         }
     }
 
-    /** Filters an activity's parameters to its data parameters (skips typedescs and client objects). */
+    /**
+     * Filters a function's parameters to its data parameters: skips typedescs and client
+     * objects (mirroring the runtime's derivation) and rest parameters (the runtime's
+     * {@code FunctionType.getParameters()} does not include them either).
+     */
     private static List<ParameterSymbol> dataParameters(List<ParameterSymbol> params) {
         List<ParameterSymbol> dataParams = new ArrayList<>();
         for (ParameterSymbol param : params) {
+            if (param.paramKind() == io.ballerina.compiler.api.symbols.ParameterKind.REST) {
+                continue;
+            }
             TypeSymbol effective = DescriptorSchemaGen.dereference(param.typeDescriptor(), 0);
             if (effective != null && (effective.typeKind() == TypeDescKind.TYPEDESC
                     || effective.typeKind() == TypeDescKind.OBJECT)) {
@@ -810,6 +847,31 @@ public final class WorkflowDescriptorBuilder {
         return colon < 0 ? ref : ref.substring(colon + 1).trim();
     }
 
+    /** Decodes the escape sequences a string literal's token text carries verbatim. */
+    private static String unescapeStringLiteral(String value) {
+        if (value.indexOf('\\') < 0) {
+            return value;
+        }
+        StringBuilder out = new StringBuilder(value.length());
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c != '\\' || i + 1 >= value.length()) {
+                out.append(c);
+                continue;
+            }
+            char next = value.charAt(++i);
+            switch (next) {
+                case 'n' -> out.append('\n');
+                case 't' -> out.append('\t');
+                case 'r' -> out.append('\r');
+                case '\\' -> out.append('\\');
+                case '"' -> out.append('"');
+                default -> out.append(c).append(next);
+            }
+        }
+        return out.toString();
+    }
+
     private static String majorVersion(String version) {
         int dot = version.indexOf('.');
         return dot < 0 ? version : version.substring(0, dot);
@@ -821,7 +883,7 @@ public final class WorkflowDescriptorBuilder {
                 && literal.kind() == SyntaxKind.STRING_LITERAL) {
             String raw = literal.literalToken().text();
             if (raw.length() >= 2 && raw.startsWith("\"") && raw.endsWith("\"")) {
-                return raw.substring(1, raw.length() - 1);
+                return unescapeStringLiteral(raw.substring(1, raw.length() - 1));
             }
             return raw;
         }

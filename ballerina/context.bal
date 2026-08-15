@@ -144,8 +144,8 @@ public client class Context {
 
     # Creates a human task and blocks until a human completes it or the optional timeout elapses.
     # Internally, the task is modelled as a durable Temporal child workflow whose type is `taskName`,
-    # so the task survives worker restarts.  Register the task name at module init time via
-    # `wfInternal:registerHumanTask(taskName)` (the compiler plugin generates this call automatically).
+    # so the task survives worker restarts. The task name is registered when the worker starts,
+    # from the workflow descriptor the compiler plugin generates at build time.
     #
     # ```ballerina
     # ApprovalDecision d = check ctx->awaitHumanTask("approveExpense", "FINANCE_APPROVER",

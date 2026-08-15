@@ -810,7 +810,9 @@ public final class WorkflowWorkerNative {
                 if (taskArray.get(i) instanceof BMap<?, ?> task) {
                     String taskName = stringField(task, "name");
                     if (taskName != null) {
-                        HUMANTASK_REGISTRY.add(name + "." + taskName);
+                        // Store the prefixed Temporal workflow type — the form awaitHumanTask
+                        // registers and the adapter's routing check reads.
+                        HUMANTASK_REGISTRY.add(HUMANTASK_TYPE_PREFIX + name + "." + taskName);
                     }
                 }
             }

@@ -47,7 +47,7 @@ public final class WorkflowDescriptorNative {
 
     private static final Object LOCK = new Object();
     private static volatile boolean loaded;
-    private static Object cachedDescriptor;
+    private static volatile Object cachedDescriptor;
 
     private WorkflowDescriptorNative() {
     }

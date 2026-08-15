@@ -18,21 +18,6 @@ import ballerina/ai;
 import ballerina/jballerina.java;
 import ballerina/log;
 
-# Registers a workflow function with the program runtime.
-#
-# This is an **internal** function used by the compiler plugin to register
-# workflows at module initialization time. It is not intended to be
-# called directly by users.
-#
-# + workflowFunction - The workflow function to register (must be annotated with @workflow:Workflow)
-# + workflowName - The unique name to register the workflow under
-# + activities - Optional map of activity function pointers used by the workflow
-# + return - `true` if registration was successful, or an error if registration fails
-public isolated function registerWorkflow(function workflowFunction, string workflowName, map<function>? activities = ()) returns boolean|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
-    name: "registerWorkflow"
-} external;
-
 # Starts the workflow runtime after all workflows have been registered.
 #
 # This is an **internal** function used by the compiler plugin as the last
@@ -54,25 +39,6 @@ public isolated function startWorkflowRuntime() returns boolean|error {
 isolated function startWorkflowRuntimeNative() returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
     name: "startSingletonWorker"
-} external;
-
-# Registers a durable agent's runner workflow with the program runtime, marking the
-# workflow type as an agent workflow so the adapter injects the native agent context
-# handle (instead of a `workflow:Context`) and arms the agent update handler.
-#
-# This is an **internal** function: `registerDurableAgentRunner` routes through it for
-# object-model agents, and the module's own unit tests use it to register loop-test
-# agents directly (the compiler plugin does not run on the workflow package itself).
-#
-# + workflowFunction - The agent workflow function (first parameter is the native
-#                      agent context handle)
-# + workflowName - The unique name to register the workflow under
-# + activities - Optional map of activity function pointers used by the agent
-# + return - `true` if registration was successful, or an error if registration fails
-public isolated function registerAgentWorkflow(function workflowFunction, string workflowName,
-        map<function>? activities = ()) returns boolean|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
-    name: "registerAgentWorkflow"
 } external;
 
 # Registers a module-level `final` client object so that it can be passed as
@@ -113,22 +79,6 @@ public isolated function registerWorkflowDescriptor(string descriptorJson)
         returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowDescriptorNative",
     name: "registerWorkflowDescriptor"
-} external;
-
-# Registers a human task type so that the workflow worker can route child workflows
-# whose type equals `taskName` to the built-in human task handler.
-#
-# This is an **internal** function intended to be called by the compiler plugin at
-# module initialization time for every `awaitHumanTask` call site found in user code,
-# similar to how `registerWorkflow` is generated for `@Workflow` functions.
-#
-# + taskName - The task name passed to `awaitHumanTask`; used directly as the
-#              Temporal child workflow type
-# + return - `true` on success (idempotent for the same name), or an error
-public isolated function registerHumanTask(string taskName)
-        returns boolean|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
-    name: "registerHumanTask"
 } external;
 
 // ---------------------------------------------------------------------------

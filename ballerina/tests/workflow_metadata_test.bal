@@ -16,7 +16,6 @@
 
 import ballerina/jballerina.java;
 import ballerina/test;
-import ballerina/workflow.internal as wfInternal;
 import ballerina/workflow.management;
 
 // Exercises management:getWorkflowMetadata(): the document must be complete before any
@@ -70,9 +69,9 @@ function setPackedWorkflowDescriptor(json? descriptor) = @java:Method {
 
 @test:Config {groups: ["unit"]}
 function testWorkflowMetadataCompleteAtRegistration() returns error? {
-    _ = check wfInternal:registerWorkflow(metaFixtureWorkflow, "metaFixtureWorkflow",
+    _ = check registerWorkflowForTest(metaFixtureWorkflow, "metaFixtureWorkflow",
             {"metaFixtureActivity": metaFixtureActivity});
-    _ = check wfInternal:registerHumanTask("metaFixtureWorkflow.approve");
+    _ = check registerHumanTaskForTest("metaFixtureWorkflow.approve");
     setPackedWorkflowDescriptor(metaFixtureDescriptor);
 
     management:WorkflowMetadata meta = check management:getWorkflowMetadata();
@@ -119,7 +118,7 @@ function testWorkflowMetadataCompleteAtRegistration() returns error? {
 // the document with a nil resultSchema until it first executes.
 @test:Config {groups: ["unit"]}
 function testWorkflowMetadataLazyHumanTaskHasNoSchema() returns error? {
-    _ = check wfInternal:registerHumanTask("metaFixtureWorkflow.lazyTask");
+    _ = check registerHumanTaskForTest("metaFixtureWorkflow.lazyTask");
     setPackedWorkflowDescriptor(metaFixtureDescriptor);
 
     management:WorkflowMetadata meta = check management:getWorkflowMetadata();

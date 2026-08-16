@@ -14,18 +14,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import ballerina/http;
 import ballerina/time;
 
 // ================================================================================
 // MANAGEMENT OPERATIONS
 // ================================================================================
-// The single implementation of every management operation, shared by the REST
-// resources in service.bal (which map these returns to HTTP responses verbatim)
-// and by `executeManagementCommand` in dispatcher.bal (which converts the same
-// values into {httpStatus, body} command results). Keeping one implementation is
-// what guarantees a command result is byte-identical to the corresponding REST
-// response body.
+// The single implementation of every management operation. Each returns the
+// operation's `json` payload, or an `Error` saying why it could not be carried
+// out — never a transport-specific value. `executeCommand` in command.bal
+// dispatches to these, and transport adapters (the HTTP API in
+// `workflow.management.rest`, and any other consumer) map the same values into
+// their own vocabulary, so every caller observes identical payloads.
 
 # Maximum number of items returned per page in list operations.
 configurable int maxPageSize = 100;
@@ -39,10 +38,10 @@ configurable string? reviewActivityAccessRole = ();
 
 // ── Definitions ───────────────────────────────────────────────────────────────
 
-isolated function opListDefinitions() returns json|http:InternalServerError {
+isolated function opListDefinitions() returns json|Error {
     WorkflowDefinition[]|error defs = listWorkflowDefinitions();
     if defs is error {
-        return <http:InternalServerError>{body: errorBody("Failed to list definitions: " + defs.message())};
+        return executionFailed("Failed to list definitions: " + defs.message());
     }
     return {definitions: defs.toJson()};
 }
@@ -51,25 +50,25 @@ isolated function opListDefinitions() returns json|http:InternalServerError {
 
 isolated function opListWorkflows(string? status, string? workflowType, string? workflowId,
         string? startedBy, int 'limit, string? pageToken, string? startTimeFrom, string? startTimeTo,
-        string? closeTimeFrom, string? closeTimeTo, string? taskQueue) returns json|http:InternalServerError {
+        string? closeTimeFrom, string? closeTimeTo, string? taskQueue) returns json|Error {
     int effectiveLimit = clampLimit('limit, maxPageSize);
     WorkflowInstancePage|error page = listWorkflowInstances(
         status, workflowType, workflowId, startedBy, effectiveLimit, pageToken,
             startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
     if page is error {
-        return <http:InternalServerError>{body: errorBody("Failed to list workflows: " + page.message())};
+        return executionFailed("Failed to list workflows: " + page.message());
     }
     return page.toJson();
 }
 
 isolated function opStartWorkflow(map<json> body, string? userId)
-        returns http:Created|http:BadRequest|http:InternalServerError {
+        returns json|Error {
     json? wfTypeJson = body["workflowType"];
     if wfTypeJson is () {
-        return <http:BadRequest>{body: errorBody("workflowType is required")};
+        return invalidRequest("workflowType is required");
     }
     if wfTypeJson !is string {
-        return <http:BadRequest>{body: errorBody("workflowType must be a string")};
+        return invalidRequest("workflowType must be a string");
     }
     string wfType = wfTypeJson;
     json? input = body["input"];
@@ -77,139 +76,114 @@ isolated function opStartWorkflow(map<json> body, string? userId)
     int? timeout = body["timeoutSeconds"] is int ? <int>body["timeoutSeconds"] : ();
     WorkflowHandle|error wfHandle = startWorkflowByType(wfType, input, wfId, timeout, userId);
     if wfHandle is error {
-        return <http:InternalServerError>{body: errorBody("Failed to start workflow: " + wfHandle.message())};
+        return executionFailed("Failed to start workflow: " + wfHandle.message());
     }
-    return <http:Created>{body: wfHandle.toJson()};
+    return wfHandle.toJson();
 }
 
 isolated function opGetWorkflow(string workflowId, string? runId, [string, string...]? callerRoles)
-        returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-    http:Forbidden? roleErr = ensureWorkflowDetailAccess(callerRoles);
-    if roleErr is http:Forbidden {
+        returns json|Error {
+    AccessDeniedError? roleErr = ensureWorkflowDetailAccess(callerRoles);
+    if roleErr is AccessDeniedError {
         return roleErr;
     }
     WorkflowExecutionInfo|error info = runId is string
         ? getWorkflowInfoForRun(workflowId, runId)
         : getWorkflowInfo(workflowId);
     if info is error {
-        string msg = info.message();
-        if msg.includes("not found") || msg.includes("NOT_FOUND") {
-            string target = runId is string ? "Workflow run not found: " + workflowId + "/" + runId
-                : "Workflow not found: " + workflowId;
-            return <http:NotFound>{body: errorBody(target)};
-        }
-        return <http:InternalServerError>{body: errorBody(msg)};
+        string target = runId is string ? "Workflow run not found: " + workflowId + "/" + runId
+            : "Workflow not found: " + workflowId;
+        return notFoundOrExecutionError(info, target);
     }
     return info.toJson();
 }
 
 isolated function opSuspendWorkflow(string workflowId, string? runId)
-        returns json|http:NotFound|http:InternalServerError {
+        returns json|Error {
     error? result = runId is string
         ? suspendWorkflowRun(workflowId, runId)
         : suspendWorkflow(workflowId);
     if result is error {
-        string msg = result.message();
-        return msg.includes("not found")
-            ? <http:NotFound>{body: errorBody(msg)}
-            : <http:InternalServerError>{body: errorBody(msg)};
+        return notFoundOrExecutionError(result);
     }
     return {success: true};
 }
 
 isolated function opResumeWorkflow(string workflowId, string? runId)
-        returns json|http:NotFound|http:InternalServerError {
+        returns json|Error {
     error? result = runId is string
         ? resumeWorkflowRun(workflowId, runId)
         : resumeWorkflow(workflowId);
     if result is error {
-        string msg = result.message();
-        return msg.includes("not found")
-            ? <http:NotFound>{body: errorBody(msg)}
-            : <http:InternalServerError>{body: errorBody(msg)};
+        return notFoundOrExecutionError(result);
     }
     return {success: true};
 }
 
-isolated function opWakeWorkflow(string workflowId) returns json|http:NotFound|http:InternalServerError {
+isolated function opWakeWorkflow(string workflowId) returns json|Error {
     error? result = wakeAgent(workflowId);
     if result is error {
-        string msg = result.message();
-        return msg.includes("not found")
-            ? <http:NotFound>{body: errorBody(msg)}
-            : <http:InternalServerError>{body: errorBody(msg)};
+        return notFoundOrExecutionError(result);
     }
     return {success: true};
 }
 
 isolated function opTerminateWorkflow(string workflowId, string? runId, string? reason)
-        returns json|http:NotFound|http:InternalServerError {
+        returns json|Error {
     error? result = terminateWorkflow(workflowId, runId ?: "", reason);
     if result is error {
-        string msg = result.message();
-        return msg.includes("not found") || msg.includes("NOT_FOUND")
-            ? <http:NotFound>{body: errorBody(msg)}
-            : <http:InternalServerError>{body: errorBody(msg)};
+        return notFoundOrExecutionError(result);
     }
     return {success: true};
 }
 
 isolated function opCancelWorkflow(string workflowId, string? runId)
-        returns json|http:NotFound|http:InternalServerError {
+        returns json|Error {
     error? result = cancelWorkflow(workflowId, runId ?: "");
     if result is error {
-        string msg = result.message();
-        return msg.includes("not found") || msg.includes("NOT_FOUND")
-            ? <http:NotFound>{body: errorBody(msg)}
-            : <http:InternalServerError>{body: errorBody(msg)};
+        return notFoundOrExecutionError(result);
     }
     return {success: true};
 }
 
 isolated function opWorkflowHistory(string workflowId, string? runId, [string, string...]? callerRoles)
-        returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-    http:Forbidden? roleErr = ensureWorkflowDetailAccess(callerRoles);
-    if roleErr is http:Forbidden {
+        returns json|Error {
+    AccessDeniedError? roleErr = ensureWorkflowDetailAccess(callerRoles);
+    if roleErr is AccessDeniedError {
         return roleErr;
     }
     HistoryEvent[]|error events = getWorkflowHistory(workflowId, runId ?: "");
     if events is error {
-        string msg = events.message();
-        return msg.includes("not found") || msg.includes("NOT_FOUND")
-            ? <http:NotFound>{body: errorBody("Workflow not found: " + workflowId)}
-            : <http:InternalServerError>{body: errorBody("Failed to get history: " + msg)};
+        return notFoundOrExecutionError(events, "Workflow not found: " + workflowId,
+                "Failed to get history: ");
     }
     return {events: events.toJson()};
 }
 
 isolated function opActivityTree(string workflowId, string? runId, [string, string...]? callerRoles)
-        returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-    http:Forbidden? roleErr = ensureWorkflowDetailAccess(callerRoles);
-    if roleErr is http:Forbidden {
+        returns json|Error {
+    AccessDeniedError? roleErr = ensureWorkflowDetailAccess(callerRoles);
+    if roleErr is AccessDeniedError {
         return roleErr;
     }
     ActivityTreeNode[]|error nodes = getActivityTree(workflowId, runId ?: "");
     if nodes is error {
-        string msg = nodes.message();
-        return msg.includes("not found") || msg.includes("NOT_FOUND")
-            ? <http:NotFound>{body: errorBody("Workflow not found: " + workflowId)}
-            : <http:InternalServerError>{body: errorBody("Failed to get activity tree: " + msg)};
+        return notFoundOrExecutionError(nodes, "Workflow not found: " + workflowId,
+                "Failed to get activity tree: ");
     }
     return {nodes: nodes.toJson()};
 }
 
 isolated function opExecutionGraph(string workflowId, string? runId, [string, string...]? callerRoles)
-        returns json|http:NotFound|http:Forbidden|http:InternalServerError {
-    http:Forbidden? roleErr = ensureWorkflowDetailAccess(callerRoles);
-    if roleErr is http:Forbidden {
+        returns json|Error {
+    AccessDeniedError? roleErr = ensureWorkflowDetailAccess(callerRoles);
+    if roleErr is AccessDeniedError {
         return roleErr;
     }
     ExecutionGraph|error graph = getExecutionGraph(workflowId, runId ?: "");
     if graph is error {
-        string msg = graph.message();
-        return msg.includes("not found") || msg.includes("NOT_FOUND")
-            ? <http:NotFound>{body: errorBody("Workflow not found: " + workflowId)}
-            : <http:InternalServerError>{body: errorBody("Failed to get execution graph: " + msg)};
+        return notFoundOrExecutionError(graph, "Workflow not found: " + workflowId,
+                "Failed to get execution graph: ");
     }
     return graph.toJson();
 }
@@ -219,11 +193,11 @@ isolated function opExecutionGraph(string workflowId, string? runId, [string, st
 isolated function opListHumanTasks(string? status, string? parentWorkflowId, string? parentWorkflowType,
         string? taskName, string? userRole, boolean onlyMyTasks, int 'limit, string? pageToken,
         string? startTimeFrom, string? startTimeTo, string? closeTimeFrom, string? closeTimeTo,
-        string? taskQueue, [string, string...]? callerRoles) returns json|http:InternalServerError {
+        string? taskQueue, [string, string...]? callerRoles) returns json|Error {
     HumanTaskSummary[]|error all = listAllHumanTasks(status,
             startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
     if all is error {
-        return <http:InternalServerError>{body: errorBody("Failed to list human tasks: " + all.message())};
+        return executionFailed("Failed to list human tasks: " + all.message());
     }
     // Apply lambda-safe filters first
     HumanTaskSummary[] preFiltered = all
@@ -249,10 +223,10 @@ isolated function opListHumanTasks(string? status, string? parentWorkflowId, str
 }
 
 isolated function opPendingHumanTaskCount(string? taskQueue, [string, string...]? callerRoles)
-        returns json|http:InternalServerError {
+        returns json|Error {
     HumanTaskSummary[]|error pending = listAllHumanTasks("PENDING", taskQueue = taskQueue);
     if pending is error {
-        return <http:InternalServerError>{body: errorBody("Failed to count pending tasks: " + pending.message())};
+        return executionFailed("Failed to count pending tasks: " + pending.message());
     }
     int visibleCount = 0;
     foreach HumanTaskSummary t in pending {
@@ -264,45 +238,41 @@ isolated function opPendingHumanTaskCount(string? taskQueue, [string, string...]
 }
 
 isolated function opGetHumanTask(string taskId, [string, string...]? callerRoles)
-        returns json|http:NotFound|http:Forbidden|http:InternalServerError {
+        returns json|Error {
     HumanTaskInfo|error info = getHumanTaskInfo(taskId);
     if info is error {
-        string msg = info.message();
-        return msg.includes("not found") || msg.includes("NOT_FOUND")
-            ? <http:NotFound>{body: errorBody("Human task not found: " + taskId)}
-            : <http:InternalServerError>{body: errorBody(msg)};
+        return notFoundOrExecutionError(info, "Human task not found: " + taskId);
     }
     if !hasRoleIntersection(info.userRoles, callerRoles) {
-        return <http:Forbidden>{body: errorBody("Unauthorized: caller is not allowed to access this task")};
+        return accessDenied("Unauthorized: caller is not allowed to access this task");
     }
     return info.toJson();
 }
 
 isolated function opCompleteHumanTask(string taskId, json result, [string, string...]? callerRoles, string? userId)
-        returns json|http:NotFound|http:Forbidden|http:Conflict|http:UnprocessableEntity|http:InternalServerError {
+        returns json|Error {
     if callerRoles is () {
-        return <http:Forbidden>{body: errorBody("Unauthorized: x-user-roles header is required")};
+        return accessDenied("Unauthorized: caller roles are required");
     }
     error? err = completeHumanTask(taskId, result, callerRoles, userId);
     if err is error {
-        return humanTaskErrorResponse(err);
+        return classifyRuntimeError(err);
     }
     return buildCompletionResponse(userId).toJson();
 }
 
 isolated function opFailHumanTask(string taskId, json? reason, map<json>? details,
         [string, string...]? callerRoles, string? userId)
-        returns json|http:BadRequest|http:NotFound|http:Forbidden|http:Conflict|http:UnprocessableEntity
-                |http:InternalServerError {
+        returns json|Error {
     if reason is () {
-        return <http:BadRequest>{body: errorBody("reason is required")};
+        return invalidRequest("reason is required");
     }
     if callerRoles is () {
-        return <http:Forbidden>{body: errorBody("Unauthorized: x-user-roles header is required")};
+        return accessDenied("Unauthorized: caller roles are required");
     }
     error? err = failHumanTask(taskId, reason.toString(), details, callerRoles, userId);
     if err is error {
-        return humanTaskErrorResponse(err);
+        return classifyRuntimeError(err);
     }
     return buildCompletionResponse(userId).toJson();
 }
@@ -312,12 +282,11 @@ isolated function opFailHumanTask(string taskId, json? reason, map<json>? detail
 isolated function opListReviewActivities(string? status, string? parentWorkflowId, string? taskName,
         int 'limit, string? pageToken, string? startTimeFrom, string? startTimeTo,
         string? closeTimeFrom, string? closeTimeTo, string? taskQueue, [string, string...]? callerRoles)
-        returns json|http:InternalServerError {
+        returns json|Error {
     ReviewActivitySummary[]|error all = listAllReviewActivities(status,
             startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
     if all is error {
-        return <http:InternalServerError>{
-            body: errorBody("Failed to list review activities: " + all.message())};
+        return executionFailed("Failed to list review activities: " + all.message());
     }
     ReviewActivitySummary[] preFiltered = all
         .filter(t => parentWorkflowId is () || t.parentWorkflowId == parentWorkflowId)
@@ -334,26 +303,22 @@ isolated function opListReviewActivities(string? status, string? parentWorkflowI
 }
 
 isolated function opGetReviewActivity(string taskId, [string, string...]? callerRoles)
-        returns json|http:NotFound|http:Forbidden|http:InternalServerError {
+        returns json|Error {
     ReviewActivityInfo|error info = getReviewActivityInfo(taskId);
     if info is error {
-        string msg = info.message();
-        return msg.includes("not found") || msg.includes("NOT_FOUND")
-            ? <http:NotFound>{body: errorBody("Review activity not found: " + taskId)}
-            : <http:InternalServerError>{body: errorBody(msg)};
+        return notFoundOrExecutionError(info, "Review activity not found: " + taskId);
     }
     if !canAccessReviewActivity(info.userRoles, callerRoles) {
-        return <http:Forbidden>{body: errorBody(
-                "Unauthorized: caller is not allowed to access this review activity")};
+        return accessDenied("Unauthorized: caller is not allowed to access this review activity");
     }
     return info.toJson();
 }
 
 isolated function opDecideReviewActivity(string taskId, string action, map<json>? input, string? feedback,
         [string, string...]? callerRoles, string? userId)
-        returns json|http:BadRequest|http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
-    http:Forbidden? roleErr = reviewDecisionRoleError(callerRoles);
-    if roleErr is http:Forbidden {
+        returns json|Error {
+    AccessDeniedError? roleErr = reviewDecisionRoleError(callerRoles);
+    if roleErr is AccessDeniedError {
         return roleErr;
     }
     ReviewDecision decision;
@@ -361,17 +326,17 @@ isolated function opDecideReviewActivity(string taskId, string action, map<json>
         decision = {action: "proceed"};
     } else if action == "proceed-with-input" {
         if input !is map<json> {
-            return <http:BadRequest>{body: errorBody("input must be a JSON object")};
+            return invalidRequest("input must be a JSON object");
         }
         decision = {action: "proceed-with-input", input: <map<anydata>>input};
     } else if action == "reject" {
         decision = {action: "reject", feedback: feedback};
     } else {
-        return <http:BadRequest>{body: errorBody("Unknown review decision action: " + action)};
+        return invalidRequest("Unknown review decision action: " + action);
     }
     error? err = completeReviewActivity(taskId, decision, callerRoles, userId);
     if err is error {
-        return reviewActivityErrorResponse(err);
+        return classifyRuntimeError(err);
     }
     return buildReviewDecisionResponse(action, userId).toJson();
 }
@@ -399,10 +364,6 @@ isolated function buildReviewDecisionResponse(string decision, string? userId) r
     return {success: true, decision: decision, decidedBy: userId ?: "unknown", decidedAt: time:utcToString(now)};
 }
 
-isolated function errorBody(string message) returns map<json> {
-    return {"error": {"message": message}};
-}
-
 isolated function clampLimit(int requested, int maxAllowed) returns int {
     if requested < 1 { return 20; }
     return requested > maxAllowed ? maxAllowed : requested;
@@ -415,9 +376,9 @@ isolated function parseRolesHeader(string? rolesHeader) returns [string, string.
     return [parts[0], ...parts.slice(1)];
 }
 
-isolated function ensureWorkflowDetailAccess([string, string...]? callerRoles) returns http:Forbidden? {
+isolated function ensureWorkflowDetailAccess([string, string...]? callerRoles) returns AccessDeniedError? {
     if callerRoles is () {
-        return <http:Forbidden>{body: errorBody("Unauthorized: x-user-roles header is required to view workflow details")};
+        return accessDenied("Unauthorized: caller roles are required to view workflow details");
     }
     return ();
 }
@@ -439,12 +400,12 @@ isolated function canAccessReviewActivity(string[] taskRoles, [string, string...
 # Guard for review activity decision routes: when `reviewActivityAccessRole` is configured,
 # the caller must hold it. Task-declared roles are enforced separately by the native
 # completion path against the task's memo.
-isolated function reviewDecisionRoleError([string, string...]? callerRoles) returns http:Forbidden? {
+isolated function reviewDecisionRoleError([string, string...]? callerRoles) returns AccessDeniedError? {
     string? requiredRole = reviewActivityAccessRole;
     if requiredRole is string && requiredRole.trim().length() > 0 {
         if callerRoles is () || callerRoles.indexOf(requiredRole) is () {
-            return <http:Forbidden>{body: errorBody(
-                    "Unauthorized: the '" + requiredRole + "' role is required to decide review activities")};
+            return accessDenied(
+                    "Unauthorized: the '" + requiredRole + "' role is required to decide review activities");
         }
     }
     return ();
@@ -529,39 +490,4 @@ isolated function decodeCursorToken(string token) returns [string, string] {
         return [token.substring(0, sep), token.substring(sep + 1)];
     }
     return ["", ""];
-}
-
-isolated function humanTaskErrorResponse(error err)
-        returns http:NotFound|http:Forbidden|http:Conflict|http:UnprocessableEntity|http:InternalServerError {
-    string msg = err.message();
-    if msg.includes("not found") || msg.includes("NOT_FOUND") {
-        return <http:NotFound>{body: errorBody(msg)};
-    }
-    if msg.includes("Unauthorized") || msg.includes("not authorized") {
-        return <http:Forbidden>{body: errorBody(msg)};
-    }
-    if msg.includes("not running") || msg.includes("already completed") {
-        return <http:Conflict>{body: errorBody(msg)};
-    }
-    // A well-formed request whose payload does not match the task's expected type is semantically
-    // invalid → 422 Unprocessable Entity (ballerina-library#8866).
-    if msg.includes("Invalid payload") {
-        return <http:UnprocessableEntity>{body: errorBody(msg)};
-    }
-    return <http:InternalServerError>{body: errorBody(msg)};
-}
-
-isolated function reviewActivityErrorResponse(error err)
-        returns http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError {
-    string msg = err.message();
-    if msg.includes("not found") || msg.includes("NOT_FOUND") {
-        return <http:NotFound>{body: errorBody(msg)};
-    }
-    if msg.includes("Unauthorized") || msg.includes("not authorized") {
-        return <http:Forbidden>{body: errorBody(msg)};
-    }
-    if msg.includes("not running") || msg.includes("already completed") {
-        return <http:Conflict>{body: errorBody(msg)};
-    }
-    return <http:InternalServerError>{body: errorBody(msg)};
 }

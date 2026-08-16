@@ -50,10 +50,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   declarations) for control planes to publish. Completion-form schemas are read
   from the packed workflow descriptor before a task first runs; the registry
   takes over once the task has executed.
-- `rest:executeManagementCommand()` in `workflow.management.rest` — executes any
-  management operation as a command and returns `{httpStatus, body}` byte-identical
-  to the corresponding REST response; the REST resources and the dispatcher share
-  one implementation. `getWorkflowMetadata` is re-exported from the same module.
+- `management:executeCommand()` — runs any management operation named by the
+  `management:Operation` enum, returning the operation's `json` payload or a
+  `management:Error`. The HTTP API in `workflow.management.rest` dispatches through
+  the same call, so a command and the matching REST route produce identical
+  payloads. `workflow.management` itself stays free of transport concepts: it
+  reports *why* an operation failed through distinct error types (`NotFoundError`,
+  `AccessDeniedError`, `InvalidRequestError`, `ConflictError`, `InvalidPayloadError`,
+  `ExecutionError`), and each adapter maps those onto its own protocol — status
+  codes in the REST module, and the tunnel envelope in a control-plane bridge.
 - Token-based caller identity for the management REST API: the gateway interceptor
   resolves the caller's identity once per request and stores it in the
   `http:RequestContext` (spec §8.1.11), where every resource reads it — requests are

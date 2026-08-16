@@ -34,7 +34,7 @@ import ballerina/workflow.management;
 //   basicAuthUsername    = "ops"
 //   basicAuthPassword    = "s3cret!"
 //
-// Every resource below is a thin HTTP adapter over `management:executeManagementCommand`:
+// Every resource below is a thin HTTP adapter over `management:executeCommand`:
 // it maps the route to the operation name, packs the query/path/body parameters, carries
 // the caller identity from the x-user-* headers, and relays the {httpStatus, body} result.
 // One execution path serves HTTP and command callers alike, so the two can never drift.
@@ -397,22 +397,55 @@ service class ManagementGatewayInterceptor {
 # Executes one management operation on behalf of the request's caller and maps the
 # result to the HTTP response: the operation's status code and body, verbatim.
 #
-# + operation - Dot-qualified operation name (see `management:executeManagementCommand`)
+# + operation - The management operation to run
 # + params - Operation parameters, keyed like the route's query/path/body parameters
 # + ctx - The request context carrying the caller identity the gateway interceptor resolved
 # + return - The operation's REST response
-isolated function executeToResponse(string operation, map<json> params,
+isolated function executeToResponse(management:Operation operation, map<json> params,
         http:RequestContext ctx) returns http:Response {
     CallerIdentity identity = callerIdentityOf(ctx);
-    management:ManagementCommandResult result = management:executeManagementCommand({
+    json|management:Error result = management:executeCommand({
         operation: operation,
         params: params,
         identity: {userId: identity.userId, roles: identity.roles}
     });
     http:Response response = new;
-    response.statusCode = result.httpStatus;
-    response.setJsonPayload(result.body);
+    if result is management:Error {
+        response.statusCode = statusCodeOf(result);
+        response.setJsonPayload(management:toErrorJson(result));
+        return response;
+    }
+    // Starting an instance creates a resource; every other operation reads or
+    // mutates an existing one.
+    response.statusCode = operation == management:START_INSTANCE
+        ? http:STATUS_CREATED : http:STATUS_OK;
+    response.setJsonPayload(result);
     return response;
+}
+
+# Maps a management error to the HTTP status code that represents it. This module
+# owns the whole HTTP vocabulary: the management module reports *why* an operation
+# failed, and only here is that turned into a status code.
+#
+# + err - The error a management operation returned
+# + return - The corresponding HTTP status code
+isolated function statusCodeOf(management:Error err) returns int {
+    if err is management:NotFoundError {
+        return http:STATUS_NOT_FOUND;
+    }
+    if err is management:AccessDeniedError {
+        return http:STATUS_FORBIDDEN;
+    }
+    if err is management:InvalidRequestError {
+        return http:STATUS_BAD_REQUEST;
+    }
+    if err is management:ConflictError {
+        return http:STATUS_CONFLICT;
+    }
+    if err is management:InvalidPayloadError {
+        return http:STATUS_UNPROCESSABLE_ENTITY;
+    }
+    return http:STATUS_INTERNAL_SERVER_ERROR;
 }
 
 # Reads the caller identity the gateway interceptor stored in the request context.
@@ -464,7 +497,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
 
     resource isolated function get definitions(
             http:RequestContext ctx) returns http:Response {
-        return executeToResponse("definitions.list", {}, ctx);
+        return executeToResponse(management:LIST_DEFINITIONS, {}, ctx);
     }
 
     // ── Workflow Instances — List & Start ─────────────────────────────────────
@@ -482,7 +515,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             string? closeTimeFrom = (),
             string? closeTimeTo = (),
             string? taskQueue = ()) returns http:Response {
-        return executeToResponse("instances.list", {
+        return executeToResponse(management:LIST_INSTANCES, {
             status: status,
             workflowType: workflowType,
             workflowId: workflowId,
@@ -500,7 +533,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
     resource isolated function post workflows(
             http:RequestContext ctx,
             @http:Payload map<json> body) returns http:Response {
-        return executeToResponse("instances.start", body, ctx);
+        return executeToResponse(management:START_INSTANCE, body, ctx);
     }
 
     // ── Workflow Instance — Latest Run ───────────────────────────────────────
@@ -509,22 +542,22 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
 
     resource isolated function get workflows/[string workflowId](
             http:RequestContext ctx) returns http:Response {
-        return executeToResponse("instances.get", {workflowId: workflowId}, ctx);
+        return executeToResponse(management:GET_INSTANCE, {workflowId: workflowId}, ctx);
     }
 
     resource isolated function post workflows/[string workflowId]/suspend(
             http:RequestContext ctx) returns http:Response {
-        return executeToResponse("instances.suspend", {workflowId: workflowId}, ctx);
+        return executeToResponse(management:SUSPEND_INSTANCE, {workflowId: workflowId}, ctx);
     }
 
     resource isolated function post workflows/[string workflowId]/wake(
             http:RequestContext ctx) returns http:Response {
-        return executeToResponse("instances.wake", {workflowId: workflowId}, ctx);
+        return executeToResponse(management:WAKE_INSTANCE, {workflowId: workflowId}, ctx);
     }
 
     resource isolated function post workflows/[string workflowId]/resume(
             http:RequestContext ctx) returns http:Response {
-        return executeToResponse("instances.resume", {workflowId: workflowId}, ctx);
+        return executeToResponse(management:RESUME_INSTANCE, {workflowId: workflowId}, ctx);
     }
 
     resource isolated function post workflows/[string workflowId]/terminate(
@@ -534,44 +567,44 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
         if body is map<json> && body["reason"] is string {
             params["reason"] = body["reason"];
         }
-        return executeToResponse("instances.terminate", params, ctx);
+        return executeToResponse(management:TERMINATE_INSTANCE, params, ctx);
     }
 
     resource isolated function post workflows/[string workflowId]/cancel(
             http:RequestContext ctx) returns http:Response {
-        return executeToResponse("instances.cancel", {workflowId: workflowId}, ctx);
+        return executeToResponse(management:CANCEL_INSTANCE, {workflowId: workflowId}, ctx);
     }
 
     resource isolated function get workflows/[string workflowId]/history(
             http:RequestContext ctx) returns http:Response {
-        return executeToResponse("instances.history", {workflowId: workflowId}, ctx);
+        return executeToResponse(management:GET_INSTANCE_HISTORY, {workflowId: workflowId}, ctx);
     }
 
     resource isolated function get workflows/[string workflowId]/activity\-tree(
             http:RequestContext ctx) returns http:Response {
-        return executeToResponse("instances.activityTree", {workflowId: workflowId}, ctx);
+        return executeToResponse(management:GET_INSTANCE_ACTIVITY_TREE, {workflowId: workflowId}, ctx);
     }
 
     resource isolated function get workflows/[string workflowId]/execution\-graph(
             http:RequestContext ctx) returns http:Response {
-        return executeToResponse("instances.executionGraph", {workflowId: workflowId}, ctx);
+        return executeToResponse(management:GET_INSTANCE_EXECUTION_GRAPH, {workflowId: workflowId}, ctx);
     }
 
     // ── Workflow Instance — Run-pinned ───────────────────────────────────────
 
     resource isolated function get workflows/[string workflowId]/[string runId](
             http:RequestContext ctx) returns http:Response {
-        return executeToResponse("instances.get", {workflowId: workflowId, runId: runId}, ctx);
+        return executeToResponse(management:GET_INSTANCE, {workflowId: workflowId, runId: runId}, ctx);
     }
 
     resource isolated function post workflows/[string workflowId]/[string runId]/suspend(
             http:RequestContext ctx) returns http:Response {
-        return executeToResponse("instances.suspend", {workflowId: workflowId, runId: runId}, ctx);
+        return executeToResponse(management:SUSPEND_INSTANCE, {workflowId: workflowId, runId: runId}, ctx);
     }
 
     resource isolated function post workflows/[string workflowId]/[string runId]/resume(
             http:RequestContext ctx) returns http:Response {
-        return executeToResponse("instances.resume", {workflowId: workflowId, runId: runId}, ctx);
+        return executeToResponse(management:RESUME_INSTANCE, {workflowId: workflowId, runId: runId}, ctx);
     }
 
     resource isolated function post workflows/[string workflowId]/[string runId]/terminate(
@@ -581,27 +614,27 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
         if body is map<json> && body["reason"] is string {
             params["reason"] = body["reason"];
         }
-        return executeToResponse("instances.terminate", params, ctx);
+        return executeToResponse(management:TERMINATE_INSTANCE, params, ctx);
     }
 
     resource isolated function post workflows/[string workflowId]/[string runId]/cancel(
             http:RequestContext ctx) returns http:Response {
-        return executeToResponse("instances.cancel", {workflowId: workflowId, runId: runId}, ctx);
+        return executeToResponse(management:CANCEL_INSTANCE, {workflowId: workflowId, runId: runId}, ctx);
     }
 
     resource isolated function get workflows/[string workflowId]/[string runId]/history(
             http:RequestContext ctx) returns http:Response {
-        return executeToResponse("instances.history", {workflowId: workflowId, runId: runId}, ctx);
+        return executeToResponse(management:GET_INSTANCE_HISTORY, {workflowId: workflowId, runId: runId}, ctx);
     }
 
     resource isolated function get workflows/[string workflowId]/[string runId]/activity\-tree(
             http:RequestContext ctx) returns http:Response {
-        return executeToResponse("instances.activityTree", {workflowId: workflowId, runId: runId}, ctx);
+        return executeToResponse(management:GET_INSTANCE_ACTIVITY_TREE, {workflowId: workflowId, runId: runId}, ctx);
     }
 
     resource isolated function get workflows/[string workflowId]/[string runId]/execution\-graph(
             http:RequestContext ctx) returns http:Response {
-        return executeToResponse("instances.executionGraph", {workflowId: workflowId, runId: runId}, ctx);
+        return executeToResponse(management:GET_INSTANCE_EXECUTION_GRAPH, {workflowId: workflowId, runId: runId}, ctx);
     }
 
     // ── Human Tasks ──────────────────────────────────────────────────────────
@@ -621,7 +654,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             string? closeTimeFrom = (),
             string? closeTimeTo = (),
             string? taskQueue = ()) returns http:Response {
-        return executeToResponse("humanTasks.list", {
+        return executeToResponse(management:LIST_HUMAN_TASKS, {
             status: status,
             parentWorkflowId: parentWorkflowId,
             parentWorkflowType: parentWorkflowType,
@@ -641,18 +674,18 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
     resource isolated function get human\-tasks/pending\-count(
             http:RequestContext ctx,
             string? taskQueue = ()) returns http:Response {
-        return executeToResponse("humanTasks.pendingCount", {taskQueue: taskQueue}, ctx);
+        return executeToResponse(management:COUNT_PENDING_HUMAN_TASKS, {taskQueue: taskQueue}, ctx);
     }
 
     resource isolated function get human\-tasks/[string taskId](
             http:RequestContext ctx) returns http:Response {
-        return executeToResponse("humanTasks.get", {taskId: taskId}, ctx);
+        return executeToResponse(management:GET_HUMAN_TASK, {taskId: taskId}, ctx);
     }
 
     resource isolated function post human\-tasks/[string taskId]/complete(
             http:RequestContext ctx,
             @http:Payload map<json> body) returns http:Response {
-        return executeToResponse("humanTasks.complete", {taskId: taskId, result: body["result"]}, ctx);
+        return executeToResponse(management:COMPLETE_HUMAN_TASK, {taskId: taskId, result: body["result"]}, ctx);
     }
 
     resource isolated function post human\-tasks/[string taskId]/'fail(
@@ -662,7 +695,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
         if body["details"] is map<json> {
             params["details"] = body["details"];
         }
-        return executeToResponse("humanTasks.fail", params, ctx);
+        return executeToResponse(management:FAIL_HUMAN_TASK, params, ctx);
     }
 
     // Note: there is deliberately no cancel endpoint for human tasks. A task becomes
@@ -683,7 +716,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             string? closeTimeFrom = (),
             string? closeTimeTo = (),
             string? taskQueue = ()) returns http:Response {
-        return executeToResponse("reviewActivities.list", {
+        return executeToResponse(management:LIST_REVIEW_ACTIVITIES, {
             status: status,
             parentWorkflowId: parentWorkflowId,
             taskName: taskName,
@@ -699,12 +732,12 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
 
     resource isolated function get review\-activities/[string taskId](
             http:RequestContext ctx) returns http:Response {
-        return executeToResponse("reviewActivities.get", {taskId: taskId}, ctx);
+        return executeToResponse(management:GET_REVIEW_ACTIVITY, {taskId: taskId}, ctx);
     }
 
     resource isolated function post review\-activities/[string taskId]/'proceed(
             http:RequestContext ctx) returns http:Response {
-        return executeToResponse("reviewActivities.decide", {taskId: taskId, action: "proceed"}, ctx);
+        return executeToResponse(management:DECIDE_REVIEW_ACTIVITY, {taskId: taskId, action: "proceed"}, ctx);
     }
 
     resource isolated function post review\-activities/[string taskId]/proceed\-with\-input(
@@ -714,7 +747,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
         if body["input"] is map<json> {
             params["input"] = body["input"];
         }
-        return executeToResponse("reviewActivities.decide", params, ctx);
+        return executeToResponse(management:DECIDE_REVIEW_ACTIVITY, params, ctx);
     }
 
     resource isolated function post review\-activities/[string taskId]/'reject(
@@ -724,7 +757,7 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
         if body["feedback"] is string {
             params["feedback"] = body["feedback"];
         }
-        return executeToResponse("reviewActivities.decide", params, ctx);
+        return executeToResponse(management:DECIDE_REVIEW_ACTIVITY, params, ctx);
     }
 
 };

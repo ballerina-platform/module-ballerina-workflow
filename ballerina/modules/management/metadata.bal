@@ -21,9 +21,8 @@ import ballerina/jballerina.java;
 // ================================================================================
 // A startup-complete description of everything this program registered with the
 // workflow runtime: definitions, human tasks, activities, and durable agents,
-// with their JSON schemas. Control planes (e.g. the ICP runtime bridge) publish
-// this document so workflow tooling can render forms and launchers without
-// calling into a live workflow instance. All schemas are JSON Schema documents
+// with their JSON schemas. A control plane publishes this document so workflow
+// tooling can render forms and launchers without calling into a live instance. All schemas are JSON Schema documents
 // serialized as strings — the same convention as `WorkflowDefinition.inputSchema`
 // and `HumanTaskInfo.formSchema`.
 

@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **A rejected human task now reaches the awaiting workflow.** `awaitHumanTask` declared
+  `T|HumanTaskTimeoutError`, so a timeout was the only failure it could return. Every
+  other outcome — a task rejected through the `fail` management operation, a terminated
+  task, a submitted value that did not match `T` — built an error outside that union and
+  **panicked the workflow with `{ballerina}TypeCastError`** at the Java→Ballerina
+  boundary. The rejection reason travelled correctly as far as the task workflow's
+  failure (recorded in its history) and was then lost, so a workflow could not
+  compensate on it and the instance failed with an opaque cast error instead.
+
+  `awaitHumanTask` now returns `T|HumanTaskError`, a union of three distinct errors:
+
+  - `HumanTaskTimeoutError` — unchanged, including its detail record;
+  - `HumanTaskRejectedError` — new, carrying `reason`, the structured `details`, and
+    `rejectedBy` exactly as submitted to the `fail` operation;
+  - `HumanTaskFailedError` — new; the task produced no result (terminated, or the
+    submitted value did not match `T`).
+
+  **Breaking (source):** the documented `on fail workflow:HumanTaskTimeoutError e`
+  pattern no longer compiles, because the `do` block can now fail with a wider type.
+  Catch the family and narrow inside:
+
+  ```ballerina
+  do {
+      decision = check ctx->awaitHumanTask("approve", "FINANCE", timeout = {hours: 24});
+  } on fail workflow:HumanTaskError e {
+      if e !is workflow:HumanTaskTimeoutError {
+          return e;                       // a rejection is an answer, not an escalation
+      }
+      // ... escalate on timeout, as before
+  }
+  ```
+
+  A rejection recorded by an older runtime carries no structured details; its
+  `HumanTaskRejectedError` reports the reason with `details` as `()`.
+
 ### Changed
 
 - **Breaking**: the management HTTP API moved from `ballerina/workflow.management`
@@ -32,12 +69,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   ```
 
   Routes, methods, base path, default port, success status codes, and success payload
-  shapes are unchanged. Two behavioral differences are worth checking: identity now
-  comes from token claims and overrides `x-user-*` headers (`trustForwardedIdentity = true`
-  restores the old precedence), and the resources are declared as returning
-  `http:Response`, so a specification generated from the source no longer carries the
-  per-route status codes, response schemas, or the `x-user-*` header parameters the old
-  typed signatures described.
+  shapes are unchanged. Identity resolution is the one behavioral difference: it now
+  comes from token claims and overrides `x-user-*` headers
+  (`trustForwardedIdentity = true` restores the old precedence).
+
+- **Breaking (generated API specification)**: the specification generated from the
+  management service's source is now less detailed than the API it describes. The
+  resources return `http:Response` rather than typed union returns, so
+  `bal openapi -i` (and anything reading its output) no longer sees:
+
+  - the per-route status codes — every operation is described with a single
+    unconstrained response instead of its `200`/`201`/`400`/`403`/`404`/`409`/`500` set;
+  - the response body schemas — `WorkflowInstancePage`, `HumanTaskInfo`,
+    `ErrorResponse`, and the rest no longer appear as response types (they remain
+    public Ballerina types and the wire payloads are byte-for-byte unchanged);
+  - the `x-user-*` header parameters, which were declared as resource parameters and
+    are now read from the request inside the service.
+
+  The **served** contract is unchanged — no route, method, status code, or payload
+  moved, so a running client keeps working. What breaks is anything *derived* from the
+  generated specification: regenerated client stubs lose their typed responses and
+  header parameters, and a gateway, mock server, or contract test built from that
+  document degrades to an untyped passthrough. Contract tests that assert the generated
+  specification matches a stored copy will fail on regeneration and must be re-baselined.
+
+  Migration, if you depend on the specification: pin the last specification generated
+  before this release and maintain it by hand, or generate it from a running endpoint
+  rather than from the source. The response types are still public, so a hand-maintained
+  document can reference them directly. Typed resource signatures may be restored in a
+  later release once error mapping no longer needs the raw `http:Response`; that would
+  restore the detail without changing the served API again.
 
   The HTTP-only types `CompletionInfo`, `ReviewDecisionInfo`, `HumanTaskPage`, and
   `ReviewActivityPage` moved with the service; the unused `ManagementServiceConfig`

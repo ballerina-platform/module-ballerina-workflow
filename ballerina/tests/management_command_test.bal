@@ -83,6 +83,28 @@ function cmdHumanTaskWorkflow(Context ctx, CmdOrder request) returns CmdDecision
     return decision;
 }
 
+// Parks on a human task and reports what a rejection delivered, so `humanTasks.fail` can
+// be verified on the values the workflow actually received rather than on the command's
+// acknowledgement. Returning the detail as data keeps the assertions in the test.
+@Workflow
+function cmdRejectableWorkflow(Context ctx, CmdOrder request) returns map<json>|error {
+    CmdDecision|HumanTaskError decision = ctx->awaitHumanTask("cmdReject", "APPROVER",
+            payload = {"reference": request.reference});
+    if decision is HumanTaskRejectedError {
+        HumanTaskRejectedDetail rejection = decision.detail();
+        return {
+            outcome: "rejected",
+            reason: rejection.reason,
+            details: rejection.details,
+            rejectedBy: rejection.rejectedBy
+        };
+    }
+    if decision is HumanTaskError {
+        return {outcome: "failed", reason: decision.message()};
+    }
+    return {outcome: "completed"};
+}
+
 // Parks on an event, so the lifecycle commands act on a genuinely running instance.
 // A timer would not do: the embedded server skips time whenever every worker is idle,
 // so `ctx.sleep` returns at once and the instance is already closed by the time a
@@ -102,6 +124,7 @@ function setupCommandTests() returns error? {
     _ = check registerWorkflowForTest(cmdSimpleWorkflow, "cmdSimpleWorkflow");
     _ = check registerWorkflowForTest(cmdScalarInputWorkflow, "cmdScalarInputWorkflow");
     _ = check registerWorkflowForTest(cmdHumanTaskWorkflow, "cmdHumanTaskWorkflow");
+    _ = check registerWorkflowForTest(cmdRejectableWorkflow, "cmdRejectableWorkflow");
     _ = check registerWorkflowForTest(cmdParkedWorkflow, "cmdParkedWorkflow");
 }
 
@@ -152,6 +175,22 @@ isolated function awaitFirstPendingTaskId(string workflowId) returns string|erro
         runtime:sleep(1);
     }
     return error("No pending human task became visible for workflow " + workflowId);
+}
+
+// Polls an instance until it reports the expected status. A lifecycle command's
+// acknowledgement only says the request was accepted, so a test that stops there passes
+// even when the instance never reaches the state it asked for. The deadline fails.
+isolated function awaitInstanceStatus(string workflowId, string expected) returns error? {
+    string last = "";
+    foreach int i in 0 ..< 20 {
+        map<json> instance = check commandPayload(management:GET_INSTANCE, {workflowId: workflowId});
+        last = instance["status"].toString();
+        if last == expected {
+            return;
+        }
+        runtime:sleep(1);
+    }
+    return error(string `Instance ${workflowId} never reached ${expected}; last status was ${last}`);
 }
 
 // Terminates an instance a test left running. Best effort: an instance that already
@@ -291,26 +330,37 @@ function testCommandHumanTaskListGetAndComplete() returns error? {
 @test:Config {groups: ["unit"]}
 function testCommandFailHumanTask() returns error? {
     CmdOrder input = {reference: "ORD-CMD-002"};
-    string workflowId = check run(cmdHumanTaskWorkflow, input);
+    string workflowId = check run(cmdRejectableWorkflow, input);
     string taskId = check awaitFirstPendingTaskId(workflowId);
 
     string reason = "rejected by the operator";
+    map<json> details = {"code": "MANUAL_REJECT", "reviewer": "alice"};
     map<json> outcome = check commandPayload(management:FAIL_HUMAN_TASK, {
         taskId: taskId,
         reason: reason,
-        details: {"code": "MANUAL_REJECT"}
+        details: details
     });
     test:assertEquals(outcome["success"], true);
     test:assertEquals(outcome["completedBy"], "alice");
 
-    // The command's own acknowledgement is not evidence that the rejection was
-    // delivered: humanTasks.fail once reported success having dropped the reason and
-    // the details on the way to the runtime. The workflow awaiting the task must fail.
-    anydata|error wfResult = getWorkflowResult(workflowId, 15);
-    if wfResult !is error {
-        test:assertFail("Failing the task must terminate the workflow with an error, got: " +
-                wfResult.toString());
-    }
+    // The command's own acknowledgement is not evidence that the rejection was delivered:
+    // humanTasks.fail once reported success having dropped the reason and the details on the
+    // way to the runtime, and asserting only that the workflow errored would pass for any
+    // failure at all. The fixture returns what it received, so both submitted values are
+    // checked where the workflow saw them.
+    anydata wfResult = check getWorkflowResult(workflowId, 15);
+    map<json> received = check wfResult.toJson().ensureType();
+    test:assertEquals(received["outcome"], "rejected",
+            "The awaiting workflow must observe a rejection, got: " + received.toJsonString());
+    test:assertEquals(received["reason"], reason, "The submitted reason must reach the workflow");
+    test:assertEquals(received["details"], details, "The submitted details must reach the workflow");
+    test:assertEquals(received["rejectedBy"], "alice",
+            "The rejecting user must reach the workflow");
+
+    // The task itself must record the rejection as terminal, not merely accept it.
+    map<json> task = check commandPayload(management:GET_HUMAN_TASK, {taskId: taskId});
+    test:assertEquals(task["status"], "FAILED",
+            "A rejected task must close as FAILED, got: " + task["status"].toString());
 }
 
 @test:Config {groups: ["unit"]}
@@ -388,6 +438,16 @@ function testCommandCancelInstance() returns error? {
 
     map<json> result = check commandPayload(management:CANCEL_INSTANCE, {workflowId: workflowId});
     test:assertEquals(result["success"], true, "instances.cancel must acknowledge");
+
+    // Cancellation is cooperative, so the acknowledgement only says the request was
+    // delivered — an instance that ignores it would still pass. Require the instance to
+    // actually close as canceled, and terminate it if it never does: a parked instance
+    // left running would otherwise outlive the suite.
+    error? closed = awaitInstanceStatus(workflowId, "CANCELED");
+    if closed is error {
+        cleanupInstance(workflowId);
+        test:assertFail(closed.message());
+    }
 }
 
 // ── reviewActivities.list / get / decide ─────────────────────────────────────

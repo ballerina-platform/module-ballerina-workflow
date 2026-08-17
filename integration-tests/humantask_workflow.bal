@@ -115,7 +115,12 @@ function expenseApprovalWithTimeoutWorkflow(workflow:Context ctx, ExpenseRequest
                 payload = {orderId: input.orderId},
                 title = "Approve $" + input.amount.toString() + " for " + input.requester,
                 timeout = {seconds: 5});
-    } on fail workflow:HumanTaskTimeoutError e {
+    } on fail workflow:HumanTaskError e {
+        // Only a timeout escalates. A rejection or a task failure is the requester's answer,
+        // not something to escalate, so it is returned as it arrived.
+        if e !is workflow:HumanTaskTimeoutError {
+            return e;
+        }
         string _ = check ctx->callActivity(htNotifyEscalation, {
             "orderId":       input.orderId,
             "taskName":      e.detail().taskName,

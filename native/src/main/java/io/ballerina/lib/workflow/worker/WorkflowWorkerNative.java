@@ -2447,9 +2447,18 @@ public final class WorkflowWorkerNative {
                 if (signalData.data() instanceof Map<?, ?> payloadMap
                         && Boolean.TRUE.equals(payloadMap.get("__rejected"))) {
                     Object reason = payloadMap.get("reason");
+                    String reasonText = reason instanceof String str && !str.isBlank()
+                            ? str : "The human task was rejected";
+                    // The reason is the failure message, and the structured details and the
+                    // rejecting user travel as failure details: the parent's awaitHumanTask
+                    // rebuilds them into a HumanTaskRejectedError, so a workflow can compensate
+                    // on what was submitted rather than on message text.
+                    Map<String, Object> rejection = new HashMap<>();
+                    rejection.put("reason", reasonText);
+                    rejection.put("details", payloadMap.get("details"));
+                    rejection.put("rejectedBy", payloadMap.get("completedBy"));
                     throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
-                            reason instanceof String str && !str.isBlank() ? str : "The human task was rejected",
-                            HUMANTASK_REJECTED_FAILURE_TYPE);
+                            reasonText, HUMANTASK_REJECTED_FAILURE_TYPE, rejection);
                 }
                 // Return the raw signal data — awaitHumanTask extracts the "result" field
                 // and coerces it to the caller's typedesc T.

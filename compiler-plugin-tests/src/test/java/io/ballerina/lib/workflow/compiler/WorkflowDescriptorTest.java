@@ -18,8 +18,12 @@
 
 package io.ballerina.lib.workflow.compiler;
 
+import io.ballerina.lib.workflow.compiler.descriptor.DescriptorPackLifecycleTask;
 import io.ballerina.lib.workflow.compiler.descriptor.WorkflowDescriptorBuilder;
+import io.ballerina.lib.workflow.compiler.descriptor.WorkflowDescriptorStore;
 import io.ballerina.projects.DocumentId;
+import io.ballerina.projects.JBallerinaBackend;
+import io.ballerina.projects.JvmTarget;
 import io.ballerina.projects.Module;
 import io.ballerina.projects.ModuleId;
 import io.ballerina.projects.PackageCompilation;
@@ -35,7 +39,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.regex.Pattern;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 /**
  * Tests the Workflow Definition Descriptor: the builder's canonical document (golden
@@ -54,6 +62,12 @@ public class WorkflowDescriptorTest {
     private static final Path DISTRIBUTION_PATH = Paths.get("../", "target", "ballerina-runtime")
             .toAbsolutePath();
     private static final Pattern CHECKSUM_PATTERN = Pattern.compile("\"checksum\":\"sha256:[0-9a-f]{64}\"");
+    private static final String DESCRIPTOR_JAR_ENTRY = "workflow.def.json";
+
+    static {
+        // JBallerinaBackend's interop validation resolves the runtime JAR through this property.
+        System.setProperty("ballerina.home", DISTRIBUTION_PATH.toString());
+    }
 
     @Test
     public void testDescriptorMatchesGolden() throws IOException {
@@ -72,6 +86,59 @@ public class WorkflowDescriptorTest {
         String golden = Files.readString(goldenPath, StandardCharsets.UTF_8).strip();
         Assert.assertEquals(descriptor, golden,
                 "Descriptor does not match the golden document");
+    }
+
+    // The artifact external tooling reads. Emitting an executable from this harness cannot
+    // exercise the packing itself: the descriptor is injected by a compiler-lifecycle task, and
+    // `codeGenerationCompleted` fires in the CLI build flow, not when a test calls
+    // `JBallerinaBackend.emit` directly. So the two halves are asserted separately — the
+    // injection here, and the hand-off between plugin phases in
+    // `testDescriptorStoreCrossesPluginPhases`. End-to-end packing is verified by building a
+    // consumer package with `bal build`, where the entry appears at the JAR root.
+    @Test
+    public void testDescriptorIsPackedIntoAnEmittedJar() throws IOException {
+        BuildProject project = loadProject("descriptor_generation");
+        project.currentPackage().runCodeGenAndModifyPlugins();
+        PackageCompilation compilation = project.currentPackage().getCompilation();
+        Assert.assertEquals(compilation.diagnosticResult().errorCount(), 0,
+                "Compilation errors: " + compilation.diagnosticResult().diagnostics());
+
+        Path execJar = Files.createTempDirectory("wf-descriptor-pack").resolve("packed.jar");
+        JBallerinaBackend backend = JBallerinaBackend.from(compilation, JvmTarget.JAVA_21);
+        backend.emit(JBallerinaBackend.OutputType.EXEC, execJar);
+
+        String expected = buildDescriptor("descriptor_generation");
+        DescriptorPackLifecycleTask.packInto(execJar, expected.getBytes(StandardCharsets.UTF_8));
+
+        try (ZipFile jar = new ZipFile(execJar.toFile())) {
+            ZipEntry entry = jar.getEntry(DESCRIPTOR_JAR_ENTRY);
+            Assert.assertNotNull(entry, DESCRIPTOR_JAR_ENTRY + " is missing from " + execJar);
+            String packed = new String(jar.getInputStream(entry).readAllBytes(), StandardCharsets.UTF_8);
+            Assert.assertEquals(packed, expected,
+                    "The packed descriptor must be the document the builder produced");
+        }
+    }
+
+    // The generator and the lifecycle task run in different plugin instances, so a field on the
+    // shared store is invisible across them — the bytes have to travel through the plugin's user
+    // data map. This pins that contract: a store built over the same map sees what the other
+    // store wrote, which is exactly what a store-per-phase does at build time.
+    @Test
+    public void testDescriptorStoreCrossesPluginPhases() {
+        Map<String, Object> userData = new HashMap<>();
+        WorkflowDescriptorStore generatorSide = new WorkflowDescriptorStore(userData);
+        WorkflowDescriptorStore lifecycleSide = new WorkflowDescriptorStore(userData);
+
+        Assert.assertTrue(lifecycleSide.isEmpty(), "Nothing has been generated yet");
+
+        byte[] descriptor = "{\"workflows\":[]}".getBytes(StandardCharsets.UTF_8);
+        generatorSide.setDescriptorBytes(descriptor);
+
+        Assert.assertFalse(lifecycleSide.isEmpty(),
+                "The lifecycle task must see the document the generator built");
+        Assert.assertEquals(lifecycleSide.descriptorBytes(), descriptor);
+        Assert.assertEquals(new WorkflowDescriptorStore(new HashMap<>()).descriptorBytes().length, 0,
+                "A store with no generated document reports zero bytes, not null");
     }
 
     @Test

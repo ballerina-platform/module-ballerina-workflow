@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- **`workflow.def.json` now reaches the built executable.** The descriptor was registered as a
+  package resource with `SourceGeneratorContext.addResourceFile`, which puts nothing into the
+  executable, the BALA, or `target` — while a file physically present in a package's `resources`
+  directory is packed into both. It is now written into the emitted executable by a
+  compiler-lifecycle task, as the root-level entry `workflow.def.json`, byte-identical to the
+  document the builder produced. Executables only: a BALA does not carry it, and a consumer that
+  needs the artifact regenerates it from the package. Nothing about registration changes — the
+  runtime registers from the copy the source modifier embeds.
+
 - **A rejected human task now reaches the awaiting workflow.** `awaitHumanTask` declared
   `T|HumanTaskTimeoutError`, so a timeout was the only failure it could return. Every
   other outcome — a task rejected through the `fail` management operation, a terminated

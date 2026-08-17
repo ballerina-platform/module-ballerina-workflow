@@ -31,12 +31,19 @@ import io.ballerina.tools.text.LineRange;
 import io.ballerina.tools.text.TextRange;
 
 /**
- * Packs the Workflow Definition Descriptor into build artifacts as the package resource
- * {@code workflow.def.json} (jar-root entry in the executable JAR, and part of the BALA) —
- * the externally consumable, fixed-name artifact of the descriptor spec. This is NOT the
- * runtime's registration source: packed resources never reach the {@code bal test}
- * classpath, so {@link io.ballerina.lib.workflow.compiler.WorkflowSourceModifier} embeds the
- * same canonical document (byte-identical: both come from
+ * Builds the Workflow Definition Descriptor while the semantic model is live, and hands it to
+ * {@link DescriptorPackLifecycleTask} through {@link WorkflowDescriptorStore} to be written into
+ * the executable JAR as the root-level entry {@code workflow.def.json} — the externally
+ * consumable, fixed-name artifact of the descriptor spec.
+ * <p>
+ * The document is <em>not</em> registered as a package resource: measured on 2201.13.4,
+ * {@code SourceGeneratorContext.addResourceFile} puts nothing into the executable, the BALA, or
+ * {@code target}, whereas a file physically present in a package's {@code resources} directory is
+ * packed into both. Only executables carry the descriptor; a BALA does not.
+ * <p>
+ * This is also NOT the runtime's registration source: packed resources never reach the
+ * {@code bal test} classpath, so {@link io.ballerina.lib.workflow.compiler.WorkflowSourceModifier}
+ * embeds the same canonical document (byte-identical: both come from
  * {@link WorkflowDescriptorBuilder#build}, which is deterministic) as data in the generated
  * registration, and the runtime prefers that registered document over the classpath copy.
  *
@@ -44,29 +51,41 @@ import io.ballerina.tools.text.TextRange;
  */
 public class WorkflowDescriptorGenerator extends CodeGenerator {
 
-    /** The packed resource's file name; on the classpath it appears under {@code resources/}. */
-    public static final String DESCRIPTOR_FILE_NAME = "workflow.def.json";
-
     /** Reported when two declarations claim the same descriptor name. */
     private static final String NAME_COLLISION_CODE = "WORKFLOW_DESCRIPTOR_NAME_COLLISION";
 
-    @Override
-    public void init(CodeGeneratorContext generatorContext) {
-        generatorContext.addSourceGeneratorTask(new DescriptorResourceTask());
+    private final WorkflowDescriptorStore store;
+
+    public WorkflowDescriptorGenerator(WorkflowDescriptorStore store) {
+        this.store = store;
     }
 
-    private static final class DescriptorResourceTask implements GeneratorTask<SourceGeneratorContext> {
+    @Override
+    public void init(CodeGeneratorContext generatorContext) {
+        generatorContext.addSourceGeneratorTask(new DescriptorCollectTask(store));
+    }
+
+    private static final class DescriptorCollectTask implements GeneratorTask<SourceGeneratorContext> {
+
+        private final WorkflowDescriptorStore store;
+
+        private DescriptorCollectTask(WorkflowDescriptorStore store) {
+            this.store = store;
+        }
+
         @Override
         public void generate(SourceGeneratorContext context) {
+            // Built here because the semantic model is live during code generation, and handed
+            // to DescriptorPackLifecycleTask, which writes it once the JAR exists. Resources
+            // added through addResourceFile at this point never reach the built artifact, so
+            // the bytes travel through the store instead.
             byte[] descriptor = WorkflowDescriptorBuilder.build(
                     context.currentPackage(), context.compilation(), false,
                     message -> context.reportDiagnostic(DiagnosticFactory.createDiagnostic(
                             new DiagnosticInfo(NAME_COLLISION_CODE, message,
                                     DiagnosticSeverity.ERROR),
                             new NullLocation())));
-            if (descriptor != null) {
-                context.addResourceFile(descriptor, DESCRIPTOR_FILE_NAME);
-            }
+            store.setDescriptorBytes(descriptor);
         }
     }
 

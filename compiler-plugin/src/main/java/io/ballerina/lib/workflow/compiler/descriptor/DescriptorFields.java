@@ -129,6 +129,28 @@ public final class DescriptorFields {
     /** JSON null. */
     public static final String JSON_NULL = "null";
 
+    // ── Enumerated values ─────────────────────────────────────────────────────
+    /** `kind` of a `@workflow:Workflow` function. */
+    public static final String KIND_WORKFLOW = "WORKFLOW";
+    /** `kind` of a durable agent. */
+    public static final String KIND_AGENT = "AGENT";
+    /** A data event the workflow receives. */
+    public static final String DIRECTION_IN = "IN";
+    /** An event consumed once. */
+    public static final String CARDINALITY_SINGLE = "SINGLE";
+    /** An event re-armed per turn. */
+    public static final String CARDINALITY_MULTI = "MULTI";
+    /** A tool backed by a `@workflow:Activity` function. */
+    public static final String SOURCE_ACTIVITY = "ACTIVITY";
+    /** A tool backed by an AI tool or toolkit. */
+    public static final String SOURCE_AI_TOOL = "AI_TOOL";
+    /** A tool backed by a peer agent. */
+    public static final String SOURCE_PEER = "PEER";
+    /** A review that runs before the activity. */
+    public static final String TRIGGER_PRE_RUN = "PRE_RUN";
+    /** A review that runs when the activity fails. */
+    public static final String TRIGGER_ON_FAILURE = "ON_FAILURE";
+
     // ── Ballerina type names used in slots ────────────────────────────────────
     /** The Ballerina nil type, as written in a slot's type field. */
     public static final String BAL_NIL = "()";

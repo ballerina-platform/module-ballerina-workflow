@@ -75,7 +75,10 @@ import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.AGE
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.BAL_NIL;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.BAL_STRING;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.CARDINALITY;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.CARDINALITY_MULTI;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.CARDINALITY_SINGLE;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.DIRECTION;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.DIRECTION_IN;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.EVENTS;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.FUNCTION;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.HUMAN_TASKS;
@@ -84,6 +87,7 @@ import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.JSO
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.JSON_OBJECT;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.JSON_STRING;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_WORKFLOW;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.LOSSY;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.MODULE;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.NAME;
@@ -97,11 +101,16 @@ import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.RES
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.REVIEW_ACTIVITIES;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SCHEMA;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SOURCE;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SOURCE_ACTIVITY;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SOURCE_AI_TOOL;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SOURCE_PEER;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.TOOLS;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.TRIGGERS;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.TRIGGER_ON_FAILURE;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.TYPE;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.VERSION;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.WORKFLOWS;
+
 
 /**
  * Builds the Workflow Definition Descriptor ({@code workflow.def.json}) from the compiled
@@ -122,7 +131,8 @@ public final class WorkflowDescriptorBuilder {
 
     public static final String DESCRIPTOR_VERSION = "1.0";
 
-    private static final String DURABLE_AGENT_TYPE = "DurableAgent";
+    // The agent object type and the human-review retry policy are named in
+    // WorkflowConstants, with the rest of the API vocabulary this builder matches.
 
     // callActivity(activityFunction, args, T, retryPolicy): the policy is the fourth
     // positional parameter, reachable when the caller supplies the typedesc explicitly.
@@ -243,7 +253,7 @@ public final class WorkflowDescriptorBuilder {
 
         Map<String, Object> entry = new LinkedHashMap<>();
         entry.put(NAME, name);
-        entry.put(KIND, "WORKFLOW");
+        entry.put(KIND, KIND_WORKFLOW);
         entry.put(FUNCTION, functionRef(moduleQName, major, name));
 
         List<ParameterSymbol> inputParams = new ArrayList<>();
@@ -302,8 +312,8 @@ public final class WorkflowDescriptorBuilder {
             }
             Map<String, Object> event = new LinkedHashMap<>();
             event.put(NAME, field.getKey());
-            event.put(DIRECTION, "IN");
-            event.put(CARDINALITY, "SINGLE");
+            event.put(DIRECTION, DIRECTION_IN);
+            event.put(CARDINALITY, CARDINALITY_SINGLE);
             event.put(PAYLOAD, DescriptorSchemaGen.slot(payloadType));
             events.add(event);
         }
@@ -398,7 +408,7 @@ public final class WorkflowDescriptorBuilder {
             String activityName = addActivity(fnSymbol);
             if (activityName != null && hasHumanReviewRetryPolicy(args)) {
                 reviewedActivities.computeIfAbsent(activityName, k -> new LinkedHashSet<>())
-                        .add("ON_FAILURE");
+                        .add(TRIGGER_ON_FAILURE);
             }
         }
 
@@ -417,7 +427,7 @@ public final class WorkflowDescriptorBuilder {
         private boolean hasHumanReviewRetryPolicy(SeparatedNodeList<FunctionArgumentNode> args) {
             for (FunctionArgumentNode arg : args) {
                 if (arg instanceof NamedArgumentNode named
-                        && "retryPolicy".equals(named.argumentName().name().text())) {
+                        && WorkflowConstants.ARG_RETRY_POLICY.equals(named.argumentName().name().text())) {
                     return isHumanReviewTyped(named.expression());
                 }
             }
@@ -435,7 +445,7 @@ public final class WorkflowDescriptorBuilder {
             }
             TypeSymbol raw = typeOpt.get();
             if (raw instanceof io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol ref
-                    && ref.getName().map("HumanReview"::equals).orElse(false)) {
+                    && ref.getName().map(WorkflowConstants.HUMAN_REVIEW_TYPE::equals).orElse(false)) {
                 return true;
             }
             return isStringOrStringArray(DescriptorSchemaGen.dereference(raw, 0), 0);
@@ -515,7 +525,7 @@ public final class WorkflowDescriptorBuilder {
         private String extractConstantTaskName(SeparatedNodeList<FunctionArgumentNode> args) {
             for (FunctionArgumentNode arg : args) {
                 if (arg instanceof NamedArgumentNode named
-                        && "taskName".equals(named.argumentName().name().text())) {
+                        && WorkflowConstants.ARG_TASK_NAME.equals(named.argumentName().name().text())) {
                     return constantStringValue(named.expression());
                 }
             }
@@ -610,13 +620,17 @@ public final class WorkflowDescriptorBuilder {
                 String fieldName = specific.fieldName().toSourceCode().trim();
                 ExpressionNode value = specific.valueExpr().get();
                 switch (fieldName) {
-                    case "inputType" -> inputSlot = typedescSlot(semanticModel, value, defaultStringSlot());
-                    case "resultType" -> resultSlot = typedescSlot(semanticModel, value, defaultNilSlot());
-                    case "events" -> events = buildAgentEvents(semanticModel, value);
-                    case "humanTasks" -> humanTasks = buildAgentHumanTasks(semanticModel, value);
-                    case "activities" -> collectAgentActivities(semanticModel, value, tools);
-                    case "tools" -> collectAgentTools(semanticModel, value, tools);
-                    case "peers" -> collectAgentPeers(value, tools);
+                    case WorkflowConstants.AGENT_CONFIG_INPUT_TYPE ->
+                            inputSlot = typedescSlot(semanticModel, value, defaultStringSlot());
+                    case WorkflowConstants.AGENT_CONFIG_RESULT_TYPE ->
+                            resultSlot = typedescSlot(semanticModel, value, defaultNilSlot());
+                    case WorkflowConstants.AGENT_CONFIG_EVENTS -> events = buildAgentEvents(semanticModel, value);
+                    case WorkflowConstants.AGENT_CONFIG_HUMAN_TASKS ->
+                            humanTasks = buildAgentHumanTasks(semanticModel, value);
+                    case WorkflowConstants.AGENT_CONFIG_ACTIVITIES ->
+                            collectAgentActivities(semanticModel, value, tools);
+                    case WorkflowConstants.AGENT_CONFIG_TOOLS -> collectAgentTools(semanticModel, value, tools);
+                    case WorkflowConstants.AGENT_CONFIG_PEERS -> collectAgentPeers(value, tools);
                     default -> {
                         // model, systemPrompt, maxIter: runtime values — not structure.
                     }
@@ -636,7 +650,7 @@ public final class WorkflowDescriptorBuilder {
         if (!(type instanceof io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol ref)) {
             return false;
         }
-        if (!ref.getName().map(DURABLE_AGENT_TYPE::equals).orElse(false)) {
+        if (!ref.getName().map(WorkflowConstants.DURABLE_AGENT_TYPE::equals).orElse(false)) {
             return false;
         }
         return ref.getModule()
@@ -690,7 +704,7 @@ public final class WorkflowDescriptorBuilder {
             String name = null;
             Map<String, Object> request = null;
             Map<String, Object> response = null;
-            String cardinality = "MULTI";
+            String cardinality = CARDINALITY_MULTI;
             for (MappingFieldNode field : mapping.fields()) {
                 if (!(field instanceof SpecificFieldNode specific) || specific.valueExpr().isEmpty()) {
                     continue;
@@ -698,11 +712,12 @@ public final class WorkflowDescriptorBuilder {
                 String fieldName = specific.fieldName().toSourceCode().trim();
                 ExpressionNode expr = specific.valueExpr().get();
                 switch (fieldName) {
-                    case "name" -> name = constantStringValue(expr);
-                    case "request" -> request = typedescSlot(semanticModel, expr, null);
-                    case "response" -> response = typedescSlot(semanticModel, expr, null);
-                    case "cardinality" -> cardinality =
-                            expr.toSourceCode().contains("SINGLE") ? "SINGLE" : "MULTI";
+                    case WorkflowConstants.DECL_NAME -> name = constantStringValue(expr);
+                    case WorkflowConstants.DECL_REQUEST -> request = typedescSlot(semanticModel, expr, null);
+                    case WorkflowConstants.DECL_RESPONSE -> response = typedescSlot(semanticModel, expr, null);
+                    case WorkflowConstants.DECL_CARDINALITY -> cardinality =
+                            expr.toSourceCode().contains(WorkflowConstants.CARDINALITY_SINGLE_EVENT)
+                                ? CARDINALITY_SINGLE : CARDINALITY_MULTI;
                     default -> {
                     }
                 }
@@ -733,9 +748,9 @@ public final class WorkflowDescriptorBuilder {
                 }
                 String fieldName = specific.fieldName().toSourceCode().trim();
                 ExpressionNode expr = specific.valueExpr().get();
-                if ("name".equals(fieldName)) {
+                if (WorkflowConstants.DECL_NAME.equals(fieldName)) {
                     name = constantStringValue(expr);
-                } else if ("resultType".equals(fieldName)) {
+                } else if (WorkflowConstants.AGENT_CONFIG_RESULT_TYPE.equals(fieldName)) {
                     result = typedescSlot(semanticModel, expr, null);
                 }
             }
@@ -767,9 +782,9 @@ public final class WorkflowDescriptorBuilder {
                     String fieldName = specific.fieldName().toSourceCode().trim();
                     ExpressionNode expr = specific.valueExpr().get();
                     switch (fieldName) {
-                        case "activity" -> fnRef = expr;
-                        case "name" -> explicitName = constantStringValue(expr);
-                        case "bindings" -> {
+                        case WorkflowConstants.DECL_ACTIVITY -> fnRef = expr;
+                        case WorkflowConstants.DECL_NAME -> explicitName = constantStringValue(expr);
+                        case WorkflowConstants.DECL_BINDINGS -> {
                             if (expr instanceof MappingConstructorExpressionNode bindings) {
                                 for (MappingFieldNode binding : bindings.fields()) {
                                     if (binding instanceof SpecificFieldNode b) {
@@ -807,7 +822,7 @@ public final class WorkflowDescriptorBuilder {
             }
             Map<String, Object> tool = new LinkedHashMap<>();
             tool.put(NAME, name);
-            tool.put(SOURCE, "ACTIVITY");
+            tool.put(SOURCE, SOURCE_ACTIVITY);
             tool.put(INPUT, DescriptorSchemaGen.parameterSlot(params));
             tools.put(name, tool);
         }
@@ -823,7 +838,7 @@ public final class WorkflowDescriptorBuilder {
             if (member instanceof MappingConstructorExpressionNode mapping) {
                 for (MappingFieldNode field : mapping.fields()) {
                     if (field instanceof SpecificFieldNode specific && specific.valueExpr().isPresent()
-                            && "tool".equals(specific.fieldName().toSourceCode().trim())) {
+                            && WorkflowConstants.DECL_TOOL.equals(specific.fieldName().toSourceCode().trim())) {
                         ref = specific.valueExpr().get();
                     }
                 }
@@ -842,7 +857,7 @@ public final class WorkflowDescriptorBuilder {
             }
             Map<String, Object> tool = new LinkedHashMap<>();
             tool.put(NAME, name);
-            tool.put(SOURCE, "AI_TOOL");
+            tool.put(SOURCE, SOURCE_AI_TOOL);
             if (symbol.isPresent() && symbol.get().kind() == SymbolKind.FUNCTION) {
                 FunctionSymbol fnSymbol = (FunctionSymbol) symbol.get();
                 tool.put(INPUT, DescriptorSchemaGen.parameterSlot(
@@ -857,7 +872,7 @@ public final class WorkflowDescriptorBuilder {
             String name = null;
             for (MappingFieldNode field : mapping.fields()) {
                 if (field instanceof SpecificFieldNode specific && specific.valueExpr().isPresent()
-                        && "name".equals(specific.fieldName().toSourceCode().trim())) {
+                        && WorkflowConstants.DECL_NAME.equals(specific.fieldName().toSourceCode().trim())) {
                     name = constantStringValue(specific.valueExpr().get());
                 }
             }
@@ -866,7 +881,7 @@ public final class WorkflowDescriptorBuilder {
             }
             Map<String, Object> tool = new LinkedHashMap<>();
             tool.put(NAME, name);
-            tool.put(SOURCE, "PEER");
+            tool.put(SOURCE, SOURCE_PEER);
             tools.put(name, tool);
         }
     }

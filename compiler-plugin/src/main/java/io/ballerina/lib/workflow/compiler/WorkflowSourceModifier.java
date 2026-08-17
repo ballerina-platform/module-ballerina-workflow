@@ -261,7 +261,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         // launched during workflow registration can already resolve them.
         for (String name : connectionNames) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerConnection(\"").append(name).append("\", ")
+                    .append(":" + WorkflowConstants.REGISTER_CONNECTION_FUNCTION + "(\"").append(name).append("\", ")
                     .append(name).append(");").append(System.lineSeparator());
         }
 
@@ -271,7 +271,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         // implementation functions by their recorded coordinates (symbol loading).
         if (descriptorJson != null) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerWorkflowDescriptor(\"")
+                    .append(":" + WorkflowConstants.REGISTER_DESCRIPTOR_FUNCTION + "(\"")
                     .append(escapeBallerinaStringLiteral(descriptorJson))
                     .append("\");").append(System.lineSeparator());
         }
@@ -283,7 +283,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         }
 
         body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                .append(":startWorkflowRuntime();").append(System.lineSeparator());
+                .append(":" + WorkflowConstants.START_RUNTIME_FUNCTION + "();").append(System.lineSeparator());
         body.append("    return true;").append(System.lineSeparator());
         body.append("}");
 
@@ -317,7 +317,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         }
         String agentNameLiteral = "\"" + escapeBallerinaStringLiteral(decl.agentName()) + "\"";
         body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                .append(":registerDurableAgentDecl(").append(agentNameLiteral)
+                .append(":" + WorkflowConstants.REGISTER_AGENT_DECL_FUNCTION + "(").append(agentNameLiteral)
                 .append(", ").append(decl.modelSource())
                 .append(", ").append(decl.systemPromptSource())
                 .append(", ").append(decl.maxIterSource() != null ? decl.maxIterSource() : "16")
@@ -326,7 +326,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                 .append(");").append(System.lineSeparator());
         for (DurableAgentDeclInfo.ActivityDecl activity : decl.activities()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerDurableAgentActivity(").append(agentNameLiteral)
+                    .append(":" + WorkflowConstants.REGISTER_AGENT_ACTIVITY_FUNCTION + "(").append(agentNameLiteral)
                     .append(", \"").append(escapeBallerinaStringLiteral(activity.toolName()))
                     .append("\", ").append(activity.functionRefSource())
                     .append(", ").append(activity.metaSource() != null ? activity.metaSource() : "()")
@@ -335,7 +335,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         }
         for (DurableAgentDeclInfo.ToolRef toolRef : decl.aiToolRefs()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerDurableAgentTool(").append(agentNameLiteral)
+                    .append(":" + WorkflowConstants.REGISTER_AGENT_TOOL_FUNCTION + "(").append(agentNameLiteral)
                     .append(", ").append(toolRef.refSource());
             if (toolRef.approvalSource() != null) {
                 body.append(", requiresApproval = ").append(toolRef.approvalSource());
@@ -347,7 +347,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         }
         for (DurableAgentDeclInfo.EventDecl event : decl.events()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerDurableAgentEvent(").append(agentNameLiteral)
+                    .append(":" + WorkflowConstants.REGISTER_AGENT_EVENT_FUNCTION + "(").append(agentNameLiteral)
                     .append(", \"").append(escapeBallerinaStringLiteral(event.name()))
                     .append("\", ").append(event.requestTypeSource())
                     .append(", ").append(event.responseTypeSource() != null ? event.responseTypeSource() : "()")
@@ -356,7 +356,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         }
         for (DurableAgentDeclInfo.HumanTaskDecl task : decl.humanTasks()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerDurableAgentHumanTask(").append(agentNameLiteral)
+                    .append(":" + WorkflowConstants.REGISTER_AGENT_HUMAN_TASK_FUNCTION + "(").append(agentNameLiteral)
                     .append(", \"").append(escapeBallerinaStringLiteral(task.name()))
                     .append("\", ").append(task.metaSource() != null ? task.metaSource() : "()")
                     .append(", ").append(task.resultTypeSource() != null ? task.resultTypeSource() : "anydata")
@@ -364,7 +364,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         }
         for (DurableAgentDeclInfo.PeerDecl peer : decl.peers()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerDurableAgentPeer(").append(agentNameLiteral)
+                    .append(":" + WorkflowConstants.REGISTER_AGENT_PEER_FUNCTION + "(").append(agentNameLiteral)
                     .append(", \"").append(escapeBallerinaStringLiteral(peer.name()))
                     .append("\", \"").append(escapeBallerinaStringLiteral(peer.targetAgent()))
                     .append("\", ").append(peer.metaSource() != null ? peer.metaSource() : "()")
@@ -376,7 +376,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         // The runner function and the built-in agent activities are captured natively at
         // workflow-module init, so the generated code references only the agent name.
         body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                .append(":registerDurableAgentRunner(").append(agentNameLiteral)
+                .append(":" + WorkflowConstants.REGISTER_AGENT_RUNNER_FUNCTION + "(").append(agentNameLiteral)
                 .append(");").append(System.lineSeparator());
         body.append("    ").append(decl.agentName()).append(".bindAgentName(")
                 .append(agentNameLiteral).append(");").append(System.lineSeparator());

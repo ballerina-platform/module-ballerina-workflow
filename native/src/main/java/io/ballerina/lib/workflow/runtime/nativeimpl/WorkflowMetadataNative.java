@@ -19,6 +19,7 @@
 package io.ballerina.lib.workflow.runtime.nativeimpl;
 
 import io.ballerina.lib.workflow.utils.DescriptorFields;
+import io.ballerina.lib.workflow.utils.MetadataFields;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
 import io.ballerina.runtime.api.creators.ErrorCreator;
@@ -72,16 +73,16 @@ public final class WorkflowMetadataNative {
     public static Object getWorkflowMetadata() {
         try {
             BMap<BString, Object> root = ValueCreator.createMapValue(JSON_MAP_TYPE);
-            root.put(StringUtils.fromString("metadataVersion"), StringUtils.fromString(METADATA_VERSION));
-            root.put(StringUtils.fromString("definitions"), buildDefinitions());
-            root.put(StringUtils.fromString("humanTasks"), buildHumanTasks());
-            root.put(StringUtils.fromString("activities"), buildActivities());
-            root.put(StringUtils.fromString("reviewActions"), buildReviewActions());
-            root.put(StringUtils.fromString("agents"), buildAgents());
+            root.put(MetadataFields.METADATA_VERSION, StringUtils.fromString(METADATA_VERSION));
+            root.put(MetadataFields.DEFINITIONS, buildDefinitions());
+            root.put(MetadataFields.HUMAN_TASKS, buildHumanTasks());
+            root.put(MetadataFields.ACTIVITIES, buildActivities());
+            root.put(MetadataFields.REVIEW_ACTIONS, buildReviewActions());
+            root.put(MetadataFields.AGENTS, buildAgents());
             // The build-time Workflow Definition Descriptor (workflow.def.json), when packed:
             // the canonical, versioned, checksummed description of the same structures. Null
             // when the program was built without one (older plugin, or no executable JAR).
-            root.put(StringUtils.fromString("descriptor"), WorkflowDescriptorNative.readPackedDescriptor());
+            root.put(MetadataFields.DESCRIPTOR, WorkflowDescriptorNative.readPackedDescriptor());
             return root;
         } catch (Exception e) {
             return ErrorCreator.createError(
@@ -97,11 +98,11 @@ public final class WorkflowMetadataNative {
                 : processRegistry.entrySet()) {
             String displayType = stripPrefix(entry.getKey(), WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX);
             BMap<BString, Object> def = ValueCreator.createMapValue(JSON_MAP_TYPE);
-            def.put(StringUtils.fromString("workflowType"), StringUtils.fromString(displayType));
-            def.put(StringUtils.fromString("kind"), StringUtils.fromString(
-                    DurableAgentNative.getAgentDecl(displayType) != null ? "AGENT" : "WORKFLOW"));
+            def.put(MetadataFields.WORKFLOW_TYPE, StringUtils.fromString(displayType));
+            def.put(MetadataFields.KIND, DurableAgentNative.getAgentDecl(displayType) != null
+                    ? MetadataFields.KIND_AGENT : MetadataFields.KIND_WORKFLOW);
             String inputSchema = ManagementNative.deriveWorkflowInputSchema(entry.getValue());
-            def.put(StringUtils.fromString("inputSchema"),
+            def.put(MetadataFields.INPUT_SCHEMA,
                     inputSchema != null ? StringUtils.fromString(inputSchema) : null);
             definitions.append(def);
         }
@@ -122,13 +123,13 @@ public final class WorkflowMetadataNative {
 
     private static BMap<BString, Object> buildHumanTaskEntry(String displayName, Type resultType) {
         BMap<BString, Object> task = ValueCreator.createMapValue(JSON_MAP_TYPE);
-        task.put(StringUtils.fromString("name"), StringUtils.fromString(displayName));
+        task.put(MetadataFields.NAME, StringUtils.fromString(displayName));
         // The registry knows the result type once the task has executed (lazy registration in
         // awaitHumanTask); before that, the completion-form schema comes from the packed
         // workflow descriptor, which the compiler plugin generated at build time.
         String resultSchema = resultType != null ? TypesUtil.toJsonSchema(resultType)
                 : descriptorHumanTaskSchema(displayName);
-        task.put(StringUtils.fromString("resultSchema"),
+        task.put(MetadataFields.RESULT_SCHEMA,
                 resultSchema != null ? StringUtils.fromString(resultSchema) : null);
         return task;
     }
@@ -197,10 +198,10 @@ public final class WorkflowMetadataNative {
             String workflowType = separator > 0 ? qualified.substring(0, separator) : "";
             String activityName = separator > 0 ? qualified.substring(separator + 1) : qualified;
             BMap<BString, Object> activity = ValueCreator.createMapValue(JSON_MAP_TYPE);
-            activity.put(StringUtils.fromString("workflowType"), StringUtils.fromString(workflowType));
-            activity.put(StringUtils.fromString("name"), StringUtils.fromString(activityName));
+            activity.put(MetadataFields.WORKFLOW_TYPE, StringUtils.fromString(workflowType));
+            activity.put(MetadataFields.NAME, StringUtils.fromString(activityName));
             String inputSchema = deriveActivityInputSchema(entry.getValue());
-            activity.put(StringUtils.fromString("inputSchema"),
+            activity.put(MetadataFields.INPUT_SCHEMA,
                     inputSchema != null ? StringUtils.fromString(inputSchema) : null);
             activities.append(activity);
         }
@@ -232,9 +233,9 @@ public final class WorkflowMetadataNative {
 
     private static BArray buildReviewActions() {
         BArray actions = ValueCreator.createArrayValue(JSON_ARRAY_TYPE);
-        actions.append(StringUtils.fromString("proceed"));
-        actions.append(StringUtils.fromString("proceed-with-input"));
-        actions.append(StringUtils.fromString("reject"));
+        actions.append(MetadataFields.ACTION_PROCEED);
+        actions.append(MetadataFields.ACTION_PROCEED_WITH_INPUT);
+        actions.append(MetadataFields.ACTION_REJECT);
         return actions;
     }
 
@@ -244,16 +245,16 @@ public final class WorkflowMetadataNative {
                 new TreeMap<>(DurableAgentNative.getAgentDeclRegistry());
         for (DurableAgentNative.AgentDecl decl : declRegistry.values()) {
             BMap<BString, Object> agent = ValueCreator.createMapValue(JSON_MAP_TYPE);
-            agent.put(StringUtils.fromString("name"), StringUtils.fromString(decl.agentName()));
-            agent.put(StringUtils.fromString("events"), toJsonStringArray(decl.events().keySet()));
+            agent.put(MetadataFields.NAME, StringUtils.fromString(decl.agentName()));
+            agent.put(MetadataFields.EVENTS, toJsonStringArray(decl.events().keySet()));
             List<String> toolNames = new ArrayList<>(decl.activities().keySet());
             toolNames.addAll(decl.tools().keySet());
-            agent.put(StringUtils.fromString("tools"), toJsonStringArray(toolNames));
+            agent.put(MetadataFields.TOOLS, toJsonStringArray(toolNames));
             List<String> taskNames = new ArrayList<>();
             for (String taskName : decl.humanTasks().keySet()) {
                 taskNames.add(decl.agentName() + "." + taskName);
             }
-            agent.put(StringUtils.fromString("humanTasks"), toJsonStringArray(taskNames));
+            agent.put(MetadataFields.HUMAN_TASKS, toJsonStringArray(taskNames));
             agents.append(agent);
         }
         return agents;

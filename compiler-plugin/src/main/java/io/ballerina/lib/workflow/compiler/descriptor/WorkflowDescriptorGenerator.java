@@ -47,6 +47,9 @@ public class WorkflowDescriptorGenerator extends CodeGenerator {
     /** The packed resource's file name; on the classpath it appears under {@code resources/}. */
     public static final String DESCRIPTOR_FILE_NAME = "workflow.def.json";
 
+    /** Reported when two declarations claim the same descriptor name. */
+    private static final String NAME_COLLISION_CODE = "WORKFLOW_DESCRIPTOR_NAME_COLLISION";
+
     @Override
     public void init(CodeGeneratorContext generatorContext) {
         generatorContext.addSourceGeneratorTask(new DescriptorResourceTask());
@@ -58,7 +61,7 @@ public class WorkflowDescriptorGenerator extends CodeGenerator {
             byte[] descriptor = WorkflowDescriptorBuilder.build(
                     context.currentPackage(), context.compilation(), false,
                     message -> context.reportDiagnostic(DiagnosticFactory.createDiagnostic(
-                            new DiagnosticInfo("WORKFLOW_DESCRIPTOR_NAME_COLLISION", message,
+                            new DiagnosticInfo(NAME_COLLISION_CODE, message,
                                     DiagnosticSeverity.ERROR),
                             new NullLocation())));
             if (descriptor != null) {

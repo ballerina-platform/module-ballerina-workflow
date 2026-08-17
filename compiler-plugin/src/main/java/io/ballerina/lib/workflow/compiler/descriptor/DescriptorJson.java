@@ -39,6 +39,10 @@ public final class DescriptorJson {
 
     public static final String CHECKSUM_FIELD = "checksum";
 
+    /** The digest the checksum is computed with, and the prefix that names it in the document. */
+    private static final String CHECKSUM_ALGORITHM = "SHA-256";
+    private static final String CHECKSUM_PREFIX = "sha256:";
+
     private DescriptorJson() {
     }
 
@@ -54,7 +58,8 @@ public final class DescriptorJson {
         withoutChecksum.remove(CHECKSUM_FIELD);
         String canonical = serialize(withoutChecksum);
         Map<String, Object> complete = new TreeMap<>(withoutChecksum);
-        complete.put(CHECKSUM_FIELD, "sha256:" + sha256Hex(canonical.getBytes(StandardCharsets.UTF_8)));
+        complete.put(CHECKSUM_FIELD,
+                CHECKSUM_PREFIX + sha256Hex(canonical.getBytes(StandardCharsets.UTF_8)));
         return serialize(complete).getBytes(StandardCharsets.UTF_8);
     }
 
@@ -136,7 +141,7 @@ public final class DescriptorJson {
 
     private static String sha256Hex(byte[] bytes) {
         try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            MessageDigest digest = MessageDigest.getInstance(CHECKSUM_ALGORITHM);
             byte[] hash = digest.digest(bytes);
             StringBuilder hex = new StringBuilder(hash.length * 2);
             for (byte b : hash) {
@@ -144,7 +149,7 @@ public final class DescriptorJson {
             }
             return hex.toString();
         } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 unavailable", e);
+            throw new IllegalStateException(CHECKSUM_ALGORITHM + " unavailable", e);
         }
     }
 }

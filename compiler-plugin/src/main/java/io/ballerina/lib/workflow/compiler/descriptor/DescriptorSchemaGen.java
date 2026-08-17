@@ -36,6 +36,24 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.BAL_ANYDATA;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.BAL_NIL;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.JSON_ARRAY;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.JSON_BOOLEAN;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.JSON_INTEGER;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.JSON_NULL;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.JSON_NUMBER;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.JSON_OBJECT;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.JSON_STRING;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.LOSSY;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SCHEMA;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SCHEMA_ADDITIONAL_PROPERTIES;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SCHEMA_ANY_OF;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SCHEMA_ITEMS;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SCHEMA_PROPERTIES;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SCHEMA_REQUIRED;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.TYPE;
+
 /**
  * Compile-time JSON Schema generation from semantic-model type symbols for the Workflow
  * Definition Descriptor. The emitted dialect is pinned to exactly what the runtime's
@@ -83,18 +101,18 @@ public final class DescriptorSchemaGen {
     public static Map<String, Object> slot(TypeSymbol type) {
         Map<String, Object> slot = new LinkedHashMap<>();
         if (type == null) {
-            slot.put("type", "anydata");
-            slot.put("schema", mapOf("type", "object"));
-            slot.put("lossy", Boolean.TRUE);
+            slot.put(TYPE, BAL_ANYDATA);
+            slot.put(SCHEMA, mapOf(TYPE, JSON_OBJECT));
+            slot.put(LOSSY, Boolean.TRUE);
             return slot;
         }
-        slot.put("type", typeString(type));
+        slot.put(TYPE, typeString(type));
         Tier tier = tierOf(type, 0);
         if (tier == Tier.EXACT) {
-            slot.put("schema", schemaObject(type, 0));
+            slot.put(SCHEMA, schemaObject(type, 0));
         } else if (tier == Tier.APPROXIMATE) {
-            slot.put("schema", schemaObject(type, 0));
-            slot.put("lossy", Boolean.TRUE);
+            slot.put(SCHEMA, schemaObject(type, 0));
+            slot.put(LOSSY, Boolean.TRUE);
         }
         return slot;
     }
@@ -110,11 +128,11 @@ public final class DescriptorSchemaGen {
     public static Map<String, Object> outputSlot(TypeSymbol returnType) {
         Map<String, Object> slot = new LinkedHashMap<>();
         if (returnType == null) {
-            slot.put("type", "()");
-            slot.put("schema", mapOf("type", "null"));
+            slot.put(TYPE, "()");
+            slot.put(SCHEMA, mapOf(TYPE, JSON_NULL));
             return slot;
         }
-        slot.put("type", typeString(returnType));
+        slot.put(TYPE, typeString(returnType));
         TypeSymbol successType = stripErrorMembers(returnType);
         if (successType == null) {
             // The whole type is error — legal, simply schema-less.
@@ -122,10 +140,10 @@ public final class DescriptorSchemaGen {
         }
         Tier tier = tierOf(successType, 0);
         if (tier == Tier.EXACT) {
-            slot.put("schema", schemaObject(successType, 0));
+            slot.put(SCHEMA, schemaObject(successType, 0));
         } else if (tier == Tier.APPROXIMATE) {
-            slot.put("schema", schemaObject(successType, 0));
-            slot.put("lossy", Boolean.TRUE);
+            slot.put(SCHEMA, schemaObject(successType, 0));
+            slot.put(LOSSY, Boolean.TRUE);
         }
         return slot;
     }
@@ -160,17 +178,17 @@ public final class DescriptorSchemaGen {
             tier = min(tier, tierOf(p.typeDescriptor(), 0));
         }
         typeSig.append(')');
-        slot.put("type", typeSig.toString());
+        slot.put(TYPE, typeSig.toString());
         if (tier != Tier.NONE) {
             Map<String, Object> schema = new LinkedHashMap<>();
-            schema.put("type", "object");
-            schema.put("properties", properties);
+            schema.put(TYPE, JSON_OBJECT);
+            schema.put(SCHEMA_PROPERTIES, properties);
             if (!required.isEmpty()) {
-                schema.put("required", required);
+                schema.put(SCHEMA_REQUIRED, required);
             }
-            slot.put("schema", schema);
+            slot.put(SCHEMA, schema);
             if (tier == Tier.APPROXIMATE) {
-                slot.put("lossy", Boolean.TRUE);
+                slot.put(LOSSY, Boolean.TRUE);
             }
         }
         return slot;
@@ -186,40 +204,40 @@ public final class DescriptorSchemaGen {
      */
     public static Object schemaObject(TypeSymbol rawType, int depth) {
         if (rawType == null || depth > MAX_DEPTH) {
-            return mapOf("type", "object");
+            return mapOf(TYPE, JSON_OBJECT);
         }
         TypeSymbol type = dereference(rawType, depth);
         if (type == null) {
-            return mapOf("type", "object");
+            return mapOf(TYPE, JSON_OBJECT);
         }
         TypeDescKind kind = type.typeKind();
         switch (kind) {
             case INT, BYTE, INT_SIGNED8, INT_SIGNED16, INT_SIGNED32,
                  INT_UNSIGNED8, INT_UNSIGNED16, INT_UNSIGNED32 -> {
-                return mapOf("type", "integer");
+                return mapOf(TYPE, JSON_INTEGER);
             }
             case FLOAT, DECIMAL -> {
-                return mapOf("type", "number");
+                return mapOf(TYPE, JSON_NUMBER);
             }
             case BOOLEAN -> {
-                return mapOf("type", "boolean");
+                return mapOf(TYPE, JSON_BOOLEAN);
             }
             case STRING, STRING_CHAR -> {
-                return mapOf("type", "string");
+                return mapOf(TYPE, JSON_STRING);
             }
             case NIL -> {
-                return mapOf("type", "null");
+                return mapOf(TYPE, JSON_NULL);
             }
             case ARRAY -> {
                 Map<String, Object> schema = new LinkedHashMap<>();
-                schema.put("type", "array");
-                schema.put("items", schemaObject(((ArrayTypeSymbol) type).memberTypeDescriptor(), depth + 1));
+                schema.put(TYPE, JSON_ARRAY);
+                schema.put(SCHEMA_ITEMS, schemaObject(((ArrayTypeSymbol) type).memberTypeDescriptor(), depth + 1));
                 return schema;
             }
             case MAP -> {
                 Map<String, Object> schema = new LinkedHashMap<>();
-                schema.put("type", "object");
-                schema.put("additionalProperties", schemaObject(((MapTypeSymbol) type).typeParam(), depth + 1));
+                schema.put(TYPE, JSON_OBJECT);
+                schema.put(SCHEMA_ADDITIONAL_PROPERTIES, schemaObject(((MapTypeSymbol) type).typeParam(), depth + 1));
                 return schema;
             }
             case RECORD -> {
@@ -231,14 +249,14 @@ public final class DescriptorSchemaGen {
             default -> {
                 // json/anydata and every unsupported kind: the permissive object schema
                 // (mirrors the runtime fallback).
-                return mapOf("type", "object");
+                return mapOf(TYPE, JSON_OBJECT);
             }
         }
     }
 
     private static Map<String, Object> recordSchema(RecordTypeSymbol recordType, int depth) {
         Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("type", "object");
+        schema.put(TYPE, JSON_OBJECT);
         Map<String, Object> properties = new LinkedHashMap<>();
         List<Object> required = new ArrayList<>();
         for (Map.Entry<String, RecordFieldSymbol> entry : recordType.fieldDescriptors().entrySet()) {
@@ -251,13 +269,13 @@ public final class DescriptorSchemaGen {
                 required.add(fieldName);
             }
         }
-        schema.put("properties", properties);
+        schema.put(SCHEMA_PROPERTIES, properties);
         if (!required.isEmpty()) {
-            schema.put("required", required);
+            schema.put(SCHEMA_REQUIRED, required);
         }
         Optional<TypeSymbol> restType = recordType.restTypeDescriptor();
         if (restType.isPresent()) {
-            schema.put("additionalProperties", schemaObject(restType.get(), depth + 1));
+            schema.put(SCHEMA_ADDITIONAL_PROPERTIES, schemaObject(restType.get(), depth + 1));
         }
         return schema;
     }
@@ -275,24 +293,24 @@ public final class DescriptorSchemaGen {
             }
         }
         if (nonNullMembers.isEmpty()) {
-            return mapOf("type", "null");
+            return mapOf(TYPE, JSON_NULL);
         }
         if (nonNullMembers.size() == 1) {
             Object base = schemaObject(nonNullMembers.get(0), depth + 1);
             if (hasNull && base instanceof Map<?, ?> baseMapRaw) {
                 Map<String, Object> baseMap = (Map<String, Object>) baseMapRaw;
-                Object typeVal = baseMap.get("type");
+                Object typeVal = baseMap.get(TYPE);
                 if (typeVal instanceof String typeStr) {
                     List<Object> unionTypes = new ArrayList<>();
                     unionTypes.add(typeStr);
-                    unionTypes.add("null");
-                    baseMap.put("type", unionTypes);
+                    unionTypes.add(JSON_NULL);
+                    baseMap.put(TYPE, unionTypes);
                 } else if (typeVal instanceof List<?> typeList) {
                     List<Object> unionTypes = new ArrayList<>(typeList);
-                    if (!unionTypes.contains("null")) {
-                        unionTypes.add("null");
+                    if (!unionTypes.contains(JSON_NULL)) {
+                        unionTypes.add(JSON_NULL);
                     }
-                    baseMap.put("type", unionTypes);
+                    baseMap.put(TYPE, unionTypes);
                 }
             }
             return base;
@@ -302,10 +320,10 @@ public final class DescriptorSchemaGen {
             schemas.add(schemaObject(member, depth + 1));
         }
         if (hasNull) {
-            schemas.add(mapOf("type", "null"));
+            schemas.add(mapOf(TYPE, JSON_NULL));
         }
         Map<String, Object> anyOf = new LinkedHashMap<>();
-        anyOf.put("anyOf", schemas);
+        anyOf.put(SCHEMA_ANY_OF, schemas);
         return anyOf;
     }
 
@@ -324,8 +342,15 @@ public final class DescriptorSchemaGen {
         }
         switch (type.typeKind()) {
             case INT, BYTE, INT_SIGNED8, INT_SIGNED16, INT_SIGNED32, INT_UNSIGNED8, INT_UNSIGNED16,
-                 INT_UNSIGNED32, FLOAT, DECIMAL, BOOLEAN, STRING, STRING_CHAR, NIL, SINGLETON -> {
+                 INT_UNSIGNED32, FLOAT, DECIMAL, BOOLEAN, STRING, STRING_CHAR, NIL -> {
                 return Tier.EXACT;
+            }
+            case SINGLETON -> {
+                // The pinned dialect renders a singleton as the permissive object schema
+                // (matching TypesUtil), which does not capture the value the type admits.
+                // That is an approximation, so the slot must say so rather than claim to be
+                // exact — a form generator would otherwise trust it for validation.
+                return Tier.APPROXIMATE;
             }
             case ARRAY -> {
                 return tierOf(((ArrayTypeSymbol) type).memberTypeDescriptor(), depth + 1);
@@ -379,10 +404,10 @@ public final class DescriptorSchemaGen {
     /** The resolved Ballerina type descriptor string for a slot's {@code type} field. */
     public static String typeString(TypeSymbol type) {
         if (type == null) {
-            return "anydata";
+            return BAL_ANYDATA;
         }
         if (type.typeKind() == TypeDescKind.NIL) {
-            return "()";
+            return BAL_NIL;
         }
         if (type instanceof TypeReferenceTypeSymbol ref) {
             return ref.getName().orElseGet(type::signature);

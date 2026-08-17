@@ -25,6 +25,7 @@ import io.ballerina.lib.workflow.context.WorkflowContextNative;
 import io.ballerina.lib.workflow.registry.EventInfo;
 import io.ballerina.lib.workflow.runtime.WorkflowRuntime;
 import io.ballerina.lib.workflow.utils.BallerinaFailureConverter;
+import io.ballerina.lib.workflow.utils.DescriptorFields;
 import io.ballerina.lib.workflow.utils.EventExtractor;
 import io.ballerina.lib.workflow.utils.EventFutureCreator;
 import io.ballerina.lib.workflow.utils.TypesUtil;
@@ -751,7 +752,7 @@ public final class WorkflowWorkerNative {
         if (!(descriptorDoc instanceof BMap<?, ?> document)) {
             return;
         }
-        Object workflows = document.get(StringUtils.fromString("workflows"));
+        Object workflows = document.get(DescriptorFields.WORKFLOWS);
         if (!(workflows instanceof BArray workflowArray)) {
             return;
         }
@@ -763,12 +764,12 @@ public final class WorkflowWorkerNative {
     }
 
     private static void registerDescriptorWorkflow(BMap<?, ?> workflow) {
-        String name = stringField(workflow, "name");
+        String name = stringField(workflow, DescriptorFields.NAME);
         if (name == null) {
             return;
         }
         String workflowType = WORKFLOW_TYPE_PREFIX + name;
-        WorkflowFunctionRef ref = symbolRefOf(workflow.get(StringUtils.fromString("function")));
+        WorkflowFunctionRef ref = symbolRefOf(workflow.get(DescriptorFields.FUNCTION));
         if (ref == null) {
             LOGGER.warn("Descriptor workflow '{}' could not be resolved to a function symbol; skipping", name);
         } else if (PROCESS_REGISTRY.putIfAbsent(workflowType, ref) == null) {
@@ -783,18 +784,18 @@ public final class WorkflowWorkerNative {
             }
         }
 
-        Object activities = workflow.get(StringUtils.fromString("activities"));
+        Object activities = workflow.get(DescriptorFields.ACTIVITIES);
         if (activities instanceof BArray activityArray) {
             for (long i = 0; i < activityArray.getLength(); i++) {
                 if (!(activityArray.get(i) instanceof BMap<?, ?> activity)) {
                     continue;
                 }
-                String activityName = stringField(activity, "name");
+                String activityName = stringField(activity, DescriptorFields.NAME);
                 if (activityName == null) {
                     continue;
                 }
                 WorkflowFunctionRef activityRef =
-                        symbolRefOf(activity.get(StringUtils.fromString("function")));
+                        symbolRefOf(activity.get(DescriptorFields.FUNCTION));
                 if (activityRef == null) {
                     LOGGER.warn("Descriptor activity '{}.{}' could not be resolved to a function symbol; skipping",
                             name, activityName);
@@ -804,11 +805,11 @@ public final class WorkflowWorkerNative {
             }
         }
 
-        Object humanTasks = workflow.get(StringUtils.fromString("humanTasks"));
+        Object humanTasks = workflow.get(DescriptorFields.HUMAN_TASKS);
         if (humanTasks instanceof BArray taskArray) {
             for (long i = 0; i < taskArray.getLength(); i++) {
                 if (taskArray.get(i) instanceof BMap<?, ?> task) {
-                    String taskName = stringField(task, "name");
+                    String taskName = stringField(task, DescriptorFields.NAME);
                     if (taskName != null) {
                         // Store the prefixed Temporal workflow type — the form awaitHumanTask
                         // registers and the adapter's routing check reads.
@@ -829,9 +830,9 @@ public final class WorkflowWorkerNative {
         if (!(functionField instanceof BMap<?, ?> fn)) {
             return null;
         }
-        String moduleQName = stringField(fn, "module");
-        String version = stringField(fn, "version");
-        String functionName = stringField(fn, "name");
+        String moduleQName = stringField(fn, DescriptorFields.MODULE);
+        String version = stringField(fn, DescriptorFields.VERSION);
+        String functionName = stringField(fn, DescriptorFields.NAME);
         if (moduleQName == null || version == null || functionName == null) {
             return null;
         }
@@ -872,8 +873,8 @@ public final class WorkflowWorkerNative {
         }
     }
 
-    private static String stringField(BMap<?, ?> map, String field) {
-        Object value = map.get(StringUtils.fromString(field));
+    private static String stringField(BMap<?, ?> map, BString field) {
+        Object value = map.get(field);
         return value instanceof BString bString ? bString.getValue() : null;
     }
 

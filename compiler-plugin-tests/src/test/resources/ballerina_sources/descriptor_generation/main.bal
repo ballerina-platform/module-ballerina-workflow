@@ -37,6 +37,10 @@ function expenseApproval(workflow:Context ctx, ExpenseRequest expense) returns e
 
 @workflow:Workflow
 function orderFlow(workflow:Context ctx, OrderEvents events) returns error? {
+    // A review activity declared positionally: the typedesc is supplied explicitly, so
+    // the retry policy lands as the fourth argument rather than a named one.
+    PostingResult _ = check ctx->callActivity(postToLedger, {"expense": {id: "x", amount: 1, note: ()}},
+        PostingResult, "OPS");
     // The descriptor captures the events record from the signature; waits are
     // exercised by other test packages.
     return;

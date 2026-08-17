@@ -56,7 +56,7 @@ public class WorkflowDescriptorGenerator extends CodeGenerator {
         @Override
         public void generate(SourceGeneratorContext context) {
             byte[] descriptor = WorkflowDescriptorBuilder.build(
-                    context.currentPackage(), context.compilation(),
+                    context.currentPackage(), context.compilation(), false,
                     message -> context.reportDiagnostic(DiagnosticFactory.createDiagnostic(
                             new DiagnosticInfo("WORKFLOW_DESCRIPTOR_NAME_COLLISION", message,
                                     DiagnosticSeverity.ERROR),

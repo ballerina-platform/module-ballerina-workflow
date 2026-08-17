@@ -11,9 +11,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **Breaking**: the management HTTP API moved from `ballerina/workflow.management`
   to the new `ballerina/workflow.management.rest` module. `workflow.management` is
   now a pure Ballerina API — importing it never starts a listener. To serve the
-  HTTP API, add `import ballerina/workflow.management.rest as _;` and move the
-  `[ballerina.workflow.management]` configurables (unchanged names) to
-  `[ballerina.workflow.management.rest]`. The endpoint contract is unchanged.
+  HTTP API, add `import ballerina/workflow.management.rest as _;`.
+
+  Configurables split between the two modules, so a migration moves *most* keys but
+  must leave two behind. `maxPageSize` and `reviewActivityAccessRole` belong to the
+  operations themselves and stay under `[ballerina.workflow.management]`; everything
+  else (listener, auth, CORS, identity) moves to `[ballerina.workflow.management.rest]`
+  with unchanged key names. Moving `reviewActivityAccessRole` by mistake is not
+  inert — it would fall back to its default, which leaves review activities that
+  declare no roles of their own visible to any caller:
+
+  ```toml
+  [ballerina.workflow.management]
+  maxPageSize = 100
+  reviewActivityAccessRole = "OPS"          # keep here, or the restriction is lost
+
+  [ballerina.workflow.management.rest]
+  port = 8234                                # everything else moves here
+  enableJwtAuth = true
+  ```
+
+  Routes, methods, base path, default port, success status codes, and success payload
+  shapes are unchanged. Two behavioral differences are worth checking: identity now
+  comes from token claims and overrides `x-user-*` headers (`trustForwardedIdentity = true`
+  restores the old precedence), and the resources are declared as returning
+  `http:Response`, so a specification generated from the source no longer carries the
+  per-route status codes, response schemas, or the `x-user-*` header parameters the old
+  typed signatures described.
+
   The HTTP-only types `CompletionInfo`, `ReviewDecisionInfo`, `HumanTaskPage`, and
   `ReviewActivityPage` moved with the service; the unused `ManagementServiceConfig`
   and `CorsConfig` types were removed.

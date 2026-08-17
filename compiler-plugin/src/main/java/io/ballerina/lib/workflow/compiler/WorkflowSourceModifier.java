@@ -83,6 +83,13 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                 context.currentPackage(), context.compilation());
         String descriptorJson = descriptorBytes != null
                 ? new String(descriptorBytes, java.nio.charset.StandardCharsets.UTF_8) : null;
+        // When the registration is hosted in a test document, the descriptor must also
+        // describe workflows declared under tests/: registration is descriptor-driven, so a
+        // test-only workflow the descriptor omits would never reach the process registry.
+        byte[] testDescriptorBytes = WorkflowDescriptorBuilder.build(
+                context.currentPackage(), context.compilation(), true, null);
+        String testDescriptorJson = testDescriptorBytes != null
+                ? new String(testDescriptorBytes, java.nio.charset.StandardCharsets.UTF_8) : null;
 
         // Collect all process functions across all documents so we can generate
         // a single registerWorkflowsAndStart() call that covers every workflow.
@@ -150,7 +157,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                     isLastDocument
                         ? collectConnectionNames(documentId.moduleId().toString(), isTestDocument)
                         : Collections.emptyList(),
-                    isLastDocument ? descriptorJson : null);
+                    isLastDocument ? (isTestDocument ? testDescriptorJson : descriptorJson) : null);
 
             // Only add the import for the document that contains the generated
             // __registerWorkflowsAndStart() function to avoid unused-import errors.
@@ -228,10 +235,12 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
 
     /**
      * Generates a private function that registers runtime values and starts the runtime.
-     * Workflows, their activities, and human tasks are NOT registered here — the runtime
-     * registers them from the packed workflow descriptor (workflow.def.json) when the worker
-     * starts. Only what carries runtime values remains generated: module-level client
-     * connections and durable-agent declarations (model providers, prompts, tool bindings).
+     * Workflows, their activities, and human tasks are NOT registered here — they are
+     * registered when the worker starts, from the descriptor this function hands the runtime
+     * as data (the embedded, registered document; the packed workflow.def.json resource is the
+     * externally consumable copy and is not what the runtime reads). Only what carries runtime
+     * values remains generated: module-level client connections and durable-agent declarations
+     * (model providers, prompts, tool bindings).
      * <pre>
      * function __registerWorkflowsAndStart() returns boolean|error {
      *     _ = check wfInternal:registerConnection("db", db);

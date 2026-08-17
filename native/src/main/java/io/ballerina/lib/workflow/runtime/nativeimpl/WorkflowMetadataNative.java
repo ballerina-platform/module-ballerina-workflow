@@ -18,6 +18,7 @@
 
 package io.ballerina.lib.workflow.runtime.nativeimpl;
 
+import io.ballerina.lib.workflow.utils.DescriptorFields;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
 import io.ballerina.runtime.api.creators.ErrorCreator;
@@ -152,7 +153,7 @@ public final class WorkflowMetadataNative {
         if (!(descriptor instanceof BMap<?, ?> document)) {
             return null;
         }
-        Object workflows = document.get(StringUtils.fromString("workflows"));
+        Object workflows = document.get(DescriptorFields.WORKFLOWS);
         if (!(workflows instanceof BArray workflowArray)) {
             return null;
         }
@@ -161,15 +162,15 @@ public final class WorkflowMetadataNative {
                     || !nameEquals(workflow, workflowName)) {
                 continue;
             }
-            Object tasks = workflow.get(StringUtils.fromString("humanTasks"));
+            Object tasks = workflow.get(DescriptorFields.HUMAN_TASKS);
             if (!(tasks instanceof BArray taskArray)) {
                 return null;
             }
             for (long j = 0; j < taskArray.getLength(); j++) {
                 if (taskArray.get(j) instanceof BMap<?, ?> task && nameEquals(task, taskName)) {
-                    Object result = task.get(StringUtils.fromString("result"));
+                    Object result = task.get(DescriptorFields.RESULT);
                     if (result instanceof BMap<?, ?> slot) {
-                        Object schema = slot.get(StringUtils.fromString("schema"));
+                        Object schema = slot.get(DescriptorFields.SCHEMA);
                         return schema != null ? StringUtils.getJsonString(schema) : null;
                     }
                     return null;
@@ -181,7 +182,7 @@ public final class WorkflowMetadataNative {
     }
 
     private static boolean nameEquals(BMap<?, ?> entry, String expected) {
-        Object name = entry.get(StringUtils.fromString("name"));
+        Object name = entry.get(DescriptorFields.NAME);
         return name instanceof BString bName && bName.getValue().equals(expected);
     }
 

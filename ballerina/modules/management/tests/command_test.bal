@@ -138,9 +138,129 @@ function testWrongTypedStringParamIsReported() {
         "The message must name the real cause, not report the parameter as missing");
 }
 
+// A human task's completion value is whatever the task declared, so `result` takes any
+// json; `details` and `input` are documented as objects and are checked as such.
 @test:Config {groups: ["unit"]}
-function testFreeFormParamsAcceptAnyJson() returns error? {
-    map<json> normalized = check normalizeParams({"result": {"approved": true}, "details": [1, 2]});
-    test:assertEquals(normalized["result"], <json>{"approved": true});
-    test:assertEquals(normalized["details"], <json>[1, 2]);
+function testCompletionResultAcceptsAnyJson() returns error? {
+    map<json> asObject = check normalizeParams({"result": {"approved": true}});
+    test:assertEquals(asObject["result"], <json>{"approved": true});
+    map<json> asScalar = check normalizeParams({"result": "approved"});
+    test:assertEquals(asScalar["result"], "approved");
+}
+
+@test:Config {groups: ["unit"]}
+function testNonObjectDetailsIsReported() {
+    // Silently dropping these made humanTasks.fail report success having lost them.
+    json|Error result = executeCommand({
+        operation: FAIL_HUMAN_TASK,
+        params: {taskId: "humantask-x", reason: "boom", details: [1, 2]},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "Non-object details must be reported");
+    test:assertEquals((<Error>result).message(), "details must be a JSON object");
+}
+
+// ── Every operation: dispatch and required-parameter contract ─────────────────
+// One case per `Operation` member. Two tests drive the table: every operation must
+// dispatch when given valid parameters (never fall through as unsupported, never
+// report a parameter missing that was supplied), and every required parameter must
+// be reported by name when absent. Operations that need a live workflow server fail
+// with an ExecutionError here — that is still a dispatch, which is what these cover;
+// the end-to-end behavior is exercised by the integration tests that run against the
+// in-memory server.
+
+type CommandCase record {|
+    Operation operation;
+    map<json> params = {};
+    string[] required = [];
+|};
+
+// A caller with roles, so role-gated operations reach their implementation rather
+// than stopping at the visibility check.
+final Identity & readonly caseIdentity = {userId: "alice", roles: ["APPROVER", "OPS"]};
+
+isolated function commandCases() returns CommandCase[] => [
+    {operation: LIST_DEFINITIONS},
+    {operation: LIST_INSTANCES, params: {status: "RUNNING", 'limit: 10}},
+    {operation: START_INSTANCE, params: {workflowType: "someWorkflow", input: {}},
+        required: ["workflowType"]},
+    {operation: GET_INSTANCE, params: {workflowId: "wf-1"}, required: ["workflowId"]},
+    {operation: SUSPEND_INSTANCE, params: {workflowId: "wf-1"}, required: ["workflowId"]},
+    {operation: RESUME_INSTANCE, params: {workflowId: "wf-1"}, required: ["workflowId"]},
+    {operation: WAKE_INSTANCE, params: {workflowId: "wf-1"}, required: ["workflowId"]},
+    {operation: TERMINATE_INSTANCE, params: {workflowId: "wf-1", reason: "cleanup"},
+        required: ["workflowId"]},
+    {operation: CANCEL_INSTANCE, params: {workflowId: "wf-1"}, required: ["workflowId"]},
+    {operation: GET_INSTANCE_HISTORY, params: {workflowId: "wf-1"}, required: ["workflowId"]},
+    {operation: GET_INSTANCE_ACTIVITY_TREE, params: {workflowId: "wf-1"}, required: ["workflowId"]},
+    {operation: GET_INSTANCE_EXECUTION_GRAPH, params: {workflowId: "wf-1"}, required: ["workflowId"]},
+    {operation: LIST_HUMAN_TASKS, params: {status: "PENDING", 'limit: 10}},
+    {operation: COUNT_PENDING_HUMAN_TASKS},
+    {operation: GET_HUMAN_TASK, params: {taskId: "humantask-x"}, required: ["taskId"]},
+    {operation: COMPLETE_HUMAN_TASK, params: {taskId: "humantask-x", result: {approved: true}},
+        required: ["taskId"]},
+    {operation: FAIL_HUMAN_TASK, params: {taskId: "humantask-x", reason: "boom"},
+        required: ["taskId", "reason"]},
+    {operation: LIST_REVIEW_ACTIVITIES, params: {status: "PENDING", 'limit: 10}},
+    {operation: GET_REVIEW_ACTIVITY, params: {taskId: "reviewactivity-x"}, required: ["taskId"]},
+    {operation: DECIDE_REVIEW_ACTIVITY, params: {taskId: "reviewactivity-x", action: "proceed"},
+        required: ["taskId", "action"]}
+];
+
+// Every member of the enum. Kept explicit because Ballerina cannot enumerate an enum
+// at run time; the coverage test below fails if the case table falls behind it.
+isolated function allOperations() returns Operation[] => [
+    LIST_DEFINITIONS, LIST_INSTANCES, START_INSTANCE, GET_INSTANCE, SUSPEND_INSTANCE,
+    RESUME_INSTANCE, WAKE_INSTANCE, TERMINATE_INSTANCE, CANCEL_INSTANCE, GET_INSTANCE_HISTORY,
+    GET_INSTANCE_ACTIVITY_TREE, GET_INSTANCE_EXECUTION_GRAPH, LIST_HUMAN_TASKS,
+    COUNT_PENDING_HUMAN_TASKS, GET_HUMAN_TASK, COMPLETE_HUMAN_TASK, FAIL_HUMAN_TASK,
+    LIST_REVIEW_ACTIVITIES, GET_REVIEW_ACTIVITY, DECIDE_REVIEW_ACTIVITY
+];
+
+@test:Config {groups: ["unit"]}
+function testEveryOperationHasACase() {
+    CommandCase[] cases = commandCases();
+    foreach Operation operation in allOperations() {
+        CommandCase[] matching = cases.filter(c => c.operation == operation);
+        test:assertEquals(matching.length(), 1,
+            string `Operation '${operation}' must have exactly one command case`);
+    }
+    test:assertEquals(cases.length(), allOperations().length(),
+        "The case table must not carry operations the enum does not declare");
+}
+
+@test:Config {groups: ["unit"]}
+function testEveryCommandDispatchesWithValidParams() {
+    foreach CommandCase commandCase in commandCases() {
+        json|Error result = executeCommand({
+            operation: commandCase.operation,
+            params: commandCase.params.clone(),
+            identity: caseIdentity
+        });
+        if result is Error {
+            // Reaching the implementation is what matters; a live-server failure is fine.
+            // A parameter complaint is not: it means the dispatch rejected valid input.
+            test:assertFalse(result is InvalidRequestError,
+                string `Operation '${commandCase.operation}' rejected valid parameters: ${result.message()}`);
+        }
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testEveryRequiredParamIsReportedByName() {
+    foreach CommandCase commandCase in commandCases() {
+        foreach string name in commandCase.required {
+            map<json> params = commandCase.params.clone();
+            json _ = params.remove(name);
+            json|Error result = executeCommand({
+                operation: commandCase.operation,
+                params: params,
+                identity: caseIdentity
+            });
+            test:assertTrue(result is InvalidRequestError,
+                string `Operation '${commandCase.operation}' must report a missing '${name}'`);
+            test:assertEquals((<Error>result).message(), name + " is required",
+                string `Operation '${commandCase.operation}' must name the missing parameter`);
+        }
+    }
 }

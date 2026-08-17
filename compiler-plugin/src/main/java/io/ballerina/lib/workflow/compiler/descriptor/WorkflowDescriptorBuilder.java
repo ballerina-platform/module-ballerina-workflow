@@ -69,6 +69,40 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.ACTIVITIES;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.ACTIVITY;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.AGENTS;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.BAL_NIL;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.BAL_STRING;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.CARDINALITY;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.DIRECTION;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.EVENTS;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.FUNCTION;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.HUMAN_TASKS;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.INPUT;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.JSON_NULL;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.JSON_OBJECT;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.JSON_STRING;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.LOSSY;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.MODULE;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.NAME;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.ORG;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.OUTPUT;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.PACKAGE;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.PAYLOAD;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.REQUEST;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.RESPONSE;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.RESULT;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.REVIEW_ACTIVITIES;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SCHEMA;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SOURCE;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.TOOLS;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.TRIGGERS;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.TYPE;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.VERSION;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.WORKFLOWS;
+
 /**
  * Builds the Workflow Definition Descriptor ({@code workflow.def.json}) from the compiled
  * package: every workflow with its input, events, activities (input and output), human tasks
@@ -90,6 +124,10 @@ public final class WorkflowDescriptorBuilder {
 
     private static final String DURABLE_AGENT_TYPE = "DurableAgent";
 
+    // callActivity(activityFunction, args, T, retryPolicy): the policy is the fourth
+    // positional parameter, reachable when the caller supplies the typedesc explicitly.
+    private static final int RETRY_POLICY_POSITION = 3;
+
     private WorkflowDescriptorBuilder() {
     }
 
@@ -102,7 +140,7 @@ public final class WorkflowDescriptorBuilder {
      *         workflows or agents
      */
     public static byte[] build(Package currentPackage, PackageCompilation compilation) {
-        return build(currentPackage, compilation, null);
+        return build(currentPackage, compilation, false, null);
     }
 
     /**
@@ -111,12 +149,21 @@ public final class WorkflowDescriptorBuilder {
      * runtime registry it feeds) is keyed by simple name, so a colliding declaration would be
      * silently dropped; the collision consumer lets the caller surface a diagnostic instead.
      *
-     * @param currentPackage the package being compiled
-     * @param compilation    its compilation (for semantic models)
-     * @param onCollision    invoked with a description of each dropped duplicate, or {@code null}
+     * <p>{@code includeTestDocuments} controls whether workflows declared under {@code tests/}
+     * are described. The descriptor packed as a build artifact never includes them — it
+     * describes the integration, not its tests — but the copy embedded in generated
+     * registration must, when that registration is hosted in a test document: registration is
+     * descriptor-driven, so a test-only workflow that the descriptor omits would never reach
+     * the process registry and could not execute under {@code bal test}.
+     *
+     * @param currentPackage       the package being compiled
+     * @param compilation          its compilation (for semantic models)
+     * @param includeTestDocuments whether to describe workflows declared in test documents
+     * @param onCollision          invoked with a description of each dropped duplicate, or {@code null}
      * @return the canonical descriptor bytes, or {@code null} when nothing is declared
      */
     public static byte[] build(Package currentPackage, PackageCompilation compilation,
+                               boolean includeTestDocuments,
                                java.util.function.Consumer<String> onCollision) {
         String major = majorVersion(currentPackage.packageVersion().value().toString());
 
@@ -127,7 +174,11 @@ public final class WorkflowDescriptorBuilder {
             Module module = currentPackage.module(moduleId);
             SemanticModel semanticModel = compilation.getSemanticModel(moduleId);
             String moduleQName = currentPackage.packageOrg().value() + "/" + module.moduleName().toString();
-            for (DocumentId documentId : module.documentIds()) {
+            java.util.List<DocumentId> documentIds = new ArrayList<>(module.documentIds());
+            if (includeTestDocuments) {
+                documentIds.addAll(module.testDocumentIds());
+            }
+            for (DocumentId documentId : documentIds) {
                 ModulePartNode root = module.document(documentId).syntaxTree().rootNode();
                 for (ModuleMemberDeclarationNode member : root.members()) {
                     if (member instanceof FunctionDefinitionNode fnDef
@@ -136,7 +187,7 @@ public final class WorkflowDescriptorBuilder {
                         Map<String, Object> entry =
                                 buildWorkflowEntry(fnDef, semanticModel, moduleQName, major);
                         if (entry != null) {
-                            String name = (String) entry.get("name");
+                            String name = (String) entry.get(NAME);
                             if ((workflows.putIfAbsent(name, entry) != null || agents.containsKey(name))
                                     && onCollision != null) {
                                 onCollision.accept("workflow '" + name + "' in module '" + moduleQName
@@ -147,7 +198,7 @@ public final class WorkflowDescriptorBuilder {
                     } else if (member instanceof ModuleVariableDeclarationNode varDecl) {
                         Map<String, Object> agent = buildAgentEntry(varDecl, semanticModel);
                         if (agent != null) {
-                            String name = (String) agent.get("name");
+                            String name = (String) agent.get(NAME);
                             if ((agents.putIfAbsent(name, agent) != null || workflows.containsKey(name))
                                     && onCollision != null) {
                                 onCollision.accept("agent '" + name + "' in module '" + moduleQName
@@ -165,14 +216,14 @@ public final class WorkflowDescriptorBuilder {
         }
 
         Map<String, Object> document = new LinkedHashMap<>();
-        document.put("descriptorVersion", DESCRIPTOR_VERSION);
+        document.put(DescriptorFields.DESCRIPTOR_VERSION, DESCRIPTOR_VERSION);
         Map<String, Object> pkg = new LinkedHashMap<>();
-        pkg.put("org", currentPackage.packageOrg().value());
-        pkg.put("name", currentPackage.packageName().value());
-        pkg.put("version", currentPackage.packageVersion().value().toString());
-        document.put("package", pkg);
-        document.put("workflows", new ArrayList<>(workflows.values()));
-        document.put("agents", new ArrayList<>(agents.values()));
+        pkg.put(ORG, currentPackage.packageOrg().value());
+        pkg.put(NAME, currentPackage.packageName().value());
+        pkg.put(VERSION, currentPackage.packageVersion().value().toString());
+        document.put(PACKAGE, pkg);
+        document.put(WORKFLOWS, new ArrayList<>(workflows.values()));
+        document.put(AGENTS, new ArrayList<>(agents.values()));
 
         return DescriptorJson.withChecksum(document);
     }
@@ -191,9 +242,9 @@ public final class WorkflowDescriptorBuilder {
         String name = fnDef.functionName().text();
 
         Map<String, Object> entry = new LinkedHashMap<>();
-        entry.put("name", name);
-        entry.put("kind", "WORKFLOW");
-        entry.put("function", functionRef(moduleQName, major, name));
+        entry.put(NAME, name);
+        entry.put(KIND, "WORKFLOW");
+        entry.put(FUNCTION, functionRef(moduleQName, major, name));
 
         List<ParameterSymbol> inputParams = new ArrayList<>();
         RecordTypeSymbol eventsRecord = null;
@@ -212,14 +263,14 @@ public final class WorkflowDescriptorBuilder {
             }
             inputParams.add(param);
         }
-        entry.put("input", DescriptorSchemaGen.parameterSlot(inputParams));
-        entry.put("events", buildWorkflowEvents(eventsRecord));
+        entry.put(INPUT, DescriptorSchemaGen.parameterSlot(inputParams));
+        entry.put(EVENTS, buildWorkflowEvents(eventsRecord));
 
         WorkflowBodyCollector collector = new WorkflowBodyCollector(semanticModel);
         fnDef.functionBody().accept(collector);
-        entry.put("activities", new ArrayList<>(collector.activities.values()));
-        entry.put("humanTasks", buildHumanTasks(collector.humanTaskResults));
-        entry.put("reviewActivities", buildReviewActivities(collector.reviewedActivities));
+        entry.put(ACTIVITIES, new ArrayList<>(collector.activities.values()));
+        entry.put(HUMAN_TASKS, buildHumanTasks(collector.humanTaskResults, collector.conflictingHumanTasks));
+        entry.put(REVIEW_ACTIVITIES, buildReviewActivities(collector.reviewedActivities));
         return entry;
     }
 
@@ -250,21 +301,23 @@ public final class WorkflowDescriptorBuilder {
                 payloadType = future.typeParameter().orElse(null);
             }
             Map<String, Object> event = new LinkedHashMap<>();
-            event.put("name", field.getKey());
-            event.put("direction", "IN");
-            event.put("cardinality", "SINGLE");
-            event.put("payload", DescriptorSchemaGen.slot(payloadType));
+            event.put(NAME, field.getKey());
+            event.put(DIRECTION, "IN");
+            event.put(CARDINALITY, "SINGLE");
+            event.put(PAYLOAD, DescriptorSchemaGen.slot(payloadType));
             events.add(event);
         }
         return events;
     }
 
-    private static List<Object> buildHumanTasks(Map<String, TypeSymbol> humanTaskResults) {
+    private static List<Object> buildHumanTasks(Map<String, TypeSymbol> humanTaskResults,
+                                                Set<String> conflicting) {
         List<Object> tasks = new ArrayList<>();
         for (Map.Entry<String, TypeSymbol> entry : humanTaskResults.entrySet()) {
             Map<String, Object> task = new LinkedHashMap<>();
-            task.put("name", entry.getKey());
-            task.put("result", DescriptorSchemaGen.slot(entry.getValue()));
+            task.put(NAME, entry.getKey());
+            TypeSymbol resultType = conflicting.contains(entry.getKey()) ? null : entry.getValue();
+            task.put(RESULT, DescriptorSchemaGen.slot(resultType));
             tasks.add(task);
         }
         return tasks;
@@ -274,8 +327,8 @@ public final class WorkflowDescriptorBuilder {
         List<Object> reviews = new ArrayList<>();
         for (Map.Entry<String, Set<String>> entry : reviewedActivities.entrySet()) {
             Map<String, Object> review = new LinkedHashMap<>();
-            review.put("activity", entry.getKey());
-            review.put("triggers", new ArrayList<>(entry.getValue()));
+            review.put(ACTIVITY, entry.getKey());
+            review.put(TRIGGERS, new ArrayList<>(entry.getValue()));
             reviews.add(review);
         }
         return reviews;
@@ -283,9 +336,9 @@ public final class WorkflowDescriptorBuilder {
 
     private static Map<String, Object> functionRef(String moduleQName, String major, String functionName) {
         Map<String, Object> ref = new LinkedHashMap<>();
-        ref.put("module", moduleQName);
-        ref.put("version", major);
-        ref.put("name", functionName);
+        ref.put(MODULE, moduleQName);
+        ref.put(VERSION, major);
+        ref.put(NAME, functionName);
         return ref;
     }
 
@@ -299,6 +352,10 @@ public final class WorkflowDescriptorBuilder {
         private final SemanticModel semanticModel;
         final Map<String, Map<String, Object>> activities = new TreeMap<>();
         final Map<String, TypeSymbol> humanTaskResults = new TreeMap<>();
+        // Task names whose call sites declared different result types. Kept apart from
+        // humanTaskResults so a later call site cannot resurrect one of the conflicting
+        // types: the schema stays unknown, which is the only honest answer.
+        final Set<String> conflictingHumanTasks = new LinkedHashSet<>();
         final Map<String, Set<String>> reviewedActivities = new TreeMap<>();
 
         WorkflowBodyCollector(SemanticModel semanticModel) {
@@ -350,6 +407,12 @@ public final class WorkflowDescriptorBuilder {
          * {@code HumanReview} shape ({@code string|string[]} — the reviewer roles). An
          * {@code AutoRetry}/{@code NoAutomaticRetry} record, or a type too dynamic to
          * classify, does not create a review activity in the descriptor.
+         *
+         * <p>Both call forms are recognized. {@code retryPolicy} is usually named, because
+         * the typedesc parameter before it is normally inferred; but a caller that supplies
+         * that typedesc explicitly can pass the policy positionally as the fourth argument —
+         * {@code ctx->callActivity(fn, {}, string, "OPS")} — and that review activity must
+         * appear in the descriptor too.
          */
         private boolean hasHumanReviewRetryPolicy(SeparatedNodeList<FunctionArgumentNode> args) {
             for (FunctionArgumentNode arg : args) {
@@ -357,6 +420,10 @@ public final class WorkflowDescriptorBuilder {
                         && "retryPolicy".equals(named.argumentName().name().text())) {
                     return isHumanReviewTyped(named.expression());
                 }
+            }
+            if (args.size() > RETRY_POLICY_POSITION
+                    && args.get(RETRY_POLICY_POSITION) instanceof PositionalArgumentNode positional) {
+                return isHumanReviewTyped(positional.expression());
             }
             return false;
         }
@@ -409,6 +476,10 @@ public final class WorkflowDescriptorBuilder {
                 return; // non-constant / invalid names are diagnosed by the process analysis task
             }
             TypeSymbol resultType = declaredResultType(remoteCall);
+            if (conflictingHumanTasks.contains(taskName)) {
+                // Already known to disagree; a further call site cannot settle it.
+                return;
+            }
             if (!humanTaskResults.containsKey(taskName)) {
                 humanTaskResults.put(taskName, resultType);
                 return;
@@ -417,7 +488,9 @@ public final class WorkflowDescriptorBuilder {
             if (existing == null) {
                 humanTaskResults.put(taskName, resultType);
             } else if (resultType != null && !existing.signature().equals(resultType.signature())) {
-                // Conflicting declared result types across call sites: unknown.
+                // Call sites declare different result types: no single completion schema is
+                // correct, so the task is recorded as conflicting and its schema stays unknown.
+                conflictingHumanTasks.add(taskName);
                 humanTaskResults.put(taskName, null);
             }
         }
@@ -464,17 +537,17 @@ public final class WorkflowDescriptorBuilder {
 
         private Map<String, Object> buildActivityEntry(String name, FunctionSymbol fnSymbol) {
             Map<String, Object> entry = new LinkedHashMap<>();
-            entry.put("name", name);
+            entry.put(NAME, name);
             Optional<ModuleSymbol> moduleSymbol = fnSymbol.getModule();
             if (moduleSymbol.isPresent()) {
                 String moduleQName = moduleSymbol.get().id().orgName() + "/"
                         + moduleSymbol.get().id().moduleName();
-                entry.put("function",
+                entry.put(FUNCTION,
                         functionRef(moduleQName, majorVersion(moduleSymbol.get().id().version()), name));
             }
-            entry.put("input", DescriptorSchemaGen.parameterSlot(
+            entry.put(INPUT, DescriptorSchemaGen.parameterSlot(
                     dataParameters(fnSymbol.typeDescriptor().params().orElse(List.of()))));
-            entry.put("output", DescriptorSchemaGen.outputSlot(
+            entry.put(OUTPUT, DescriptorSchemaGen.outputSlot(
                     fnSymbol.typeDescriptor().returnTypeDescriptor().orElse(null)));
             return entry;
         }
@@ -521,7 +594,7 @@ public final class WorkflowDescriptorBuilder {
         MappingConstructorExpressionNode config = agentConfigMapping(varDecl);
 
         Map<String, Object> agent = new LinkedHashMap<>();
-        agent.put("name", agentName);
+        agent.put(NAME, agentName);
 
         Map<String, Object> inputSlot = defaultStringSlot();
         Map<String, Object> resultSlot = defaultNilSlot();
@@ -551,11 +624,11 @@ public final class WorkflowDescriptorBuilder {
             }
         }
 
-        agent.put("input", inputSlot);
-        agent.put("result", resultSlot);
-        agent.put("events", events);
-        agent.put("tools", new ArrayList<>(tools.values()));
-        agent.put("humanTasks", humanTasks);
+        agent.put(INPUT, inputSlot);
+        agent.put(RESULT, resultSlot);
+        agent.put(EVENTS, events);
+        agent.put(TOOLS, new ArrayList<>(tools.values()));
+        agent.put(HUMAN_TASKS, humanTasks);
         return agent;
     }
 
@@ -638,11 +711,11 @@ public final class WorkflowDescriptorBuilder {
                 continue;
             }
             Map<String, Object> event = new LinkedHashMap<>();
-            event.put("name", name);
-            event.put("cardinality", cardinality);
-            event.put("request", request != null ? request : defaultStringSlot());
+            event.put(NAME, name);
+            event.put(CARDINALITY, cardinality);
+            event.put(REQUEST, request != null ? request : defaultStringSlot());
             if (response != null) {
-                event.put("response", response);
+                event.put(RESPONSE, response);
             }
             events.put(name, event);
         }
@@ -670,8 +743,8 @@ public final class WorkflowDescriptorBuilder {
                 continue;
             }
             Map<String, Object> task = new LinkedHashMap<>();
-            task.put("name", name);
-            task.put("result", result != null ? result : anydataSlot());
+            task.put(NAME, name);
+            task.put(RESULT, result != null ? result : anydataSlot());
             tasks.put(name, task);
         }
         return new ArrayList<>(tasks.values());
@@ -733,9 +806,9 @@ public final class WorkflowDescriptorBuilder {
                 params.add(p);
             }
             Map<String, Object> tool = new LinkedHashMap<>();
-            tool.put("name", name);
-            tool.put("source", "ACTIVITY");
-            tool.put("input", DescriptorSchemaGen.parameterSlot(params));
+            tool.put(NAME, name);
+            tool.put(SOURCE, "ACTIVITY");
+            tool.put(INPUT, DescriptorSchemaGen.parameterSlot(params));
             tools.put(name, tool);
         }
     }
@@ -768,11 +841,11 @@ public final class WorkflowDescriptorBuilder {
                 continue;
             }
             Map<String, Object> tool = new LinkedHashMap<>();
-            tool.put("name", name);
-            tool.put("source", "AI_TOOL");
+            tool.put(NAME, name);
+            tool.put(SOURCE, "AI_TOOL");
             if (symbol.isPresent() && symbol.get().kind() == SymbolKind.FUNCTION) {
                 FunctionSymbol fnSymbol = (FunctionSymbol) symbol.get();
-                tool.put("input", DescriptorSchemaGen.parameterSlot(
+                tool.put(INPUT, DescriptorSchemaGen.parameterSlot(
                         dataParameters(fnSymbol.typeDescriptor().params().orElse(List.of()))));
             }
             tools.put(name, tool);
@@ -792,8 +865,8 @@ public final class WorkflowDescriptorBuilder {
                 continue;
             }
             Map<String, Object> tool = new LinkedHashMap<>();
-            tool.put("name", name);
-            tool.put("source", "PEER");
+            tool.put(NAME, name);
+            tool.put(SOURCE, "PEER");
             tools.put(name, tool);
         }
     }
@@ -816,29 +889,29 @@ public final class WorkflowDescriptorBuilder {
 
     private static Map<String, Object> defaultStringSlot() {
         Map<String, Object> slot = new LinkedHashMap<>();
-        slot.put("type", "string");
+        slot.put(TYPE, BAL_STRING);
         Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("type", "string");
-        slot.put("schema", schema);
+        schema.put(TYPE, JSON_STRING);
+        slot.put(SCHEMA, schema);
         return slot;
     }
 
     private static Map<String, Object> defaultNilSlot() {
         Map<String, Object> slot = new LinkedHashMap<>();
-        slot.put("type", "()");
+        slot.put(TYPE, BAL_NIL);
         Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("type", "null");
-        slot.put("schema", schema);
+        schema.put(TYPE, JSON_NULL);
+        slot.put(SCHEMA, schema);
         return slot;
     }
 
     private static Map<String, Object> anydataSlot() {
         Map<String, Object> slot = new LinkedHashMap<>();
-        slot.put("type", "anydata");
+        slot.put(TYPE, DescriptorFields.BAL_ANYDATA);
         Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("type", "object");
-        slot.put("schema", schema);
-        slot.put("lossy", Boolean.TRUE);
+        schema.put(TYPE, JSON_OBJECT);
+        slot.put(SCHEMA, schema);
+        slot.put(LOSSY, Boolean.TRUE);
         return slot;
     }
 

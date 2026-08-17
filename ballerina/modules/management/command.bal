@@ -306,13 +306,18 @@ public isolated function executeCommand(Command command) returns json|Error {
 // encodes every scalar as text (a query string relayed verbatim, a queue message),
 // so numeric parameters accept their string form and are coerced here; a value
 // that cannot be coerced is reported rather than silently replaced by a default.
-// Parameters holding free-form data (`input`, `result`, `details`) take any json
-// and are absent from this table, as is any name an operation does not read.
+// `result` is the value a human submitted and may be any json, so it is absent from
+// this table, as is any name an operation does not read. `details` and `input` are
+// documented as JSON objects and the operations bind them as such: a scalar or array
+// would otherwise be silently dropped and the operation would report success having
+// lost what the caller sent.
 final readonly & map<string> PARAM_TYPES = {
     "action": "string",
+    "details": "object",
     "closeTimeFrom": "string",
     "closeTimeTo": "string",
     "feedback": "string",
+    "input": "object",
     "limit": "int",
     "pageToken": "string",
     "parentWorkflowId": "string",
@@ -358,6 +363,13 @@ isolated function normalizeParams(map<json> params) returns map<json>|Error {
                 }
             }
             return invalidRequest(name + " must be an integer");
+        }
+        if expected == "object" {
+            if value is map<json> {
+                normalized[name] = value;
+                continue;
+            }
+            return invalidRequest(name + " must be a JSON object");
         }
         if value !is string {
             return invalidRequest(name + " must be a string");

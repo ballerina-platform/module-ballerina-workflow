@@ -194,6 +194,54 @@ function testScopeEnforcementPerOperationClass() {
     test:assertTrue(resolveCallerIdentity(crossClass, "human-tasks", enforcing) is http:Forbidden);
 }
 
+// A request that carries no bearer token cannot satisfy a scope policy, whichever
+// scheme authenticated it. Letting it through would also honor its forwarded
+// identity headers, so the caller could choose its own roles.
+@test:Config {groups: ["unit", "auth"]}
+function testScopeEnforcementDeniesRequestsWithoutABearerToken() {
+    CallerIdentityConfig enforcing = {
+        basicAuthEnabled: true,
+        tokenAuthEnabled: true,
+        trustForwardedIdentity: false,
+        enforceScopes: true,
+        userIdClaim: "sub",
+        rolesClaim: "roles"
+    };
+    // Basic-authenticated, with identity headers of its own choosing.
+    http:Request basic = new;
+    basic.method = "GET";
+    basic.setHeader("Authorization", "Basic YWxpY2U6c2VjcmV0");
+    basic.setHeader(USER_ID_HEADER, "root");
+    basic.setHeader(USER_ROLES_HEADER, "admin");
+    test:assertTrue(resolveCallerIdentity(basic, "workflows", enforcing) is http:Forbidden,
+        "A request with no bearer token must not pass scope enforcement");
+
+    // The same policy with no token-based scheme at all denies rather than skips.
+    CallerIdentityConfig noTokenScheme = {
+        basicAuthEnabled: true,
+        tokenAuthEnabled: false,
+        trustForwardedIdentity: false,
+        enforceScopes: true,
+        userIdClaim: "sub",
+        rolesClaim: "roles"
+    };
+    test:assertTrue(resolveCallerIdentity(basic, "workflows", noTokenScheme) is http:Forbidden,
+        "Scope enforcement without a token scheme must deny, not skip");
+}
+
+// Providers disagree on the shape of each scope claim, so both names are read in
+// both shapes.
+@test:Config {groups: ["unit", "auth"]}
+function testScopeClaimIsReadInBothShapes() {
+    test:assertEquals(scopesOf({"scope": "workflow:view humantask:manage"}),
+        ["workflow:view", "humantask:manage"], "space-separated `scope`");
+    test:assertEquals(scopesOf({"scope": ["workflow:view", "humantask:manage"]}),
+        ["workflow:view", "humantask:manage"], "array-valued `scope`");
+    test:assertEquals(scopesOf({"scp": "workflow:view"}), ["workflow:view"], "string-valued `scp`");
+    test:assertEquals(scopesOf({"scp": ["workflow:view"]}), ["workflow:view"], "array-valued `scp`");
+    test:assertEquals(scopesOf({}), [], "no scope claim");
+}
+
 // ── Basic auth ───────────────────────────────────────────────────────────────────
 
 @test:Config {groups: ["unit", "auth"]}

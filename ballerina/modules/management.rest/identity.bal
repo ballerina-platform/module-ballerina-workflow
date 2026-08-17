@@ -146,10 +146,23 @@ isolated function resolveCallerIdentity(http:Request req, string firstSegment,
     }
 
     if !cfg.tokenAuthEnabled {
+        if cfg.enforceScopes {
+            // Scope enforcement is configured but no token-based scheme can carry
+            // scopes: deny rather than let the request through unchecked.
+            return <http:Forbidden>{body: errorBody(
+                    "Scope enforcement requires a token-based authentication scheme")};
+        }
         return identity;
     }
     string? token = bearerToken(req);
     if token is () {
+        // A request authenticated by another enabled scheme (e.g. Basic) carries no
+        // scopes. Under scope enforcement it cannot satisfy the policy, and honoring
+        // its forwarded identity headers would let it choose its own roles.
+        if cfg.enforceScopes {
+            return <http:Forbidden>{body: errorBody(
+                    "Scope enforcement requires a bearer token; this request carries none")};
+        }
         return identity;
     }
     [jwt:Header, jwt:Payload]|jwt:Error decoded = jwt:decode(token);
@@ -283,22 +296,28 @@ isolated function stringArrayFromClaim(json? value) returns string[]? {
 # + claims - The token's claims
 # + return - The scope names; empty when the token carries none
 isolated function scopesOf(map<json> claims) returns string[] {
-    json? scopeClaim = claims["scope"];
-    if scopeClaim is string {
-        return re`\s+`.split(scopeClaim.trim()).filter(s => s.length() > 0);
+    // Providers differ on both the claim name and its shape: `scope` is usually a
+    // space-separated string and `scp` usually an array, but either may take either
+    // form, so both are accepted in both shapes.
+    string[] scopes = claimScopes(claims["scope"]);
+    if scopes.length() > 0 {
+        return scopes;
     }
-    json? scpClaim = claims["scp"];
-    if scpClaim is json[] {
+    return claimScopes(claims["scp"]);
+}
+
+isolated function claimScopes(json? claim) returns string[] {
+    if claim is string {
+        return re`\s+`.split(claim.trim()).filter(s => s.length() > 0);
+    }
+    if claim is json[] {
         string[] scopes = [];
-        foreach json entry in scpClaim {
+        foreach json entry in claim {
             if entry is string && entry.trim().length() > 0 {
                 scopes.push(entry.trim());
             }
         }
         return scopes;
-    }
-    if scpClaim is string {
-        return re`\s+`.split(scpClaim.trim()).filter(s => s.length() > 0);
     }
     return [];
 }

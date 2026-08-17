@@ -112,7 +112,7 @@ public type Command record {|
 # - `WAKE_INSTANCE` — `workflowId` (required).
 # - `TERMINATE_INSTANCE` — `workflowId` (required), `runId`, `reason`.
 # - `LIST_HUMAN_TASKS` — `status`, `parentWorkflowId`, `parentWorkflowType`, `taskName`,
-#   `userRole`, `onlyMyTasks`, `limit`, `pageToken`, the four time bounds, `taskQueue`.
+#   `userRole`, `limit`, `pageToken`, the four time bounds, `taskQueue`.
 # - `COUNT_PENDING_HUMAN_TASKS` — `taskQueue`.
 # - `GET_HUMAN_TASK` — `taskId` (required).
 # - `COMPLETE_HUMAN_TASK` — `taskId` (required), `result`.
@@ -129,6 +129,14 @@ public type Command record {|
 #     identity: {userId: "alice", roles: ["approver"]}
 # });
 # ```
+#
+# This function authenticates nothing. It trusts `command.identity` as given and
+# applies only the role checks the operations themselves perform — the same checks
+# the HTTP API relies on once it has resolved a caller. A consumer that accepts
+# commands from a remote channel is responsible for authenticating that channel and
+# for populating `identity` from a verified credential; scope policies configured
+# for the HTTP API (`enforceScopes` and friends) belong to that module and have no
+# effect here.
 #
 # + command - The command to execute
 # + return - The operation's payload, or the error explaining why it could not run
@@ -222,7 +230,7 @@ public isolated function executeCommand(Command command) returns json|Error {
             return opListHumanTasks(strParam(params, "status"),
                     strParam(params, "parentWorkflowId"), strParam(params, "parentWorkflowType"),
                     strParam(params, "taskName"), strParam(params, "userRole"),
-                    boolParam(params, "onlyMyTasks"), intParam(params, "limit", 20),
+                    intParam(params, "limit", 20),
                     strParam(params, "pageToken"), strParam(params, "startTimeFrom"),
                     strParam(params, "startTimeTo"), strParam(params, "closeTimeFrom"),
                     strParam(params, "closeTimeTo"), strParam(params, "taskQueue"), callerRoles);
@@ -314,9 +322,4 @@ isolated function strParam(map<json> params, string name) returns string? {
 isolated function intParam(map<json> params, string name, int defaultValue) returns int {
     json value = params[name];
     return value is int ? value : defaultValue;
-}
-
-isolated function boolParam(map<json> params, string name) returns boolean {
-    json value = params[name];
-    return value is boolean ? value : false;
 }

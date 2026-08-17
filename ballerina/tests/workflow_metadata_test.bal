@@ -105,11 +105,16 @@ function testWorkflowMetadataCompleteAtRegistration() returns error? {
     management:ActivityMeta[] activities = meta.activities
         .filter(a => a.workflowType == "metaFixtureWorkflow" && a.name == "metaFixtureActivity");
     test:assertEquals(activities.length(), 1, "The registered activity must appear in activities");
-    string activitySchema = activities[0].inputSchema ?: "";
-    test:assertTrue(activitySchema.includes("requestId"),
-        "The activity input schema must describe its data parameters, got: " + activitySchema);
-    test:assertFalse(activitySchema.includes("\"required\":[\"requestId\",\"retries\"]"),
-        "Defaultable activity parameters must not be required in the schema");
+    // Parse the schema rather than matching its text: the assertion is about which
+    // properties are required, not about how the document happens to be formatted.
+    json activitySchema = check (activities[0].inputSchema ?: "{}").fromJsonString();
+    map<json> schemaObject = check activitySchema.ensureType();
+    map<json> properties = check schemaObject["properties"].ensureType();
+    test:assertTrue(properties.hasKey("requestId"),
+        "The activity input schema must describe its data parameters, got: " + activitySchema.toString());
+    json[] required = check schemaObject["required"].ensureType();
+    test:assertEquals(required, <json[]>["requestId"],
+        "Only the non-defaultable parameter must be required");
 
     setPackedWorkflowDescriptor(());
 }

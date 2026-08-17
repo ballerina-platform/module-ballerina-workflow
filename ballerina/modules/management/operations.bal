@@ -191,7 +191,7 @@ isolated function opExecutionGraph(string workflowId, string? runId, [string, st
 // ── Human tasks ───────────────────────────────────────────────────────────────
 
 isolated function opListHumanTasks(string? status, string? parentWorkflowId, string? parentWorkflowType,
-        string? taskName, string? userRole, boolean onlyMyTasks, int 'limit, string? pageToken,
+        string? taskName, string? userRole, int 'limit, string? pageToken,
         string? startTimeFrom, string? startTimeTo, string? closeTimeFrom, string? closeTimeTo,
         string? taskQueue, [string, string...]? callerRoles) returns json|Error {
     HumanTaskSummary[]|error all = listAllHumanTasks(status,
@@ -205,16 +205,13 @@ isolated function opListHumanTasks(string? status, string? parentWorkflowId, str
         .filter(t => parentWorkflowType is () || t.parentWorkflowType == parentWorkflowType)
         .filter(t => taskName is () || t.taskName == taskName)
         .filter(t => userRole is () || t.userRoles.some(r => r == userRole));
-    // Apply onlyMyTasks and canComplete in a foreach (avoids lambda isolation constraint
-    // on computed local variables in this Ballerina version)
+    // Role visibility in a foreach (avoids the lambda isolation constraint on
+    // computed local variables in this Ballerina version). A caller only ever sees
+    // tasks their roles match, so every listed task is one they can complete.
     HumanTaskSummary[] enriched = [];
     foreach HumanTaskSummary t in preFiltered {
-        boolean hasMatchingRole = hasRoleIntersection(t.userRoles, callerRoles);
-        if !hasMatchingRole {
+        if !hasRoleIntersection(t.userRoles, callerRoles) {
             continue;
-        }
-        if onlyMyTasks {
-            // Visibility is already constrained to role-matching tasks.
         }
         t.canComplete = true;
         enriched.push(t);
@@ -365,8 +362,10 @@ isolated function buildReviewDecisionResponse(string decision, string? userId) r
 }
 
 isolated function clampLimit(int requested, int maxAllowed) returns int {
-    if requested < 1 { return 20; }
-    return requested > maxAllowed ? maxAllowed : requested;
+    // The default applies when nothing usable was requested, but it is still a
+    // request: an operator who caps pages below the default gets the cap.
+    int effective = requested < 1 ? 20 : requested;
+    return effective > maxAllowed ? maxAllowed : effective;
 }
 
 isolated function parseRolesHeader(string? rolesHeader) returns [string, string...]? {

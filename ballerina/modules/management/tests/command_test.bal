@@ -109,3 +109,38 @@ function testErrorJsonRepresentation() {
         <json>{"error": {"message": "Workflow not found: wf-1"}},
         "Every transport serializes errors through this one representation");
 }
+
+// ── Parameter typing ──────────────────────────────────────────────────────────
+// A command may arrive from a channel that encodes scalars as text, so numeric
+// parameters accept their string form; anything that cannot be coerced is
+// reported instead of silently falling back to a default.
+
+@test:Config {groups: ["unit"]}
+function testNumericParamAcceptsStringForm() returns error? {
+    map<json> normalized = check normalizeParams({"limit": "50", "status": "PENDING"});
+    test:assertEquals(normalized["limit"], 50, "A string-encoded number must be coerced");
+    test:assertEquals(normalized["status"], "PENDING");
+}
+
+@test:Config {groups: ["unit"]}
+function testUncoercibleNumericParamIsReported() {
+    map<json>|Error normalized = normalizeParams({"limit": "many"});
+    test:assertTrue(normalized is InvalidRequestError,
+        "A limit that is not a number must be reported, not replaced by the default");
+    test:assertEquals((<Error>normalized).message(), "limit must be an integer");
+}
+
+@test:Config {groups: ["unit"]}
+function testWrongTypedStringParamIsReported() {
+    json|Error result = executeCommand({operation: GET_INSTANCE, params: {"workflowId": 42}});
+    test:assertTrue(result is InvalidRequestError, "A non-string workflowId must be reported");
+    test:assertEquals((<Error>result).message(), "workflowId must be a string",
+        "The message must name the real cause, not report the parameter as missing");
+}
+
+@test:Config {groups: ["unit"]}
+function testFreeFormParamsAcceptAnyJson() returns error? {
+    map<json> normalized = check normalizeParams({"result": {"approved": true}, "details": [1, 2]});
+    test:assertEquals(normalized["result"], <json>{"approved": true});
+    test:assertEquals(normalized["details"], <json>[1, 2]);
+}

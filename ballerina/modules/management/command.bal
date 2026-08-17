@@ -141,7 +141,11 @@ public type Command record {|
 # + command - The command to execute
 # + return - The operation's payload, or the error explaining why it could not run
 public isolated function executeCommand(Command command) returns json|Error {
-    map<json> params = command.params;
+    map<json>|Error normalized = normalizeParams(command.params);
+    if normalized is Error {
+        return normalized;
+    }
+    map<json> params = normalized;
     [string, string...]? callerRoles = rolesFromIdentity(command.identity);
     string? userId = command.identity.userId;
 
@@ -298,7 +302,74 @@ public isolated function executeCommand(Command command) returns json|Error {
 
 // ── Parameter access ──────────────────────────────────────────────────────────
 
+// The type each parameter carries. A command may arrive from a channel that
+// encodes every scalar as text (a query string relayed verbatim, a queue message),
+// so numeric parameters accept their string form and are coerced here; a value
+// that cannot be coerced is reported rather than silently replaced by a default.
+// Parameters holding free-form data (`input`, `result`, `details`) take any json
+// and are absent from this table, as is any name an operation does not read.
+final readonly & map<string> PARAM_TYPES = {
+    "action": "string",
+    "closeTimeFrom": "string",
+    "closeTimeTo": "string",
+    "feedback": "string",
+    "limit": "int",
+    "pageToken": "string",
+    "parentWorkflowId": "string",
+    "parentWorkflowType": "string",
+    "reason": "string",
+    "runId": "string",
+    "startTimeFrom": "string",
+    "startTimeTo": "string",
+    "startedBy": "string",
+    "status": "string",
+    "taskId": "string",
+    "taskName": "string",
+    "taskQueue": "string",
+    "timeoutSeconds": "int",
+    "userRole": "string",
+    "workflowId": "string",
+    "workflowType": "string"
+};
+
+# Checks every parameter against the type its operation expects, coercing the
+# string form of a number and reporting anything that cannot be coerced.
+#
+# + params - The command's parameters
+# + return - The parameters with numbers normalized, or the first type error found
+isolated function normalizeParams(map<json> params) returns map<json>|Error {
+    map<json> normalized = {};
+    foreach [string, json] [name, value] in params.entries() {
+        string? expected = PARAM_TYPES[name];
+        if expected is () || value is () {
+            normalized[name] = value;
+            continue;
+        }
+        if expected == "int" {
+            if value is int {
+                normalized[name] = value;
+                continue;
+            }
+            if value is string {
+                int|error parsed = int:fromString(value);
+                if parsed is int {
+                    normalized[name] = parsed;
+                    continue;
+                }
+            }
+            return invalidRequest(name + " must be an integer");
+        }
+        if value !is string {
+            return invalidRequest(name + " must be a string");
+        }
+        normalized[name] = value;
+    }
+    return normalized;
+}
+
 isolated function requiredParam(map<json> params, string name) returns string|Error {
+    // Wrong-typed values are already reported by normalizeParams, so reaching here
+    // with a non-string value is impossible; absence is the only failure left.
     string? value = strParam(params, name);
     if value is () || value == "" {
         return invalidRequest(name + " is required");
@@ -313,6 +384,9 @@ isolated function rolesFromIdentity(Identity identity) returns [string, string..
     }
     return [roles[0], ...roles.slice(1)];
 }
+
+// Both accessors read a normalized map: a value of the wrong type has already been
+// reported, so a missing value is the only case left and the default applies.
 
 isolated function strParam(map<json> params, string name) returns string? {
     json value = params[name];

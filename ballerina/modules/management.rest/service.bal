@@ -16,6 +16,7 @@
 
 import ballerina/http;
 import ballerina/lang.runtime;
+import ballerina/log;
 import ballerina/workflow.management;
 
 // All configurable variables are scoped to [ballerina.workflow.management.rest] in Config.toml.
@@ -211,6 +212,30 @@ isolated function validateManagementApiConfig() {
     }
 }
 
+# Names the authentication in force, so the startup log makes an unprotected endpoint
+# obvious rather than leaving it to be discovered.
+#
+# + return - A short description of the enabled schemes
+isolated function describeManagementAuth() returns string {
+    string[] schemes = [];
+    if enableJwtAuth {
+        schemes.push("JWT");
+    }
+    if enableOAuth {
+        schemes.push("OAuth2");
+    }
+    if enableBasicAuth {
+        schemes.push("basic");
+    }
+    if enableApiKey {
+        schemes.push("API key");
+    }
+    if schemes.length() == 0 {
+        return "none — the API is open to anyone who can reach the port";
+    }
+    return string:'join(", ", ...schemes);
+}
+
 # Builds the `http:ListenerConfiguration` from the configurable variables.
 # Wires TLS only — CORS is configured at service level via `@http:ServiceConfig`.
 # + return - Listener configuration with TLS wired when `enableTls` is true.
@@ -244,6 +269,7 @@ http:Listener? mgmtListener = ();
 # + return - An error if creating, attaching, or starting the listener fails
 function startManagementService() returns error? {
     if !enableManagementApi {
+        log:printDebug("Workflow management REST API is disabled; no port is reserved");
         return;
     }
     check startManagementListener();
@@ -260,6 +286,11 @@ function startManagementListener() returns error? {
     mgmtListener = httpListener;
     check httpListener.attach(mgmtService, "/workflow");
     check httpListener.'start();
+    // Say so plainly: this is an inbound surface on a port, and it is what keeps a
+    // workflow integration running once `main` returns.
+    log:printInfo(string `Workflow management REST API enabled on ` +
+            string `${enableTls ? "https" : "http"}://localhost:${port}/workflow` +
+            string ` (auth: ${describeManagementAuth()})`);
     // Always stop the listener on shutdown. With a programmatically started listener the
     // runtime no longer does this automatically (it only manages `listener` declarations);
     // an un-stopped listener would hold the port past program end (e.g. across `bal test`

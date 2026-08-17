@@ -138,8 +138,21 @@ function testWrongTypedStringParamIsReported() {
         "The message must name the real cause, not report the parameter as missing");
 }
 
+// A workflow's input is bound to its declared parameter, which need not be a record,
+// so `instances.start` must carry a scalar or an array through untouched. Rejecting
+// them would leave every workflow with a non-record input unstartable.
+@test:Config {groups: ["unit"]}
+function testStartInputAcceptsAnyJson() returns error? {
+    map<json> asObject = check normalizeParams({"input": {"orderId": "ORD-1"}});
+    test:assertEquals(asObject["input"], <json>{"orderId": "ORD-1"});
+    map<json> asScalar = check normalizeParams({"input": "ORD-1"});
+    test:assertEquals(asScalar["input"], "ORD-1");
+    map<json> asArray = check normalizeParams({"input": [1, 2]});
+    test:assertEquals(asArray["input"], <json>[1, 2]);
+}
+
 // A human task's completion value is whatever the task declared, so `result` takes any
-// json; `details` and `input` are documented as objects and are checked as such.
+// json; `details` is documented as an object and is checked as such.
 @test:Config {groups: ["unit"]}
 function testCompletionResultAcceptsAnyJson() returns error? {
     map<json> asObject = check normalizeParams({"result": {"approved": true}});

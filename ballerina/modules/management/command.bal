@@ -307,17 +307,23 @@ public isolated function executeCommand(Command command) returns json|Error {
 // so numeric parameters accept their string form and are coerced here; a value
 // that cannot be coerced is reported rather than silently replaced by a default.
 // `result` is the value a human submitted and may be any json, so it is absent from
-// this table, as is any name an operation does not read. `details` and `input` are
-// documented as JSON objects and the operations bind them as such: a scalar or array
-// would otherwise be silently dropped and the operation would report success having
-// lost what the caller sent.
+// this table, as is any name an operation does not read. `details` is documented as a
+// JSON object and `opFailHumanTask` binds it as one: a scalar or array would otherwise
+// be silently dropped and the operation would report success having lost what the
+// caller sent.
+//
+// This table is keyed by parameter name, so a name may only appear here when every
+// operation using it agrees on the type. `input` does not qualify: a review decision's
+// `input` is an object, but a workflow's input is whatever the workflow's parameter
+// accepts — a string, a number, an array — and the runtime binds it positionally.
+// Requiring an object here would make every workflow with a non-record input
+// unstartable. The decision path keeps its own check, in `opDecideReviewActivity`.
 final readonly & map<string> PARAM_TYPES = {
     "action": "string",
     "details": "object",
     "closeTimeFrom": "string",
     "closeTimeTo": "string",
     "feedback": "string",
-    "input": "object",
     "limit": "int",
     "pageToken": "string",
     "parentWorkflowId": "string",

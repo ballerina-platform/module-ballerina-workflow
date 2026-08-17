@@ -971,7 +971,9 @@ public final class WorkflowWorkerNative {
         }
 
         try {
-            LOGGER.debug("Stopping singleton worker...");
+            // At info: a drain can take up to the timeout below, so an operator watching a
+            // shutdown should see why the process is not gone yet.
+            LOGGER.info("Stopping the workflow worker, draining work in progress");
 
             if (inMemoryMode && testEnvironment != null) {
                 // In-memory mode: use TestWorkflowEnvironment.close()
@@ -982,6 +984,7 @@ public final class WorkflowWorkerNative {
                 if (workerFactory != null) {
                     workerFactory.shutdown();
                     workerFactory.awaitTermination(30, TimeUnit.SECONDS);
+                    LOGGER.info("Workflow worker stopped; work in progress was drained");
                 }
 
                 if (serviceStubs != null) {

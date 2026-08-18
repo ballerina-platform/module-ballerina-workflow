@@ -110,6 +110,23 @@ function testErrorJsonRepresentation() {
         "Every transport serializes errors through this one representation");
 }
 
+// Adapters everywhere (the REST API, the ICP command tunnel's generated glue) branch
+// on these reason values to pick their wire-specific codes; the classification and
+// the enum's string values are a contract for all of them.
+@test:Config {groups: ["unit"]}
+function testErrorCodeClassification() {
+    test:assertEquals(errorCodeOf(error NotFoundError("missing")), NOT_FOUND);
+    test:assertEquals(errorCodeOf(error AccessDeniedError("no role")), ACCESS_DENIED);
+    test:assertEquals(errorCodeOf(error InvalidRequestError("bad param")), INVALID_REQUEST);
+    test:assertEquals(errorCodeOf(error ConflictError("already completed")), CONFLICT);
+    test:assertEquals(errorCodeOf(error InvalidPayloadError("wrong shape")), INVALID_PAYLOAD);
+    test:assertEquals(errorCodeOf(error ExecutionError("runtime failed")), EXECUTION_ERROR);
+    test:assertEquals(errorCodeOf(error Error("unclassified")), EXECUTION_ERROR,
+        "An error outside the named subtypes must classify as an execution failure");
+    // The string values are wire-visible to consumers that carry the reason as text.
+    test:assertEquals(<string>NOT_FOUND, "NOT_FOUND");
+}
+
 // ── Parameter typing ──────────────────────────────────────────────────────────
 // A command may arrive from a channel that encodes scalars as text, so numeric
 // parameters accept their string form; anything that cannot be coerced is

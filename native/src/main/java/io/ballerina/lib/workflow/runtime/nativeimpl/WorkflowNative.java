@@ -401,8 +401,6 @@ public final class WorkflowNative {
             // Get registries from WorkflowWorkerNative (the singleton worker)
             Map<String, io.ballerina.lib.workflow.worker.WorkflowFunctionRef> processRegistry =
                     WorkflowWorkerNative.getProcessRegistry();
-            Map<String, io.ballerina.lib.workflow.worker.WorkflowFunctionRef> activityRegistry =
-                    WorkflowWorkerNative.getActivityRegistry();
             Map<String, List<String>> eventRegistry = WorkflowWorkerNative.getEventRegistry();
 
             // Get the ProcessRegistration record type from the workflow module
@@ -427,15 +425,17 @@ public final class WorkflowNative {
                                                                                      "ProcessRegistration");
                 processRecord.put(StringUtils.fromString("name"), StringUtils.fromString(displayName));
 
-                // Find activities for this process (activities are registered as "processName.activityName")
+                // Which activities this workflow declares. The registry is keyed by the plain
+                // activity name, so ownership comes from the ownership map rather than from a
+                // prefix match on the key.
                 List<String> processActivities = new ArrayList<>();
-                for (String activityName : activityRegistry.keySet()) {
-                    if (activityName.startsWith(processName + ".")) {
-                        // Extract just the activity name part
-                        String shortName = activityName.substring(processName.length() + 1);
-                        processActivities.add(shortName);
+                for (Map.Entry<String, java.util.Set<String>> owned
+                        : WorkflowWorkerNative.getActivityOwners().entrySet()) {
+                    if (owned.getValue().contains(processName)) {
+                        processActivities.add(owned.getKey());
                     }
                 }
+                java.util.Collections.sort(processActivities);
 
                 BString[] activityArray = processActivities.stream().map(StringUtils::fromString).toArray(
                         BString[]::new);

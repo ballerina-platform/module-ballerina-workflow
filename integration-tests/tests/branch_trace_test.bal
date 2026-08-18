@@ -77,6 +77,35 @@ function testTheExecutionGraphCarriesTheStepIdForHighlighting() returns error? {
     }
 }
 
+@test:Config {
+    groups: ["integration", "branch-trace"]
+}
+function testActivitiesAreScheduledUnderTheirPlainName() returns error? {
+    // The activity type used to be "<workflowType>.<activity>". Executions started since the
+    // naming patch schedule the plain name; the qualified one stays registered so older
+    // executions keep replaying.
+    string testId = uniqueId("branch-naming");
+    string workflowId = check workflow:run(branchTraceWorkflow, {id: testId, approved: true});
+    _ = check workflow:getWorkflowResult(workflowId, 30);
+
+    management:ActivityTreeNode node = check activityNodeFor(workflowId, "recordDecision");
+    test:assertEquals(node.name, "recordDecision",
+            "The activity type is the plain function name, with no workflow qualifier");
+}
+
+@test:Config {
+    groups: ["integration", "branch-trace"]
+}
+function testAChosenStepIdIsWhatTheExecutionReports() returns error? {
+    string testId = uniqueId("branch-named");
+    string workflowId = check workflow:run(namedStepWorkflow, {id: testId, approved: true});
+    _ = check workflow:getWorkflowResult(workflowId, 30);
+
+    management:ActivityTreeNode node = check activityNodeFor(workflowId, "recordDecision");
+    test:assertEquals(node.stepId, "record-outcome",
+            "The chosen id reaches history, so the graph and the run agree on the same name");
+}
+
 // Returns the single activity-tree node whose name contains `activityName`.
 isolated function activityNodeFor(string workflowId, string activityName)
         returns management:ActivityTreeNode|error {

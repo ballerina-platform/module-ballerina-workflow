@@ -20,6 +20,7 @@ package io.ballerina.lib.workflow.context;
 
 import io.ballerina.lib.workflow.ModuleUtils;
 import io.ballerina.lib.workflow.utils.TypesUtil;
+import io.ballerina.lib.workflow.worker.ActivityNaming;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
 import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.types.FunctionType;
@@ -117,7 +118,9 @@ public final class WorkflowContextNative {
             WorkflowWorkerNative.awaitWhileSuspended();
             String simpleActivityName = activityFunction.getType().getName();
             String workflowType = Workflow.getInfo().getWorkflowType();
-            String fullActivityName = workflowType + "." + simpleActivityName;
+            // The plain activity name for executions started since the naming patch; the legacy
+            // qualified name for older ones, whose history records it.
+            String fullActivityName = ActivityNaming.activityTypeFor(workflowType, simpleActivityName);
 
             Map<String, Object> namedArgs = convertArgsMapWithConnectionMarkers(args);
 
@@ -145,8 +148,8 @@ public final class WorkflowContextNative {
             if (isManualRetry) {
                 // Manual retry: run activity in a loop; on failure start a review-activity
                 // child workflow and wait for a human decision.
-                return executeWithManualRetry(fullActivityName, workflowType, namedArgs, callConfig,
-                        manualRetryRoles, typedesc, stepIdValue);
+                return executeWithManualRetry(fullActivityName, workflowType, simpleActivityName, namedArgs,
+                        callConfig, manualRetryRoles, typedesc, stepIdValue);
             }
 
             // AutoRetry or NoRetry — single Temporal activity invocation
@@ -223,6 +226,7 @@ public final class WorkflowContextNative {
      */
     @SuppressWarnings("unchecked")
     private static Object executeWithManualRetry(String fullActivityName, String workflowType,
+                                                 String simpleActivityName,
                                                  Map<String, Object> initialArgs, Map<String, Object> callConfig,
                                                  String[] reviewerRoles, BTypedesc typedesc, String stepId) {
 
@@ -257,8 +261,8 @@ public final class WorkflowContextNative {
             }
 
             // Activity failed — start a review-activity child workflow and await the human decision
-            Map<String, Object> decision = callBuiltinReviewActivity(fullActivityName, currentArgs,
-                    lastErrorMsg, reviewerRoles);
+            Map<String, Object> decision = callBuiltinReviewActivity(workflowType, fullActivityName,
+                    simpleActivityName, currentArgs, lastErrorMsg, reviewerRoles);
 
             String action = decision.containsKey("action") ? String.valueOf(decision.get("action")) : "reject";
 
@@ -299,7 +303,11 @@ public final class WorkflowContextNative {
      * approval gate (PRE_RUN) shares this starter when gated-activity policies land.
      *
      * @param trigger          {@code "PRE_RUN"} (approval gate) or {@code "ON_FAILURE"} (rerun decision)
-     * @param fullActivityName the qualified activity name (also used as the task name)
+     * @param qualifiedTaskName the qualified review task name, from
+     *                          {@link ActivityNaming#reviewTaskNameFor} — what the task is
+     *                          listed under and what its child workflow type is derived from
+     * @param activityType     the Temporal activity type being reviewed, used to look its input
+     *                         schema up in the registry
      * @param activityArgs     the proposed (or last-attempted) arguments, shown to the reviewer
      * @param errorMessage     the failure message for ON_FAILURE, or empty/null for PRE_RUN
      * @param userRoles        roles permitted to decide (empty → any role)
@@ -307,12 +315,12 @@ public final class WorkflowContextNative {
      * @return the decision map
      */
     @SuppressWarnings("unchecked")
-    static Map<String, Object> startReviewActivity(String trigger, String fullActivityName,
+    static Map<String, Object> startReviewActivity(String trigger, String qualifiedTaskName, String activityType,
                                                    Map<String, Object> activityArgs, String errorMessage,
                                                    String[] userRoles, Long timeoutMillis) {
         WorkflowWorkerNative.awaitWhileSuspended();
 
-        String qualifiedTaskName = fullActivityName;
+        String fullActivityName = qualifiedTaskName;
         String parentWorkflowId = Workflow.getInfo().getWorkflowId();
         String reviewId = "reviewactivity-" + Workflow.randomUUID();
 
@@ -351,7 +359,7 @@ public final class WorkflowContextNative {
         memo.put("activityArgs", activityArgs);
         memo.put("userRoles", roles);
         memo.put("createdAt", java.time.Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString());
-        memo.put("formSchema", deriveReviewInputSchema(fullActivityName, activityArgs));
+        memo.put("formSchema", deriveReviewInputSchema(activityType, activityArgs));
 
         // Input passed into the child workflow's execute()
         Map<String, Object> inputs = new HashMap<>();
@@ -392,11 +400,13 @@ public final class WorkflowContextNative {
     }
 
     // On-failure manual-retry review (the ManualRetry policy). Delegates to the shared starter.
-    private static Map<String, Object> callBuiltinReviewActivity(String fullActivityName,
+    private static Map<String, Object> callBuiltinReviewActivity(String workflowType, String activityType,
+                                                                 String simpleActivityName,
                                                                  Map<String, Object> activityArgs,
                                                                  String errorMessage, String[] reviewerRoles) {
-        return startReviewActivity("ON_FAILURE", fullActivityName, activityArgs, errorMessage,
-                reviewerRoles, null);
+        return startReviewActivity("ON_FAILURE",
+                ActivityNaming.reviewTaskNameFor(workflowType, simpleActivityName), activityType,
+                activityArgs, errorMessage, reviewerRoles, null);
     }
 
     /**

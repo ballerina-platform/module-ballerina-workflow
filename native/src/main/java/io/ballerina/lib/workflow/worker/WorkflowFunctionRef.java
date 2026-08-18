@@ -84,6 +84,35 @@ public final class WorkflowFunctionRef {
         return runtime.callFunction(module, functionName, new StrandMetadata(true, null), args);
     }
 
+    /**
+     * Whether this and {@code other} resolve the same Ballerina function. Two symbol references
+     * built from the same descriptor coordinates are separate objects but the same function —
+     * which is what registering one activity from several workflows produces.
+     *
+     * @param other the reference to compare with
+     * @return true when both name the same function
+     */
+    public boolean refersToSameFunctionAs(WorkflowFunctionRef other) {
+        if (other == null) {
+            return false;
+        }
+        if (this == other) {
+            return true;
+        }
+        if (pointer != null && pointer == other.pointer) {
+            return true;
+        }
+        if (functionName != null && functionName.equals(other.functionName)
+                && module != null && module.equals(other.module)) {
+            return true;
+        }
+        // Two pointers captured for one function are distinct objects, so fall back to the
+        // function's own name — only a genuine name clash should read as a collision.
+        String thisName = functionType != null ? functionType.getName() : null;
+        String otherName = other.functionType != null ? other.functionType.getName() : null;
+        return thisName != null && thisName.equals(otherName);
+    }
+
     @Override
     public String toString() {
         return pointer != null ? "pointer:" + pointer

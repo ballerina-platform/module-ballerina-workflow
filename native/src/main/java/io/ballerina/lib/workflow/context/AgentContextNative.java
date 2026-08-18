@@ -19,6 +19,7 @@
 package io.ballerina.lib.workflow.context;
 
 import io.ballerina.lib.workflow.utils.TypesUtil;
+import io.ballerina.lib.workflow.worker.ActivityNaming;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
 import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
@@ -360,7 +361,9 @@ public final class AgentContextNative {
                 }
                 break;
             }
-            String qualifiedName = Workflow.getInfo().getWorkflowType() + "." + activityName;
+            String workflowType = Workflow.getInfo().getWorkflowType();
+            String reviewTaskName = ActivityNaming.reviewTaskNameFor(workflowType, activityName);
+            String activityType = ActivityNaming.activityTypeFor(workflowType, activityName);
 
             Object parsedArgs = JsonUtils.parse(argsJson.getValue());
             Map<String, Object> argsMap = new LinkedHashMap<>();
@@ -370,7 +373,8 @@ public final class AgentContextNative {
             }
 
             Map<String, Object> decision = WorkflowContextNative.startReviewActivity(
-                    "PRE_RUN", qualifiedName, argsMap, "", reviewRoles, info.approvalTimeoutMillis);
+                    "PRE_RUN", reviewTaskName, activityType, argsMap, "", reviewRoles,
+                    info.approvalTimeoutMillis);
             return StringUtils.fromString(TypesUtil.toJsonString(decision));
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -1066,7 +1070,7 @@ public final class AgentContextNative {
     private static Object executeActivity(String activityName, Map<String, Object> namedArgs, BTypedesc td,
                                           Object retryPolicy) {
         String workflowType = Workflow.getInfo().getWorkflowType();
-        String fullActivityName = workflowType + "." + activityName;
+        String fullActivityName = ActivityNaming.activityTypeFor(workflowType, activityName);
         boolean manualRetry = retryPolicy instanceof BString s && "MANUAL_RETRY".equals(s.getValue());
         boolean autoRetry = retryPolicy instanceof BMap;
 
@@ -1106,7 +1110,8 @@ public final class AgentContextNative {
                 }
                 // Manual retry: a human reviews the failure and decides.
                 Map<String, Object> decision = WorkflowContextNative.startReviewActivity(
-                        "ON_FAILURE", fullActivityName, currentArgs, errorMsg, new String[0], null);
+                        "ON_FAILURE", ActivityNaming.reviewTaskNameFor(workflowType, activityName),
+                        fullActivityName, currentArgs, errorMsg, new String[0], null);
                 String action = decision.containsKey("action") ? String.valueOf(decision.get("action")) : "reject";
                 if ("proceed".equals(action)) {
                     continue;

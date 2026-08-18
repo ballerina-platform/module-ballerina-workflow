@@ -194,8 +194,18 @@ public final class WorkflowWorkerNative {
     // Static registry to store service objects accessible during workflow execution
     private static final Map<String, BObject> SERVICE_REGISTRY = new ConcurrentHashMap<>();
     // Static registry to store activity implementations (activity name to function ref:
-    // a captured pointer or a symbol reference from the packed workflow descriptor)
+    // a captured pointer or a symbol reference from the packed workflow descriptor).
+    //
+    // Keyed by the plain activity name. Ballerina function names are unique within a package,
+    // so the workflow that calls an activity adds nothing to its identity — and the Temporal
+    // activity type is what the registry is looked up by, so a shorter key means a shorter type
+    // in history and one entry per function instead of one per (workflow, activity) pair. The
+    // legacy `<workflowType>.<activity>` key is registered alongside so executions recorded
+    // before the change keep dispatching (see LEGACY_ACTIVITY_NAMING_CHANGE_ID).
     private static final Map<String, WorkflowFunctionRef> ACTIVITY_REGISTRY = new ConcurrentHashMap<>();
+    // Which workflow types declare each activity. The registry no longer carries that in its
+    // key, but the metadata document still reports an activity per workflow.
+    private static final Map<String, Set<String>> ACTIVITY_OWNERS = new ConcurrentHashMap<>();
     // Static registry to store process functions (workflow type to function ref)
     private static final Map<String, WorkflowFunctionRef> PROCESS_REGISTRY = new ConcurrentHashMap<>();
     // Static registry to store event names per process (process name to list of event names)
@@ -689,9 +699,8 @@ public final class WorkflowWorkerNative {
                 BMap<BString, BFunctionPointer> activityMap = (BMap<BString, BFunctionPointer>) activities;
                 for (BString activityName : activityMap.getKeys()) {
                     BFunctionPointer activityFunc = activityMap.get(activityName);
-                    String fullActivityName = workflowType + "." + activityName.getValue();
-                    ACTIVITY_REGISTRY.put(fullActivityName, WorkflowFunctionRef.of(activityFunc));
-                    LOGGER.debug("Registered activity: {}", fullActivityName);
+                    registerActivity(workflowType, activityName.getValue(),
+                            WorkflowFunctionRef.of(activityFunc), true);
                 }
             }
 
@@ -801,7 +810,7 @@ public final class WorkflowWorkerNative {
                             name, activityName);
                     continue;
                 }
-                ACTIVITY_REGISTRY.putIfAbsent(workflowType + "." + activityName, activityRef);
+                registerActivity(workflowType, activityName, activityRef, false);
             }
         }
 
@@ -1158,12 +1167,56 @@ public final class WorkflowWorkerNative {
     }
 
     /**
+     * Registers one activity under the name the Temporal activity type uses — its plain name —
+     * and under the legacy {@code <workflowType>.<activity>} name, so an execution recorded
+     * before the rename still resolves. Also records the calling workflow, which the metadata
+     * document reports per workflow.
+     *
+     * @param workflowType the calling workflow's Temporal type
+     * @param activityName the activity's plain name
+     * @param activityRef  the resolved implementation
+     * @param replace      whether an existing registration should be overwritten
+     */
+    private static void registerActivity(String workflowType, String activityName,
+                                         WorkflowFunctionRef activityRef, boolean replace) {
+        WorkflowFunctionRef existing = ACTIVITY_REGISTRY.get(activityName);
+        if (existing != null && !existing.refersToSameFunctionAs(activityRef)) {
+            // Two different functions claiming one plain name — possible when packages that
+            // define the same activity name share a task queue. One of them will serve every
+            // call, so say so rather than letting the dispatch look arbitrary. Registering the
+            // same activity from a second workflow of the same package is not a collision.
+            LOGGER.warn("Activity '{}' is already registered as {}; the registration from workflow "
+                    + "'{}' ({}) does not replace it. Activity names must be unique across the "
+                    + "packages sharing a task queue.", activityName, existing, workflowType, activityRef);
+        }
+        String legacyName = workflowType + "." + activityName;
+        if (replace) {
+            ACTIVITY_REGISTRY.put(activityName, activityRef);
+            ACTIVITY_REGISTRY.put(legacyName, activityRef);
+        } else {
+            ACTIVITY_REGISTRY.putIfAbsent(activityName, activityRef);
+            ACTIVITY_REGISTRY.putIfAbsent(legacyName, activityRef);
+        }
+        ACTIVITY_OWNERS.computeIfAbsent(activityName, name -> ConcurrentHashMap.newKeySet()).add(workflowType);
+        LOGGER.debug("Registered activity: {} (also as {})", activityName, legacyName);
+    }
+
+    /**
      * Gets the activity registry for testing purposes.
      *
      * @return the activity registry map
      */
     public static Map<String, WorkflowFunctionRef> getActivityRegistry() {
         return Collections.unmodifiableMap(ACTIVITY_REGISTRY);
+    }
+
+    /**
+     * The workflow types that declare each activity, by plain activity name.
+     *
+     * @return the activity ownership map
+     */
+    public static Map<String, Set<String>> getActivityOwners() {
+        return Collections.unmodifiableMap(ACTIVITY_OWNERS);
     }
 
     /**

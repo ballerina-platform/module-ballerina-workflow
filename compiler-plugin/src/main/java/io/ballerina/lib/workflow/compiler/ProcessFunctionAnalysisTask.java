@@ -75,10 +75,12 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
         // Collect activity calls and human task names within this workflow function
         Map<String, String> activityMap = new LinkedHashMap<>();
         Set<String> humanTaskNames = new LinkedHashSet<>();
-        ActivityCallCollector collector = new ActivityCallCollector(context, activityMap, humanTaskNames);
+        ActivityCallCollector collector =
+                new ActivityCallCollector(context, activityMap, humanTaskNames);
         functionNode.functionBody().accept(collector);
 
-        ProcessFunctionInfo processInfo = new ProcessFunctionInfo(functionName, activityMap, humanTaskNames);
+        ProcessFunctionInfo processInfo =
+                new ProcessFunctionInfo(functionName, activityMap, humanTaskNames);
         addToModifierContext(context.documentId(), processInfo);
     }
 
@@ -199,6 +201,7 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
 
             remoteCallNode.arguments().forEach(arg -> arg.accept(this));
         }
+
 
         /**
          * Extracts the literal {@code taskName} value from the arguments of a

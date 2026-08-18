@@ -179,6 +179,19 @@ public final class TestNatives {
     }
 
     /**
+     * Installs a workflow descriptor document as if it had been packed into the running JAR.
+     * Backs the metadata tests: {@code bal test} runs never produce an executable JAR, so the
+     * descriptor-sourced completion-form schemas are exercised by injecting the document here.
+     * Passing {@code ()} restores the not-packed state.
+     *
+     * @param descriptor the descriptor document as json, or nil to clear
+     */
+    public static void setPackedWorkflowDescriptor(Object descriptor) {
+        io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowDescriptorNative
+                .setPackedDescriptorForTesting(descriptor);
+    }
+
+    /**
      * Simulates the human task completion payload path against the task's expected result type, without a live
      * workflow server.
      * <p>

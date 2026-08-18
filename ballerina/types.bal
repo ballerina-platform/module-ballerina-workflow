@@ -132,8 +132,47 @@ public type HumanTaskTimeoutDetail record {|
 |};
 
 # Returned by `awaitHumanTask` when no human acts within the configured deadline.
-# Catch with `on fail workflow:HumanTaskTimeoutError e` to run compensation logic.
+# Catch the whole family with `on fail workflow:HumanTaskError e` and narrow with
+# `if e is workflow:HumanTaskTimeoutError` to run compensation logic for a timeout.
 public type HumanTaskTimeoutError distinct error<HumanTaskTimeoutDetail>;
+
+# Detail fields carried by a `HumanTaskRejectedError`.
+#
+# + taskName - The `taskName` value passed to `awaitHumanTask`
+# + taskWorkflowId - Temporal child workflow ID of the rejected task instance
+# + reason - The reason submitted with the rejection
+# + details - Structured data submitted with the rejection, or `()` if none was given
+# + rejectedBy - The user who rejected the task, when the rejection recorded one
+public type HumanTaskRejectedDetail record {|
+    string taskName;
+    string taskWorkflowId;
+    string reason;
+    map<json>? details = ();
+    string? rejectedBy = ();
+|};
+
+# Returned by `awaitHumanTask` when the task is rejected instead of completed — the
+# `fail` management operation, which records a reason rather than a result. The reason
+# and any structured details submitted with the rejection are on the error detail, so a
+# workflow can compensate on what the rejecting user said:
+#
+# ```ballerina
+# Approval|workflow:HumanTaskError approval = ctx->awaitHumanTask("approve", "FINANCE");
+# if approval is workflow:HumanTaskRejectedError {
+#     _ = check ctx->callActivity(notifyRejected, args = {"reason": approval.detail().reason});
+# }
+# ```
+public type HumanTaskRejectedError distinct error<HumanTaskRejectedDetail>;
+
+# Returned by `awaitHumanTask` when the task neither completed nor closed with a reason
+# it can report — the task workflow failed, was terminated by an administrator, or the
+# submitted value did not match the expected result type.
+public type HumanTaskFailedError distinct error;
+
+# Every failure `awaitHumanTask` can report: nobody acted in time
+# (`HumanTaskTimeoutError`), someone rejected the task (`HumanTaskRejectedError`), or the
+# task could not produce a result at all (`HumanTaskFailedError`).
+public type HumanTaskError HumanTaskTimeoutError|HumanTaskRejectedError|HumanTaskFailedError;
 
 # A data-event turn a durable agent has accepted but not yet answered. Returned
 # by `getPendingAgentEvents` so callers can rediscover in-flight event turns

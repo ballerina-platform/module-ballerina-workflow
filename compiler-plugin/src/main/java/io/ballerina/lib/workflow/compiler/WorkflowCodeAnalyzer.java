@@ -56,5 +56,6 @@ public class WorkflowCodeAnalyzer extends CodeAnalyzer {
         // composition methods (ctx->runChildWorkflow / ctx->callWorkflow)
         analysisContext.addSyntaxNodeAnalysisTask(new ChildWorkflowCallValidatorTask(),
                 SyntaxKind.REMOTE_METHOD_CALL_ACTION);
+
     }
 }

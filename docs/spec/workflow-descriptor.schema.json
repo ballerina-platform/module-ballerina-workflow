@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ballerina.io/spec/workflow/workflow-descriptor/1.0/workflow-descriptor.schema.json",
+  "title": "Workflow Definition Descriptor",
+  "description": "The meta-schema of the Workflow Definition Descriptor (WDD): the versioned, structured definition file the ballerina/workflow compiler plugin generates at build time and packs into the integration's executable JAR as the fixed-name resource 'workflow.def.json'. The descriptor captures only structural facts — what registers with the workflow runtime, plus JSON Schemas — never expression-valued instance parameters (roles, titles, retry counts, timeouts, payloads).",
+  "type": "object",
+  "required": ["descriptorVersion", "package", "checksum", "workflows", "agents"],
+  "additionalProperties": false,
+  "properties": {
+    "descriptorVersion": {
+      "description": "WDD spec version (major.minor). Minor versions are additive-only; consumers must not parse an unknown major.",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
+    "package": {
+      "description": "The Ballerina package this descriptor describes.",
+      "type": "object",
+      "required": ["org", "name", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "org": {"type": "string"},
+        "name": {"type": "string"},
+        "version": {"type": "string"}
+      }
+    },
+    "checksum": {
+      "description": "SHA-256 of the document's canonical bytes (sorted keys, no insignificant whitespace) serialized without this field. Instance identity is (package.org, package.name, package.version, checksum).",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "workflows": {
+      "description": "Every @workflow:Workflow function in the package, sorted by name.",
+      "type": "array",
+      "items": {"$ref": "#/$defs/workflow"}
+    },
+    "agents": {
+      "description": "Every module-level durable-agent declaration's static structure, sorted by name.",
+      "type": "array",
+      "items": {"$ref": "#/$defs/agent"}
+    }
+  },
+  "$defs": {
+    "workflow": {
+      "type": "object",
+      "required": ["name", "kind", "function", "input"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "The registered workflow type (the function name, without the runtime's 'workflow-' prefix).",
+          "type": "string"
+        },
+        "kind": {"enum": ["WORKFLOW", "AGENT"]},
+        "function": {"$ref": "#/$defs/functionRef"},
+        "input": {
+          "description": "The workflow's start input as a single form: one property per data parameter. The slot's type is the parenthesized data-parameter list.",
+          "$ref": "#/$defs/typedSlot"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "direction", "cardinality", "payload"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"type": "string"},
+              "direction": {"enum": ["IN"]},
+              "cardinality": {"enum": ["SINGLE"]},
+              "payload": {"$ref": "#/$defs/typedSlot"}
+            }
+          }
+        },
+        "activities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "input", "output"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"type": "string"},
+              "function": {"$ref": "#/$defs/functionRef"},
+              "input": {
+                "description": "The activity's data parameters as a single form; also backs review 'proceed-with-input' forms.",
+                "$ref": "#/$defs/typedSlot"
+              },
+              "output": {
+                "description": "The activity's return. The slot type records the full (possibly error-bearing) type; the schema describes the success members only.",
+                "$ref": "#/$defs/typedSlot"
+              }
+            }
+          }
+        },
+        "humanTasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "result"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "description": "The task name as written at the awaitHumanTask call site; qualified at runtime as <workflow>.<task>.",
+                "type": "string"
+              },
+              "result": {
+                "description": "The completion-form slot.",
+                "$ref": "#/$defs/typedSlot"
+              }
+            }
+          }
+        },
+        "reviewActivities": {
+          "description": "Which activities are human-reviewed, and on which trigger. The review's proceed-with-input form is the activity's input slot — not repeated here.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["activity", "triggers"],
+            "additionalProperties": false,
+            "properties": {
+              "activity": {"type": "string"},
+              "triggers": {
+                "type": "array",
+                "items": {"enum": ["PRE_RUN", "ON_FAILURE"]},
+                "minItems": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "required": ["name", "input", "result"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "The agent's stable identity: its module-level variable name.",
+          "type": "string"
+        },
+        "input": {"$ref": "#/$defs/typedSlot"},
+        "result": {"$ref": "#/$defs/typedSlot"},
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "cardinality", "request"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"type": "string"},
+              "cardinality": {"enum": ["SINGLE", "MULTI"]},
+              "request": {"$ref": "#/$defs/typedSlot"},
+              "response": {"$ref": "#/$defs/typedSlot"}
+            }
+          }
+        },
+        "tools": {
+          "description": "Declared capabilities advertised to the model. Runtime-added capabilities surface through runtime APIs only, never the descriptor.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "source"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"type": "string"},
+              "source": {"enum": ["ACTIVITY", "AI_TOOL", "PEER"]},
+              "input": {"$ref": "#/$defs/typedSlot"}
+            }
+          }
+        },
+        "humanTasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "result"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"type": "string"},
+              "result": {"$ref": "#/$defs/typedSlot"}
+            }
+          }
+        }
+      }
+    },
+    "functionRef": {
+      "description": "The implementation binding: the module-level function the runtime resolves and invokes for this structure. Structural — it is what registers with the runtime.",
+      "type": "object",
+      "required": ["module", "version", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "module": {
+          "description": "Qualified module name: <org>/<module> (the module name includes submodule parts, e.g. acme/procurement.ledger).",
+          "type": "string"
+        },
+        "version": {
+          "description": "The module's major version — the granularity the runtime resolves symbols at.",
+          "type": "string"
+        },
+        "name": {"type": "string"}
+      }
+    },
+    "typedSlot": {
+      "description": "A typed schema slot. The resolved Ballerina type descriptor is always recorded; the JSON Schema is a derived rendering emitted per representability tier: exact for closed anydata shapes, permissive + lossy for open anydata (json, anydata), omitted for the unrepresentable (xml, error, behavioral types, and composites mixing them into JSON data).",
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "description": "The resolved Ballerina type descriptor — the source of truth. For parameter-list inputs this is the parenthesized data-parameter list.",
+          "type": "string"
+        },
+        "schema": {"$ref": "#/$defs/schemaDocument"},
+        "lossy": {
+          "description": "Present (true) when the schema is a permissive approximation of the type rather than an exact rendering — form generators should not over-promise validation.",
+          "const": true
+        }
+      }
+    },
+    "schemaDocument": {
+      "description": "The pinned JSON Schema dialect: the exact 2020-12 subset the workflow runtime's TypesUtil emits. Extensions to this subset arrive only with WDD minor versions.",
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "anyOf": [
+                {"enum": ["object", "array", "string", "integer", "number", "boolean", "null"]},
+                {
+                  "type": "array",
+                  "items": {"enum": ["object", "array", "string", "integer", "number", "boolean", "null"]}
+                }
+              ]
+            },
+            "properties": {
+              "type": "object",
+              "additionalProperties": {"$ref": "#/$defs/schemaDocument"}
+            },
+            "required": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "items": {"$ref": "#/$defs/schemaDocument"},
+            "additionalProperties": {
+              "anyOf": [{"const": true}, {"$ref": "#/$defs/schemaDocument"}]
+            },
+            "anyOf": {
+              "type": "array",
+              "items": {"$ref": "#/$defs/schemaDocument"},
+              "minItems": 2
+            }
+          }
+        }
+      ]
+    }
+  }
+}

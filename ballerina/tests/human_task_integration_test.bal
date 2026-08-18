@@ -33,7 +33,6 @@
 
 import ballerina/lang.runtime;
 import ballerina/test;
-import ballerina/workflow.internal as wfInternal;
 import ballerina/workflow.management;
 
 type HtDecision record {|
@@ -73,7 +72,7 @@ function firstPendingHumanTaskId(string workflowId) returns string? {
 
 @test:Config {groups: ["unit"]}
 function testCompleteHumanTaskWithValidRecordPayload() returns error? {
-    _ = check wfInternal:registerWorkflow(htRecordWorkflow, "human-task-record-valid-test");
+    _ = check registerWorkflowForTest(htRecordWorkflow, "human-task-record-valid-test");
 
     map<string> input = {id: "test-ht-valid-001", orderId: "ORD-HT-001"};
     string|error runResult = run(htRecordWorkflow, input);
@@ -105,7 +104,7 @@ function testCompleteHumanTaskWithValidRecordPayload() returns error? {
 
 @test:Config {groups: ["unit"]}
 function testCompleteHumanTaskEmptyForNilableType() returns error? {
-    _ = check wfInternal:registerWorkflow(htNilableWorkflow, "human-task-nilable-test");
+    _ = check registerWorkflowForTest(htNilableWorkflow, "human-task-nilable-test");
 
     map<string> input = {id: "test-ht-nil-001", orderId: "ORD-HT-002"};
     string|error runResult = run(htNilableWorkflow, input);
@@ -133,7 +132,7 @@ function testCompleteHumanTaskEmptyForNilableType() returns error? {
 
 @test:Config {groups: ["unit"]}
 function testCompleteHumanTaskInvalidPayloadDoesNotComplete() returns error? {
-    _ = check wfInternal:registerWorkflow(htRecordWorkflow, "human-task-record-invalid-test");
+    _ = check registerWorkflowForTest(htRecordWorkflow, "human-task-record-invalid-test");
 
     map<string> input = {id: "test-ht-invalid-001", orderId: "ORD-HT-003"};
     string|error runResult = run(htRecordWorkflow, input);
@@ -182,7 +181,7 @@ function testCompleteHumanTaskInvalidPayloadDoesNotComplete() returns error? {
 function testFailHumanTaskBypassesPayloadValidation() returns error? {
     // failHumanTask sends a rejection sentinel ({__rejected: true, ...}) that intentionally does not
     // conform to the task's result type. Payload validation must not block it (ballerina-library#8866).
-    _ = check wfInternal:registerWorkflow(htRecordWorkflow, "human-task-record-reject-test");
+    _ = check registerWorkflowForTest(htRecordWorkflow, "human-task-record-reject-test");
 
     map<string> input = {id: "test-ht-reject-001", orderId: "ORD-HT-004"};
     string|error runResult = run(htRecordWorkflow, input);

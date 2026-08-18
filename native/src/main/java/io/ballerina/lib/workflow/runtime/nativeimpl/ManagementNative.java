@@ -41,7 +41,6 @@ import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BArray;
 import io.ballerina.runtime.api.values.BError;
-import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
 import io.temporal.api.common.v1.Payload;
@@ -223,7 +222,8 @@ public final class ManagementNative {
             BArray result = ValueCreator.createArrayValue(TypeCreator.createArrayType(defType));
 
             for (String workflowType : WorkflowWorkerNative.getProcessRegistry().keySet()) {
-                BFunctionPointer processFn = WorkflowWorkerNative.getProcessRegistry().get(workflowType);
+                io.ballerina.lib.workflow.worker.WorkflowFunctionRef processFn =
+                        WorkflowWorkerNative.getProcessRegistry().get(workflowType);
                 String displayType = workflowType.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX) ?
                                      workflowType.substring(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length()) :
                                      workflowType;
@@ -257,9 +257,10 @@ public final class ManagementNative {
 
     /**
      * Builds a JSON schema for workflow input based on the registered workflow function signature. Skips Context and
-     * events parameters and returns the schema for the actual data input parameters.
+     * events parameters and returns the schema for the actual data input parameters. Package-visible so
+     * {@link WorkflowMetadataNative} can reuse the derivation for metadata publishing.
      */
-    private static String deriveWorkflowInputSchema(BFunctionPointer processFunction) {
+    static String deriveWorkflowInputSchema(io.ballerina.lib.workflow.worker.WorkflowFunctionRef processFunction) {
         if (processFunction == null) {
             return TypesUtil.toJsonSchemaForParameters(new Parameter[0], 0, 0);
         }
@@ -274,9 +275,9 @@ public final class ManagementNative {
             return TypesUtil.toJsonSchemaForParameters(new Parameter[0], 0, 0);
         }
 
-        int startIndex = EventExtractor.hasContextParameter(processFunction) ? 1 : 0;
+        int startIndex = EventExtractor.hasContextParameter(processFunction.getType()) ? 1 : 0;
         int endExclusive = parameters.length;
-        if (EventExtractor.getEventsRecordType(processFunction) != null && endExclusive > startIndex) {
+        if (EventExtractor.getEventsRecordType(processFunction.getType()) != null && endExclusive > startIndex) {
             endExclusive--;
         }
 

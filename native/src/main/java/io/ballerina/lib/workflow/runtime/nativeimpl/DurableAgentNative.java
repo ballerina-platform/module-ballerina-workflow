@@ -344,6 +344,16 @@ public final class DurableAgentNative {
         return AGENT_DECL_REGISTRY.get(agentName);
     }
 
+    /**
+     * Returns an unmodifiable view of every declared durable agent, keyed by agent name.
+     * Used by {@link WorkflowMetadataNative} to publish agent declarations as workflow metadata.
+     *
+     * @return unmodifiable map of agent name to declaration
+     */
+    public static java.util.Map<String, AgentDecl> getAgentDeclRegistry() {
+        return java.util.Collections.unmodifiableMap(AGENT_DECL_REGISTRY);
+    }
+
     // -----------------------------------------------------------------------------------------
     // Runner registration and driving (run / result reads)
     // -----------------------------------------------------------------------------------------

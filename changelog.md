@@ -6,8 +6,164 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **`workflow.def.json` now reaches the built executable.** The descriptor was registered as a
+  package resource with `SourceGeneratorContext.addResourceFile`, which puts nothing into the
+  executable, the BALA, or `target` — while a file physically present in a package's `resources`
+  directory is packed into both. It is now written into the emitted executable by a
+  compiler-lifecycle task, as the root-level entry `workflow.def.json`, byte-identical to the
+  document the builder produced. Executables only: a BALA does not carry it, and a consumer that
+  needs the artifact regenerates it from the package. Nothing about registration changes — the
+  runtime registers from the copy the source modifier embeds.
+
+- **A rejected human task now reaches the awaiting workflow.** `awaitHumanTask` declared
+  `T|HumanTaskTimeoutError`, so a timeout was the only failure it could return. Every
+  other outcome — a task rejected through the `fail` management operation, a terminated
+  task, a submitted value that did not match `T` — built an error outside that union and
+  **panicked the workflow with `{ballerina}TypeCastError`** at the Java→Ballerina
+  boundary. The rejection reason travelled correctly as far as the task workflow's
+  failure (recorded in its history) and was then lost, so a workflow could not
+  compensate on it and the instance failed with an opaque cast error instead.
+
+  `awaitHumanTask` now returns `T|HumanTaskError`, a union of three distinct errors:
+
+  - `HumanTaskTimeoutError` — unchanged, including its detail record;
+  - `HumanTaskRejectedError` — new, carrying `reason`, the structured `details`, and
+    `rejectedBy` exactly as submitted to the `fail` operation;
+  - `HumanTaskFailedError` — new; the task produced no result (terminated, or the
+    submitted value did not match `T`).
+
+  **Breaking (source):** the documented `on fail workflow:HumanTaskTimeoutError e`
+  pattern no longer compiles, because the `do` block can now fail with a wider type.
+  Catch the family and narrow inside:
+
+  ```ballerina
+  do {
+      decision = check ctx->awaitHumanTask("approve", "FINANCE", timeout = {hours: 24});
+  } on fail workflow:HumanTaskError e {
+      if e !is workflow:HumanTaskTimeoutError {
+          return e;                       // a rejection is an answer, not an escalation
+      }
+      // ... escalate on timeout, as before
+  }
+  ```
+
+  A rejection recorded by an older runtime carries no structured details; its
+  `HumanTaskRejectedError` reports the reason with `details` as `()`.
+
+### Changed
+
+- **Breaking**: the management HTTP API moved from `ballerina/workflow.management`
+  to the new `ballerina/workflow.management.rest` module. `workflow.management` is
+  now a pure Ballerina API — importing it never starts a listener. To serve the
+  HTTP API, add `import ballerina/workflow.management.rest as _;`.
+
+  Configurables split between the two modules, so a migration moves *most* keys but
+  must leave two behind. `maxPageSize` and `reviewActivityAccessRole` belong to the
+  operations themselves and stay under `[ballerina.workflow.management]`; everything
+  else (listener, auth, CORS, identity) moves to `[ballerina.workflow.management.rest]`
+  with unchanged key names. Moving `reviewActivityAccessRole` by mistake is not
+  inert — it would fall back to its default, which leaves review activities that
+  declare no roles of their own visible to any caller:
+
+  ```toml
+  [ballerina.workflow.management]
+  maxPageSize = 100
+  reviewActivityAccessRole = "OPS"          # keep here, or the restriction is lost
+
+  [ballerina.workflow.management.rest]
+  port = 8234                                # everything else moves here
+  enableJwtAuth = true
+  ```
+
+  Routes, methods, base path, default port, success status codes, and success payload
+  shapes are unchanged. Identity resolution is the one behavioral difference: it now
+  comes from token claims and overrides `x-user-*` headers
+  (`trustForwardedIdentity = true` restores the old precedence).
+
+- **Breaking (generated API specification)**: the specification generated from the
+  management service's source is now less detailed than the API it describes. The
+  resources return `http:Response` rather than typed union returns, so
+  `bal openapi -i` (and anything reading its output) no longer sees:
+
+  - the per-route status codes — every operation is described with a single
+    unconstrained response instead of its `200`/`201`/`400`/`403`/`404`/`409`/`500` set;
+  - the response body schemas — `WorkflowInstancePage`, `HumanTaskInfo`,
+    `ErrorResponse`, and the rest no longer appear as response types (they remain
+    public Ballerina types and the wire payloads are byte-for-byte unchanged);
+  - the `x-user-*` header parameters, which were declared as resource parameters and
+    are now read from the request inside the service.
+
+  The **served** contract is unchanged — no route, method, status code, or payload
+  moved, so a running client keeps working. What breaks is anything *derived* from the
+  generated specification: regenerated client stubs lose their typed responses and
+  header parameters, and a gateway, mock server, or contract test built from that
+  document degrades to an untyped passthrough. Contract tests that assert the generated
+  specification matches a stored copy will fail on regeneration and must be re-baselined.
+
+  Migration, if you depend on the specification: pin the last specification generated
+  before this release and maintain it by hand, or generate it from a running endpoint
+  rather than from the source. The response types are still public, so a hand-maintained
+  document can reference them directly. Typed resource signatures may be restored in a
+  later release once error mapping no longer needs the raw `http:Response`; that would
+  restore the detail without changing the served API again.
+
+  The HTTP-only types `CompletionInfo`, `ReviewDecisionInfo`, `HumanTaskPage`, and
+  `ReviewActivityPage` moved with the service; the unused `ManagementServiceConfig`
+  and `CorsConfig` types were removed.
+
 ### Added
 
+- **Descriptor-driven registration (zero metadata codegen)**: the compiler plugin no
+  longer generates per-workflow `registerWorkflow`/`registerHumanTask` calls. The
+  generated module-init function hands the canonical descriptor document to the
+  runtime in a single data-only `registerWorkflowDescriptor` call; when the worker
+  starts, the runtime registers every described workflow, activity, and human task
+  and resolves the implementation functions by their recorded module coordinates
+  (symbol references invoked through `Runtime.callFunction` with a concurrent-safe
+  strand). Direct pointer registration remains supported for durable-agent runners
+  and programmatic use. Only runtime values stay generated: module-level client
+  connections and durable-agent declarations.
+- **Workflow Definition Descriptor (WDD)**: the compiler plugin now generates a
+  versioned, OpenAPI-style definition file describing every workflow component in
+  the package — workflows, activities (input and output), human tasks (completion
+  forms), review activities, events, and durable agents — with embedded JSON
+  Schemas, and packs it into the executable JAR as the fixed-name resource
+  `workflow.def.json`. Every schema-bearing position is a typed slot: the resolved
+  Ballerina type is always recorded, and the JSON Schema is emitted per
+  representability tier (exact for closed anydata shapes, permissive + `lossy` for
+  open anydata, omitted for `xml`/`error`/behavioral types). The document is
+  canonical JSON with a SHA-256 content checksum, so consumers can persist, diff,
+  and audit definitions over time. The packed descriptor is served under the
+  `descriptor` field of `management:getWorkflowMetadata()` (nil when the program
+  was built without one, e.g. under `bal test`). The meta-schema lives in
+  `docs/spec/`.
+- `management:getWorkflowMetadata()` — a startup-complete metadata document
+  (definitions with input schemas, human tasks with completion-form schemas,
+  activities with input schemas, the review-action vocabulary, and durable-agent
+  declarations) for control planes to publish. Completion-form schemas are read
+  from the packed workflow descriptor before a task first runs; the registry
+  takes over once the task has executed.
+- `management:executeCommand()` — runs any management operation named by the
+  `management:Operation` enum, returning the operation's `json` payload or a
+  `management:Error`. The HTTP API in `workflow.management.rest` dispatches through
+  the same call, so a command and the matching REST route produce identical
+  payloads. `workflow.management` itself stays free of transport concepts: it
+  reports *why* an operation failed through distinct error types (`NotFoundError`,
+  `AccessDeniedError`, `InvalidRequestError`, `ConflictError`, `InvalidPayloadError`,
+  `ExecutionError`), and each adapter maps those onto its own protocol — status
+  codes in the REST module, and the tunnel envelope in a control-plane bridge.
+- Token-based caller identity for the management REST API: the gateway interceptor
+  resolves the caller's identity once per request and stores it in the
+  `http:RequestContext` (spec §8.1.11), where every resource reads it — requests are
+  never mutated. With JWT/OAuth2 auth, the user ID and roles are extracted from the
+  bearer token's claims (configurable `userIdClaim`, `rolesClaim` with dotted-path
+  support) and replace any forwarded `x-user-id`/`x-user-roles` headers so identity
+  cannot be spoofed alongside a valid token (`trustForwardedIdentity = true` restores
+  header precedence). Optional OAuth scope enforcement per operation class via
+  `enforceScopes` and the `scopeWorkflowView/Manage`, `scopeHumanTaskView/Manage`
+  configurables. Basic auth defaults the audit user ID to the authenticated username.
 - Declared agent activities honor `bindings`: arguments fixed at registration (typically a
   client the model cannot supply) are carried from the declaration through to the
   registration, so a connection-based activity can be exposed as an agent tool by binding

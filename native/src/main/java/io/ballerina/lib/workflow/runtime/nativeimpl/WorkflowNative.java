@@ -399,8 +399,10 @@ public final class WorkflowNative {
     public static Object getRegisteredWorkflows() {
         try {
             // Get registries from WorkflowWorkerNative (the singleton worker)
-            Map<String, BFunctionPointer> processRegistry = WorkflowWorkerNative.getProcessRegistry();
-            Map<String, BFunctionPointer> activityRegistry = WorkflowWorkerNative.getActivityRegistry();
+            Map<String, io.ballerina.lib.workflow.worker.WorkflowFunctionRef> processRegistry =
+                    WorkflowWorkerNative.getProcessRegistry();
+            Map<String, io.ballerina.lib.workflow.worker.WorkflowFunctionRef> activityRegistry =
+                    WorkflowWorkerNative.getActivityRegistry();
             Map<String, List<String>> eventRegistry = WorkflowWorkerNative.getEventRegistry();
 
             // Get the ProcessRegistration record type from the workflow module
@@ -411,7 +413,8 @@ public final class WorkflowNative {
             MapType mapType = TypeCreator.createMapType(processRegType);
             BMap<BString, Object> resultMap = ValueCreator.createMapValue(mapType);
 
-            for (Map.Entry<String, BFunctionPointer> entry : processRegistry.entrySet()) {
+            for (Map.Entry<String, io.ballerina.lib.workflow.worker.WorkflowFunctionRef> entry
+                    : processRegistry.entrySet()) {
                 String processName = entry.getKey(); // internal prefixed name, e.g. "workflow-test-process"
 
                 // Strip the "workflow-" prefix for user-facing display name

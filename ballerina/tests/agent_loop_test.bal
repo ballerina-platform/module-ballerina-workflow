@@ -19,7 +19,7 @@
 // ============================================================================
 //
 // The compiler plugin doesn't run on the workflow package itself, so these tests
-// register agents with `wfInternal:registerAgentWorkflow` using the tools +
+// register agents with `registerAgentWorkflowForTest` using the tools +
 // built-in activities map (mirroring the init code the plugin generates for
 // `workflow:DurableAgent` declarations). The agent bodies drive the module's
 // internal capability-registration functions (registerActivity + buildAndRun)
@@ -35,7 +35,6 @@ import ballerina/ai;
 import ballerina/jballerina.java;
 import ballerina/lang.runtime;
 import ballerina/test;
-import ballerina/workflow.internal as wfInternal;
 import ballerina/workflow.management;
 
 // ── Scripted mock model providers ────────────────────────────────────────────
@@ -617,28 +616,28 @@ function setupAgentTests() returns error? {
         "generate": generate,
         "executeAgentTool": executeAgentTool
     };
-    _ = check wfInternal:registerAgentWorkflow(stockAgent, "stockAgent", agentActivities);
-    _ = check wfInternal:registerAgentWorkflow(chatStockAgent, "chatStockAgent", agentActivities);
-    _ = check wfInternal:registerAgentWorkflow(loopingAgent, "loopingAgent", agentActivities);
-    _ = check wfInternal:registerAgentWorkflow(unknownToolAgent, "unknownToolAgent", agentActivities);
-    _ = check wfInternal:registerAgentWorkflow(priceAgent, "priceAgent", agentActivities);
-    _ = check wfInternal:registerAgentWorkflow(approvalAgent, "approvalAgent", agentActivities);
-    _ = check wfInternal:registerAgentWorkflow(eventWaitingAgent, "eventWaitingAgent", agentActivities);
-    _ = check wfInternal:registerAgentWorkflow(conversationAgent, "conversationAgent", agentActivities);
-    _ = check wfInternal:registerAgentWorkflow(unsafeConversationAgent, "unsafeConversationAgent",
+    _ = check registerAgentWorkflowForTest(stockAgent, "stockAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(chatStockAgent, "chatStockAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(loopingAgent, "loopingAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(unknownToolAgent, "unknownToolAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(priceAgent, "priceAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(approvalAgent, "approvalAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(eventWaitingAgent, "eventWaitingAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(conversationAgent, "conversationAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(unsafeConversationAgent, "unsafeConversationAgent",
             agentActivities);
-    _ = check wfInternal:registerAgentWorkflow(cappedConversationAgent, "cappedConversationAgent",
+    _ = check registerAgentWorkflowForTest(cappedConversationAgent, "cappedConversationAgent",
             agentActivities);
-    _ = check wfInternal:registerAgentWorkflow(timeoutAgent, "timeoutAgent", agentActivities);
-    _ = check wfInternal:registerAgentWorkflow(contextToolAgent, "contextToolAgent", agentActivities);
-    _ = check wfInternal:registerAgentWorkflow(toolkitAgent, "toolkitAgent", agentActivities);
-    _ = check wfInternal:registerAgentWorkflow(humanTaskTimeoutAgent, "humanTaskTimeoutAgent",
+    _ = check registerAgentWorkflowForTest(timeoutAgent, "timeoutAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(contextToolAgent, "contextToolAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(toolkitAgent, "toolkitAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(humanTaskTimeoutAgent, "humanTaskTimeoutAgent",
             agentActivities);
-    _ = check wfInternal:registerWorkflow(parkedPlainWorkflow, "parkedPlainWorkflow");
-    _ = check wfInternal:registerAgentWorkflow(endingAgent, "endingAgent", agentActivities);
-    _ = check wfInternal:registerAgentWorkflow(autoConversationAgent, "autoConversationAgent",
+    _ = check registerWorkflowForTest(parkedPlainWorkflow, "parkedPlainWorkflow");
+    _ = check registerAgentWorkflowForTest(endingAgent, "endingAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(autoConversationAgent, "autoConversationAgent",
             agentActivities);
-    _ = check wfInternal:registerAgentWorkflow(shortTimeoutConversationAgent, "shortTimeoutConversationAgent",
+    _ = check registerAgentWorkflowForTest(shortTimeoutConversationAgent, "shortTimeoutConversationAgent",
             agentActivities);
 }
 

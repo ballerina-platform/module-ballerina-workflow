@@ -1147,7 +1147,11 @@ public final class AgentContextNative {
             }
         }
         Parameter[] params = dataParams.toArray(new Parameter[0]);
-        return TypesUtil.toParameterSchemaMap(params, 0, params.length);
+        // Honor declared defaults: a defaultable parameter is one the model may omit, and
+        // the descriptor's compile-time schema (DescriptorSchemaGen.parameterSlot) leaves it
+        // out of `required` too. Passing false here made the two disagree for non-nilable
+        // defaultable parameters.
+        return TypesUtil.toParameterSchemaMap(params, 0, params.length, true);
     }
 
     // Parses a JSON-schema string into the plain-map form used in tool definitions.

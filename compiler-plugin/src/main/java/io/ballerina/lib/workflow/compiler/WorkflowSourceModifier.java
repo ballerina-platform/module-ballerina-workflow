@@ -32,6 +32,7 @@ import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.compiler.syntax.tree.SyntaxTree;
 import io.ballerina.compiler.syntax.tree.Token;
+import io.ballerina.lib.workflow.compiler.descriptor.WorkflowDescriptorBuilder;
 import io.ballerina.projects.DocumentId;
 import io.ballerina.projects.Module;
 import io.ballerina.projects.plugins.ModifierTask;
@@ -46,7 +47,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
 
 /**
  * Source modifier that transforms workflow process functions.
@@ -76,6 +76,21 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
 
     @Override
     public void modify(SourceModifierContext context) {
+        // Build the workflow descriptor here so the generated registration can embed it as
+        // data: generated sources travel through every compilation mode (bal build, bal run,
+        // bal test), unlike packed JAR resources, which bal test runs never see.
+        byte[] descriptorBytes = WorkflowDescriptorBuilder.build(
+                context.currentPackage(), context.compilation());
+        String descriptorJson = descriptorBytes != null
+                ? new String(descriptorBytes, java.nio.charset.StandardCharsets.UTF_8) : null;
+        // When the registration is hosted in a test document, the descriptor must also
+        // describe workflows declared under tests/: registration is descriptor-driven, so a
+        // test-only workflow the descriptor omits would never reach the process registry.
+        byte[] testDescriptorBytes = WorkflowDescriptorBuilder.build(
+                context.currentPackage(), context.compilation(), true, null);
+        String testDescriptorJson = testDescriptorBytes != null
+                ? new String(testDescriptorBytes, java.nio.charset.StandardCharsets.UTF_8) : null;
+
         // Collect all process functions across all documents so we can generate
         // a single registerWorkflowsAndStart() call that covers every workflow.
         List<Map.Entry<DocumentId, WorkflowModifierContext>> entries = new ArrayList<>();
@@ -141,7 +156,8 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                     isLastDocument ? allDurableAgentDecls : Collections.emptyList(),
                     isLastDocument
                         ? collectConnectionNames(documentId.moduleId().toString(), isTestDocument)
-                        : Collections.emptyList());
+                        : Collections.emptyList(),
+                    isLastDocument ? (isTestDocument ? testDescriptorJson : descriptorJson) : null);
 
             // Only add the import for the document that contains the generated
             // __registerWorkflowsAndStart() function to avoid unused-import errors.
@@ -165,7 +181,8 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
     private ModulePartNode transformDocument(ModulePartNode rootNode, WorkflowModifierContext workflowContext,
                                              List<ProcessFunctionInfo> allProcessInfos,
                                              List<DurableAgentDeclInfo> allDurableAgentDecls,
-                                             List<String> connectionNames) {
+                                             List<String> connectionNames,
+                                             String descriptorJson) {
         NodeList<ModuleMemberDeclarationNode> members = rootNode.members();
         List<ModuleMemberDeclarationNode> newMembers = new ArrayList<>();
         for (ModuleMemberDeclarationNode member : members) {
@@ -177,7 +194,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         // starts the runtime, plus a module-level variable that calls it.
         if (allProcessInfos != null && (!allProcessInfos.isEmpty() || !allDurableAgentDecls.isEmpty())) {
             newMembers.add(createRegisterAndStartFunction(allProcessInfos,
-                    allDurableAgentDecls, connectionNames));
+                    allDurableAgentDecls, connectionNames, descriptorJson));
             newMembers.add(createRegisterAndStartInvocation());
         }
 
@@ -217,12 +234,16 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
     }
 
     /**
-     * Generates a private function that registers all workflows and starts the runtime.
+     * Generates a private function that registers runtime values and starts the runtime.
+     * Workflows, their activities, and human tasks are NOT registered here — they are
+     * registered when the worker starts, from the descriptor this function hands the runtime
+     * as data (the embedded, registered document; the packed workflow.def.json resource is the
+     * externally consumable copy and is not what the runtime reads). Only what carries runtime
+     * values remains generated: module-level client connections and durable-agent declarations
+     * (model providers, prompts, tool bindings).
      * <pre>
      * function __registerWorkflowsAndStart() returns boolean|error {
      *     _ = check wfInternal:registerConnection("db", db);
-     *     _ = check wfInternal:registerWorkflow(wf1, "wf1", {"act": act});
-     *     _ = check wfInternal:registerHumanTask("approveExpense");
      *     _ = check wfInternal:startWorkflowRuntime();
      *     return true;
      * }
@@ -230,7 +251,8 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
      */
     private ModuleMemberDeclarationNode createRegisterAndStartFunction(
             List<ProcessFunctionInfo> allProcessInfos,
-            List<DurableAgentDeclInfo> allDurableAgentDecls, List<String> connectionNames) {
+            List<DurableAgentDeclInfo> allDurableAgentDecls, List<String> connectionNames,
+            String descriptorJson) {
         StringBuilder body = new StringBuilder();
         body.append("function __registerWorkflowsAndStart() returns boolean|error {");
         body.append(System.lineSeparator());
@@ -239,34 +261,19 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         // launched during workflow registration can already resolve them.
         for (String name : connectionNames) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerConnection(\"").append(name).append("\", ")
+                    .append(":" + WorkflowConstants.REGISTER_CONNECTION_FUNCTION + "(\"").append(name).append("\", ")
                     .append(name).append(");").append(System.lineSeparator());
         }
 
-        for (ProcessFunctionInfo processInfo : allProcessInfos) {
-            String activitiesArg = buildActivitiesArg(processInfo);
+        // Hand the workflow descriptor to the runtime as data. This single call replaces the
+        // per-workflow registerWorkflow/registerHumanTask codegen: the runtime registers every
+        // described workflow, activity, and human task from the document and resolves the
+        // implementation functions by their recorded coordinates (symbol loading).
+        if (descriptorJson != null) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerWorkflow(").append(processInfo.functionName())
-                    .append(", \"").append(processInfo.functionName()).append("\", ")
-                    .append(activitiesArg).append(");").append(System.lineSeparator());
-        }
-
-        // Collect qualified human task names ("workflowFunctionName.taskName") across every
-        // workflow in this module. Qualification ensures uniqueness across workflows that
-        // reuse the same short task name and matches the runtime qualification in awaitHumanTask.
-        // A sorted set is used for deterministic code generation across compiler runs.
-        Set<String> qualifiedHumanTaskNames = new TreeSet<>();
-        for (ProcessFunctionInfo processInfo : allProcessInfos) {
-            for (String taskName : processInfo.humanTaskNames()) {
-                qualifiedHumanTaskNames.add(processInfo.functionName() + "." + taskName);
-            }
-        }
-        for (String qualifiedName : qualifiedHumanTaskNames) {
-            body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerHumanTask(\"")
-                    .append(escapeBallerinaStringLiteral(qualifiedName))
-                    .append("\");")
-                    .append(System.lineSeparator());
+                    .append(":" + WorkflowConstants.REGISTER_DESCRIPTOR_FUNCTION + "(\"")
+                    .append(escapeBallerinaStringLiteral(descriptorJson))
+                    .append("\");").append(System.lineSeparator());
         }
 
         // Register object-model durable agent declarations: identity + model first, then the
@@ -276,7 +283,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         }
 
         body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                .append(":startWorkflowRuntime();").append(System.lineSeparator());
+                .append(":" + WorkflowConstants.START_RUNTIME_FUNCTION + "();").append(System.lineSeparator());
         body.append("    return true;").append(System.lineSeparator());
         body.append("}");
 
@@ -310,7 +317,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         }
         String agentNameLiteral = "\"" + escapeBallerinaStringLiteral(decl.agentName()) + "\"";
         body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                .append(":registerDurableAgentDecl(").append(agentNameLiteral)
+                .append(":" + WorkflowConstants.REGISTER_AGENT_DECL_FUNCTION + "(").append(agentNameLiteral)
                 .append(", ").append(decl.modelSource())
                 .append(", ").append(decl.systemPromptSource())
                 .append(", ").append(decl.maxIterSource() != null ? decl.maxIterSource() : "16")
@@ -319,7 +326,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                 .append(");").append(System.lineSeparator());
         for (DurableAgentDeclInfo.ActivityDecl activity : decl.activities()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerDurableAgentActivity(").append(agentNameLiteral)
+                    .append(":" + WorkflowConstants.REGISTER_AGENT_ACTIVITY_FUNCTION + "(").append(agentNameLiteral)
                     .append(", \"").append(escapeBallerinaStringLiteral(activity.toolName()))
                     .append("\", ").append(activity.functionRefSource())
                     .append(", ").append(activity.metaSource() != null ? activity.metaSource() : "()")
@@ -328,7 +335,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         }
         for (DurableAgentDeclInfo.ToolRef toolRef : decl.aiToolRefs()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerDurableAgentTool(").append(agentNameLiteral)
+                    .append(":" + WorkflowConstants.REGISTER_AGENT_TOOL_FUNCTION + "(").append(agentNameLiteral)
                     .append(", ").append(toolRef.refSource());
             if (toolRef.approvalSource() != null) {
                 body.append(", requiresApproval = ").append(toolRef.approvalSource());
@@ -340,7 +347,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         }
         for (DurableAgentDeclInfo.EventDecl event : decl.events()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerDurableAgentEvent(").append(agentNameLiteral)
+                    .append(":" + WorkflowConstants.REGISTER_AGENT_EVENT_FUNCTION + "(").append(agentNameLiteral)
                     .append(", \"").append(escapeBallerinaStringLiteral(event.name()))
                     .append("\", ").append(event.requestTypeSource())
                     .append(", ").append(event.responseTypeSource() != null ? event.responseTypeSource() : "()")
@@ -349,7 +356,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         }
         for (DurableAgentDeclInfo.HumanTaskDecl task : decl.humanTasks()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerDurableAgentHumanTask(").append(agentNameLiteral)
+                    .append(":" + WorkflowConstants.REGISTER_AGENT_HUMAN_TASK_FUNCTION + "(").append(agentNameLiteral)
                     .append(", \"").append(escapeBallerinaStringLiteral(task.name()))
                     .append("\", ").append(task.metaSource() != null ? task.metaSource() : "()")
                     .append(", ").append(task.resultTypeSource() != null ? task.resultTypeSource() : "anydata")
@@ -357,7 +364,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         }
         for (DurableAgentDeclInfo.PeerDecl peer : decl.peers()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                    .append(":registerDurableAgentPeer(").append(agentNameLiteral)
+                    .append(":" + WorkflowConstants.REGISTER_AGENT_PEER_FUNCTION + "(").append(agentNameLiteral)
                     .append(", \"").append(escapeBallerinaStringLiteral(peer.name()))
                     .append("\", \"").append(escapeBallerinaStringLiteral(peer.targetAgent()))
                     .append("\", ").append(peer.metaSource() != null ? peer.metaSource() : "()")
@@ -369,27 +376,10 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
         // The runner function and the built-in agent activities are captured natively at
         // workflow-module init, so the generated code references only the agent name.
         body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
-                .append(":registerDurableAgentRunner(").append(agentNameLiteral)
+                .append(":" + WorkflowConstants.REGISTER_AGENT_RUNNER_FUNCTION + "(").append(agentNameLiteral)
                 .append(");").append(System.lineSeparator());
         body.append("    ").append(decl.agentName()).append(".bindAgentName(")
                 .append(agentNameLiteral).append(");").append(System.lineSeparator());
-    }
-
-    private String buildActivitiesArg(ProcessFunctionInfo processInfo) {
-        if (processInfo.activityMap().isEmpty()) {
-            return "()";
-        }
-        StringBuilder mapLiteral = new StringBuilder("{");
-        boolean first = true;
-        for (Map.Entry<String, String> activity : processInfo.activityMap().entrySet()) {
-            if (!first) {
-                mapLiteral.append(", ");
-            }
-            mapLiteral.append("\"").append(activity.getKey()).append("\": ").append(activity.getValue());
-            first = false;
-        }
-        mapLiteral.append("}");
-        return mapLiteral.toString();
     }
 
     /**
@@ -422,12 +412,8 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
     private Set<String> collectRequiredImportPrefixes(List<ProcessFunctionInfo> infos,
                                                       List<DurableAgentDeclInfo> agentDecls) {
         Set<String> prefixes = new LinkedHashSet<>();
-        for (ProcessFunctionInfo info : infos) {
-            for (Map.Entry<String, String> e : info.activityMap().entrySet()) {
-                addPrefixIfQualified(prefixes, e.getKey());
-                addPrefixIfQualified(prefixes, e.getValue());
-            }
-        }
+        // Workflow activity references are no longer re-emitted (the runtime resolves them
+        // from the packed descriptor), so only agent declarations contribute prefixes.
         for (DurableAgentDeclInfo decl : agentDecls) {
             addPrefixIfQualified(prefixes, decl.modelSource());
             // Collected from the parsed type nodes at analysis time — only genuine

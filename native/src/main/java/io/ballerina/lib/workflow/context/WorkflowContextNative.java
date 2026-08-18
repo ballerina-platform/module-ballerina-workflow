@@ -387,7 +387,8 @@ public final class WorkflowContextNative {
      */
     private static String deriveReviewInputSchema(String fullActivityName, Map<String, Object> activityArgs) {
         try {
-            BFunctionPointer fn = WorkflowWorkerNative.getActivityRegistry().get(fullActivityName);
+            io.ballerina.lib.workflow.worker.WorkflowFunctionRef fn =
+                    WorkflowWorkerNative.getActivityRegistry().get(fullActivityName);
             if (fn != null && fn.getType() instanceof FunctionType funcType) {
                 Parameter[] allParams = funcType.getParameters();
                 List<Parameter> dataParams = new ArrayList<>();
@@ -652,10 +653,11 @@ public final class WorkflowContextNative {
     public static Object awaitHumanTask(BObject self, BString taskNameBStr, Object userRolesObj,
                                         BMap<BString, Object> payloadObj, Object titleObj, Object descriptionObj,
                                         Object timeoutObj, BTypedesc typedesc) {
+        // Named outside the try so a failure can report which task it belongs to.
+        String taskName = taskNameBStr.getValue();
+        String taskWorkflowId = "unknown";
         try {
             WorkflowWorkerNative.awaitWhileSuspended();
-            // --- Extract individual params -------------------------------------------
-            String taskName = taskNameBStr.getValue();
 
             // taskName must be non-blank and must not contain '.' (qualifier separator) or '|' (timeout msg separator)
             if (taskName.isBlank()) {
@@ -715,7 +717,7 @@ public final class WorkflowContextNative {
             WorkflowWorkerNative.registerHumanTaskResultType(humanTaskTypeName, typedesc.getDescribingType());
 
             // Compact instance ID: "humantask-" + UUID7 (deterministic across replays)
-            String taskWorkflowId = "humantask-" + Workflow.randomUUID();
+            taskWorkflowId = "humantask-" + Workflow.randomUUID();
 
             // --- Memo (immutable, readable without full history) --------------------
             Map<String, Object> memo = new HashMap<>();
@@ -766,7 +768,14 @@ public final class WorkflowContextNative {
             // at the Java→Ballerina boundary (ballerina-library#8866).
             Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(formResult);
             Type targetType = typedesc.getDescribingType();
-            return TypesUtil.validateAndConvert(ballerinaResult, targetType);
+            Object converted = TypesUtil.validateAndConvert(ballerinaResult, targetType);
+            if (converted instanceof BError conversionError) {
+                // A submitted value that does not match T is a task failure, and must be
+                // returned as one of the declared error types rather than as a bare error.
+                return buildTaskFailedError("Human task '" + taskName + "' returned a value that is not a valid '"
+                        + targetType + "': " + conversionError.getMessage());
+            }
+            return converted;
 
         } catch (ChildWorkflowFailure e) {
             Throwable cause = e.getCause();
@@ -778,17 +787,17 @@ public final class WorkflowContextNative {
             // rejection reason as the failure message (ballerina-library#8892).
             if (cause instanceof ApplicationFailure af
                     && WorkflowWorkerNative.HUMANTASK_REJECTED_FAILURE_TYPE.equals(af.getType())) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Human task rejected: " + af.getOriginalMessage()));
+                return buildRejectedError(taskName, taskWorkflowId, af);
             }
-            // Some other child workflow failure — surface as a generic error
+            // Some other child workflow failure — the task was terminated, or its result did
+            // not match the caller's type.
             String msg = cause != null ? cause.getMessage() : e.getMessage();
-            return ErrorCreator.createError(StringUtils.fromString("Human task failed: " + msg));
+            return buildTaskFailedError("Human task failed: " + msg);
 
         } catch (io.temporal.worker.NonDeterministicException | io.temporal.failure.TemporalFailure e) {
             throw e;
         } catch (Exception e) {
-            return ErrorCreator.createError(StringUtils.fromString("awaitHumanTask failed: " + e.getMessage()));
+            return buildTaskFailedError("awaitHumanTask failed: " + e.getMessage());
         }
     }
 
@@ -892,6 +901,64 @@ public final class WorkflowContextNative {
             // Fallback if the module type hasn't been initialised yet (e.g. in unit tests)
             return ErrorCreator.createError(StringUtils.fromString(
                     "HumanTaskTimeoutError: Human task '" + taskName + "' timed out after " + timedOutAfter), detail);
+        }
+    }
+
+    /**
+     * Builds a Ballerina {@code HumanTaskRejectedError} from the failure the rejected task
+     * workflow raised. The reason is the failure message; the structured details and the
+     * rejecting user travel as failure details, so both reach the awaiting workflow as data.
+     */
+    @SuppressWarnings("unchecked")
+    private static BError buildRejectedError(String taskName, String taskWorkflowId, ApplicationFailure af) {
+        String reason = af.getOriginalMessage();
+        Object details = null;
+        Object rejectedBy = null;
+        try {
+            // Details are absent for a rejection recorded before they were carried; a task
+            // rejected by an older runtime still yields the reason.
+            if (af.getDetails() != null && af.getDetails().getSize() > 0) {
+                Map<String, Object> rejection = af.getDetails().get(0, Map.class);
+                if (rejection != null) {
+                    details = rejection.get("details");
+                    rejectedBy = rejection.get("rejectedBy");
+                }
+            }
+        } catch (Exception e) {
+            // Undecodable details must not mask the rejection itself.
+        }
+
+        BMap<BString, Object> detail = io.ballerina.runtime.api.creators.ValueCreator.createMapValue();
+        detail.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+        detail.put(StringUtils.fromString("taskWorkflowId"), StringUtils.fromString(taskWorkflowId));
+        detail.put(StringUtils.fromString("reason"), StringUtils.fromString(reason == null ? "" : reason));
+        detail.put(StringUtils.fromString("details"),
+                details == null ? null : TypesUtil.convertJavaToBallerinaType(details));
+        detail.put(StringUtils.fromString("rejectedBy"),
+                rejectedBy instanceof String by ? StringUtils.fromString(by) : null);
+
+        String message = "Human task rejected: " + reason;
+        try {
+            return ErrorCreator.createError(ModuleUtils.getModule(), "HumanTaskRejectedError",
+                    StringUtils.fromString(message), null, detail);
+        } catch (Exception e) {
+            // Fallback if the module type hasn't been initialised yet (e.g. in unit tests)
+            return ErrorCreator.createError(StringUtils.fromString(message), detail);
+        }
+    }
+
+    /**
+     * Builds a Ballerina {@code HumanTaskFailedError}. Every failure path of
+     * {@code awaitHumanTask} must return one of the error types its signature declares —
+     * an untyped error would panic with a {@code TypeCastError} at the Java→Ballerina
+     * boundary instead of reaching the workflow.
+     */
+    private static BError buildTaskFailedError(String message) {
+        try {
+            return ErrorCreator.createError(ModuleUtils.getModule(), "HumanTaskFailedError",
+                    StringUtils.fromString(message), null, null);
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(message));
         }
     }
 

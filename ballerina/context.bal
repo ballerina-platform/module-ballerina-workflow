@@ -144,16 +144,18 @@ public client class Context {
 
     # Creates a human task and blocks until a human completes it or the optional timeout elapses.
     # Internally, the task is modelled as a durable Temporal child workflow whose type is `taskName`,
-    # so the task survives worker restarts.  Register the task name at module init time via
-    # `wfInternal:registerHumanTask(taskName)` (the compiler plugin generates this call automatically).
+    # so the task survives worker restarts. The task name is registered when the worker starts,
+    # from the workflow descriptor the compiler plugin generates at build time.
     #
     # ```ballerina
     # ApprovalDecision d = check ctx->awaitHumanTask("approveExpense", "FINANCE_APPROVER",
     #     payload = {"amount": 1200, "currency": "USD"},
     #     title = "Approve order",
     #     timeout = {hours: 24}
-    # ) on fail workflow:HumanTaskTimeoutError e {
-    #     check ctx->callActivity(notifyEscalation, args = {"taskName": e.detail().taskName});
+    # ) on fail workflow:HumanTaskError e {
+    #     if e is workflow:HumanTaskTimeoutError {
+    #         check ctx->callActivity(notifyEscalation, args = {"taskName": e.detail().taskName});
+    #     }
     #     return e;
     # };
     # ```
@@ -165,7 +167,10 @@ public client class Context {
     # + description - Additional context shown alongside the form. Optional
     # + timeout - Maximum time to wait. Omit (or pass `()`) to wait indefinitely
     # + T - Expected result type; drives form schema generation and runtime validation
-    # + return - The typed value submitted by the human, or a `HumanTaskTimeoutError`
+    # + return - The typed value submitted by the human, or a `HumanTaskError`: a
+    #            `HumanTaskTimeoutError` if the deadline passed, a `HumanTaskRejectedError`
+    #            if someone rejected the task (carrying their reason and details), or a
+    #            `HumanTaskFailedError` if the task could not produce a result
     remote isolated function awaitHumanTask(
             string taskName,
             string|string[] userRoles,
@@ -174,7 +179,7 @@ public client class Context {
             string? description = (),
             Duration? timeout = (),
             typedesc<anydata> T = <>)
-            returns T|HumanTaskTimeoutError = @java:Method {
+            returns T|HumanTaskError = @java:Method {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
         name: "awaitHumanTask"
     } external;

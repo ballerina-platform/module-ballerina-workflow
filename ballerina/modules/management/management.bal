@@ -16,27 +16,12 @@
 
 import ballerina/jballerina.java;
 
-// Captures this submodule's reference so native code can create records in this module,
-// validates the management API configuration so any misconfiguration causes a
-// descriptive error at startup rather than a silent runtime failure, and then starts
-// the management HTTP service programmatically (see service.bal) when
-// enableManagementApi = true. When the API is disabled, no listener is created and
-// no port is reserved — importing this module purely for its programmatic helpers
-// stays port-free.
-//
-// The service is attached and started from here — not via a module-level `listener`
-// declaration — so this module fully owns the listener lifecycle. The started
-// listener is registered as a dynamic listener with the runtime, which keeps the
-// program alive after a `main` function returns so programs that use an entry point
-// other than services can still serve the management API. The listener is
-// deregistered and stopped on graceful shutdown so signal-driven termination
-// (SIGINT/SIGTERM) is not blocked.
-#
-# + return - An error if the management service cannot be started
-function init() returns error? {
+// Captures this submodule's reference so native code can create records in this
+// module. This module is a pure Ballerina API: it opens no port and starts no
+// service. The management HTTP API lives in `ballerina/workflow.management.rest`,
+// which imports this module and owns the listener lifecycle.
+function init() {
     initManagementModule();
-    validateManagementApiConfig();
-    check startManagementService();
 }
 
 isolated function initManagementModule() = @java:Method {
@@ -93,8 +78,9 @@ public isolated function getAgentResponse(string agentId) returns string?|error 
 } external;
 
 # Lists all workflow types registered with this worker, for use in the workflow launcher UI.
-# Returns one entry per registered workflow function. The `inputSchema` field is `()` until
-# the compiler plugin generates JSON Schema at build time.
+# Returns one entry per registered workflow function. The `inputSchema` field is derived at
+# runtime from the registered workflow function's signature, or `()` when the workflow takes
+# no data input.
 #
 # ```ballerina
 # management:WorkflowDefinition[] defs = check management:listWorkflowDefinitions();
@@ -489,13 +475,11 @@ public isolated function getExecutionGraph(string workflowId, string runId)
 // ================================================================================
 // HTTP SERVICE
 // ================================================================================
-// The management HTTP service is started programmatically from this module's
-// init() (see startManagementService() in service.bal) — and only when
-// enableManagementApi = true: a disabled API creates no listener and reserves
-// no port. Configure it in Config.toml:
+// The management HTTP API lives in `ballerina/workflow.management.rest`. Import
+// that module and enable it in Config.toml to expose these operations over REST:
 //
-//   [ballerina.workflow.management]
+//   import ballerina/workflow.management.rest as _;
+//
+//   [ballerina.workflow.management.rest]
 //   enableManagementApi = true
 //   port = 8234
-//
-// See service.bal for the full list of configurable variables.

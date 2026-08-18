@@ -397,32 +397,6 @@ public type GraphEdge record {|
 // HTTP SERVICE CONFIGURATION
 // ================================================================================
 
-# Configuration for the management HTTP service.
-#
-# + port - TCP port to listen on
-# + basePath - Base path prefix for all endpoints
-# + cors - Optional CORS configuration
-# + maxPageSize - Maximum allowed page size for list operations
-# + defaultPageSize - Default page size when the caller does not specify one
-public type ManagementServiceConfig record {|
-    int port = 8234;
-    string basePath = "/workflow-api";
-    CorsConfig? cors = ();
-    int maxPageSize = 100;
-    int defaultPageSize = 20;
-|};
-
-# CORS configuration for the management HTTP service.
-#
-# + allowOrigins - Allowed origins
-# + allowMethods - Allowed HTTP methods
-# + allowHeaders - Allowed request headers
-public type CorsConfig record {|
-    string[] allowOrigins = ["*"];
-    string[] allowMethods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"];
-    string[] allowHeaders = ["Content-Type", "x-user-id", "x-user-roles", "Authorization"];
-|};
-
 // ================================================================================
 // WORKFLOW INSTANCE TYPES
 // ================================================================================

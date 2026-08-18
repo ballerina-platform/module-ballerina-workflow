@@ -472,6 +472,11 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                 report(argument.location(), WorkflowDiagnostic.WORKFLOW_159);
                 return;
             }
+            if (stepId.isBlank()) {
+                // A blank id is treated as absent and the compiler generates one, so there is
+                // nothing to check and nothing worth saying.
+                return;
+            }
             if (seen.containsKey(stepId)) {
                 report(argument.location(), WorkflowDiagnostic.WORKFLOW_158, stepId);
                 return;

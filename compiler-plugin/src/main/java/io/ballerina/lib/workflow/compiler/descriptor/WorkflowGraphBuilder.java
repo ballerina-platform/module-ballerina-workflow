@@ -127,7 +127,13 @@ public final class WorkflowGraphBuilder {
      */
     public static String chosenStepId(RemoteMethodCallActionNode remoteCall) {
         Node expression = stepIdArgument(remoteCall);
-        return expression == null ? null : constantStepId(expression);
+        String chosen = expression == null ? null : constantStepId(expression);
+        // A blank id is no id, so the compiler generates one: nothing useful can be done with "" — it
+        // would name a node after nothing — and it is what an empty form field produces, which makes
+        // it an accident rather than a choice. Blankness is decided here rather than in
+        // constantStepId, which answers only whether the value is a constant: a blank literal is a
+        // perfectly good constant, and reporting it as an expression would be a lie.
+        return chosen == null || chosen.isBlank() ? null : chosen;
     }
 
     /**

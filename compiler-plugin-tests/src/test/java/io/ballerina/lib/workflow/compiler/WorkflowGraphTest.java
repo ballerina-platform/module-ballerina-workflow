@@ -335,15 +335,36 @@ public class WorkflowGraphTest {
                 "Exactly one step id per call");
 
         Map<String, Object> chosen = descriptorOf("graph_step_id_chosen");
-        Map<String, Object> graph = asObject(((Map<?, ?>) ((List<?>) chosen.get("workflows")).get(0)).get("graph"));
+        Map<String, Object> graph = graphOf(chosen, "shipOrder");
         Assert.assertEquals(nodeAt(graph, "stock-check").get("target"), "checkStock",
                 "and the graph carries the same id, which is what makes the join work");
+    }
+
+    @Test
+    public void testABlankStepIdFallsBackToTheGeneratedOne() {
+        // Naming a node after nothing is never what was meant, and "" is what an empty form field
+        // produces — so a blank id is treated as absent. Its own package, because the assertions
+        // below search the whole rewritten source.
+        BuildProject project = loadProject("graph_step_id_blank");
+        project.currentPackage().runCodeGenAndModifyPlugins();
+        Assert.assertEquals(project.currentPackage().getCompilation().diagnosticResult().errorCount(), 0,
+                "Compilation errors: " + project.currentPackage().getCompilation().diagnosticResult().diagnostics());
+
+        Map<String, Object> graph = graphOf(descriptorOf("graph_step_id_blank"), "shipOrder");
+        Assert.assertEquals(nodeAt(graph, "checkStock#1").get("target"), "checkStock",
+                "The graph describes the generated id, not an empty one");
+        Assert.assertTrue(allSourcesOf(project).contains("stepId = \"checkStock#1\""),
+                "and the generated id replaces the blank at the call");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private Map<String, Object> graphOf(String workflowName) {
-        for (Object workflow : (List<?>) descriptor.get("workflows")) {
+        return graphOf(descriptor, workflowName);
+    }
+
+    private static Map<String, Object> graphOf(Map<String, Object> document, String workflowName) {
+        for (Object workflow : (List<?>) document.get("workflows")) {
             Map<?, ?> entry = (Map<?, ?>) workflow;
             if (workflowName.equals(entry.get("name"))) {
                 Map<String, Object> graph = asObject(entry.get("graph"));

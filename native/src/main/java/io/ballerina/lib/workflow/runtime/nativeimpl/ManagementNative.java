@@ -1945,6 +1945,10 @@ public final class ManagementNative {
                         var attrs = event.getActivityTaskScheduledEventAttributes();
                         var node = newNode(eid, attrs.getActivityType().getName(), "ACTIVITY", ts);
                         node.put("input", decodeFirstPayload(attrs.getInput(), dc));
+                        // Which call site scheduled this activity — the identity that places the
+                        // execution on the descriptor's graph. Absent for executions started
+                        // before the runtime carried it, which is why `site` stays optional.
+                        node.put("stepId", decodeStepId(attrs.getInput(), dc));
                         nodeByEventId.put(eid, node);
                         nodeOrder.add(eid);
                     }
@@ -2016,6 +2020,7 @@ public final class ManagementNative {
                         var node = newNode(eid, nodeName, nodeType, ts);
                         node.put("childWorkflowId", childId);
                         node.put("input", decodeFirstPayload(attrs.getInput(), dc));
+                        node.put("stepId", decodeMemoString(dc, attrs.getMemo().getFieldsMap(), "stepId", null));
                         nodeByEventId.put(eid, node);
                         nodeOrder.add(eid);
                     }
@@ -2251,12 +2256,20 @@ public final class ManagementNative {
                 String type = ((BString) treeNode.get(StringUtils.fromString("type"))).getValue();
                 String status = ((BString) treeNode.get(StringUtils.fromString("status"))).getValue();
 
-                // Metadata: include childWorkflowId for human/retry tasks
+                // Metadata: the childWorkflowId for human/retry tasks, and the call site that
+                // ran — what lets a viewer highlight this node on the static graph.
                 BMap<BString, Object> metadata = null;
                 Object cwf = treeNode.get(StringUtils.fromString("childWorkflowId"));
                 if (cwf instanceof BString cws) {
                     metadata = ValueCreator.createMapValue();
                     metadata.put(StringUtils.fromString("taskId"), cws);
+                }
+                Object stepIdValue = treeNode.get(StringUtils.fromString("stepId"));
+                if (stepIdValue instanceof BString stepIdStr) {
+                    if (metadata == null) {
+                        metadata = ValueCreator.createMapValue();
+                    }
+                    metadata.put(StringUtils.fromString("stepId"), stepIdStr);
                 }
 
                 BMap<BString, Object> gn = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
@@ -2420,6 +2433,28 @@ public final class ManagementNative {
     }
 
     /**
+     * Reads the call-site identity out of an activity invocation: {@code callActivity} sends
+     * {@code [namedArgs, callConfig]} and the config carries {@code site}. Returns {@code null}
+     * for an invocation that carries none — an older runtime, or a hand-written call.
+     */
+    private static String decodeStepId(Payloads payloads, DataConverter dc) {
+        if (payloads == null || payloads.getPayloadsCount() < 2) {
+            return null;
+        }
+        try {
+            Object config = dc.fromPayload(payloads.getPayloads(1), Object.class, Object.class);
+            if (config instanceof java.util.Map<?, ?> configMap
+                    && configMap.get(io.ballerina.lib.workflow.context.WorkflowContextNative.STEP_ID_KEY)
+                            instanceof String site) {
+                return site;
+            }
+        } catch (Exception e) {
+            // A payload we cannot read is reported as no site, never as a failed tree.
+        }
+        return null;
+    }
+
+    /**
      * Converts a mutable node data map into a Ballerina {@code ActivityTreeNode} record.
      */
     @SuppressWarnings("unchecked")
@@ -2462,6 +2497,8 @@ public final class ManagementNative {
 
         int attempt = data.get("attempt") instanceof Integer i ? i : 1;
         node.put(StringUtils.fromString("attempt"), (long) attempt);
+        String stepId = (String) data.get("stepId");
+        node.put(StringUtils.fromString("stepId"), stepId != null ? StringUtils.fromString(stepId) : null);
         node.put(StringUtils.fromString("children"), null);
         return node;
     }

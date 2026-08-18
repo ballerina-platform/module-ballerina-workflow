@@ -63,6 +63,7 @@ import io.ballerina.compiler.syntax.tree.TypeDescriptorNode;
 import io.ballerina.compiler.syntax.tree.TypedBindingPatternNode;
 import io.ballerina.compiler.syntax.tree.VariableDeclarationNode;
 import io.ballerina.compiler.syntax.tree.WaitFieldsListNode;
+import io.ballerina.lib.workflow.compiler.descriptor.WorkflowGraphBuilder;
 import io.ballerina.projects.plugins.AnalysisTask;
 import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
 import io.ballerina.tools.diagnostics.DiagnosticFactory;
@@ -70,7 +71,9 @@ import io.ballerina.tools.diagnostics.DiagnosticInfo;
 import io.ballerina.tools.diagnostics.Location;
 
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
@@ -114,6 +117,9 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
             validateNoConcurrencyPrimitives(functionNode, context);
             // Validate no direct AI model/agent calls (non-deterministic) inside @Workflow
             validateNoDirectAiCalls(functionNode, context);
+            // Validate chosen step ids: constant, unique within the workflow, and not colliding
+            // with the ids the compiler generates
+            validateStepIds(functionNode, context);
         }
 
         // Check if function has @Activity annotation
@@ -418,6 +424,69 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
      * Validates that ctx->callActivity() calls have a function with @Activity annotation
      * as the first argument.
      */
+    /**
+     * Validates the step ids chosen at the call sites of one workflow.
+     *
+     * <p>A step id names a node of the workflow's graph, and the graph is written at build time, so
+     * the value has to be a constant — an expression evaluated per execution cannot be described,
+     * and that is an error. Sharing an id with another step is only a warning: the graph builder
+     * disambiguates the later one with a numeric suffix and writes that same id back to the call, so
+     * the build stays correct, but which step ends up called what is then the compiler's choice
+     * rather than the author's.
+     *
+     * @param functionNode the workflow function
+     * @param context      the analysis context
+     */
+    private void validateStepIds(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context) {
+        StepIdValidator validator = new StepIdValidator(context);
+        functionNode.functionBody().accept(validator);
+    }
+
+    /** Collects the chosen step ids of one workflow body and reports the three ways they can be wrong. */
+    private static class StepIdValidator extends NodeVisitor {
+
+        private final SyntaxNodeAnalysisContext context;
+        private final Map<String, Location> seen = new LinkedHashMap<>();
+
+        StepIdValidator(SyntaxNodeAnalysisContext context) {
+            this.context = context;
+        }
+
+        @Override
+        public void visit(RemoteMethodCallActionNode remoteCall) {
+            String methodName = remoteCall.methodName().name().text();
+            if (WorkflowConstants.CALL_ACTIVITY_FUNCTION.equals(methodName)
+                    || WorkflowConstants.CALL_HUMAN_TASK_METHOD.equals(methodName)) {
+                checkStepId(remoteCall);
+            }
+            remoteCall.arguments().forEach(argument -> argument.accept(this));
+        }
+
+        private void checkStepId(RemoteMethodCallActionNode remoteCall) {
+            Node argument = WorkflowGraphBuilder.stepIdArgument(remoteCall);
+            if (argument == null) {
+                return;
+            }
+            String stepId = WorkflowGraphBuilder.constantStepId(argument);
+            if (stepId == null) {
+                report(argument.location(), WorkflowDiagnostic.WORKFLOW_159);
+                return;
+            }
+            if (seen.containsKey(stepId)) {
+                report(argument.location(), WorkflowDiagnostic.WORKFLOW_158, stepId);
+                return;
+            }
+            seen.put(stepId, argument.location());
+        }
+
+        private void report(Location location, WorkflowDiagnostic diagnostic, Object... args) {
+            DiagnosticInfo info = new DiagnosticInfo(diagnostic.getCode(),
+                    args.length == 0 ? diagnostic.getMessage() : String.format(diagnostic.getMessage(), args),
+                    diagnostic.getSeverity());
+            context.reportDiagnostic(DiagnosticFactory.createDiagnostic(info, location));
+        }
+    }
+
     private void validateCallActivityUsage(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context) {
         CallActivityValidator validator = new CallActivityValidator(context);
         functionNode.functionBody().accept(validator);

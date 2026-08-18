@@ -145,6 +145,12 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             Module module = context.currentPackage().module(documentId.moduleId());
             ModulePartNode rootNode = module.document(documentId).syntaxTree().rootNode();
 
+            // Stamp each durable call site with its identity, so a running execution can be
+            // traced back to the exact call site the descriptor's graph describes. Same walk,
+            // same ids: the graph and the runtime cannot disagree.
+            rootNode = new CallSiteInjector(context.compilation().getSemanticModel(documentId.moduleId()))
+                    .inject(rootNode);
+
             // … and append the combined registration function + invocation
             // only to the LAST document so that all @Workflow functions from
             // every source file are visible to the generated function body.

@@ -72,6 +72,13 @@ public final class WorkflowContextNative {
     // Key used to mark a call configuration map passed as the last activity argument
     private static final String CALL_CONFIG_MARKER = "__callConfig__";
     private static final String RETRY_ON_ERROR_KEY = "retryOnError";
+    /**
+     * Call-site identity, as {@code <activity>#<ordinal>}. Travels in the call config the
+     * activity already carries — unlike an activity id, which the SDK does not let us choose,
+     * and unlike the activity type, which participates in replay validation. Activity *inputs*
+     * are not validated on replay, so adding this key is safe for in-flight executions.
+     */
+    public static final String STEP_ID_KEY = "site";
 
     private WorkflowContextNative() {
         // Utility class, prevent instantiation
@@ -100,11 +107,12 @@ public final class WorkflowContextNative {
      * @param args             the map&lt;anydata&gt; args containing arguments to pass to the activity
      * @param typedesc         the expected return type descriptor for dependent typing
      * @param retryPolicy      null for NoRetry, AutoRetry BMap, or ManualRetry string sentinel
+     * @param stepId         the compiler-injected call-site identity, or nil
      * @return the result of the activity execution converted to the expected type, or an error
      */
     @SuppressWarnings("unchecked")
     public static Object callActivity(BObject self, BFunctionPointer activityFunction, BMap<BString, Object> args,
-                                      BTypedesc typedesc, Object retryPolicy) {
+                                      BTypedesc typedesc, Object retryPolicy, Object stepId) {
         try {
             WorkflowWorkerNative.awaitWhileSuspended();
             String simpleActivityName = activityFunction.getType().getName();
@@ -129,12 +137,16 @@ public final class WorkflowContextNative {
             Map<String, Object> callConfig = new HashMap<>();
             callConfig.put(CALL_CONFIG_MARKER, true);
             callConfig.put(RETRY_ON_ERROR_KEY, isAutoRetry);
+            String stepIdValue = stepId instanceof BString bStepId ? bStepId.getValue() : null;
+            if (stepIdValue != null) {
+                callConfig.put(STEP_ID_KEY, stepIdValue);
+            }
 
             if (isManualRetry) {
                 // Manual retry: run activity in a loop; on failure start a review-activity
                 // child workflow and wait for a human decision.
                 return executeWithManualRetry(fullActivityName, workflowType, namedArgs, callConfig,
-                        manualRetryRoles, typedesc);
+                        manualRetryRoles, typedesc, stepIdValue);
             }
 
             // AutoRetry or NoRetry — single Temporal activity invocation
@@ -147,6 +159,11 @@ public final class WorkflowContextNative {
                         io.temporal.common.RetryOptions.newBuilder().setMaximumAttempts(1).build());
             } else {
                 optionsBuilder.setRetryOptions(buildPerCallRetryOptions(retryPolicyMap));
+            }
+
+            if (stepIdValue != null) {
+                // Also visible in the Temporal UI, on servers that record user metadata.
+                optionsBuilder.setSummary(stepIdValue);
             }
 
             io.temporal.workflow.ActivityStub activityStub = Workflow.newUntypedActivityStub(optionsBuilder.build());
@@ -207,12 +224,16 @@ public final class WorkflowContextNative {
     @SuppressWarnings("unchecked")
     private static Object executeWithManualRetry(String fullActivityName, String workflowType,
                                                  Map<String, Object> initialArgs, Map<String, Object> callConfig,
-                                                 String[] reviewerRoles, BTypedesc typedesc) {
+                                                 String[] reviewerRoles, BTypedesc typedesc, String stepId) {
 
-        io.temporal.activity.ActivityOptions activityOptions =
+        io.temporal.activity.ActivityOptions.Builder manualRetryOptions =
                 io.temporal.activity.ActivityOptions.newBuilder().setStartToCloseTimeout(
                         java.time.Duration.ofMinutes(5)).setRetryOptions(
-                        io.temporal.common.RetryOptions.newBuilder().setMaximumAttempts(1).build()).build();
+                        io.temporal.common.RetryOptions.newBuilder().setMaximumAttempts(1).build());
+        if (stepId != null) {
+            manualRetryOptions.setSummary(stepId);
+        }
+        io.temporal.activity.ActivityOptions activityOptions = manualRetryOptions.build();
         io.temporal.workflow.ActivityStub activityStub = Workflow.newUntypedActivityStub(activityOptions);
 
         Map<String, Object> currentArgs = initialArgs;
@@ -236,8 +257,8 @@ public final class WorkflowContextNative {
             }
 
             // Activity failed — start a review-activity child workflow and await the human decision
-            Map<String, Object> decision = callBuiltinReviewActivity(fullActivityName, currentArgs, lastErrorMsg,
-                                                                reviewerRoles);
+            Map<String, Object> decision = callBuiltinReviewActivity(fullActivityName, currentArgs,
+                    lastErrorMsg, reviewerRoles);
 
             String action = decision.containsKey("action") ? String.valueOf(decision.get("action")) : "reject";
 
@@ -647,12 +668,13 @@ public final class WorkflowContextNative {
      * @param descriptionObj additional context shown alongside the form (BString or null)
      * @param timeoutObj     maximum wait duration (BMap time:Duration or null for indefinite)
      * @param typedesc       the expected result type descriptor (for dependent-typing and coercion)
+     * @param stepId       the compiler-injected call-site identity, or nil
      * @return the coerced result value, or a {@code HumanTaskTimeoutError} BError
      */
     @SuppressWarnings("unchecked")
     public static Object awaitHumanTask(BObject self, BString taskNameBStr, Object userRolesObj,
                                         BMap<BString, Object> payloadObj, Object titleObj, Object descriptionObj,
-                                        Object timeoutObj, BTypedesc typedesc) {
+                                        Object timeoutObj, BTypedesc typedesc, Object stepId) {
         // Named outside the try so a failure can report which task it belongs to.
         String taskName = taskNameBStr.getValue();
         String taskWorkflowId = "unknown";
@@ -731,6 +753,11 @@ public final class WorkflowContextNative {
             memo.put("payload", TypesUtil.convertBallerinaToJavaType(payload));
             memo.put("createdAt", Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString());
             memo.put("formSchema", TypesUtil.toJsonSchema(typedesc.getDescribingType()));
+            if (stepId instanceof BString site) {
+                // Which await in the workflow this task belongs to — the memo is readable
+                // without replaying history, so a listing can place the task on the graph.
+                memo.put(STEP_ID_KEY, site.getValue());
+            }
 
             // --- Build input map passed to the child workflow -----------------------
             Map<String, Object> inputs = new HashMap<>();

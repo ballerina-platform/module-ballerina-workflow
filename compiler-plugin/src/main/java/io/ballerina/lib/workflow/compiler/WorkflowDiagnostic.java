@@ -238,6 +238,16 @@ public enum WorkflowDiagnostic {
                     + "data the model can supply: fix the argument at registration by declaring the "
                     + "activity as '{activity: %s, bindings: {%s: <value>}}', or expose an activity "
                     + "whose parameters are all data",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_158("WORKFLOW_158",
+            "Step id '%s' is already used by another step in this workflow. A step id identifies one "
+                    + "step of the workflow's graph, so this one is described with a numeric suffix "
+                    + "instead. Give it an id of its own to control what it is called",
+            DiagnosticSeverity.WARNING),
+    WORKFLOW_159("WORKFLOW_159",
+            "A step id must be a constant string: it is recorded in the workflow's graph at build "
+                    + "time, so an expression evaluated per execution cannot be described. Use a "
+                    + "literal, or omit it and let the compiler generate one",
             DiagnosticSeverity.ERROR);
 
     private final String code;

@@ -91,7 +91,11 @@ public final class WorkflowConstants {
     public static final String ARG_TASK_NAME = "taskName";
     /** {@code callActivity(retryPolicy = ...)}. */
     public static final String ARG_RETRY_POLICY = "retryPolicy";
+    /** {@code callActivity(stepId = ...)} — the compiler-injected call-site identity. */
+    public static final String ARG_STEP_ID = "stepId";
 
+    /** {@code DurableAgentConfig.model}. */
+    public static final String AGENT_CONFIG_MODEL = "model";
     /** {@code DurableAgentConfig.inputType}. */
     public static final String AGENT_CONFIG_INPUT_TYPE = "inputType";
     /** {@code DurableAgentConfig.resultType}, also {@code HumanTaskDecl.resultType}. */
@@ -137,4 +141,5 @@ public final class WorkflowConstants {
     public static final String RUN_CHILD_WORKFLOW_METHOD = "runChildWorkflow";
     public static final String CALL_WORKFLOW_METHOD = "callWorkflow";
     public static final String SEND_DATA_TO_CHILD_WORKFLOW_METHOD = "sendDataToChildWorkflow";
+    public static final String SLEEP_METHOD = "sleep";
 }

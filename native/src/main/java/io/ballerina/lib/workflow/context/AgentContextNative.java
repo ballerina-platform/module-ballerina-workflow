@@ -70,6 +70,12 @@ public final class AgentContextNative {
 
     private static final String CALL_CONFIG_MARKER = "__callConfig__";
     private static final String RETRY_ON_ERROR_KEY = "retryOnError";
+    /** Site prefixes of an agent's graph nodes — see {@code AgentGraphBuilder}. */
+    private static final String AGENT_TOOL_SITE_PREFIX = "tool:";
+    private static final String AGENT_TASK_SITE_PREFIX = "task:";
+    /** The agent graph's model node: every built-in model call belongs to it, not to a tool. */
+    private static final String AGENT_MODEL_SITE = "model";
+    private static final Set<String> MODEL_ACTIVITIES = Set.of("llmChat", "generate", "generateResult");
     private static final String CHAT_EVENT = "chat";
 
     // Tool dispatch kinds understood by the Ballerina agent loop.
@@ -986,7 +992,8 @@ public final class AgentContextNative {
                 : ValueCreator.createMapValue();
         return WorkflowContextNative.awaitHumanTask(null, taskName, meta.userRoles(), payloadMap,
                 StringUtils.fromString(meta.title()), StringUtils.fromString(meta.description()),
-                meta.timeout(), meta.resultType());
+                meta.timeout(), meta.resultType(),
+                StringUtils.fromString(AGENT_TASK_SITE_PREFIX + taskName.getValue()));
     }
 
     /**
@@ -1066,6 +1073,12 @@ public final class AgentContextNative {
         Map<String, Object> callConfig = new HashMap<>();
         callConfig.put(CALL_CONFIG_MARKER, true);
         callConfig.put(RETRY_ON_ERROR_KEY, autoRetry);
+        // An agent has no lexical call site — the model chose this tool — so the site is the
+        // node the call belongs to in the agent's graph: the model for a built-in model call,
+        // the tool itself otherwise.
+        String stepId = MODEL_ACTIVITIES.contains(activityName)
+                ? AGENT_MODEL_SITE : AGENT_TOOL_SITE_PREFIX + activityName;
+        callConfig.put(WorkflowContextNative.STEP_ID_KEY, stepId);
 
         RetryOptions retryOptions = autoRetry
                 ? WorkflowContextNative.buildPerCallRetryOptions((BMap<BString, Object>) retryPolicy)
@@ -1073,6 +1086,7 @@ public final class AgentContextNative {
         ActivityOptions options = ActivityOptions.newBuilder()
                 .setStartToCloseTimeout(Duration.ofMinutes(5))
                 .setRetryOptions(retryOptions)
+                .setSummary(stepId)
                 .build();
         io.temporal.workflow.ActivityStub stub = Workflow.newUntypedActivityStub(options);
 

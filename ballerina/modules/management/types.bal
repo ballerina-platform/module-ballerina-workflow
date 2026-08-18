@@ -343,6 +343,9 @@ public enum ActivityNodeType {
 # + output - Decoded activity/workflow result, or `()`
 # + failure - Failure detail if the node failed, otherwise `()`
 # + attempt - Temporal attempt number (1-indexed)
+# + stepId - Which step of the workflow ran: the id chosen with `stepId` at the call site, or the
+#            generated `<target>#<ordinal>`, matching a node in the descriptor's `graph`. `()` when
+#            the execution carries none — an instance started before the runtime recorded it
 # + children - Nested child nodes, or `()` for leaf nodes
 public type ActivityTreeNode record {|
     string id;
@@ -355,6 +358,7 @@ public type ActivityTreeNode record {|
     anydata? output;
     FailureInfo? failure;
     int attempt;
+    string? stepId = ();
     ActivityTreeNode[]? children;
 |};
 
@@ -373,7 +377,8 @@ public type ExecutionGraph record {|
 # + label - Display label
 # + 'type - Node classification (same values as `ActivityNodeType`)
 # + status - Current status
-# + metadata - Optional extra key-value pairs for the UI (e.g. taskId for human tasks)
+# + metadata - Optional extra key-value pairs for the UI: `taskId` for human tasks, and
+#              `stepId` — which step ran, for highlighting the descriptor's graph
 public type GraphNode record {|
     string id;
     string label;

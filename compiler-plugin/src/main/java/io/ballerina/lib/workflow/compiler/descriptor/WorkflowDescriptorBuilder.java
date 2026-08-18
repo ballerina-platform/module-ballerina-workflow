@@ -81,6 +81,7 @@ import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.DIR
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.DIRECTION_IN;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.EVENTS;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.FUNCTION;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.GRAPH;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.HUMAN_TASKS;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.INPUT;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.JSON_NULL;
@@ -129,7 +130,7 @@ import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.WOR
  */
 public final class WorkflowDescriptorBuilder {
 
-    public static final String DESCRIPTOR_VERSION = "1.0";
+    public static final String DESCRIPTOR_VERSION = "1.1";
 
     // The agent object type and the human-review retry policy are named in
     // WorkflowConstants, with the rest of the API vocabulary this builder matches.
@@ -137,6 +138,9 @@ public final class WorkflowDescriptorBuilder {
     // callActivity(activityFunction, args, T, retryPolicy): the policy is the fourth
     // positional parameter, reachable when the caller supplies the typedesc explicitly.
     private static final int RETRY_POLICY_POSITION = 3;
+
+    /** Display labels are capped so one long expression cannot dominate the document. */
+    private static final int MAX_LABEL_LENGTH = 120;
 
     private WorkflowDescriptorBuilder() {
     }
@@ -281,6 +285,9 @@ public final class WorkflowDescriptorBuilder {
         entry.put(ACTIVITIES, new ArrayList<>(collector.activities.values()));
         entry.put(HUMAN_TASKS, buildHumanTasks(collector.humanTaskResults, collector.conflictingHumanTasks));
         entry.put(REVIEW_ACTIVITIES, buildReviewActivities(collector.reviewedActivities));
+        // The activity list says *what* the workflow calls; the graph says where, in what order,
+        // and under which branch — the identity an execution's history is joined back to.
+        entry.put(GRAPH, WorkflowGraphBuilder.build(fnDef, semanticModel).graph());
         return entry;
     }
 
@@ -608,6 +615,7 @@ public final class WorkflowDescriptorBuilder {
 
         Map<String, Object> inputSlot = defaultStringSlot();
         Map<String, Object> resultSlot = defaultNilSlot();
+        String modelLabel = null;
         List<Object> events = new ArrayList<>();
         List<Object> humanTasks = new ArrayList<>();
         Map<String, Map<String, Object>> tools = new TreeMap<>();
@@ -631,8 +639,9 @@ public final class WorkflowDescriptorBuilder {
                             collectAgentActivities(semanticModel, value, tools);
                     case WorkflowConstants.AGENT_CONFIG_TOOLS -> collectAgentTools(semanticModel, value, tools);
                     case WorkflowConstants.AGENT_CONFIG_PEERS -> collectAgentPeers(value, tools);
+                    case WorkflowConstants.AGENT_CONFIG_MODEL -> modelLabel = sourceLabel(value);
                     default -> {
-                        // model, systemPrompt, maxIter: runtime values — not structure.
+                        // systemPrompt, maxIter: runtime values — not structure.
                     }
                 }
             }
@@ -643,7 +652,22 @@ public final class WorkflowDescriptorBuilder {
         agent.put(EVENTS, events);
         agent.put(TOOLS, new ArrayList<>(tools.values()));
         agent.put(HUMAN_TASKS, humanTasks);
+        agent.put(GRAPH, AgentGraphBuilder.build(agentName, modelLabel, events,
+                new ArrayList<>(tools.values()), humanTasks));
         return agent;
+    }
+
+    /**
+     * The source text of a config expression, as a display label: the model an agent reasons
+     * with is a runtime value, but which reference was configured is structure worth drawing.
+     * Capped, because the descriptor ships in every full heartbeat.
+     */
+    private static String sourceLabel(ExpressionNode expression) {
+        String text = expression.toSourceCode().trim().replaceAll("\\s+", " ");
+        if (text.isEmpty()) {
+            return null;
+        }
+        return text.length() <= MAX_LABEL_LENGTH ? text : text.substring(0, MAX_LABEL_LENGTH - 1) + "\u2026";
     }
 
     private static boolean isDurableAgentType(TypeSymbol type) {
@@ -966,7 +990,7 @@ public final class WorkflowDescriptorBuilder {
     }
 
     /** A compile-time constant string: a plain literal or a template without interpolations. */
-    private static String constantStringValue(Node expression) {
+    static String constantStringValue(Node expression) {
         if (expression instanceof BasicLiteralNode literal
                 && literal.kind() == SyntaxKind.STRING_LITERAL) {
             String raw = literal.literalToken().text();

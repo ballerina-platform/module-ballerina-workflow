@@ -93,6 +93,83 @@ public final class DescriptorFields {
     /** Where a tool comes from: ACTIVITY, AI_TOOL, or PEER. */
     public static final String SOURCE = "source";
 
+    // ── Execution graph ───────────────────────────────────────────────────────
+    /** A workflow's or agent's structure graph: what it does, and in what order. */
+    public static final String GRAPH = "graph";
+    /** The graph's steps, in source order. */
+    public static final String NODES = "nodes";
+    /** Directed edges between steps. */
+    public static final String EDGES = "edges";
+    /**
+     * The stable per-workflow identity of one step. Chosen at the call site with
+     * {@code stepId = "..."}, or generated as `<target>#<ordinal>` when the call names none.
+     */
+    public static final String STEP_ID = "stepId";
+    /** What a step calls: an activity, task, child workflow, event, or tool name. */
+    public static final String TARGET = "target";
+    /** Display text for a step — a condition, a matched expression, a model reference. */
+    public static final String LABEL = "label";
+    /** The enclosing control-flow step's site, for a nested step. */
+    public static final String PARENT = "parent";
+    /** Which arm of the enclosing step a nested step belongs to. */
+    public static final String BRANCH = "branch";
+    /** Source file the graph was derived from. */
+    public static final String FILE = "file";
+    /** One-based source line of a step. */
+    public static final String LINE = "line";
+    /** One-based source column of a step. */
+    public static final String COLUMN = "column";
+    /** Edge origin site. */
+    public static final String FROM = "from";
+    /** Edge destination site. */
+    public static final String TO = "to";
+    /** What makes an edge the one taken: a branch arm, a loop entry, or a repeat. */
+    public static final String WHEN = "when";
+
+    // ── Graph node kinds ──────────────────────────────────────────────────────
+    /** A step that calls an activity. */
+    public static final String KIND_ACTIVITY = "ACTIVITY";
+    /** A step that awaits a human task. */
+    public static final String KIND_HUMAN_TASK = "HUMAN_TASK";
+    /** A step that starts or calls a child workflow. */
+    public static final String KIND_CHILD_WORKFLOW = "CHILD_WORKFLOW";
+    /** A step that blocks on one or more data events. */
+    public static final String KIND_EVENT_WAIT = "EVENT_WAIT";
+    /** A durable sleep. */
+    public static final String KIND_SLEEP = "SLEEP";
+    /** A conditional: `if`/`else` or `match`. */
+    public static final String KIND_BRANCH = "BRANCH";
+    /** A loop: `while` or `foreach`. */
+    public static final String KIND_LOOP = "LOOP";
+    /** A `do`/`on fail` block. */
+    public static final String KIND_TRY = "TRY";
+    /** The agent itself, at the centre of an agent's graph. */
+    public static final String KIND_AGENT_NODE = "AGENT";
+    /** The model an agent reasons with. */
+    public static final String KIND_MODEL = "MODEL";
+    /** A capability an agent may invoke. */
+    public static final String KIND_TOOL = "TOOL";
+    /** A data event channel an agent receives on. */
+    public static final String KIND_EVENT = "EVENT";
+
+    // ── Edge conditions ───────────────────────────────────────────────────────
+    /** The arm taken when a condition holds. */
+    public static final String WHEN_THEN = "then";
+    /** The arm taken when it does not. */
+    public static final String WHEN_ELSE = "else";
+    /** Entry into a loop body. */
+    public static final String WHEN_BODY = "body";
+    /** The loop body's return to the loop. */
+    public static final String WHEN_REPEAT = "repeat";
+    /** The guarded block of a `do`/`on fail`. */
+    public static final String WHEN_DO = "do";
+    /** Its failure handler. */
+    public static final String WHEN_ON_FAIL = "onFail";
+    /** An agent's inbound edge: an event or task feeding the agent. */
+    public static final String WHEN_IN = "in";
+    /** An agent's outbound edge: a tool or model the agent invokes. */
+    public static final String WHEN_OUT = "out";
+
     // ── Typed slots ───────────────────────────────────────────────────────────
     /** The resolved Ballerina type descriptor — always present in a slot. */
     public static final String TYPE = "type";

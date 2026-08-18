@@ -27,6 +27,27 @@ agents, with their JSON Schemas.
   of the document's canonical bytes (sorted keys, no insignificant whitespace) serialized
   without the checksum field.
 
+- **The graph, per workflow and per agent** (`descriptorVersion` 1.1): what a workflow *does*, in
+  source order, nested under the control flow that guards it — activities, human tasks, child
+  workflows, event waits and sleeps as steps, `BRANCH`/`LOOP`/`TRY` as the containers around them,
+  with edges that follow control flow. It answers what the activity list cannot: when the same
+  activity is called from both arms of an `if`, which arm ran. An agent's graph is a star instead
+  of a flow — the model, not the code, decides what runs — with data events and human tasks
+  inbound and tools and the model outbound.
+- **Step ids join a run to its graph**: a step's identity is either chosen at the call site
+  (`stepId = "charge-card"`) or generated as `<target>#<ordinal>`, counting occurrences of that
+  target within the workflow in source order. A generated id survives reformatting and edits
+  elsewhere in the file but shifts if a call to the same target is added earlier; a chosen id does
+  not move at all, which is why naming the steps that matter is worth doing. A chosen id must be a
+  constant (an expression evaluated per execution cannot be described at build time); an id another
+  step already has is suffixed with a warning rather than rejected, and the suffixed id is what both
+  the graph and the call carry, so the two never disagree.
+  `line`/`column` travel alongside for display only. The runtime stamps the step id onto the
+  invocation it records and reports it back as `ActivityTreeNode.stepId` /
+  `GraphNode.metadata.stepId`, so a viewer can highlight the path a run actually took. Treat the
+  join as optional: an execution started before the runtime carried step ids reports none, and a
+  step renamed since a run started reports the old id.
+
 The meta-schema — the JSON Schema this descriptor validates against — is
 [`workflow-descriptor.schema.json`](workflow-descriptor.schema.json). The embedded schema
 dialect is pinned: the exact JSON Schema 2020-12 subset enumerated in the meta-schema's

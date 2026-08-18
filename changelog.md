@@ -6,6 +6,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **The descriptor now carries each workflow's graph, and executions say where they are in it.**
+  A workflow that calls the same activity from both arms of an `if` produced two invocations that
+  history could not tell apart, which is what stopped the control plane from drawing the workflow
+  and highlighting the path a run actually took.
+
+  `workflow.def.json` (`descriptorVersion` 1.1) gains a `graph` per workflow: its durable steps —
+  activities, human tasks, child workflows, event waits, sleeps — in source order, nested under
+  the `BRANCH`/`LOOP`/`TRY` constructs that guard them, with edges that follow control flow.
+  Lexical `line`/`column` travel alongside for display but are deliberately not part of a step's
+  identity, so reformatting and unrelated edits do not move it.
+
+  Durable agents get a `graph` too, in the same shape: an agent has no lexical control flow — the
+  model decides what runs — so it is a star, with data events and human tasks inbound and tools
+  and the model outbound.
+
+- **Steps can be named: `stepId`.** Every step in the graph carries an id. Name it with the new
+  `stepId` parameter on `callActivity` and `awaitHumanTask` — `stepId = "charge-card"` — or leave it
+  out and the compiler generates `<target>#<ordinal>` from the occurrences of that target in source
+  order. Naming is worth doing for the steps you care about: a generated ordinal shifts when a call
+  to the same target is added earlier in the workflow, so an in-flight execution then points at the
+  wrong node, while a chosen id does not move at all.
+
+  A chosen id must be a constant string — the graph is written at build time, so an expression
+  evaluated per execution cannot be described, and that is an error. Sharing an id with another step
+  is only a warning: the later step is described with a numeric suffix (`book`, then `book#2`) and
+  that same id is written back to the call, so the graph and the execution still agree. There are no
+  reserved characters — generation steps over any id a call chose, so a step may be called `order#1`
+  if that reads best.
+
+  The id travels in the call config the activity already carries, and `ActivityTreeNode.stepId` and
+  `GraphNode.metadata.stepId` report it back — that join is what lets a viewer highlight the path a
+  run actually took. Where the server records user metadata it is also the activity's summary in the
+  Temporal UI. Activity *inputs* are not compared during replay, so in-flight executions are
+  unaffected; an execution started before this release reports `()`, and a step renamed since a run
+  started reports the old id — so treat the join as optional and draw an unmatched node
+  unhighlighted rather than failing.
+
+### Changed
+
+- **Activities are scheduled under their plain name.** An activity's Temporal type was
+  `<workflowType>.<activity>`, which added nothing — Ballerina function names are already unique
+  within a package — while making one registry entry per (workflow, activity) pair and a longer
+  type in every history. It is now just the activity name, and a review task is listed as
+  `<workflow>.<activity>` without the runtime's internal `workflow-` prefix.
+
+  An activity's type *is* compared during replay, so the change is gated per execution with
+  `Workflow.getVersion`: an execution started before this release keeps scheduling the qualified
+  name — which stays registered — and only new executions use the plain one. No instance needs
+  draining, at the cost of one marker event per execution that calls an activity.
+
+  The runtime metadata document is unchanged: it still reports one activity per workflow, from an
+  ownership map rather than by splitting the registry key.
+
 ### Fixed
 
 - **`workflow.def.json` now reaches the built executable.** The descriptor was registered as a

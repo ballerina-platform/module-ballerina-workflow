@@ -92,6 +92,10 @@ public type AgentMeta record {|
 #                never produced an executable JAR, such as `bal test`)
 public type WorkflowMetadata record {|
     string metadataVersion;
+    # The Temporal task queue this program's worker serves. Integrations in one project share a
+    # namespace, so this is what scopes a control plane's listings to one integration. Nil until
+    # the worker has registered.
+    string? taskQueue = ();
     WorkflowDefinitionMeta[] definitions;
     HumanTaskMeta[] humanTasks;
     ActivityMeta[] activities;

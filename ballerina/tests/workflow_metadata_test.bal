@@ -78,6 +78,10 @@ function testWorkflowMetadataCompleteAtRegistration() returns error? {
 
     test:assertEquals(meta.metadataVersion, "1.0");
     test:assertEquals(meta.reviewActions, ["proceed", "proceed-with-input", "reject"]);
+    // The queue is the one attribute that separates this integration's executions from its
+    // project neighbours', so a control plane needs it published — see the taskQueue field doc.
+    test:assertEquals(meta.taskQueue, "BALLERINA_WORKFLOW_TASK_QUEUE",
+        "The metadata document must name the worker's task queue");
 
     management:WorkflowDefinitionMeta[] defs =
             meta.definitions.filter(d => d.workflowType == "metaFixtureWorkflow");

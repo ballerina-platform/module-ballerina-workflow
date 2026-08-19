@@ -74,6 +74,14 @@ public final class WorkflowMetadataNative {
         try {
             BMap<BString, Object> root = ValueCreator.createMapValue(JSON_MAP_TYPE);
             root.put(MetadataFields.METADATA_VERSION, StringUtils.fromString(METADATA_VERSION));
+            // The Temporal task queue this program's worker serves. A namespace is shared by every
+            // integration in a project, so the queue is the only attribute that separates one
+            // integration's executions from its neighbours' — a control plane cannot scope a listing
+            // to an integration without it, and nothing else publishes it. Null before the worker is
+            // registered; the document is re-read on every full heartbeat, so it fills in.
+            String taskQueue = WorkflowWorkerNative.getTaskQueue();
+            root.put(MetadataFields.TASK_QUEUE,
+                    taskQueue != null ? StringUtils.fromString(taskQueue) : null);
             root.put(MetadataFields.DEFINITIONS, buildDefinitions());
             root.put(MetadataFields.HUMAN_TASKS, buildHumanTasks());
             root.put(MetadataFields.ACTIVITIES, buildActivities());

@@ -40,6 +40,7 @@ public final class MetadataFields {
     // ── Document ──────────────────────────────────────────────────────────────
     /** Version of the metadata document's shape. */
     public static final BString METADATA_VERSION = StringUtils.fromString("metadataVersion");
+    public static final BString TASK_QUEUE = StringUtils.fromString("taskQueue");
     /** Registered workflow definitions. */
     public static final BString DEFINITIONS = StringUtils.fromString("definitions");
     /** Human task types with their completion-form schemas. */

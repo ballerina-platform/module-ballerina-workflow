@@ -1418,13 +1418,18 @@ public final class ManagementNative {
             }
 
             String[] userRolesArr = new String[0];
-            try {
-                Payload rolesPl = memoFields.get("userRoles");
-                if (rolesPl != null) {
+            Payload rolesPl = memoFields.get("userRoles");
+            if (rolesPl != null) {
+                try {
                     userRolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
+                } catch (Exception e) {
+                    // Not recoverable here. An empty role list means "declares no roles",
+                    // which canAccessReviewActivity reads as unrestricted — so treating an
+                    // unreadable memo as empty would open a review the caller may not decide.
+                    return ErrorCreator.createError(StringUtils.fromString(
+                            "Could not read the roles declared by review activity '" + taskIdStr + "': "
+                                    + e.getMessage()));
                 }
-            } catch (Exception e) {
-                LOGGER.debug("Could not decode userRoles memo field: {}", e.getMessage());
             }
             BArray roles = ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING));
             for (String role : userRolesArr) {
@@ -2866,27 +2871,14 @@ public final class ManagementNative {
             if (!runId.getValue().isEmpty()) {
                 execution.setRunId(runId.getValue());
             }
-            ResetWorkflowExecutionRequest.Builder request = ResetWorkflowExecutionRequest.newBuilder()
-                    .setNamespace(client.getOptions().getNamespace())
-                    .setWorkflowExecution(execution.build())
-                    .setWorkflowTaskFinishEventId(eventId)
-                    .setReason(reason.getValue())
-                    .setIdentity(identity.getValue())
-                    // Derived from the request, so a retry after a client-side timeout is a
-                    // no-op rather than a second reset of the run the first one created. The
-                    // default reason names the caller, so two operators asking for the same
-                    // point are still distinct requests.
-                    .setRequestId(UUID.nameUUIDFromBytes(
-                            (workflowId.getValue() + '\0' + runId.getValue() + '\0' + eventId + '\0'
-                                    + reason.getValue()).getBytes(StandardCharsets.UTF_8)).toString())
-                    .setResetReapplyType(ResetReapplyType.RESET_REAPPLY_TYPE_SIGNAL);
             ResetReapplyType reapply = toReapplyType(reapplyType.getValue());
             if (reapply == null) {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Unknown reapply type: " + reapplyType.getValue()
                                 + " (expected \"signal\", \"none\", or \"all-eligible\")"));
             }
-            request.setResetReapplyType(reapply);
+            List<ResetReapplyExcludeType> excludes = new ArrayList<>();
+            StringBuilder excludeKey = new StringBuilder();
             for (int i = 0; i < excludeTypes.size(); i++) {
                 String raw = excludeTypes.get(i).toString();
                 ResetReapplyExcludeType exclude = toReapplyExcludeType(raw);
@@ -2895,8 +2887,28 @@ public final class ManagementNative {
                             "Unknown reapply exclusion: " + raw
                                     + " (expected \"signal\", \"update\", \"nexus\", or \"cancel-request\")"));
                 }
-                request.addResetReapplyExcludeTypes(exclude);
+                excludes.add(exclude);
+                excludeKey.append(exclude.name()).append(',');
             }
+
+            // Derived from the whole operation, so a retry after a client-side timeout is a
+            // no-op rather than a second reset of the run the first one created — while two
+            // resets of the same point that differ in what they re-deliver stay distinct
+            // requests. Keying on the target alone would silently swallow the second.
+            String requestKey = String.join("\0", workflowId.getValue(), runId.getValue(),
+                    Long.toString(eventId), reason.getValue(), identity.getValue(),
+                    reapply.name(), excludeKey.toString());
+
+            ResetWorkflowExecutionRequest.Builder request = ResetWorkflowExecutionRequest.newBuilder()
+                    .setNamespace(client.getOptions().getNamespace())
+                    .setWorkflowExecution(execution.build())
+                    .setWorkflowTaskFinishEventId(eventId)
+                    .setReason(reason.getValue())
+                    .setIdentity(identity.getValue())
+                    .setRequestId(UUID.nameUUIDFromBytes(
+                            requestKey.getBytes(StandardCharsets.UTF_8)).toString())
+                    .setResetReapplyType(reapply);
+            request.addAllResetReapplyExcludeTypes(excludes);
 
             ResetWorkflowExecutionResponse response = client.getWorkflowServiceStubs()
                     .blockingStub()

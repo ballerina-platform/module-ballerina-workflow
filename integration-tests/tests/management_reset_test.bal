@@ -69,6 +69,17 @@ isolated function schedules(string[] nodeNames, string activity) returns boolean
     return false;
 }
 
+// The scheduled event ID recorded for a step, by unqualified activity name. Preserved
+// history keeps a step's ID; re-execution gives it a new one.
+isolated function stepNodeId(management:ActivityTreeNode[] nodes, string activity) returns string {
+    foreach management:ActivityTreeNode node in nodes {
+        if node.name == activity || node.name.endsWith("." + activity) {
+            return node.id;
+        }
+    }
+    return "";
+}
+
 // Runs a two-activity workflow to completion and returns its ID and its result.
 function runTwoActivityWorkflow(string prefix) returns [string, anydata]|error {
     ActivityInvocationInput input = {id: uniqueId(prefix), value: "reset"};
@@ -116,6 +127,12 @@ function testResetFromFirstWorkflowTaskRerunsTheSameInstance() returns error? {
     string workflowId = started[0];
     anydata originalResult = started[1];
 
+    // Node IDs are scheduled event IDs, so a step that was re-scheduled has a different
+    // one and a step that was preserved keeps its own. That is what separates "ran again"
+    // from "reused", which the result alone cannot show.
+    management:ActivityTreeNode[] before = check management:getActivityTree(workflowId, "");
+    string firstStepIdBefore = stepNodeId(before, "uppercaseActivity");
+
     management:WorkflowHandle reset = check resetRun(workflowId, {resetType: "first-workflow-task"});
     test:assertEquals(reset.workflowId, workflowId, "A reset stays on the same workflow ID");
     test:assertTrue(reset.runId != "", "A reset must report the new run ID");
@@ -123,6 +140,12 @@ function testResetFromFirstWorkflowTaskRerunsTheSameInstance() returns error? {
     // The reset run replays from the beginning and reaches the same outcome.
     anydata replayed = check workflow:getWorkflowResult(workflowId, 20);
     test:assertEquals(replayed, originalResult, "Replaying from the start must reproduce the result");
+
+    // Nothing is reused: resetting to the first workflow task discards every recorded
+    // result, so even the step that succeeded runs again.
+    management:ActivityTreeNode[] after = check management:getActivityTree(workflowId, reset.runId);
+    test:assertTrue(stepNodeId(after, "uppercaseActivity") != firstStepIdBefore,
+            "Resetting to the first workflow task must re-execute the earliest step, not reuse it");
 }
 
 @test:Config {
@@ -163,12 +186,22 @@ function testResetFromLastWorkflowTask() returns error? {
     string workflowId = started[0];
     management:ResetPoint[] points = check resetPointsOf(workflowId);
 
+    management:ActivityTreeNode[] before = check management:getActivityTree(workflowId, "");
+    string firstStepIdBefore = stepNodeId(before, "uppercaseActivity");
+
     management:WorkflowHandle reset = check resetRun(workflowId, {resetType: "last-workflow-task"});
     test:assertEquals(reset.workflowId, workflowId);
     test:assertTrue(reset.runId != "", "Resetting to the last workflow task must start a new run");
 
     anydata replayed = check workflow:getWorkflowResult(workflowId, 20);
     test:assertEquals(replayed, started[1], "Re-running only the tail must reach the same result");
+
+    // Only the tail re-runs: the earlier step keeps its recorded result, and therefore
+    // its scheduled event ID. This is the assertion that separates this target from
+    // first-workflow-task, which re-executes the same step.
+    management:ActivityTreeNode[] after = check management:getActivityTree(workflowId, reset.runId);
+    test:assertEquals(stepNodeId(after, "uppercaseActivity"), firstStepIdBefore,
+            "Resetting to the last workflow task must preserve the earlier step, not re-run it");
 
     // The target really was the last point, not the first.
     management:ResetPoint last = points[points.length() - 1];

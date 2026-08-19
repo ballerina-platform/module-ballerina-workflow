@@ -15,6 +15,7 @@
 // under the License.
 
 import ballerina/http;
+import ballerina/io;
 import ballerina/test;
 
 // Route coverage for the reset resources: both the latest-run and pinned-run paths,
@@ -24,6 +25,20 @@ import ballerina/test;
 // Every case here is answered before any history is read — either by the role gate or
 // by request validation — which is what makes the routes testable without a live
 // Temporal server, and is also the ordering the reset operation deliberately follows.
+
+// Releases the management listener after every test in this module. A route test that
+// fails an assertion never reaches its own stop call, and the held port then fails each
+// later test that starts a listener — turning one real failure into several and burying
+// it. Stopping an already-stopped service is a no-op, so this is safe for the tests that
+// never start one.
+@test:AfterEach
+function releaseManagementListener() {
+    error? stopped = stopManagementService();
+    if stopped is error {
+        // Cleanup must not mask the test's own outcome.
+        io:println("Could not stop the management listener after a test: ", stopped.message());
+    }
+}
 
 @test:Config {}
 function testResetRoutesMapBodyAndErrors() returns error? {

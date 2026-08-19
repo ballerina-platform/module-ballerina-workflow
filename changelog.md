@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Failed activities can be retried or failed in bulk.** A workflow that fails several
+  activities under a human-review retry policy raised one review task per failure, and an
+  operator had to decide each one individually — the same decision, repeated, with no way to
+  clear an inbox after a downstream system came back.
+
+  The new `reviewActivities.bulkRetry` operation applies one decision to many failure reviews:
+  `POST /workflow-api/review-activities/bulk-retry` with `{"action": "retry"}` to rerun the
+  activities with their original arguments, or `{"action": "fail"}` to surface the original
+  failures to the workflows. Tasks are named either explicitly with `taskIds`, or by
+  `parentWorkflowId` for every pending failure review of one workflow — optionally narrowed to
+  one activity with `activityName`.
+
+  **The decision cannot change the payload.** There is no field for replacement arguments
+  anywhere in the request, so editing what an activity is retried with stays a single-task
+  decision (`proceed-with-input`), where the reviewer sees the activity they are editing. For
+  the same reason, a `parentWorkflowId` selection covers only failure reviews: approval gates
+  (`PRE_RUN`) are a different decision and are never bulk-approved.
+
+  A bulk decision races other operators by nature, so it reports per-task outcomes instead of
+  failing as a whole — `APPLIED`, `SKIPPED` (already decided, or not a failure review), or
+  `FAILED` (unknown task, or one the caller may not decide) — with counts and the deciding
+  user. The response is `200` whenever the batch was accepted, including when some tasks were
+  skipped or failed; only a malformed selection is `400`. Re-issuing the same batch is
+  therefore safe: tasks decided in the meantime come back `SKIPPED`.
+
+  `maxBulkRetrySize` (default `100`, under `[ballerina.workflow.management]`) caps one batch. A
+  selection that resolves to more is rejected rather than truncated, so a caller is never told a
+  decision was applied to a larger set than it was.
+
 ### Fixed
 
 - **`workflow.def.json` now reaches the built executable.** The descriptor was registered as a

@@ -84,6 +84,141 @@ function testCommandDecideRejectsUnknownAction() {
     test:assertEquals((<Error>result).message(), "Unknown review decision action: escalate");
 }
 
+// ── Bulk retry selection ──────────────────────────────────────────────────────
+// A bulk decision addresses many tasks, so every way of naming the wrong set is
+// reported before any task is decided — a partially applied batch is worse than a
+// rejected one.
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryRejectsUnknownAction() {
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "escalate", taskIds: ["reviewactivity-x"]},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "An unknown bulk action must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(),
+        "Unknown bulk retry action: escalate (expected \"retry\" or \"fail\")");
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryRequiresAction() {
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {taskIds: ["reviewactivity-x"]},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "A missing action must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(), "action is required");
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryRequiresASelector() {
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "retry"},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "A bulk decision with no selector must be rejected");
+    test:assertEquals((<Error>result).message(), "Either taskIds or parentWorkflowId is required");
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryRejectsBothSelectors() {
+    // Neither selector wins by precedence: naming both is ambiguous about which set
+    // of tasks the caller meant, so it is reported rather than resolved.
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "retry", taskIds: ["reviewactivity-x"], parentWorkflowId: "wf-1"},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "Naming both selectors must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(), "Specify either taskIds or parentWorkflowId, not both");
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryRejectsNonArrayTaskIds() {
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "retry", taskIds: "reviewactivity-x"},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "A scalar taskIds must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(), "taskIds must be a JSON array");
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryRejectsEmptyTaskIds() {
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "retry", taskIds: []},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "An empty taskIds must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(), "taskIds must not be empty");
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryRejectsNonStringTaskId() {
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "retry", taskIds: ["reviewactivity-x", 42]},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "A non-string task ID must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(), "taskIds must contain non-empty strings");
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryRejectsActivityNameWithTaskIds() {
+    // activityName narrows the set a parent workflow resolves to; with an explicit
+    // list the caller has already chosen, so accepting it would silently drop tasks
+    // the caller named.
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "retry", taskIds: ["reviewactivity-x"], activityName: "chargeCard"},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "activityName with taskIds must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(),
+        "activityName narrows a parentWorkflowId selection; it cannot be combined with taskIds");
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryDeduplicatesTaskIds() returns error? {
+    // A repeated ID names one task. Without deduplication the second occurrence would
+    // be reported as already decided — by this same call.
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "fail", taskIds: ["reviewactivity-dup", "reviewactivity-dup"]},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertFalse(result is Error, "Duplicate IDs must not make the request malformed");
+    json payload = check result.ensureType();
+    BulkRetryResult report = check payload.cloneWithType();
+    test:assertEquals(report.requested, 1, "A repeated task ID is addressed once");
+    test:assertEquals(report.items.length(), 1);
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryReportsUnknownTaskAsFailedItem() returns error? {
+    // A task that cannot be decided is reported in the batch, not raised: the rest
+    // of the batch still runs.
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "fail", taskIds: ["reviewactivity-does-not-exist"]},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertFalse(result is Error, "An undecidable task must not fail the whole batch");
+    json payload = check result.ensureType();
+    BulkRetryResult report = check payload.cloneWithType();
+    test:assertEquals(report.requested, 1);
+    test:assertEquals(report.applied, 0);
+    test:assertEquals(report.failed, 1);
+    test:assertEquals(report.items[0].outcome, FAILED);
+    test:assertEquals(report.decidedBy, "alice");
+}
+
 // ── Operation names on the wire ───────────────────────────────────────────────
 
 @test:Config {groups: ["unit"]}

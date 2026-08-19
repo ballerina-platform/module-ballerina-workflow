@@ -292,6 +292,69 @@ public type ReviewDecisionInfo record {|
 |};
 
 // ================================================================================
+// BULK RETRY TYPES
+// ================================================================================
+// Applying one decision to many failed-activity reviews. The decision is limited to
+// retry or fail: there is no field for replacement arguments anywhere in the request,
+// so a bulk decision cannot change the payload an activity is retried with. Editing
+// arguments stays a single-task operation (`proceed-with-input`), where the reviewer
+// sees the activity they are editing.
+
+# What to do with each review activity in a bulk decision.
+#
+# `"retry"` reruns the activity with its original arguments (the single-task
+# `proceed` decision); `"fail"` surfaces the original failure to the workflow (the
+# single-task `reject` decision).
+public type BulkRetryAction "retry"|"fail";
+
+# What happened to one review activity in a bulk decision.
+#
+# `APPLIED` — the decision was submitted.
+# `SKIPPED` — the task was not eligible and nothing was submitted: it was already
+# decided, or it gates a proposed call (`PRE_RUN`) rather than reviewing a failure.
+# `FAILED` — the decision could not be submitted: the task does not exist, the caller
+# may not decide it, or the runtime rejected it.
+public enum BulkItemOutcome {
+    APPLIED,
+    SKIPPED,
+    FAILED
+}
+
+# The outcome of one review activity within a bulk decision.
+#
+# + taskId - Workflow ID of the review activity this outcome belongs to
+# + outcome - Whether the decision was applied, skipped, or failed
+# + reason - Why, for `SKIPPED` and `FAILED`; `()` when the decision was applied
+public type BulkItemResult record {|
+    string taskId;
+    BulkItemOutcome outcome;
+    string? reason;
+|};
+
+# The result of a bulk decision. A bulk decision reports per-task outcomes rather
+# than failing as a whole: one task decided by another operator in the meantime, or
+# one the caller may not decide, does not stop the rest.
+#
+# + action - The decision applied to every eligible task
+# + requested - Number of tasks the selector resolved to
+# + applied - Number of tasks the decision was submitted for
+# + skipped - Number of tasks that were not eligible
+# + failed - Number of tasks the decision could not be submitted for
+# + items - Per-task outcomes, in the order the tasks were processed
+# + decidedBy - User ID of the caller, or `"unknown"` when the caller presented none
+# + decidedAt - ISO-8601 timestamp of when the bulk decision was processed
+public type BulkRetryResult record {|
+    BulkRetryAction action;
+    int requested;
+    int applied;
+    int skipped;
+    int failed;
+    BulkItemResult[] items;
+    string decidedBy;
+    string decidedAt;
+|};
+
+// ================================================================================
 // EXECUTION VISUALIZATION TYPES
 // ================================================================================
 

@@ -789,4 +789,26 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
         return executeToResponse(management:DECIDE_REVIEW_ACTIVITY, params, ctx);
     }
 
+    // Retries or fails many failed-activity reviews in one call. The body names the
+    // decision and the tasks: `taskIds` for an explicit selection, or
+    // `parentWorkflowId` for every pending failure review of one workflow, optionally
+    // narrowed by `activityName`. The decision is limited to retry or fail — there is
+    // no body field for replacement arguments, so a bulk decision cannot change the
+    // payload an activity is retried with.
+    //
+    // Responds 200 with a per-task report whenever the batch was accepted, including
+    // when some tasks were skipped or failed; only a malformed selection is 400.
+    resource isolated function post review\-activities/bulk\-retry(
+            http:RequestContext ctx,
+            @http:Payload map<json> body) returns http:Response {
+        map<json> params = {};
+        foreach string name in ["action", "taskIds", "parentWorkflowId", "activityName", "feedback"] {
+            json value = body[name];
+            if value !is () {
+                params[name] = value;
+            }
+        }
+        return executeToResponse(management:BULK_RETRY_REVIEW_ACTIVITIES, params, ctx);
+    }
+
 };

@@ -29,6 +29,11 @@ import ballerina/time;
 # Maximum number of items returned per page in list operations.
 configurable int maxPageSize = 100;
 
+# Maximum number of review activities one bulk decision may address. A selector that
+# resolves to more is rejected rather than truncated, so a caller is never told a
+# decision was applied to a set larger than the one it was applied to.
+configurable int maxBulkRetrySize = 100;
+
 # Optional role required to view or decide review activities that declare no roles of
 # their own (failure reviews are created without role restrictions today). By default
 # (`()`), such review activities are visible to any caller; set a role name to restrict
@@ -336,6 +341,199 @@ isolated function opDecideReviewActivity(string taskId, string action, map<json>
         return classifyRuntimeError(err);
     }
     return buildReviewDecisionResponse(action, userId).toJson();
+}
+
+// The review-activity states a bulk decision reads. Both are values the runtime
+// reports on a summary or info record, not values this module chooses.
+
+# Trigger value marking a review that was created because an activity failed, as
+# opposed to one gating a proposed call (`PRE_RUN`).
+const ON_FAILURE_TRIGGER = "ON_FAILURE";
+
+# Status of a review activity that is still awaiting a decision.
+const PENDING_STATUS = "PENDING";
+
+# Applies one decision — retry or fail — to every review activity the selector
+# resolves to. Reports a per-task outcome instead of failing as a whole, because a
+# bulk decision races other operators by nature: a task decided in between is a
+# skip, not a reason to abandon the rest.
+isolated function opBulkRetryReviewActivities(string action, json? taskIds, string? parentWorkflowId,
+        string? activityName, string? feedback, [string, string...]? callerRoles, string? userId)
+        returns json|Error {
+    if action != "retry" && action != "fail" {
+        return invalidRequest("Unknown bulk retry action: " + action
+                + " (expected \"retry\" or \"fail\")");
+    }
+    AccessDeniedError? roleErr = reviewDecisionRoleError(callerRoles);
+    if roleErr is AccessDeniedError {
+        return roleErr;
+    }
+    BulkCandidate[]|Error resolved = resolveBulkCandidates(taskIds, parentWorkflowId, activityName);
+    if resolved is Error {
+        return resolved;
+    }
+    if resolved.length() > maxBulkRetrySize {
+        return invalidRequest("Too many review activities in one bulk decision: "
+                + resolved.length().toString() + " (maximum is " + maxBulkRetrySize.toString() + ")");
+    }
+
+    ReviewDecision decision = action == "retry"
+        ? {action: "proceed"}
+        : {action: "reject", feedback: feedback};
+    BulkItemResult[] items = [];
+    int applied = 0;
+    int skipped = 0;
+    int failed = 0;
+    foreach BulkCandidate candidate in resolved {
+        BulkItemResult item = decideOneInBulk(candidate, decision, callerRoles, userId);
+        items.push(item);
+        match item.outcome {
+            APPLIED => {
+                applied += 1;
+            }
+            SKIPPED => {
+                skipped += 1;
+            }
+            _ => {
+                failed += 1;
+            }
+        }
+    }
+    BulkRetryResult result = {
+        action: action == "retry" ? "retry" : "fail",
+        requested: resolved.length(),
+        applied: applied,
+        skipped: skipped,
+        failed: failed,
+        items: items,
+        decidedBy: userId ?: "unknown",
+        decidedAt: time:utcToString(time:utcNow())
+    };
+    return result.toJson();
+}
+
+# One review activity a bulk decision will act on, with the state the eligibility
+# check needs. Resolving through a parent workflow already yields that state, so it
+# is carried here rather than re-read per task.
+type BulkCandidate record {|
+    string taskId;
+    # `()` when the task came from an explicit id list and has not been read yet
+    ReviewActivitySummary? summary;
+|};
+
+# Resolves a bulk selector to the tasks it addresses. Exactly one of `taskIds` and
+# `parentWorkflowId` selects; naming both, or neither, is a malformed request rather
+# than a silent precedence rule.
+isolated function resolveBulkCandidates(json? taskIds, string? parentWorkflowId, string? activityName)
+        returns BulkCandidate[]|Error {
+    boolean byIds = taskIds !is ();
+    boolean byParent = parentWorkflowId is string && parentWorkflowId.trim().length() > 0;
+    if byIds && byParent {
+        return invalidRequest("Specify either taskIds or parentWorkflowId, not both");
+    }
+    if !byIds && !byParent {
+        return invalidRequest("Either taskIds or parentWorkflowId is required");
+    }
+    if byIds {
+        if activityName is string {
+            return invalidRequest("activityName narrows a parentWorkflowId selection; "
+                    + "it cannot be combined with taskIds");
+        }
+        // normalizeParams has already established that taskIds is an array.
+        json[] ids = <json[]>taskIds;
+        if ids.length() == 0 {
+            return invalidRequest("taskIds must not be empty");
+        }
+        BulkCandidate[] candidates = [];
+        string[] seen = [];
+        foreach json id in ids {
+            if id !is string || id.trim().length() == 0 {
+                return invalidRequest("taskIds must contain non-empty strings");
+            }
+            // A repeated id names one task, so it is decided once. Reporting it twice
+            // would show the second as already decided — by this very call.
+            if seen.indexOf(id) is int {
+                continue;
+            }
+            seen.push(id);
+            candidates.push({taskId: id, summary: ()});
+        }
+        return candidates;
+    }
+
+    ReviewActivitySummary[]|error pending = listPendingReviewActivities(<string>parentWorkflowId);
+    if pending is error {
+        return notFoundOrExecutionError(pending, (), "Failed to list review activities: ");
+    }
+    BulkCandidate[] candidates = [];
+    foreach ReviewActivitySummary summary in pending {
+        // Only failure reviews: approving proposed calls in bulk is a different
+        // decision from retrying failures, and is deliberately not reachable here.
+        if summary.trigger != ON_FAILURE_TRIGGER {
+            continue;
+        }
+        if activityName is string && summary.activityName != activityName {
+            continue;
+        }
+        candidates.push({taskId: summary.taskId, summary: summary});
+    }
+    return candidates;
+}
+
+# Submits the decision for one task, converting every failure into an outcome. A
+# task that cannot be decided is reported in the result; it never aborts the batch.
+isolated function decideOneInBulk(BulkCandidate candidate, ReviewDecision decision,
+        [string, string...]? callerRoles, string? userId) returns BulkItemResult {
+    ReviewActivitySummary? known = candidate.summary;
+    string trigger;
+    string status;
+    string[] taskRoles;
+    if known is ReviewActivitySummary {
+        trigger = known.trigger;
+        status = known.status;
+        taskRoles = known.userRoles;
+    } else {
+        ReviewActivityInfo|error info = getReviewActivityInfo(candidate.taskId);
+        if info is error {
+            return {taskId: candidate.taskId, outcome: FAILED, reason: info.message()};
+        }
+        trigger = info.trigger;
+        status = info.status;
+        taskRoles = info.userRoles;
+    }
+    if !canAccessReviewActivity(taskRoles, callerRoles) {
+        return {
+            taskId: candidate.taskId,
+            outcome: FAILED,
+            reason: "Unauthorized: caller is not allowed to decide this review activity"
+        };
+    }
+    if trigger != ON_FAILURE_TRIGGER {
+        return {
+            taskId: candidate.taskId,
+            outcome: SKIPPED,
+            reason: "Not a failed-activity review: this review gates a proposed call"
+        };
+    }
+    if status != PENDING_STATUS {
+        return {
+            taskId: candidate.taskId,
+            outcome: SKIPPED,
+            reason: "Already decided: the review activity is " + status
+        };
+    }
+    error? err = completeReviewActivity(candidate.taskId, decision, callerRoles, userId);
+    if err is error {
+        // A task decided between the eligibility check and the submission is a skip,
+        // not a failure: the caller asked for it to be decided and it is.
+        Error classified = classifyRuntimeError(err);
+        return {
+            taskId: candidate.taskId,
+            outcome: classified is ConflictError ? SKIPPED : FAILED,
+            reason: classified.message()
+        };
+    }
+    return {taskId: candidate.taskId, outcome: APPLIED, reason: ()};
 }
 
 // ================================================================================

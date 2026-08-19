@@ -544,6 +544,12 @@ public final class WorkflowWorkerNative {
 
             singletonWorker = workerFactory.newWorker(taskQueue, workerOptions);
 
+            // Kind filtering needs the WorkflowKind search attribute on the cluster. Registered
+            // here — never on the in-memory test server, which does not support custom search
+            // attributes — and starts stamp it only when this succeeded, so a server that refuses
+            // the registration degrades to memo-only kinds instead of failing every start.
+            initWorkflowKindSearchAttribute(ns);
+
             // Parse and store global default activity retry policy
             defaultActivityRetryOptions = parseRetryPolicy(defaultRetryPolicy);
             LOGGER.debug("Default activity retry policy: maxAttempts={}",
@@ -1062,6 +1068,67 @@ public final class WorkflowWorkerNative {
      */
     public static WorkflowClient getWorkflowClient() {
         return workflowClient;
+    }
+
+    /** Set only when the WorkflowKind search attribute is confirmed on the cluster. */
+    private static volatile boolean kindSearchAttributeReady = false;
+
+    /** The search-attribute key every start stamps when the cluster is known to accept it. */
+    public static final io.temporal.common.SearchAttributeKey<String> WORKFLOW_KIND_KEY =
+            io.temporal.common.SearchAttributeKey.forKeyword("WorkflowKind");
+
+    /**
+     * Whether starts may stamp the WorkflowKind search attribute: true only on a real server that
+     * accepted (or already had) the attribute. The memo kind is always written regardless — this
+     * gates the *indexed* copy that visibility queries can filter on.
+     */
+    public static boolean isKindSearchAttributeReady() {
+        return kindSearchAttributeReady;
+    }
+
+    /**
+     * Registers the WorkflowKind Keyword search attribute with the cluster, idempotently.
+     * ALREADY_EXISTS counts as success; any other failure only disables stamping — human-task
+     * grade features assume a real, writable server, and a cluster that refuses the attribute
+     * still gets fully working workflows, just without server-side kind filtering.
+     */
+    private static void initWorkflowKindSearchAttribute(String namespace) {
+        try {
+            io.temporal.serviceclient.OperatorServiceStubsOptions.Builder operatorOptions =
+                    io.temporal.serviceclient.OperatorServiceStubsOptions.newBuilder();
+            operatorOptions.setChannel(serviceStubs.getRawChannel());
+            // newServiceStubs refuses options built with plain build() — the validated variant is
+            // required, and the refusal is an exception this method must not let pass silently.
+            io.temporal.serviceclient.OperatorServiceStubs operator =
+                    io.temporal.serviceclient.OperatorServiceStubs.newServiceStubs(
+                            operatorOptions.validateAndBuildWithDefaults());
+            try {
+                operator.blockingStub()
+                        .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                        .addSearchAttributes(
+                                io.temporal.api.operatorservice.v1.AddSearchAttributesRequest.newBuilder()
+                                        .setNamespace(namespace)
+                                        .putSearchAttributes("WorkflowKind",
+                                                io.temporal.api.enums.v1.IndexedValueType
+                                                        .INDEXED_VALUE_TYPE_KEYWORD)
+                                        .build());
+                kindSearchAttributeReady = true;
+                LOGGER.info("Registered the WorkflowKind search attribute");
+            } catch (io.grpc.StatusRuntimeException e) {
+                if (e.getStatus().getCode() == io.grpc.Status.Code.ALREADY_EXISTS) {
+                    kindSearchAttributeReady = true;
+                    LOGGER.debug("WorkflowKind search attribute already registered");
+                } else {
+                    LOGGER.warn("Could not register the WorkflowKind search attribute; kind "
+                            + "filtering is unavailable on this cluster: {}", e.getMessage());
+                }
+            } finally {
+                operator.shutdown();
+            }
+        } catch (Exception e) {
+            LOGGER.warn("Could not reach the operator service to register WorkflowKind: {}",
+                    e.getMessage());
+        }
     }
 
     /**

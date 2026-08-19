@@ -159,7 +159,8 @@ public isolated function executeCommand(Command command) returns json|Error {
                     strParam(params, "startedBy"), intParam(params, "limit", 20),
                     strParam(params, "pageToken"), strParam(params, "startTimeFrom"),
                     strParam(params, "startTimeTo"), strParam(params, "closeTimeFrom"),
-                    strParam(params, "closeTimeTo"), strParam(params, "taskQueue"));
+                    strParam(params, "closeTimeTo"), strParam(params, "taskQueue"),
+                    strParam(params, "kind"));
         }
         START_INSTANCE => {
             // The params map carries the start request itself

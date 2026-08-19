@@ -1552,12 +1552,19 @@ public final class ManagementNative {
             }
             // Every instance says what it is, in its memo: consumers route to the right UI by
             // asking the instance, never by parsing its id — the prefixes stay for human eyes only.
+            String kind = WorkflowWorkerNative.isAgentWorkflowType(type) ? "AGENT" : "WORKFLOW";
             Map<String, Object> memo = new HashMap<>();
-            memo.put("workflowKind", WorkflowWorkerNative.isAgentWorkflowType(type) ? "AGENT" : "WORKFLOW");
+            memo.put("workflowKind", kind);
             if (startedBy instanceof BString starter && !starter.getValue().isBlank()) {
                 memo.put("startedBy", starter.getValue());
             }
             optBuilder.setMemo(memo);
+            if (WorkflowWorkerNative.isKindSearchAttributeReady()) {
+                // The indexed copy, so visibility queries can filter by kind. Only when the
+                // cluster confirmed the attribute — an unknown attribute fails the start.
+                optBuilder.setTypedSearchAttributes(io.temporal.common.SearchAttributes.newBuilder()
+                        .set(WorkflowWorkerNative.WORKFLOW_KIND_KEY, kind).build());
+            }
 
             WorkflowStub stub = client.newUntypedWorkflowStub(type, optBuilder.build());
             Object javaInput;
@@ -1601,7 +1608,7 @@ public final class ManagementNative {
     public static Object listWorkflowInstances(Object status, Object workflowType, Object workflowId, Object startedBy,
                                                long limit, Object pageToken, Object startTimeFrom, Object startTimeTo,
                                                Object closeTimeFrom, Object closeTimeTo,
-                                               Object taskQueue) {
+                                               Object taskQueue, Object kind) {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
@@ -1630,7 +1637,10 @@ public final class ManagementNative {
                 String prefixedType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + wt.getValue();
                 String safeWt = prefixedType.replace("\\", "\\\\").replace("\"", "\\\"");
                 clauses.add(String.format("WorkflowType = \"%s\"", safeWt));
-            } else {
+            } else if (!(kind instanceof BString k && !k.getValue().isBlank())) {
+                // The pre-kind way of excluding task and review children. A kind filter says
+                // precisely what the caller wants — including those very children — so it
+                // replaces this heuristic rather than being overridden by it.
                 clauses.add("WorkflowType STARTS_WITH 'workflow-'");
             }
             if (workflowId instanceof BString wi) {
@@ -1642,6 +1652,7 @@ public final class ManagementNative {
             addTimeClause(clauses, closeTimeFrom, "CloseTime", ">=");
             addTimeClause(clauses, closeTimeTo, "CloseTime", "<=");
             addTaskQueueClause(clauses, taskQueue);
+            addKindClause(clauses, kind);
 
             String query = String.join(" AND ", clauses);
             int pageSize = (int) Math.min(limit, 100);
@@ -2545,6 +2556,16 @@ public final class ManagementNative {
     private static void addTaskQueueClause(List<String> clauses, Object taskQueue) {
         if (taskQueue instanceof BString queue && !queue.getValue().isBlank()) {
             clauses.add("TaskQueue = '" + queue.getValue().replace("'", "''") + "'");
+        }
+    }
+
+    // Scopes a visibility query to one kind of instance — WORKFLOW, AGENT, HUMAN_TASK,
+    // REVIEW_ACTIVITY, CHILD_WORKFLOW — via the WorkflowKind search attribute the starts stamp.
+    // Only instances started after the attribute existed match; a server without the attribute
+    // rejects the query, which is the honest answer where filtering is genuinely unavailable.
+    private static void addKindClause(List<String> clauses, Object kind) {
+        if (kind instanceof BString value && !value.getValue().isBlank()) {
+            clauses.add("WorkflowKind = '" + value.getValue().replace("'", "''") + "'");
         }
     }
 

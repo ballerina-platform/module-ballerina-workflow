@@ -387,6 +387,12 @@ public final class WorkflowContextNative {
         io.temporal.workflow.ChildWorkflowOptions.Builder optsBuilder =
                 io.temporal.workflow.ChildWorkflowOptions.newBuilder().setWorkflowId(reviewId).setParentClosePolicy(
                         io.temporal.api.enums.v1.ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL).setMemo(memo);
+        if (WorkflowWorkerNative.isKindSearchAttributeReady()) {
+            // The indexed kind, so lists can include or exclude reviews server-side. Not part of
+            // replay command validation, so the gate is safe for in-flight executions.
+            optsBuilder.setTypedSearchAttributes(io.temporal.common.SearchAttributes.newBuilder()
+                    .set(WorkflowWorkerNative.WORKFLOW_KIND_KEY, "REVIEW_ACTIVITY").build());
+        }
         if (timeoutMillis != null && timeoutMillis > 0) {
             optsBuilder.setWorkflowExecutionTimeout(java.time.Duration.ofMillis(timeoutMillis));
         }
@@ -814,13 +820,17 @@ public final class WorkflowContextNative {
             // --- Start child workflow and block until completion --------------------
             // REQUEST_CANCEL (not TERMINATE) so a task retired by its parent closing ends as
             // CANCELED — distinguishable from an admin terminating the task (ballerina-library#8892).
-            ChildWorkflowOptions childOptions = ChildWorkflowOptions
+            ChildWorkflowOptions.Builder childOptionsBuilder = ChildWorkflowOptions
                     .newBuilder()
                     .setWorkflowId(taskWorkflowId)
                     .setParentClosePolicy(
                             io.temporal.api.enums.v1.ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL)
-                    .setMemo(memo)
-                    .build();
+                    .setMemo(memo);
+            if (WorkflowWorkerNative.isKindSearchAttributeReady()) {
+                childOptionsBuilder.setTypedSearchAttributes(io.temporal.common.SearchAttributes.newBuilder()
+                        .set(WorkflowWorkerNative.WORKFLOW_KIND_KEY, "HUMAN_TASK").build());
+            }
+            ChildWorkflowOptions childOptions = childOptionsBuilder.build();
 
             ChildWorkflowStub childStub = Workflow.newUntypedChildWorkflowStub(humanTaskTypeName, childOptions);
 
@@ -1401,13 +1411,16 @@ public final class WorkflowContextNative {
             memo.put(STEP_ID_KEY, stepId);
         }
 
-        ChildWorkflowOptions options = ChildWorkflowOptions.newBuilder()
+        ChildWorkflowOptions.Builder optionsBuilder = ChildWorkflowOptions.newBuilder()
                 .setWorkflowId(childId)
                 .setParentClosePolicy(
                         io.temporal.api.enums.v1.ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL)
-                .setMemo(memo)
-                .build();
-        return Workflow.newUntypedChildWorkflowStub(childType, options);
+                .setMemo(memo);
+        if (WorkflowWorkerNative.isKindSearchAttributeReady()) {
+            optionsBuilder.setTypedSearchAttributes(io.temporal.common.SearchAttributes.newBuilder()
+                    .set(WorkflowWorkerNative.WORKFLOW_KIND_KEY, CHILD_WORKFLOW_KIND).build());
+        }
+        return Workflow.newUntypedChildWorkflowStub(childType, optionsBuilder.build());
     }
 
     /**

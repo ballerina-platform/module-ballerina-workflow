@@ -428,7 +428,7 @@ public isolated function listWorkflowInstances(string? status = (), string? work
     string? workflowId = (), string? startedBy = (), int 'limit = 20, string? pageToken = (),
         string? startTimeFrom = (), string? startTimeTo = (),
         string? closeTimeFrom = (), string? closeTimeTo = (),
-        string? taskQueue = ())
+        string? taskQueue = (), string? kind = ())
         returns WorkflowInstancePage|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;

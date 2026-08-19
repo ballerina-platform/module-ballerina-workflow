@@ -134,15 +134,19 @@ public final class WorkflowRuntime {
         try {
             // Build workflow options. The kind memo is how a consumer learns what an instance
             // is without parsing its id — same stamp the management start path writes.
+            String kind = WorkflowWorkerNative.isAgentWorkflowType(processName) ? "AGENT" : "WORKFLOW";
             java.util.Map<String, Object> memo = new java.util.HashMap<>();
-            memo.put("workflowKind",
-                    WorkflowWorkerNative.isAgentWorkflowType(processName) ? "AGENT" : "WORKFLOW");
-            WorkflowOptions options = WorkflowOptions
+            memo.put("workflowKind", kind);
+            WorkflowOptions.Builder optionsBuilder = WorkflowOptions
                     .newBuilder()
                     .setWorkflowId(workflowId)
                     .setTaskQueue(taskQueue)
-                    .setMemo(memo)
-                    .build();
+                    .setMemo(memo);
+            if (WorkflowWorkerNative.isKindSearchAttributeReady()) {
+                optionsBuilder.setTypedSearchAttributes(io.temporal.common.SearchAttributes.newBuilder()
+                        .set(WorkflowWorkerNative.WORKFLOW_KIND_KEY, kind).build());
+            }
+            WorkflowOptions options = optionsBuilder.build();
 
             // Create an untyped workflow stub for dynamic workflow execution
             WorkflowStub workflowStub = client.newUntypedWorkflowStub(processName, options);

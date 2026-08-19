@@ -50,11 +50,11 @@ isolated function opListDefinitions() returns json|Error {
 
 isolated function opListWorkflows(string? status, string? workflowType, string? workflowId,
         string? startedBy, int 'limit, string? pageToken, string? startTimeFrom, string? startTimeTo,
-        string? closeTimeFrom, string? closeTimeTo, string? taskQueue) returns json|Error {
+        string? closeTimeFrom, string? closeTimeTo, string? taskQueue, string? kind) returns json|Error {
     int effectiveLimit = clampLimit('limit, maxPageSize);
     WorkflowInstancePage|error page = listWorkflowInstances(
         status, workflowType, workflowId, startedBy, effectiveLimit, pageToken,
-            startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
+            startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue, kind);
     if page is error {
         return executionFailed("Failed to list workflows: " + page.message());
     }

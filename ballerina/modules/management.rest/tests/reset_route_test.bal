@@ -43,6 +43,14 @@ function testResetRoutesMapBodyAndErrors() returns error? {
     http:Response pinnedNoRoles = check mgmtClient->get("/workflow/workflows/wf-x/run-y/reset-points");
     test:assertEquals(pinnedNoRoles.statusCode, 403, "The pinned-run route is gated the same way");
 
+    // The fourth route, and the one that rewrites history on a named run. The operation
+    // gates unconditionally, so what this proves is the *route* forwarding caller roles:
+    // a mapping that dropped them would answer with a validation error here, not 403.
+    http:Response pinnedResetNoRoles = check mgmtClient->post("/workflow/workflows/wf-x/run-y/reset",
+            {resetType: "first-workflow-task"});
+    test:assertEquals(pinnedResetNoRoles.statusCode, 403,
+            "Resetting a pinned run with no roles is refused");
+
     // ── resetType reaches the operation from the body ─────────────────────────
     http:Response noType = check mgmtClient->post("/workflow/workflows/wf-x/reset", {}, asOperator);
     test:assertEquals(noType.statusCode, 400);

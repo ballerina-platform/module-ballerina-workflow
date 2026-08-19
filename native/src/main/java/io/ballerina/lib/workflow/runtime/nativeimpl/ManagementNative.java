@@ -2879,7 +2879,14 @@ public final class ManagementNative {
                     .setRequestId(UUID.nameUUIDFromBytes(
                             (workflowId.getValue() + '\0' + runId.getValue() + '\0' + eventId + '\0'
                                     + reason.getValue()).getBytes(StandardCharsets.UTF_8)).toString())
-                    .setResetReapplyType(toReapplyType(reapplyType.getValue()));
+                    .setResetReapplyType(ResetReapplyType.RESET_REAPPLY_TYPE_SIGNAL);
+            ResetReapplyType reapply = toReapplyType(reapplyType.getValue());
+            if (reapply == null) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Unknown reapply type: " + reapplyType.getValue()
+                                + " (expected \"signal\", \"none\", or \"all-eligible\")"));
+            }
+            request.setResetReapplyType(reapply);
             for (int i = 0; i < excludeTypes.size(); i++) {
                 String raw = excludeTypes.get(i).toString();
                 ResetReapplyExcludeType exclude = toReapplyExcludeType(raw);
@@ -2907,11 +2914,16 @@ public final class ManagementNative {
         }
     }
 
+    // Null for an unrecognized value rather than a silent fallback to SIGNAL: this is a
+    // public entry point, so a direct caller bypasses the operation layer's validation,
+    // and a typo like "all_eligible" would otherwise reapply the events it meant to
+    // withhold. Same rule the exclusions follow.
     private static ResetReapplyType toReapplyType(String value) {
         return switch (value) {
+            case "signal" -> ResetReapplyType.RESET_REAPPLY_TYPE_SIGNAL;
             case "none" -> ResetReapplyType.RESET_REAPPLY_TYPE_NONE;
             case "all-eligible" -> ResetReapplyType.RESET_REAPPLY_TYPE_ALL_ELIGIBLE;
-            default -> ResetReapplyType.RESET_REAPPLY_TYPE_SIGNAL;
+            default -> null;
         };
     }
 

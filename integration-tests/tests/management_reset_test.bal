@@ -212,11 +212,17 @@ function testResetPointsMarkTheFirstFailure() returns error? {
     // can offer "retry from where it broke" without the operator reading history.
     ActivityInvocationInput input = {id: uniqueId("reset-failure"), value: "boom"};
     string workflowId = check workflow:run(singleFailInvocationWorkflow, input);
-    do {
-        _ = check workflow:getWorkflowResult(workflowId, 20);
-    } on fail {
-        // Expected — the activity always fails.
+    // Asserted rather than tolerated: `on fail` would accept a result timeout or a
+    // lookup error just as readily, and the point of this run is that a specific
+    // activity failed. invocationFailActivity returns error("Invocation fail: " + message).
+    anydata|error outcome = workflow:getWorkflowResult(workflowId, 20);
+    if outcome !is error {
+        test:assertFail("The workflow must fail on invocationFailActivity, but it completed with: "
+                + outcome.toBalString());
     }
+    test:assertTrue(outcome.message().includes("Invocation fail: boom"),
+            "The workflow must fail with the activity's own failure rather than a timeout or "
+            + "lookup error, got: " + outcome.message());
     runtime:sleep(0.5d);
 
     management:ResetPoint[] points = check resetPointsOf(workflowId);

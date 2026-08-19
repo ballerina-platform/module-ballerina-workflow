@@ -139,7 +139,11 @@ public final class DescriptorFields {
     public static final String KIND_SLEEP = "SLEEP";
     /** A conditional: `if`/`else` or `match`. */
     public static final String KIND_BRANCH = "BRANCH";
-    public static final String KIND_RETURN = "RETURN";
+    /** An early exit inside an arm: a return, fail or panic — which one is in {@link #MODE}. */
+    public static final String KIND_EXIT = "EXIT";
+    /** A run of consecutive non-durable statements, collapsed to one display-only node. */
+    public static final String KIND_CODE = "CODE";
+    public static final String MODE = "mode";
     /** A loop: `while` or `foreach`. */
     public static final String KIND_LOOP = "LOOP";
     /** A `do`/`on fail` block. */

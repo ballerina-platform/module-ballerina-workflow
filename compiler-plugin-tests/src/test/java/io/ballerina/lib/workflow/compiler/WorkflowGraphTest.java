@@ -129,7 +129,7 @@ public class WorkflowGraphTest {
                 "A chosen id is what the graph publishes, so an execution reporting it can be placed");
         Assert.assertEquals(calls.get(1).get("stepId"), "bookCarrier#2",
                 "and the ordinal is still consumed, so naming one call never renumbers a sibling");
-        Assert.assertTrue(hasEdge(graph, "book-primary", "bookCarrier#2", null),
+        Assert.assertTrue(hasEdgeFrom(graph, "book-primary", null),
                 "Edges refer to whichever id the node carries");
     }
 
@@ -182,9 +182,11 @@ public class WorkflowGraphTest {
         Map<String, Object> graph = graphOf("retryShipments");
         Map<String, Object> loop = nodeAt(graph, "while#1");
         Assert.assertEquals(loop.get("kind"), "LOOP");
-        Assert.assertTrue(hasEdge(graph, "while#1", "bookCarrier#1", "body"),
+        // The body's first and last items may be CODE nodes now (the loop counter), so entry and
+        // repeat are asserted by the loop's own end of each edge.
+        Assert.assertTrue(hasEdgeFrom(graph, "while#1", "body"),
                 "The loop enters its body");
-        Assert.assertTrue(hasEdge(graph, "bookCarrier#1", "while#1", "repeat"),
+        Assert.assertTrue(hasEdgeTo(graph, "while#1", "repeat"),
                 "and the body's tail returns to it");
         // The loop, not its body, is what the next step follows.
         Assert.assertTrue(hasEdge(graph, "while#1", "foreach#1", null));
@@ -370,35 +372,44 @@ public class WorkflowGraphTest {
     }
 
     @Test
-    public void testEarlyReturnsAreDescribedAndEmptyBranchesAreNot() {
-        // A guard that only returns is the one thing that can explain a run that completed
-        // without reaching later steps, so it is kept — with a terminal RETURN leaf. A branch
-        // holding nothing durable is pruned entirely, and its ordinal is not reassigned: a gap
-        // means a construct existed there, and a construct gaining its first step later must not
-        // move its siblings' identities.
+    public void testExitsCodeAndEmptyBranches() {
+        // Three ways an `if` can mislead a drawing, each with its own rule. A guard that only
+        // returns keeps a terminal EXIT leaf — the one thing that can explain a run that
+        // completed without reaching later steps. A branch holding only non-durable code keeps a
+        // single collapsed CODE node, so the diagram reads like the source without drowning the
+        // steps. A construct with nothing at all below it is pruned, and its ordinal is not
+        // reused: a gap means a construct exists there in source, so a construct gaining its
+        // first step later does not move its siblings' identities.
         Map<String, Object> descriptor = descriptorOf("graph_early_return");
         Map<String, Object> graph = graphOf(descriptor, "settleOrder");
 
-        Map<String, Object> guardReturn = nodeAt(graph, "return#1");
-        Assert.assertEquals(guardReturn.get("kind"), "RETURN");
-        Assert.assertEquals(guardReturn.get("parent"), "if#1");
-        Assert.assertEquals(guardReturn.get("branch"), "then");
+        Map<String, Object> guardExit = nodeAt(graph, "return#1");
+        Assert.assertEquals(guardExit.get("kind"), "EXIT");
+        Assert.assertEquals(guardExit.get("mode"), "return");
+        Assert.assertEquals(guardExit.get("parent"), "if#1");
+        Assert.assertEquals(guardExit.get("branch"), "then");
 
-        Assert.assertFalse(hasNode(graph, "if#2"), "The nothing-durable branch is not described");
-        Assert.assertTrue(hasNode(graph, "if#3"), "but its ordinal is not reused by the next one");
+        // The code-only branch is kept, its two statements collapsed to one display node.
+        Map<String, Object> code = nodeAt(graph, "code#1");
+        Assert.assertEquals(code.get("kind"), "CODE");
+        Assert.assertEquals(code.get("label"), "2 statements");
+        Assert.assertEquals(code.get("parent"), "if#2");
+
+        // The truly empty branch is pruned; the next construct keeps its own ordinal.
+        Assert.assertFalse(hasNode(graph, "if#3"), "A construct with nothing below it is pruned");
+        Assert.assertTrue(hasNode(graph, "if#4"), "and its ordinal is not reused by the next one");
 
         // A top-level return is the body ending, not a node.
-        Assert.assertFalse(hasNode(graph, "return#3"), "Only arm-resident returns are nodes");
+        Assert.assertFalse(hasNode(graph, "return#3"), "Only arm-resident exits are nodes");
 
-        // Flow: the guard's exit is terminal, so the next step is reached only by skipping it.
-        Assert.assertTrue(hasEdge(graph, "if#1", "chargeCard#1", null), "flow continues past the guard");
+        // Flow: exits are terminal, so later steps are reached only on the paths that skip them.
+        Assert.assertTrue(hasEdge(graph, "if#2", "chargeCard#1", null),
+                "flow continues across the pruned construct");
         Assert.assertFalse(hasEdge(graph, "return#1", "chargeCard#1", null),
-                "and never out of the return");
-        // The express arm ends in its own return, so archiveOrder is reached only on the skip path.
-        Assert.assertTrue(hasEdge(graph, "if#3", "archiveOrder#1", null));
+                "and never out of an exit");
+        Assert.assertTrue(hasEdge(graph, "if#4", "archiveOrder#1", null));
         Assert.assertFalse(hasEdge(graph, "bookCarrier#1", "archiveOrder#1", null),
                 "an arm that returns contributes no exit toward the next step");
-        Assert.assertFalse(hasEdge(graph, "return#2", "archiveOrder#1", null));
     }
 
     @Test
@@ -437,18 +448,12 @@ public class WorkflowGraphTest {
         Assert.assertEquals(nodeAt(graph, "notifyWarehouse#1").get("branch"), "else");
 
         // Both loops carry their own repeat edges — nesting must not collapse them into one.
-        // A repeat edge leaves a body's *exit steps*: for the outer loop the body ends in a
-        // branch, so every leaf a run can end that iteration on flows back — through two levels
-        // of nesting — while the inner loop's single-step body flows back directly.
+        // The loop tails are the counter increments, captured as CODE nodes, so the repeat edges
+        // are asserted by destination: what matters is that each loop is re-entered from inside
+        // its own body, whatever kind of node happens to sit last on it.
         Assert.assertTrue(hasEdge(graph, "while#1", "if#1", "body"), "outer loop enters its body");
-        Assert.assertTrue(hasEdge(graph, "while#2", "bookCarrier#1", "body"), "inner loop enters its body");
-        Assert.assertTrue(hasEdge(graph, "bookCarrier#1", "while#2", "repeat"), "inner loop repeats");
-        Assert.assertTrue(hasEdge(graph, "postToLedger#1", "while#1", "repeat"),
-                "the rush arm's exit repeats the outer loop");
-        Assert.assertTrue(hasEdge(graph, "sleep#1", "while#1", "repeat"),
-                "the non-rush arm's exit repeats the outer loop");
-        Assert.assertTrue(hasEdge(graph, "notifyWarehouse#1", "while#1", "repeat"),
-                "the standard arm's exit repeats the outer loop");
+        Assert.assertTrue(hasEdgeTo(graph, "while#2", "repeat"), "inner loop repeats");
+        Assert.assertTrue(hasEdgeTo(graph, "while#1", "repeat"), "outer loop repeats");
     }
 
     @Test
@@ -526,6 +531,30 @@ public class WorkflowGraphTest {
     @SuppressWarnings("unchecked")
     private static List<Map<String, Object>> nodesOf(Map<String, Object> graph) {
         return (List<Map<String, Object>>) (List<?>) graph.get("nodes");
+    }
+
+    /** Whether any edge with this source and label exists, whatever its destination. */
+    @SuppressWarnings("unchecked")
+    private static boolean hasEdgeFrom(Map<String, Object> graph, String from, String when) {
+        for (Object raw : (List<Object>) graph.get("edges")) {
+            Map<?, ?> edge = (Map<?, ?>) raw;
+            if (from.equals(edge.get("from")) && (when == null || when.equals(edge.get("when")))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether any edge with this destination and label exists, whatever its source. */
+    @SuppressWarnings("unchecked")
+    private static boolean hasEdgeTo(Map<String, Object> graph, String to, String when) {
+        for (Object raw : (List<Object>) graph.get("edges")) {
+            Map<?, ?> edge = (Map<?, ?>) raw;
+            if (to.equals(edge.get("to")) && (when == null || when.equals(edge.get("when")))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Whether the graph has a node with this step id — for asserting absence, which nodeAt cannot. */

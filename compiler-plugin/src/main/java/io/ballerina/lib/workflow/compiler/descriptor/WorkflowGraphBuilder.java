@@ -65,7 +65,9 @@ import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIN
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_AWAIT_RESULT;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_ACTIVITY;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_BRANCH;
-import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_RETURN;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_CODE;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_EXIT;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.MODE;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_CHILD_WORKFLOW;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_EVENT_WAIT;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_HUMAN_TASK;
@@ -426,6 +428,8 @@ public final class WorkflowGraphBuilder {
         /** Ids already handed out, so nothing is issued twice. */
         private final Set<String> taken = new LinkedHashSet<>();
         final List<Map<String, Object>> nodes = new ArrayList<>();
+        /** The same nodes by step id, for the emitters that update a node after creating it. */
+        final Map<String, Map<String, Object>> nodesById = new LinkedHashMap<>();
         final List<CallSite> sites = new ArrayList<>();
         final Block root = new Block(null, false);
 
@@ -439,20 +443,87 @@ public final class WorkflowGraphBuilder {
             this.chosenIds = chosenIds;
         }
 
+        // ── Blocks: statement-level walking, so non-durable code is captured ─
+        //
+        // The diagram must read like the source, so code that does nothing durable still appears —
+        // but collapsed: a maximal run of consecutive silent statements becomes one CODE node
+        // ("4 statements"), because per-statement nodes would drown the steps the diagram exists
+        // to show. A statement is silent when walking it emitted nothing; the durable call inside
+        // `string x = check ctx->callActivity(...)` emits, so that statement is a step, not code.
+        // Exit statements are excluded even where they emit nothing (the top level): a return is
+        // the body ending, not code, and folding it in would make the count lie.
+
+        @Override
+        public void visit(io.ballerina.compiler.syntax.tree.FunctionBodyBlockNode body) {
+            walkStatements(body.statements());
+        }
+
+        @Override
+        public void visit(io.ballerina.compiler.syntax.tree.BlockStatementNode block) {
+            walkStatements(block.statements());
+        }
+
+        private void walkStatements(io.ballerina.compiler.syntax.tree.NodeList<
+                io.ballerina.compiler.syntax.tree.StatementNode> statements) {
+            Map<String, Object> codeNode = null;
+            int codeCount = 0;
+            for (io.ballerina.compiler.syntax.tree.StatementNode statement : statements) {
+                boolean exitStatement = statement
+                        instanceof io.ballerina.compiler.syntax.tree.ReturnStatementNode
+                        || statement instanceof io.ballerina.compiler.syntax.tree.FailStatementNode
+                        || statement instanceof io.ballerina.compiler.syntax.tree.PanicStatementNode;
+                int before = nodes.size();
+                statement.accept(this);
+                if (nodes.size() > before || exitStatement) {
+                    codeNode = null;
+                    codeCount = 0;
+                    continue;
+                }
+                if (codeNode == null) {
+                    Item item = addNode(KIND_CODE, "code", null, null, statement);
+                    codeNode = nodesById.get(item.stepId);
+                    codeCount = 0;
+                }
+                codeCount++;
+                codeNode.put(LABEL, codeCount == 1 ? "1 statement" : codeCount + " statements");
+            }
+        }
+
         // ── Control flow ──────────────────────────────────────────────────
 
         @Override
         public void visit(io.ballerina.compiler.syntax.tree.ReturnStatementNode returnStatement) {
             returnStatement.expression().ifPresent(expression -> expression.accept(this));
+            exitNode("return", returnStatement);
+        }
+
+        @Override
+        public void visit(io.ballerina.compiler.syntax.tree.FailStatementNode failStatement) {
+            failStatement.expression().accept(this);
+            exitNode("fail", failStatement);
+        }
+
+        @Override
+        public void visit(io.ballerina.compiler.syntax.tree.PanicStatementNode panicStatement) {
+            panicStatement.expression().accept(this);
+            exitNode("panic", panicStatement);
+        }
+
+        /**
+         * Emits an exit node — a return, fail or panic inside an arm. It is the only thing that
+         * can explain a run that ended without reaching the steps after the branch, and it is
+         * terminal: the linker draws no edge out of it, because real flow has none. An exit never
+         * appears in an execution, so consumers attribute a run to one only when it is the single
+         * exit consistent with the observed last step. At the top level it stays invisible — the
+         * body's own exit already says the workflow can end there.
+         */
+        private void exitNode(String mode, Node statement) {
             if (current == root) {
-                // A top-level return is just the body ending; the block's exit already says so.
                 return;
             }
-            // Inside an arm, a return is the only thing that can explain a run that completed
-            // without reaching the steps after the branch — so it is a node, and a terminal one:
-            // the linker draws no edge out of it, because real flow has none.
-            Item item = addNode(KIND_RETURN, "return", null, null, returnStatement);
+            Item item = addNode(KIND_EXIT, mode, null, null, statement);
             item.terminal = true;
+            nodesById.get(item.stepId).put(MODE, mode);
         }
 
         @Override
@@ -693,6 +764,7 @@ public final class WorkflowGraphBuilder {
             LineRange range = source.location().lineRange();
 
             Map<String, Object> node = new LinkedHashMap<>();
+            nodesById.put(stepId, node);
             node.put(STEP_ID, stepId);
             node.put(KIND, kind);
             if (target != null) {

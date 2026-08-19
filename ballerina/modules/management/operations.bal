@@ -35,8 +35,10 @@ configurable int maxPageSize = 100;
 configurable int maxBulkRetrySize = 100;
 
 # Optional role required to view or decide review activities that declare no roles of
-# their own (failure reviews are created without role restrictions today). By default
-# (`()`), such review activities are visible to any caller; set a role name to restrict
+# their own. A failure review declares the roles its `retryPolicy` names — a role
+# string, or a list of them — and declares none only when the policy is the legacy
+# `"MANUAL_RETRY"` sentinel, which opts out of role restriction. By default (`()`),
+# those unrestricted reviews are visible to any caller; set a role name to restrict
 # them to callers holding that role. Review activities that do declare roles always
 # require a matching caller role, regardless of this setting.
 configurable string? reviewActivityAccessRole = ();

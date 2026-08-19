@@ -276,6 +276,37 @@ function testBulkRetryFeedbackIsAcceptedForFail() returns error? {
     test:assertEquals(report.requested, 1);
 }
 
+// ── Review activity authorization ─────────────────────────────────────────────
+// The gate a bulk decision applies per task is the same one a single decision
+// applies, so it is pinned here — including the permissive default, which is easy
+// to mistake for "bulk retry is authorized" when it is not.
+
+@test:Config {groups: ["unit"]}
+function testDeclaredRolesGateAccess() {
+    // A review that declares roles admits only a caller holding one of them.
+    test:assertTrue(canAccessReviewActivity(["OPS", "APPROVER"], ["APPROVER"]),
+        "A caller holding a declared role may decide the review");
+    test:assertFalse(canAccessReviewActivity(["OPS"], ["AUDITOR"]),
+        "A caller holding none of the declared roles may not");
+    test:assertFalse(canAccessReviewActivity(["OPS"], ()),
+        "A caller presenting no roles may not decide a role-restricted review");
+}
+
+@test:Config {groups: ["unit"]}
+function testUndeclaredRolesAreOpenByDefault() {
+    // A failure review declares whatever roles its `retryPolicy` names, so most are
+    // role-restricted and the check above governs them. It declares none only for the
+    // legacy `"MANUAL_RETRY"` sentinel, which opts out of role restriction; for those,
+    // and with reviewActivityAccessRole left at (), any caller may decide — in bulk or
+    // one at a time. That combination is the only open path, and it is opted into.
+    test:assertTrue(canAccessReviewActivity([], ()),
+        "With no declared roles and no configured role, access is open by default");
+    test:assertTrue(canAccessReviewActivity([], ["ANYTHING"]),
+        "The declared-role check does not restrict a review that declares none");
+    test:assertTrue(reviewDecisionRoleError(()) is (),
+        "With no reviewActivityAccessRole configured, deciding is not gated on roles");
+}
+
 // ── Operation names on the wire ───────────────────────────────────────────────
 
 @test:Config {groups: ["unit"]}

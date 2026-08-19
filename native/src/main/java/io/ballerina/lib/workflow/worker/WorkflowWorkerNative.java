@@ -187,10 +187,18 @@ public final class WorkflowWorkerNative {
     private static final java.util.logging.Logger TEMPORAL_JUL_LOGGER =
             java.util.logging.Logger.getLogger("io.temporal");
     // Ensures the JUL config-reload listener is registered exactly once, preventing
-    // the listener list from growing each time suppressTemporalLogs() is called.
+    // the listener list from growing each time applyLoggingStrategy() is called.
     // Must be declared BEFORE the static initializer block so it is non-null when
-    // suppressTemporalLogs() first runs at class-load time.
+    // applyLoggingStrategy() first runs at class-load time.
     private static final AtomicBoolean configListenerRegistered = new AtomicBoolean(false);
+    // Strong references to this module's own JUL loggers (held for the same
+    // LG_LOST_LOGGER_DUE_TO_WEAK_REFERENCE reason as TEMPORAL_JUL_LOGGER above).
+    // MODULE_JUL_LOGGER covers everything the native layer logs through SLF4J;
+    // FORWARD_JUL_LOGGER is the target TemporalLogHandler forwards Temporal warnings to.
+    private static final java.util.logging.Logger MODULE_JUL_LOGGER =
+            java.util.logging.Logger.getLogger("io.ballerina.lib.workflow");
+    private static final java.util.logging.Logger FORWARD_JUL_LOGGER =
+            java.util.logging.Logger.getLogger("ballerina.workflow.temporal");
     // Static registry to store service objects accessible during workflow execution
     private static final Map<String, BObject> SERVICE_REGISTRY = new ConcurrentHashMap<>();
     // Static registry to store activity implementations (activity name to function ref:
@@ -330,7 +338,9 @@ public final class WorkflowWorkerNative {
         //   - Drops INFO/FINE startup banners ("Created WorkflowServiceStubs", etc.)
         //   - Suppresses known-harmless WARNINGs (UnhandledCommand, HUMANTASK_TIMEOUT)
         //   - Forwards remaining WARNINGs to Ballerina's SLF4J layer in Ballerina log format
-        suppressTemporalLogs();
+        // It also makes this module's own logging independent of the JUL root logger —
+        // see ensureModuleLogVisibility() for why that is necessary.
+        applyLoggingStrategy();
     }
 
     private WorkflowWorkerNative() {
@@ -363,7 +373,7 @@ public final class WorkflowWorkerNative {
      * <pre>  -Dballerina.workflow.temporal.logs=true</pre>
      *
      * <p>The strategy is re-applied after any {@link java.util.logging.LogManager#readConfiguration()}
-     * call via a configuration listener registered exactly once.
+     * call via a configuration listener registered exactly once (see {@link #applyLoggingStrategy()}).
      */
     private static void suppressTemporalLogs() {
         if (TEMPORAL_LOGS_ENABLED) {
@@ -387,11 +397,59 @@ public final class WorkflowWorkerNative {
             TEMPORAL_JUL_LOGGER.addHandler(new TemporalLogHandler());
         }
         TEMPORAL_JUL_LOGGER.setUseParentHandlers(false);
+    }
+
+    /**
+     * Installs this module's complete logging strategy: Temporal SDK suppression
+     * ({@link #suppressTemporalLogs()}) plus the module's own log visibility
+     * ({@link #ensureModuleLogVisibility()}). Re-applied after any
+     * {@link java.util.logging.LogManager#readConfiguration()} call via a configuration
+     * listener registered exactly once.
+     */
+    private static void applyLoggingStrategy() {
+        suppressTemporalLogs();
+        ensureModuleLogVisibility();
 
         // Re-apply after any JUL configuration reload (registered exactly once).
         if (configListenerRegistered.compareAndSet(false, true)) {
             java.util.logging.LogManager.getLogManager().addConfigurationListener(
-                    WorkflowWorkerNative::suppressTemporalLogs);
+                    WorkflowWorkerNative::applyLoggingStrategy);
+        }
+    }
+
+    /**
+     * Makes this module's logging independent of the JUL root logger.
+     *
+     * <p>The native layer logs through SLF4J, which the Ballerina runtime routes to
+     * {@code java.util.logging} (the runtime bundles the slf4j-jdk14 provider). That path is
+     * fragile: any library in the program may reconfigure the shared JUL root — notably
+     * {@code ballerina/task} turns the root logger OFF to silence Quartz, which silently
+     * swallows every log this module emits in any program that also schedules tasks (the ICP
+     * runtime bridge does). Warnings about degraded capabilities — a search attribute that
+     * could not be registered, a descriptor entry that resolved to nothing — must not vanish
+     * because an unrelated module quieted its own dependency.
+     *
+     * <p>The cure is the same one {@code ballerina/http} applies to its trace and access logs:
+     * give the module's own logger namespaces an explicit level and a dedicated console
+     * handler, and detach them from parent handlers, so the root logger's level and handlers
+     * are irrelevant. Output is formatted in Ballerina log style ({@code time=... level=...
+     * module=ballerina/workflow message="..."}) so it reads consistently beside
+     * {@code ballerina/log} output rather than as raw JUL noise.
+     */
+    private static void ensureModuleLogVisibility() {
+        for (java.util.logging.Logger logger : List.of(MODULE_JUL_LOGGER, FORWARD_JUL_LOGGER)) {
+            logger.setLevel(Level.INFO);
+            boolean alreadyInstalled = false;
+            for (java.util.logging.Handler h : logger.getHandlers()) {
+                if (h instanceof ModuleLogHandler) {
+                    alreadyInstalled = true;
+                    break;
+                }
+            }
+            if (!alreadyInstalled) {
+                logger.addHandler(new ModuleLogHandler());
+            }
+            logger.setUseParentHandlers(false);
         }
     }
 
@@ -1813,6 +1871,59 @@ public final class WorkflowWorkerNative {
 
         @Override
         public void close() {
+        }
+    }
+
+    /**
+     * Console handler for this module's own JUL loggers (see
+     * {@link #ensureModuleLogVisibility()}): a plain {@link java.util.logging.ConsoleHandler}
+     * with a Ballerina-log-style formatter, so module output reads consistently beside
+     * {@code ballerina/log} output.
+     */
+    private static final class ModuleLogHandler extends java.util.logging.ConsoleHandler {
+
+        ModuleLogHandler() {
+            setLevel(Level.INFO);
+            setFormatter(new BallerinaLogFormatter());
+        }
+    }
+
+    /**
+     * Formats a JUL record in Ballerina's structured log style:
+     * {@code time=... level=... module=ballerina/workflow message="..." [error="..."]}.
+     */
+    private static final class BallerinaLogFormatter extends java.util.logging.Formatter {
+
+        @Override
+        public String format(java.util.logging.LogRecord record) {
+            StringBuilder line = new StringBuilder("time=")
+                    .append(record.getInstant().truncatedTo(java.time.temporal.ChronoUnit.MILLIS))
+                    .append(" level=").append(ballerinaLevel(record.getLevel()))
+                    .append(" module=ballerina/workflow")
+                    .append(" message=\"").append(escape(formatMessage(record))).append('"');
+            Throwable thrown = record.getThrown();
+            if (thrown != null) {
+                line.append(" error=\"").append(escape(String.valueOf(thrown))).append('"');
+            }
+            return line.append(System.lineSeparator()).toString();
+        }
+
+        private static String ballerinaLevel(Level level) {
+            int value = level.intValue();
+            if (value >= Level.SEVERE.intValue()) {
+                return "ERROR";
+            }
+            if (value >= Level.WARNING.intValue()) {
+                return "WARN";
+            }
+            if (value >= Level.INFO.intValue()) {
+                return "INFO";
+            }
+            return "DEBUG";
+        }
+
+        private static String escape(String text) {
+            return text.replace("\\", "\\\\").replace("\"", "\\\"");
         }
     }
 

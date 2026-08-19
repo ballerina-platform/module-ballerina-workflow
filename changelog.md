@@ -23,8 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   trail forks.
 
   Two operations expose Temporal's reset through the management API. `instances.resetPoints`
-  (`GET /workflow/{workflowId}/reset-points`, and a `{runId}` variant) lists the events a run can
-  be restarted from; `instances.reset` (`POST .../reset`) restarts it there, preserving history
+  (`GET /workflow/workflows/{workflowId}/reset-points`, and a `{runId}` variant) lists the events a
+  run can be restarted from; `instances.reset` (`POST .../reset`) restarts it there, preserving history
   up to that point and re-executing everything after it as a **new run of the same workflow ID**.
 
   `resetType` chooses the point: `"first-workflow-task"` runs the whole workflow again with the

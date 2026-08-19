@@ -68,6 +68,7 @@ import io.temporal.common.converter.DataConverter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -2598,6 +2599,7 @@ public final class ManagementNative {
             }
             String wfId = workflowId.getValue();
             String rid = runId.getValue().isEmpty() ? null : runId.getValue();
+            DataConverter dc = client.getOptions().getDataConverter();
             List<HistoryEvent> events = fetchFullHistory(client, wfId, rid);
 
             // Eligible reset targets, in history order.
@@ -2632,15 +2634,22 @@ public final class ManagementNative {
                     }
                     case EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED -> {
                         var attrs = event.getStartChildWorkflowExecutionInitiatedEventAttributes();
+                        // Named by the same rules getActivityTree uses, because the join
+                        // between a diagram node and the point that re-runs it is what this
+                        // operation exists to provide: a review activity takes its memo
+                        // taskName, a human task its short task name.
+                        String childId = attrs.getWorkflowId();
+                        String childType = attrs.getWorkflowType().getName();
+                        String childName = isReviewActivityId(childId)
+                                ? decodeMemoString(dc, attrs.getMemo().getFieldsMap(), "taskName", childType)
+                                : shortTaskName(childType, childId);
                         recordScheduled(pointNodeIds, pointNodeNames, schedulerOf,
-                                        attrs.getWorkflowTaskCompletedEventId(), eid,
-                                        attrs.getWorkflowType().getName());
+                                        attrs.getWorkflowTaskCompletedEventId(), eid, childName);
                     }
                     case EVENT_TYPE_TIMER_STARTED -> {
                         var attrs = event.getTimerStartedEventAttributes();
                         recordScheduled(pointNodeIds, pointNodeNames, schedulerOf,
-                                        attrs.getWorkflowTaskCompletedEventId(), eid,
-                                        "timer:" + attrs.getTimerId());
+                                        attrs.getWorkflowTaskCompletedEventId(), eid, "sleep");
                     }
                     case EVENT_TYPE_ACTIVITY_TASK_FAILED -> {
                         long scheduled = event.getActivityTaskFailedEventAttributes().getScheduledEventId();
@@ -2755,8 +2764,13 @@ public final class ManagementNative {
                     .setWorkflowTaskFinishEventId(eventId)
                     .setReason(reason.getValue())
                     .setIdentity(identity.getValue())
-                    // A retried request must not produce a second reset.
-                    .setRequestId(UUID.randomUUID().toString())
+                    // Derived from the request, so a retry after a client-side timeout is a
+                    // no-op rather than a second reset of the run the first one created. The
+                    // default reason names the caller, so two operators asking for the same
+                    // point are still distinct requests.
+                    .setRequestId(UUID.nameUUIDFromBytes(
+                            (workflowId.getValue() + '\0' + runId.getValue() + '\0' + eventId + '\0'
+                                    + reason.getValue()).getBytes(StandardCharsets.UTF_8)).toString())
                     .setResetReapplyType(toReapplyType(reapplyType.getValue()));
             for (int i = 0; i < excludeTypes.size(); i++) {
                 String raw = excludeTypes.get(i).toString();

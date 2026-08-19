@@ -156,6 +156,29 @@ function testResetFromSelectedStepStartsThere() returns error? {
 @test:Config {
     groups: ["integration"]
 }
+function testResetFromLastWorkflowTask() returns error? {
+    // Use case: a run wedged on a failing workflow task, moved onto fixed code. The
+    // target is the run's most recent workflow task, so only its tail re-executes.
+    [string, anydata] started = check runTwoActivityWorkflow("reset-last");
+    string workflowId = started[0];
+    management:ResetPoint[] points = check resetPointsOf(workflowId);
+
+    management:WorkflowHandle reset = check resetRun(workflowId, {resetType: "last-workflow-task"});
+    test:assertEquals(reset.workflowId, workflowId);
+    test:assertTrue(reset.runId != "", "Resetting to the last workflow task must start a new run");
+
+    anydata replayed = check workflow:getWorkflowResult(workflowId, 20);
+    test:assertEquals(replayed, started[1], "Re-running only the tail must reach the same result");
+
+    // The target really was the last point, not the first.
+    management:ResetPoint last = points[points.length() - 1];
+    test:assertTrue(last.eventId > points[0].eventId,
+            "A run with several workflow tasks must distinguish its first from its last");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
 function testResetRejectsAnEventThatIsNotAResetPoint() returns error? {
     [string, anydata] started = check runTwoActivityWorkflow("reset-bad-event");
     string workflowId = started[0];

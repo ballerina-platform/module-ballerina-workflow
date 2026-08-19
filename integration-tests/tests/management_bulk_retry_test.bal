@@ -53,13 +53,23 @@ function startFailingReview(string idPrefix)
     return [workflowId, review];
 }
 
-// Drains a workflow that is expected to end in failure once its review is failed.
-function awaitExpectedFailure(string workflowId) {
-    do {
-        _ = check workflow:getWorkflowResult(workflowId, 15);
-    } on fail {
-        // Expected: failing the review surfaces the activity failure to the workflow.
+// Drains a workflow that must end in failure once its review is failed, and asserts
+// that it failed *for the right reason*. Completing successfully would mean a rejected
+// review no longer surfaces the activity's failure; failing with anything else — a
+// result timeout, a cancellation, a lookup error — would let the same regression pass
+// as long as something went wrong. The reviewed activity's own message is what
+// distinguishes them.
+function awaitExpectedFailure(string workflowId,
+        string expectedFailure = "manual retry fail decision") {
+    anydata|error result = workflow:getWorkflowResult(workflowId, 15);
+    if result !is error {
+        test:assertFail("Failing the review must surface the activity failure to the workflow, "
+                + "but it completed with: " + result.toBalString());
     }
+    test:assertTrue(result.message().includes(expectedFailure),
+            "The workflow must fail with the reviewed activity's failure rather than a timeout or "
+            + "lookup error. Expected the message to contain '" + expectedFailure
+            + "' but got: " + result.message());
 }
 
 @test:Config {

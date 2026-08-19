@@ -339,6 +339,7 @@ public isolated function listPendingReviewActivities(string parentWorkflowId)
 # + startTimeTo - Optional ISO-8601 upper bound on task start time (inclusive)
 # + closeTimeFrom - Optional ISO-8601 lower bound on task close time (inclusive)
 # + closeTimeTo - Optional ISO-8601 upper bound on task close time (inclusive)
+# + taskQueue - Optional task queue filter; without it, every queue in the configured namespace
 # + return - Array of review activity summaries, or an error
 public isolated function listAllReviewActivities(string? status = (),
         string? startTimeFrom = (), string? startTimeTo = (),
@@ -434,6 +435,7 @@ public isolated function startWorkflowByType(string workflowType, json? input,
 # + startTimeTo - Optional ISO-8601 upper bound on workflow start time (inclusive)
 # + closeTimeFrom - Optional ISO-8601 lower bound on workflow close time (inclusive)
 # + closeTimeTo - Optional ISO-8601 upper bound on workflow close time (inclusive)
+# + taskQueue - Optional task queue filter; without it, every queue in the configured namespace
 # + return - Paginated list of workflow instance summaries, or an error
 public isolated function listWorkflowInstances(string? status = (), string? workflowType = (),
     string? workflowId = (), string? startedBy = (), int 'limit = 20, string? pageToken = (),

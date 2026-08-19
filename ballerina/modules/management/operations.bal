@@ -357,6 +357,15 @@ const PENDING_STATUS = "PENDING";
 # resolves to. Reports a per-task outcome instead of failing as a whole, because a
 # bulk decision races other operators by nature: a task decided in between is a
 # skip, not a reason to abandon the rest.
+#
+# + action - `retry` to rerun each activity, `fail` to surface its original failure
+# + taskIds - Explicit review activity IDs, or `()` when selecting by parent
+# + parentWorkflowId - Parent whose pending failure reviews are selected, or `()`
+# + activityName - Narrows a parent selection to one activity, or `()`
+# + feedback - Relayed to the caller on `fail`
+# + callerRoles - Roles held by the caller
+# + userId - Caller identity recorded in the report
+# + return - The batch report as `json`, or the reason the batch was refused
 isolated function opBulkRetryReviewActivities(string action, json? taskIds, string? parentWorkflowId,
         string? activityName, string? feedback, [string, string...]? callerRoles, string? userId)
         returns json|Error {
@@ -410,15 +419,22 @@ isolated function opBulkRetryReviewActivities(string action, json? taskIds, stri
 # One review activity a bulk decision will act on, with the state the eligibility
 # check needs. Resolving through a parent workflow already yields that state, so it
 # is carried here rather than re-read per task.
+#
+# + taskId - The review activity's workflow ID
+# + summary - Its already-read state, or `()` when it came from an explicit ID list
 type BulkCandidate record {|
     string taskId;
-    # `()` when the task came from an explicit id list and has not been read yet
     ReviewActivitySummary? summary;
 |};
 
 # Resolves a bulk selector to the tasks it addresses. Exactly one of `taskIds` and
 # `parentWorkflowId` selects; naming both, or neither, is a malformed request rather
 # than a silent precedence rule.
+#
+# + taskIds - Explicit review activity IDs, or `()`
+# + parentWorkflowId - Parent whose pending failure reviews are selected, or `()`
+# + activityName - Narrows a parent selection to one activity, or `()`
+# + return - The tasks to decide, or the reason the selector is malformed
 isolated function resolveBulkCandidates(json? taskIds, string? parentWorkflowId, string? activityName)
         returns BulkCandidate[]|Error {
     boolean byIds = taskIds !is ();
@@ -484,12 +500,20 @@ isolated function resolveBulkCandidates(json? taskIds, string? parentWorkflowId,
 # Reports a selection larger than one batch may address. Raised as soon as the cap
 # is passed, so an oversized request is rejected without first materializing it —
 # the count is therefore deliberately absent from the message.
+#
+# + return - The refusal, naming the cap
 isolated function oversizedBulk() returns InvalidRequestError =>
     invalidRequest("Too many review activities in one bulk decision (maximum is "
             + maxBulkRetrySize.toString() + ")");
 
 # Submits the decision for one task, converting every failure into an outcome. A
 # task that cannot be decided is reported in the result; it never aborts the batch.
+#
+# + candidate - The task to decide, with any state already read for it
+# + decision - The decision to submit
+# + callerRoles - Roles held by the caller
+# + userId - Caller identity recorded with the decision
+# + return - What happened to this task
 isolated function decideOneInBulk(BulkCandidate candidate, ReviewDecision decision,
         [string, string...]? callerRoles, string? userId) returns BulkItemResult {
     ReviewActivitySummary? known = candidate.summary;
@@ -593,6 +617,10 @@ isolated function ensureWorkflowDetailAccess([string, string...]? callerRoles) r
 # A review activity with declared roles requires a matching caller role (same rule as human
 # tasks). A review activity with no declared roles is visible to any caller by default;
 # when `reviewActivityAccessRole` is configured, the caller must hold that role instead.
+#
+# + taskRoles - Roles the review activity declares
+# + callerRoles - Roles held by the caller
+# + return - Whether the caller may see or act on it
 isolated function canAccessReviewActivity(string[] taskRoles, [string, string...]? callerRoles) returns boolean {
     if taskRoles.length() > 0 {
         return hasRoleIntersection(taskRoles, callerRoles);
@@ -607,6 +635,9 @@ isolated function canAccessReviewActivity(string[] taskRoles, [string, string...
 # Guard for review activity decision routes: when `reviewActivityAccessRole` is configured,
 # the caller must hold it. Task-declared roles are enforced separately by the native
 # completion path against the task's memo.
+#
+# + callerRoles - Roles held by the caller
+# + return - The refusal when the configured role is missing, otherwise `()`
 isolated function reviewDecisionRoleError([string, string...]? callerRoles) returns AccessDeniedError? {
     string? requiredRole = reviewActivityAccessRole;
     if requiredRole is string && requiredRole.trim().length() > 0 {

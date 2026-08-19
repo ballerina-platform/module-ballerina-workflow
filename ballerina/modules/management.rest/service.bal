@@ -259,7 +259,7 @@ isolated function buildMgmtListenerConfig() returns http:ListenerConfiguration {
 http:Listener? mgmtListener = ();
 
 # Creates the management listener, attaches the service, and starts it — only when
-# `enableManagementApi = true`. Called from the module `init()`. When the API is
+# `enableManagementApi = true`. Called from the module's init function. When the API is
 # disabled this is a no-op: no listener is created and the port stays free, so a
 # program that imports this module purely for its programmatic helpers opens no
 # port. The started listener is registered as a dynamic listener with the runtime,

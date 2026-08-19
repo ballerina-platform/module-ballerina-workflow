@@ -113,8 +113,33 @@ function testBulkRetryByParentWorkflowRetriesThenFails() returns error? {
             check waitForPendingReviewActivity(workflowId, excludeTaskId = firstTaskId);
     test:assertTrue(second.taskId != firstTaskId, "Retrying must raise a fresh review activity");
 
-    _ = check bulkRetry({action: "fail", parentWorkflowId: workflowId});
+    // activityName narrows a parent selection. A name the parent never called selects
+    // nothing, which is an empty batch rather than an error — the caller asked for
+    // whatever matches, and nothing does.
+    management:BulkRetryResult narrowedAway = check bulkRetry({
+        action: "fail",
+        parentWorkflowId: workflowId,
+        activityName: "someActivityThisWorkflowNeverCalls"
+    });
+    test:assertEquals(narrowedAway.requested, 0, "A non-matching activityName must select nothing");
+    test:assertEquals(narrowedAway.items.length(), 0);
+
+    // The review's own activity name selects it.
+    management:BulkRetryResult narrowedTo = check bulkRetry({
+        action: "fail",
+        parentWorkflowId: workflowId,
+        activityName: second.activityName
+    });
+    test:assertEquals(narrowedTo.requested, 1, "The review's own activity name must select it");
+    test:assertEquals(narrowedTo.applied, 1);
+
     awaitExpectedFailure(workflowId);
+
+    // With every review decided the parent has nothing pending, so the same selector
+    // now reports an empty batch instead of failing.
+    management:BulkRetryResult drained = check bulkRetry({action: "fail", parentWorkflowId: workflowId});
+    test:assertEquals(drained.requested, 0, "A parent with nothing pending selects nothing");
+    test:assertEquals(drained.applied, 0);
 }
 
 @test:Config {

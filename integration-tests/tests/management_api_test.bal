@@ -577,13 +577,24 @@ function testGetReviewActivityInfo() returns error? {
                 "formSchema should describe the editable activity argument 'message', got: " + schema);
     }
 
+    // A pending review carries no decision: the decision signal is what ends it. The
+    // info path relies on this to skip two history scans while a review is pending, so
+    // the invariant is asserted on both sides of the decision.
+    test:assertTrue(info.decidedBy is (), "A pending review must report no decider");
+    test:assertTrue(info.decidedAt is (), "A pending review must report no decision time");
+
     // Clean up — decide fail so the workflow terminates (workflow itself will also error out)
-    check management:completeReviewActivity(reviewTask.taskId, {action: "reject"});
+    check management:completeReviewActivity(reviewTask.taskId, {action: "reject"}, userId = "auditor");
     do {
         _ = check workflow:getWorkflowResult(workflowId, 15);
     } on fail {
         // expected — the workflow fails when the retry task action is "fail"
     }
+
+    management:ReviewActivityInfo decided = check management:getReviewActivityInfo(reviewTask.taskId);
+    test:assertFalse(decided.status == "PENDING", "The review must be closed once decided");
+    test:assertEquals(decided.decidedBy, "auditor", "A decided review must still report its decider");
+    test:assertTrue(decided.decidedAt is string, "A decided review must still report its decision time");
 }
 
 @test:Config {

@@ -239,6 +239,43 @@ function testBulkRetryReportsUnknownTaskAsFailedItem() returns error? {
     test:assertEquals(report.decidedBy, "alice");
 }
 
+@test:Config {groups: ["unit"]}
+function testBulkRetryWithRetryActionReportsPerTask() returns error? {
+    // The retry action takes the same path as fail, so it is exercised too: the two
+    // differ only in the decision submitted, and a batch of undecidable tasks still
+    // reports rather than raises.
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "retry", taskIds: ["reviewactivity-nope-1", "reviewactivity-nope-2"]},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertFalse(result is Error, "A batch of undecidable tasks must still report");
+    json payload = check result.ensureType();
+    BulkRetryResult report = check payload.cloneWithType();
+    test:assertEquals(report.action, "retry");
+    test:assertEquals(report.requested, 2);
+    test:assertEquals(report.failed, 2);
+    test:assertEquals(report.applied, 0);
+    foreach BulkItemResult item in report.items {
+        test:assertEquals(item.outcome, FAILED);
+        test:assertTrue(item.reason is string, "A failed item must say why");
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryFeedbackIsAcceptedForFail() returns error? {
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "fail", taskIds: ["reviewactivity-nope"], feedback: "not recoverable"},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertFalse(result is Error, "Feedback must be accepted alongside a fail decision");
+    json payload = check result.ensureType();
+    BulkRetryResult report = check payload.cloneWithType();
+    test:assertEquals(report.action, "fail");
+    test:assertEquals(report.requested, 1);
+}
+
 // ── Operation names on the wire ───────────────────────────────────────────────
 
 @test:Config {groups: ["unit"]}

@@ -1346,9 +1346,18 @@ public final class ManagementNative {
             record.put(StringUtils.fromString("activityArgs"), bArgs);
             record.put(StringUtils.fromString("createdAt"), StringUtils.fromString(createdAt));
 
-            // Audit fields from the taskDecision signal stored in workflow history
-            String decidedBy = readSignalField(client, taskIdStr, "taskDecision", "decidedBy");
-            String decidedAt = readSignalField(client, taskIdStr, "taskDecision", "decidedAt");
+            // Audit fields from the taskDecision signal stored in workflow history. The
+            // signal is what ends a review, so a PENDING one cannot carry it: reading it
+            // there scans the whole history twice to find nothing. Skipping that is not a
+            // shortcut — it is the only case where the answer is known in advance — and it
+            // is what keeps a bulk decision, which reads mostly pending reviews, to one
+            // describe per task instead of three round trips.
+            String decidedBy = null;
+            String decidedAt = null;
+            if (!"PENDING".equals(statusStr)) {
+                decidedBy = readSignalField(client, taskIdStr, "taskDecision", "decidedBy");
+                decidedAt = readSignalField(client, taskIdStr, "taskDecision", "decidedAt");
+            }
             record.put(StringUtils.fromString("decidedBy"),
                        decidedBy != null ? StringUtils.fromString(decidedBy) : null);
             record.put(StringUtils.fromString("decidedAt"),

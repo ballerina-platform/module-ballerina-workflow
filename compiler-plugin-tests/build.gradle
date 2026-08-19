@@ -120,5 +120,12 @@ test {
 }
 
 test.dependsOn ":workflow-ballerina:build"
+// ":workflow-ballerina:build" is finalized by clearBirCache, which deletes the BIR cache
+// for ballerina/workflow. Gradle orders a finalizer after the task it finalizes, but not
+// against that task's other dependents — so the delete may land while these tests are
+// compiling packages that import ballerina/workflow, and a resolution failure then shows
+// up as an unexpected extra diagnostic. Ordering against the finalizer removes the
+// overlap; it adds no work, since the task is already in the graph.
+test.mustRunAfter ":workflow-ballerina:clearBirCache"
 test.finalizedBy jacocoTestReport
 jacocoTestReport.dependsOn test

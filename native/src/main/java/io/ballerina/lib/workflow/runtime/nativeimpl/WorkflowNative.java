@@ -638,6 +638,16 @@ public final class WorkflowNative {
         record.put(StringUtils.fromString("workflowType"), StringUtils.fromString(displayType));
         record.put(StringUtils.fromString("status"), StringUtils.fromString(status));
 
+        // No caller can know the result at describe time — it lives in the run's terminal history
+        // event — so a closed run without one gets it fetched here. Reporting result: null for a
+        // completed run made every consumer re-derive it from raw history, or lie.
+        if (result == null && client != null && "COMPLETED".equals(status)) {
+            result = fetchRunResult(client, workflowId);
+        }
+        if (errorMessage == null && client != null && "FAILED".equals(status)) {
+            errorMessage = fetchRunFailureMessage(client, workflowId);
+        }
+
         if (result != null) {
             record.put(StringUtils.fromString("result"), TypesUtil.convertJavaToBallerinaType(result));
         } else {
@@ -659,6 +669,63 @@ public final class WorkflowNative {
         record.put(StringUtils.fromString("activityInvocations"), activityInvocations);
 
         return record;
+    }
+
+    /**
+     * Fetches the close event of a run — one request, filtered server-side to the terminal event.
+     */
+    private static HistoryEvent fetchCloseEvent(WorkflowClient client, String workflowId) {
+        GetWorkflowExecutionHistoryRequest request = GetWorkflowExecutionHistoryRequest
+                .newBuilder()
+                .setNamespace(client.getOptions().getNamespace())
+                .setExecution(io.temporal.api.common.v1.WorkflowExecution.newBuilder()
+                        .setWorkflowId(workflowId).build())
+                .setHistoryEventFilterType(
+                        io.temporal.api.enums.v1.HistoryEventFilterType.HISTORY_EVENT_FILTER_TYPE_CLOSE_EVENT)
+                .build();
+        GetWorkflowExecutionHistoryResponse response = client
+                .getWorkflowServiceStubs()
+                .blockingStub()
+                .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                .getWorkflowExecutionHistory(request);
+        java.util.List<HistoryEvent> events = response.getHistory().getEventsList();
+        return events.isEmpty() ? null : events.get(events.size() - 1);
+    }
+
+    /**
+     * The result a completed run returned, decoded to a plain Java value, or null when the run
+     * returned nothing (or the fetch fails — an info read must not fail over a decoration).
+     */
+    private static Object fetchRunResult(WorkflowClient client, String workflowId) {
+        try {
+            HistoryEvent close = fetchCloseEvent(client, workflowId);
+            if (close == null || !close.hasWorkflowExecutionCompletedEventAttributes()) {
+                return null;
+            }
+            io.temporal.api.common.v1.Payloads payloads =
+                    close.getWorkflowExecutionCompletedEventAttributes().getResult();
+            if (payloads.getPayloadsCount() == 0) {
+                return null;
+            }
+            return client.getOptions().getDataConverter().fromPayload(
+                    payloads.getPayloads(0), Object.class, Object.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** The failure message of a failed run, or null — same contract as {@link #fetchRunResult}. */
+    private static String fetchRunFailureMessage(WorkflowClient client, String workflowId) {
+        try {
+            HistoryEvent close = fetchCloseEvent(client, workflowId);
+            if (close == null || !close.hasWorkflowExecutionFailedEventAttributes()
+                    || !close.getWorkflowExecutionFailedEventAttributes().hasFailure()) {
+                return null;
+            }
+            return close.getWorkflowExecutionFailedEventAttributes().getFailure().getMessage();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**

@@ -49,6 +49,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -368,13 +369,18 @@ public final class WorkflowContextNative {
         memo.put("createdAt", java.time.Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString());
         memo.put("formSchema", deriveReviewInputSchema(activityType, activityArgs));
 
-        // Input passed into the child workflow's execute()
-        Map<String, Object> inputs = new HashMap<>();
-        inputs.put("activityName", fullActivityName);
+        // Input passed into the child workflow's execute(). Ordered for the human who reads it
+        // rendered: what the task is, why it exists, what it carries, then where it came from —
+        // a HashMap serialized these in hash order, which put the name and title last. The task's
+        // own id is included because it is the handle every management operation needs, and the
+        // reader of a rendered envelope otherwise has no way to it.
+        Map<String, Object> inputs = new LinkedHashMap<>();
+        inputs.put("taskId", reviewId);
         inputs.put("taskName", qualifiedTaskName);
-        inputs.put("parentWorkflowId", parentWorkflowId);
+        inputs.put("activityName", fullActivityName);
         inputs.put("errorMessage", errorMessage != null ? errorMessage : "");
         inputs.put("activityArgs", activityArgs);
+        inputs.put("parentWorkflowId", parentWorkflowId);
 
         // REQUEST_CANCEL (not TERMINATE) so a review retired by its parent closing ends as
         // CANCELED — distinguishable from an admin terminating the task (ballerina-library#8892).
@@ -789,7 +795,12 @@ public final class WorkflowContextNative {
             }
 
             // --- Build input map passed to the child workflow -----------------------
-            Map<String, Object> inputs = new HashMap<>();
+            // Ordered for the human who reads it rendered: what the task is, why it exists, what
+            // it carries, then where it came from — a HashMap serialized these in hash order,
+            // which put the name and title last. The task's own id is the handle every management
+            // operation needs, so the envelope carries it.
+            Map<String, Object> inputs = new LinkedHashMap<>();
+            inputs.put("taskId", taskWorkflowId);
             inputs.put("taskName", qualifiedTaskName);
             inputs.put("title", title);
             inputs.put("description", description);

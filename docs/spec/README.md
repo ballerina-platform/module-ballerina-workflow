@@ -27,7 +27,7 @@ agents, with their JSON Schemas.
   of the document's canonical bytes (sorted keys, no insignificant whitespace) serialized
   without the checksum field.
 
-- **The graph, per workflow and per agent** (`descriptorVersion` 1.1): what a workflow *does*, in
+- **The graph, per workflow and per agent** (part of `descriptorVersion` 1.0 — the descriptor has not shipped, so the graph is in the first version rather than a bump): what a workflow *does*, in
   source order, nested under the control flow that guards it — activities, human tasks, child
   workflows, event waits and sleeps as steps, `BRANCH`/`LOOP`/`TRY` as the containers around them,
   with edges that follow control flow. It answers what the activity list cannot: when the same

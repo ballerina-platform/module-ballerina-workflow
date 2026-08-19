@@ -13,7 +13,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   history could not tell apart, which is what stopped the control plane from drawing the workflow
   and highlighting the path a run actually took.
 
-  `workflow.def.json` (`descriptorVersion` 1.1) gains a `graph` per workflow: its durable steps —
+  `workflow.def.json` gains a `graph` per workflow (still `descriptorVersion` 1.0 — the
+  descriptor has never shipped, so its first release simply includes the graph): its durable steps —
   activities, human tasks, child workflows, event waits, sleeps — in source order, nested under
   the `BRANCH`/`LOOP`/`TRY` constructs that guard them, with edges that follow control flow.
   Lexical `line`/`column` travel alongside for display but are deliberately not part of a step's

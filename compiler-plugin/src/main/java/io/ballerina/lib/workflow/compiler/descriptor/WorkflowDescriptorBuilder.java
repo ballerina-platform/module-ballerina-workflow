@@ -130,7 +130,7 @@ import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.WOR
  */
 public final class WorkflowDescriptorBuilder {
 
-    public static final String DESCRIPTOR_VERSION = "1.1";
+    public static final String DESCRIPTOR_VERSION = "1.0";
 
     // The agent object type and the human-review retry policy are named in
     // WorkflowConstants, with the rest of the API vocabulary this builder matches.

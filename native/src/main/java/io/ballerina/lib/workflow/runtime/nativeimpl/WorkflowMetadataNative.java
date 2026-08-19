@@ -90,6 +90,18 @@ public final class WorkflowMetadataNative {
         }
     }
 
+    /**
+     * Returns the Temporal task queue this program's worker serves, or null before the worker is
+     * registered. Deliberately not part of the metadata document: the queue is chosen at program
+     * startup — worker configuration — so it is runtime state, reported beside capabilities.
+     *
+     * @return the task queue as a Ballerina string, or null
+     */
+    public static Object getWorkflowTaskQueue() {
+        String taskQueue = WorkflowWorkerNative.getTaskQueue();
+        return taskQueue != null ? StringUtils.fromString(taskQueue) : null;
+    }
+
     private static BArray buildDefinitions() {
         BArray definitions = ValueCreator.createArrayValue(JSON_ARRAY_TYPE);
         Map<String, io.ballerina.lib.workflow.worker.WorkflowFunctionRef> processRegistry =

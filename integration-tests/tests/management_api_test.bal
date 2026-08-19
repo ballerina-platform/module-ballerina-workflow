@@ -577,9 +577,9 @@ function testGetReviewActivityInfo() returns error? {
                 "formSchema should describe the editable activity argument 'message', got: " + schema);
     }
 
-    // A pending review carries no decision: the decision signal is what ends it. The
-    // info path relies on this to skip two history scans while a review is pending, so
-    // the invariant is asserted on both sides of the decision.
+    // Audit fields are reported on both sides of a decision. They are read from history
+    // unconditionally: the decision signal is sent before the review closes, so a status
+    // check is not a sound proxy for its absence.
     test:assertTrue(info.decidedBy is (), "A pending review must report no decider");
     test:assertTrue(info.decidedAt is (), "A pending review must report no decision time");
 

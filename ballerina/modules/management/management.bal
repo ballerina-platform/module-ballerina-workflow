@@ -348,6 +348,17 @@ public isolated function listAllReviewActivities(string? status = (),
     name: "listAllReviewActivities"
 } external;
 
+# Reads only the facts a bulk decision needs about a review activity, with one
+# describe and no history scan. Not public: it exists so a batch does not pay
+# `getReviewActivityInfo`'s two history scans per task for audit fields it never reads.
+#
+# + taskId - The review activity's workflow ID
+# + return - Its trigger, status, and permitted roles, or an error when the ID is not
+#            a review activity
+isolated function getReviewActivityState(string taskId) returns ReviewActivityState|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
 # Returns detailed info for a single review activity, including the failure context,
 # the activity arguments that triggered the task, and the JSON Schema of the input
 # accepted by the `proceed-with-input` decision (`formSchema`).

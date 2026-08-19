@@ -291,6 +291,22 @@ public type ReviewDecisionInfo record {|
     string decidedAt;
 |};
 
+# What deciding one review activity in bulk needs to know about it: whether it
+# reviews a failure, whether it is still open, and who may decide it.
+#
+# Deliberately not `ReviewActivityInfo`. That record also reports who decided and
+# when, which live only in the workflow's history and cost two paginated scans to
+# read — a price a batch would pay per task for fields it never looks at.
+#
+# + trigger - `ON_FAILURE` for a failed activity, `PRE_RUN` for a gated call
+# + status - `PENDING` while the review is still open
+# + userRoles - Roles permitted to decide it; empty means unrestricted
+type ReviewActivityState record {|
+    string trigger;
+    string status;
+    string[] userRoles;
+|};
+
 // ================================================================================
 // BULK RETRY TYPES
 // ================================================================================

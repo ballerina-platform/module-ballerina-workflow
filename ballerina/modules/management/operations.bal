@@ -501,13 +501,15 @@ isolated function decideOneInBulk(BulkCandidate candidate, ReviewDecision decisi
         status = known.status;
         taskRoles = known.userRoles;
     } else {
-        ReviewActivityInfo|error info = getReviewActivityInfo(candidate.taskId);
-        if info is error {
-            return {taskId: candidate.taskId, outcome: FAILED, reason: info.message()};
+        // The eligibility facts only — one describe. The full info record would add two
+        // history scans per task for the audit fields a batch never reads.
+        ReviewActivityState|error state = getReviewActivityState(candidate.taskId);
+        if state is error {
+            return {taskId: candidate.taskId, outcome: FAILED, reason: state.message()};
         }
-        trigger = info.trigger;
-        status = info.status;
-        taskRoles = info.userRoles;
+        trigger = state.trigger;
+        status = state.status;
+        taskRoles = state.userRoles;
     }
     if !canAccessReviewActivity(taskRoles, callerRoles) {
         return {

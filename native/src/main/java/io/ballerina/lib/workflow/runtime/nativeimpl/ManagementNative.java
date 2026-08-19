@@ -1346,18 +1346,15 @@ public final class ManagementNative {
             record.put(StringUtils.fromString("activityArgs"), bArgs);
             record.put(StringUtils.fromString("createdAt"), StringUtils.fromString(createdAt));
 
-            // Audit fields from the taskDecision signal stored in workflow history. The
-            // signal is what ends a review, so a PENDING one cannot carry it: reading it
-            // there scans the whole history twice to find nothing. Skipping that is not a
-            // shortcut — it is the only case where the answer is known in advance — and it
-            // is what keeps a bulk decision, which reads mostly pending reviews, to one
-            // describe per task instead of three round trips.
-            String decidedBy = null;
-            String decidedAt = null;
-            if (!"PENDING".equals(statusStr)) {
-                decidedBy = readSignalField(client, taskIdStr, "taskDecision", "decidedBy");
-                decidedAt = readSignalField(client, taskIdStr, "taskDecision", "decidedAt");
-            }
+            // Audit fields from the taskDecision signal stored in workflow history. These
+            // are read unconditionally: the signal carries decidedBy/decidedAt and is sent
+            // *before* the review closes, so there is an interval in which the decision is
+            // in history while the status is still PENDING. Gating the read on status
+            // would report no decider during exactly that window. Callers that only need
+            // eligibility, and cannot afford two history scans per task, use
+            // getReviewActivityState instead.
+            String decidedBy = readSignalField(client, taskIdStr, "taskDecision", "decidedBy");
+            String decidedAt = readSignalField(client, taskIdStr, "taskDecision", "decidedAt");
             record.put(StringUtils.fromString("decidedBy"),
                        decidedBy != null ? StringUtils.fromString(decidedBy) : null);
             record.put(StringUtils.fromString("decidedAt"),
@@ -1367,6 +1364,73 @@ public final class ManagementNative {
 
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString("Failed to get retry task info: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Reads only what deciding a review activity in bulk requires — its trigger, its status, and the roles it
+     * declares — with a single {@code DescribeWorkflowExecution} and no history scan.
+     *
+     * <p>This exists because {@code getReviewActivityInfo} must also report who decided and when, and those live
+     * only in the workflow's history: two paginated scans per task, for fields a batch never reads.
+     *
+     * @param taskId the review activity's workflow ID
+     * @return a Ballerina {@code ReviewActivityState} record, or an error when the ID is not a review activity
+     */
+    public static Object getReviewActivityState(BString taskId) {
+        try {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+            String taskIdStr = taskId.getValue();
+            DescribeWorkflowExecutionRequest request = DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
+                    client.getOptions().getNamespace()).setExecution(
+                    WorkflowExecution.newBuilder().setWorkflowId(taskIdStr).build()).build();
+            DescribeWorkflowExecutionResponse response = client
+                    .getWorkflowServiceStubs()
+                    .blockingStub()
+                    .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                    .describeWorkflowExecution(request);
+
+            WorkflowExecutionInfo execInfo = response.getWorkflowExecutionInfo();
+            Map<String, Payload> memoFields = execInfo.getMemo().getFieldsMap();
+            DataConverter dc = client.getOptions().getDataConverter();
+
+            // Same guard as the info path: a human task or user workflow ID must not be
+            // decided through a review activity operation (ballerina-library#8894).
+            String workflowKind = decodeMemoString(dc, memoFields, "workflowKind", null);
+            if (!isReviewActivityKind(workflowKind)) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Review activity not found: '" + taskIdStr + "' is not a review activity workflow"));
+            }
+
+            String[] userRolesArr = new String[0];
+            try {
+                Payload rolesPl = memoFields.get("userRoles");
+                if (rolesPl != null) {
+                    userRolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
+                }
+            } catch (Exception e) {
+                LOGGER.debug("Could not decode userRoles memo field: {}", e.getMessage());
+            }
+            BArray roles = ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING));
+            for (String role : userRolesArr) {
+                roles.append(StringUtils.fromString(role));
+            }
+
+            BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
+                                                                          "ReviewActivityState");
+            // Older review activities predate the trigger field and are all failure-driven.
+            record.put(StringUtils.fromString("trigger"),
+                       StringUtils.fromString(decodeMemoString(dc, memoFields, "trigger", "ON_FAILURE")));
+            record.put(StringUtils.fromString("status"),
+                       StringUtils.fromString(taskStatusFromTemporal(execInfo.getStatus())));
+            record.put(StringUtils.fromString("userRoles"), roles);
+            return record;
+        } catch (Exception e) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to get review activity state: " + e.getMessage()));
         }
     }
 

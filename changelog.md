@@ -45,6 +45,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   started reports the old id — so treat the join as optional and draw an unmatched node
   unhighlighted rather than failing.
 
+- **`management:ErrorCode` and `management:errorCodeOf(Error)`** — the machine-readable,
+  protocol-independent reason a management operation failed (`NOT_FOUND`, `ACCESS_DENIED`,
+  `INVALID_REQUEST`, `CONFLICT`, `INVALID_PAYLOAD`, `EXECUTION_ERROR`). Consumers that carry
+  errors across a boundary — the HTTP API in `workflow.management.rest`, the ICP bridge's
+  generated command-tunnel glue — branch on the reason instead of `is`-checking this module's
+  error subtypes, and each adapter owns mapping the reason to its wire vocabulary (the
+  management module itself names no status codes). A new error subtype now surfaces as a
+  classified reason everywhere, instead of silently degrading in hand-copied mappings.
+
 ### Changed
 
 - **Activities are scheduled under their plain name.** An activity's Temporal type was
@@ -60,7 +69,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
   The runtime metadata document is unchanged: it still reports one activity per workflow, from an
   ownership map rather than by splitting the registry key.
-
 ### Fixed
 
 - **`workflow.def.json` now reaches the built executable.** The descriptor was registered as a

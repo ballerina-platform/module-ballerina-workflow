@@ -18,10 +18,12 @@
 // MANAGEMENT ERRORS
 // ================================================================================
 // Why an operation could not be carried out, described in terms of the management
-// domain rather than any transport. Each transport adapter maps these to its own
-// vocabulary — the HTTP API in `workflow.management.rest` maps them to status
-// codes, and other consumers map them to whatever their protocol uses. The
-// module itself stays free of transport and vendor concepts.
+// domain rather than any transport. Every error carries a machine-readable,
+// protocol-independent reason (`ErrorCode`, via `errorCodeOf`); each transport
+// adapter maps those reasons to its own vocabulary — the HTTP API in
+// `workflow.management.rest` maps them to status codes, and other consumers map
+// them to whatever their protocol uses. The module itself stays free of transport
+// and vendor concepts.
 
 # A management operation failed. Every error returned by an operation belongs to
 # one of the distinct subtypes below, so consumers can branch on the reason
@@ -59,6 +61,51 @@ public type ExecutionError distinct Error;
 # + err - The error to represent
 # + return - The error as a `json` payload
 public isolated function toErrorJson(Error err) returns json => {"error": {"message": err.message()}};
+
+# The machine-readable, protocol-independent reason a management operation failed.
+# One value per `Error` subtype, so a consumer that carries errors across a
+# boundary (a wire format, generated code, a log pipeline) can branch on the
+# reason without doing `is`-checks against this module's error types — and without
+# this module knowing anything about the consumer's protocol. Adapters own the
+# translation: `workflow.management.rest` maps these to HTTP status codes; other
+# transports map them to their own vocabulary.
+public enum ErrorCode {
+    # The addressed workflow, human task, or review activity does not exist.
+    NOT_FOUND,
+    # The caller lacks the roles required to see or act on the target.
+    ACCESS_DENIED,
+    # The request is malformed.
+    INVALID_REQUEST,
+    # The target is not in a state that allows the operation.
+    CONFLICT,
+    # The payload does not match the type the target declared.
+    INVALID_PAYLOAD,
+    # A failure inside the workflow runtime or its backing service.
+    EXECUTION_ERROR
+}
+
+# Classifies a management error into its `ErrorCode` reason.
+#
+# + err - The error a management operation returned
+# + return - The error's protocol-independent reason
+public isolated function errorCodeOf(Error err) returns ErrorCode {
+    if err is NotFoundError {
+        return NOT_FOUND;
+    }
+    if err is AccessDeniedError {
+        return ACCESS_DENIED;
+    }
+    if err is InvalidRequestError {
+        return INVALID_REQUEST;
+    }
+    if err is ConflictError {
+        return CONFLICT;
+    }
+    if err is InvalidPayloadError {
+        return INVALID_PAYLOAD;
+    }
+    return EXECUTION_ERROR;
+}
 
 // ── Internal constructors ─────────────────────────────────────────────────────
 // Kept here so operations read as `return notFound("...")` rather than repeating

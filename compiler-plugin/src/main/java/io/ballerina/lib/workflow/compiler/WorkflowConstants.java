@@ -142,4 +142,6 @@ public final class WorkflowConstants {
     public static final String CALL_WORKFLOW_METHOD = "callWorkflow";
     public static final String SEND_DATA_TO_CHILD_WORKFLOW_METHOD = "sendDataToChildWorkflow";
     public static final String SLEEP_METHOD = "sleep";
+    /** {@code workflow:getWorkflowResult} — awaits another workflow's result. */
+    public static final String GET_WORKFLOW_RESULT_FUNCTION = "getWorkflowResult";
 }

@@ -143,6 +143,8 @@ public final class DescriptorFields {
     public static final String KIND_LOOP = "LOOP";
     /** A `do`/`on fail` block. */
     public static final String KIND_TRY = "TRY";
+    /** A step that awaits another workflow's result (`workflow:getWorkflowResult`). */
+    public static final String KIND_AWAIT_RESULT = "AWAIT_RESULT";
     /** The agent itself, at the centre of an agent's graph. */
     public static final String KIND_AGENT_NODE = "AGENT";
     /** The model an agent reasons with. */

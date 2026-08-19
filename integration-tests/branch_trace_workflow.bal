@@ -59,6 +59,21 @@ function namedStepWorkflow(workflow:Context ctx, BranchInput input) returns stri
     return recorded;
 }
 
+# Starts a child workflow with a chosen step id, so the memo carrier is exercised. Activities carry
+# their id in the call config and sleeps in the timer summary; children, human tasks and review tasks
+# all carry theirs in the child's **memo**, and that path had no test until a mismatched key was found
+# by hand — the writer used a constant, the reader a literal, and they drifted.
+#
+# + ctx - Workflow context
+# + input - The claim to record
+# + return - The child's recorded line, or an error
+@workflow:Workflow
+function childStepWorkflow(workflow:Context ctx, BranchInput input) returns string|error {
+    string child = check ctx->runChildWorkflow(namedStepWorkflow, input, stepId = "spawn-audit");
+    string recorded = check ctx->waitForChildWorkflow(child);
+    return recorded;
+}
+
 # Takes one of two arms, calling the same activity from each.
 #
 # + ctx - Workflow context

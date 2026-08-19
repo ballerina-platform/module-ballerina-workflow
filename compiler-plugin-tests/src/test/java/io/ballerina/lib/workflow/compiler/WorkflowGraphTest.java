@@ -246,10 +246,39 @@ public class WorkflowGraphTest {
     }
 
     @Test
-    public void testAChildWorkflowIsDescribedButNeverStamped() {
-        // Only callActivity and awaitHumanTask take a stepId. Stamping a child workflow call made
-        // every one of them fail to compile — caught by the integration package, so pin it here
-        // where the feedback is a minute rather than eight.
+    public void testASleepIsStampedLikeAnyOtherStep() {
+        // A sleep alone in a branch arm used to be placeable only by order, and two sleeps with the
+        // same duration in opposite arms were indistinguishable. It carries its own id now.
+        Map<String, Object> graph = graphOf("shipOrder");
+        Assert.assertEquals(nodeAt(graph, "sleep#1").get("kind"), "SLEEP");
+
+        BuildProject project = loadProject(PACKAGE);
+        project.currentPackage().runCodeGenAndModifyPlugins();
+        Assert.assertEquals(project.currentPackage().getCompilation().diagnosticResult().errorCount(), 0,
+                "The rewritten sources must still compile: "
+                        + project.currentPackage().getCompilation().diagnosticResult().diagnostics());
+        Assert.assertTrue(allSourcesOf(project).contains("stepId = \"sleep#1\""),
+                "ctx.sleep is a method rather than a remote call, and must be stamped all the same");
+    }
+
+    @Test
+    public void testAwaitingAnotherWorkflowsResultIsAStep() {
+        // `workflow:getWorkflowResult` inside a workflow is routed through an implicit activity, so
+        // it appears in history as `workflow:getResult` — a durable wait the author wrote, which an
+        // earlier draft of the spec would have filtered away as internal machinery. Its siblings
+        // `workflow:run` and `workflow:sendData` cannot appear at all: they are compile errors
+        // inside a workflow (WORKFLOW_138).
+        Map<String, Object> graph = graphOf("orchestrateShipment");
+        Assert.assertEquals(nodeAt(graph, "awaitResult#1").get("kind"), "AWAIT_RESULT");
+        Assert.assertTrue(hasEdge(graph, "retryShipments#1", "awaitResult#1", null),
+                "and it sequences like any other step");
+    }
+
+    @Test
+    public void testAChildWorkflowStartIsStamped() {
+        // Stamping this call once broke every runChildWorkflow in the integration package, because
+        // the method had no stepId parameter. It has one now, so the guard is that the id arrives —
+        // and the earlier failure is why this is pinned where feedback costs a minute, not eight.
         Map<String, Object> graph = graphOf("dispatchShipment");
         Assert.assertEquals(nodeAt(graph, "retryShipments#1").get("kind"), "CHILD_WORKFLOW");
 
@@ -258,8 +287,8 @@ public class WorkflowGraphTest {
         Assert.assertEquals(project.currentPackage().getCompilation().diagnosticResult().errorCount(), 0,
                 "The rewritten sources must still compile: "
                         + project.currentPackage().getCompilation().diagnosticResult().diagnostics());
-        Assert.assertTrue(allSourcesOf(project).contains("runChildWorkflow(retryShipments, request)"),
-                "The child workflow call must reach the compiler exactly as written");
+        Assert.assertTrue(allSourcesOf(project).contains("stepId = \"retryShipments#1\""),
+                "so two starts of the same child workflow are distinguishable in the parent's diagram");
     }
 
     // ── The agent's star ──────────────────────────────────────────────────────
@@ -338,6 +367,56 @@ public class WorkflowGraphTest {
         Map<String, Object> graph = graphOf(chosen, "shipOrder");
         Assert.assertEquals(nodeAt(graph, "stock-check").get("target"), "checkStock",
                 "and the graph carries the same id, which is what makes the join work");
+    }
+
+    @Test
+    public void testNestedControlFlowKeepsItsLineage() {
+        // A while holding an if, whose arm holds another while and another if. A consumer
+        // reconstructs the drawing from parent links alone, so what matters here is lineage:
+        // every step's parent chain names each enclosing construct in order, and ordinals count
+        // constructs of a kind across the whole body, not per nesting level.
+        Map<String, Object> descriptor = descriptorOf("graph_nested_control_flow");
+        Map<String, Object> graph = graphOf(descriptor, "routeShipment");
+
+        // The parent chain of the innermost step: bookCarrier -> while#2 -> if#1 -> while#1 -> top.
+        Map<String, Object> carrier = nodeAt(graph, "bookCarrier#1");
+        Assert.assertEquals(carrier.get("parent"), "while#2");
+        Assert.assertEquals(carrier.get("branch"), "body");
+        Map<String, Object> innerWhile = nodeAt(graph, "while#2");
+        Assert.assertEquals(innerWhile.get("parent"), "if#1");
+        Assert.assertEquals(innerWhile.get("branch"), "then");
+        Map<String, Object> outerIf = nodeAt(graph, "if#1");
+        Assert.assertEquals(outerIf.get("parent"), "while#1");
+        Assert.assertEquals(outerIf.get("branch"), "body");
+        Assert.assertNull(nodeAt(graph, "while#1").get("parent"),
+                "The outer while is a top-level node");
+
+        // The sibling if nested in the same arm gets the next ordinal of its kind, not a reset.
+        Map<String, Object> innerIf = nodeAt(graph, "if#2");
+        Assert.assertEquals(innerIf.get("parent"), "if#1");
+        Assert.assertEquals(innerIf.get("branch"), "then");
+        Assert.assertEquals(nodeAt(graph, "postToLedger#1").get("parent"), "if#2");
+        Assert.assertEquals(nodeAt(graph, "postToLedger#1").get("branch"), "then");
+        Assert.assertEquals(nodeAt(graph, "sleep#1").get("parent"), "if#2");
+        Assert.assertEquals(nodeAt(graph, "sleep#1").get("branch"), "else");
+
+        // The untaken arm of the outer if is described too.
+        Assert.assertEquals(nodeAt(graph, "notifyWarehouse#1").get("parent"), "if#1");
+        Assert.assertEquals(nodeAt(graph, "notifyWarehouse#1").get("branch"), "else");
+
+        // Both loops carry their own repeat edges — nesting must not collapse them into one.
+        // A repeat edge leaves a body's *exit steps*: for the outer loop the body ends in a
+        // branch, so every leaf a run can end that iteration on flows back — through two levels
+        // of nesting — while the inner loop's single-step body flows back directly.
+        Assert.assertTrue(hasEdge(graph, "while#1", "if#1", "body"), "outer loop enters its body");
+        Assert.assertTrue(hasEdge(graph, "while#2", "bookCarrier#1", "body"), "inner loop enters its body");
+        Assert.assertTrue(hasEdge(graph, "bookCarrier#1", "while#2", "repeat"), "inner loop repeats");
+        Assert.assertTrue(hasEdge(graph, "postToLedger#1", "while#1", "repeat"),
+                "the rush arm's exit repeats the outer loop");
+        Assert.assertTrue(hasEdge(graph, "sleep#1", "while#1", "repeat"),
+                "the non-rush arm's exit repeats the outer loop");
+        Assert.assertTrue(hasEdge(graph, "notifyWarehouse#1", "while#1", "repeat"),
+                "the standard arm's exit repeats the outer loop");
     }
 
     @Test

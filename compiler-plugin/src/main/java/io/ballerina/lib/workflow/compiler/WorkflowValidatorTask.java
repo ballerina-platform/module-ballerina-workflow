@@ -461,7 +461,9 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         public void visit(RemoteMethodCallActionNode remoteCall) {
             String methodName = remoteCall.methodName().name().text();
             if (WorkflowConstants.CALL_ACTIVITY_FUNCTION.equals(methodName)
-                    || WorkflowConstants.CALL_HUMAN_TASK_METHOD.equals(methodName)) {
+                    || WorkflowConstants.CALL_HUMAN_TASK_METHOD.equals(methodName)
+                    || WorkflowConstants.RUN_CHILD_WORKFLOW_METHOD.equals(methodName)
+                    || WorkflowConstants.CALL_WORKFLOW_METHOD.equals(methodName)) {
                 checkStepId(remoteCall);
             }
             remoteCall.arguments().forEach(argument -> argument.accept(this));

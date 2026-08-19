@@ -2020,7 +2020,8 @@ public final class ManagementNative {
                         var node = newNode(eid, nodeName, nodeType, ts);
                         node.put("childWorkflowId", childId);
                         node.put("input", decodeFirstPayload(attrs.getInput(), dc));
-                        node.put("stepId", decodeMemoString(dc, attrs.getMemo().getFieldsMap(), "stepId", null));
+                        node.put("stepId", decodeMemoString(dc, attrs.getMemo().getFieldsMap(),
+                                io.ballerina.lib.workflow.context.WorkflowContextNative.STEP_ID_KEY, null));
                         nodeByEventId.put(eid, node);
                         nodeOrder.add(eid);
                     }
@@ -2075,6 +2076,9 @@ public final class ManagementNative {
 
                     case EVENT_TYPE_TIMER_STARTED -> {
                         var node = newNode(eid, "sleep", "TIMER", ts);
+                        // The step id rides as the timer's summary: a timer id is replay-validated
+                        // and SDK-assigned, so user metadata is the only carrier available.
+                        node.put("stepId", decodeSummary(event, dc));
                         nodeByEventId.put(eid, node);
                         nodeOrder.add(eid);
                     }
@@ -2428,6 +2432,28 @@ public final class ManagementNative {
         try {
             return dc.fromPayload(payloads.getPayloads(0), Object.class, Object.class);
         } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Reads an event's user-metadata summary — where a timer carries its step id, since a timer's id
+     * is replay-validated and assigned by the SDK. Absent on servers that do not record user
+     * metadata (before 1.27) and on executions from before the runtime set it, which is why the
+     * step id stays optional.
+     *
+     * @param event the history event
+     * @param dc    the data converter
+     * @return the summary, or {@code null}
+     */
+    private static String decodeSummary(HistoryEvent event, DataConverter dc) {
+        if (!event.hasUserMetadata() || !event.getUserMetadata().hasSummary()) {
+            return null;
+        }
+        try {
+            return dc.fromPayload(event.getUserMetadata().getSummary(), String.class, String.class);
+        } catch (Exception e) {
+            // Unreadable metadata is reported as no step id, never as a failed tree.
             return null;
         }
     }

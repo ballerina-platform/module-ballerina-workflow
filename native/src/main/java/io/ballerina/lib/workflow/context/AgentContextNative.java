@@ -374,7 +374,7 @@ public final class AgentContextNative {
 
             Map<String, Object> decision = WorkflowContextNative.startReviewActivity(
                     "PRE_RUN", reviewTaskName, activityType, argsMap, "", reviewRoles,
-                    info.approvalTimeoutMillis);
+                    info.approvalTimeoutMillis, AGENT_TOOL_SITE_PREFIX + activityName);
             return StringUtils.fromString(TypesUtil.toJsonString(decision));
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -1111,7 +1111,7 @@ public final class AgentContextNative {
                 // Manual retry: a human reviews the failure and decides.
                 Map<String, Object> decision = WorkflowContextNative.startReviewActivity(
                         "ON_FAILURE", ActivityNaming.reviewTaskNameFor(workflowType, activityName),
-                        fullActivityName, currentArgs, errorMsg, new String[0], null);
+                        fullActivityName, currentArgs, errorMsg, new String[0], null, stepId);
                 String action = decision.containsKey("action") ? String.valueOf(decision.get("action")) : "reject";
                 if ("proceed".equals(action)) {
                     continue;

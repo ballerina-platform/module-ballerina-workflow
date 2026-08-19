@@ -61,6 +61,7 @@ import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.EDG
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.FILE;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.FROM;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_AWAIT_RESULT;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_ACTIVITY;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_BRANCH;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_CHILD_WORKFLOW;
@@ -111,6 +112,10 @@ public final class WorkflowGraphBuilder {
     // awaitHumanTask(taskName, userRoles, payload, title, description, timeout, T, stepId).
     private static final int CALL_ACTIVITY_STEP_ID_POSITION = 4;
     private static final int AWAIT_HUMAN_TASK_STEP_ID_POSITION = 7;
+    // runChildWorkflow(childWorkflow, input, stepId)
+    private static final int RUN_CHILD_WORKFLOW_STEP_ID_POSITION = 2;
+    // callWorkflow(childWorkflow, input, T, stepId)
+    private static final int CALL_WORKFLOW_STEP_ID_POSITION = 3;
 
     private WorkflowGraphBuilder() {
     }
@@ -126,8 +131,31 @@ public final class WorkflowGraphBuilder {
      * @return the chosen step id, or {@code null}
      */
     public static String chosenStepId(RemoteMethodCallActionNode remoteCall) {
-        Node expression = stepIdArgument(remoteCall);
+        return blankAsAbsent(stepIdArgument(remoteCall));
+    }
+
+    /**
+     * The step id chosen by a call that passes its arguments as a plain list — {@code ctx.sleep}, a
+     * method rather than a remote call, so there is no method name to pick a positional index from.
+     *
+     * @param args the call's arguments
+     * @return the chosen step id, or {@code null}
+     */
+    public static String chosenStepId(SeparatedNodeList<FunctionArgumentNode> args) {
+        for (FunctionArgumentNode arg : args) {
+            if (arg instanceof NamedArgumentNode named
+                    && WorkflowConstants.ARG_STEP_ID.equals(named.argumentName().name().text())) {
+                return blankAsAbsent(named.expression());
+            }
+        }
+        // sleep(duration, stepId): the second positional argument.
+        return args.size() > 1 && args.get(1) instanceof PositionalArgumentNode positional
+                ? blankAsAbsent(positional.expression()) : null;
+    }
+
+    private static String blankAsAbsent(Node expression) {
         String chosen = expression == null ? null : constantStepId(expression);
+
         // A blank id is no id, so the compiler generates one: nothing useful can be done with "" — it
         // would name a node after nothing — and it is what an empty form field produces, which makes
         // it an accident rather than a choice. Blankness is decided here rather than in
@@ -155,6 +183,8 @@ public final class WorkflowGraphBuilder {
         int position = switch (remoteCall.methodName().name().text()) {
             case WorkflowConstants.CALL_ACTIVITY_FUNCTION -> CALL_ACTIVITY_STEP_ID_POSITION;
             case WorkflowConstants.CALL_HUMAN_TASK_METHOD -> AWAIT_HUMAN_TASK_STEP_ID_POSITION;
+            case WorkflowConstants.RUN_CHILD_WORKFLOW_METHOD -> RUN_CHILD_WORKFLOW_STEP_ID_POSITION;
+            case WorkflowConstants.CALL_WORKFLOW_METHOD -> CALL_WORKFLOW_STEP_ID_POSITION;
             default -> -1;
         };
         if (position >= 0 && remoteCall.arguments().size() > position
@@ -477,9 +507,7 @@ public final class WorkflowGraphBuilder {
                 case WorkflowConstants.CALL_WORKFLOW_METHOD, WorkflowConstants.RUN_CHILD_WORKFLOW_METHOD -> {
                     String target = functionNameOf(remoteCall.arguments());
                     if (target != null) {
-                        // Described, but not stampable: only callActivity and awaitHumanTask carry a
-                        // stepId parameter, so a child workflow gets a graph node and no injection.
-                        addNode(KIND_CHILD_WORKFLOW, target, target, null, remoteCall);
+                        addCallSite(KIND_CHILD_WORKFLOW, target, remoteCall);
                     }
                 }
                 default -> {
@@ -492,22 +520,58 @@ public final class WorkflowGraphBuilder {
 
         @Override
         public void visit(FunctionCallExpressionNode callNode) {
-            // A direct call to an @Activity function: the descriptor lists it among the
-            // workflow's activities, so the graph shows it as a step too.
             Optional<Symbol> symbol = semanticModel.symbol(callNode);
-            if (symbol.isPresent() && symbol.get().kind() == SymbolKind.FUNCTION
-                    && WorkflowPluginUtils.hasWorkflowAnnotation((FunctionSymbol) symbol.get(),
-                            WorkflowConstants.ACTIVITY_ANNOTATION)) {
-                ((FunctionSymbol) symbol.get()).getName()
-                        .ifPresent(name -> addNode(KIND_ACTIVITY, name, name, null, callNode));
+            if (symbol.isPresent() && symbol.get().kind() == SymbolKind.FUNCTION) {
+                FunctionSymbol fnSymbol = (FunctionSymbol) symbol.get();
+                if (WorkflowPluginUtils.hasWorkflowAnnotation(fnSymbol, WorkflowConstants.ACTIVITY_ANNOTATION)) {
+                    // A direct call to an @Activity function: the descriptor lists it among the
+                    // workflow's activities, so the graph shows it as a step too.
+                    fnSymbol.getName().ifPresent(name -> addNode(KIND_ACTIVITY, name, name, null, callNode));
+                } else {
+                    addWorkflowModuleStep(fnSymbol, callNode);
+                }
             }
             callNode.arguments().forEach(arg -> arg.accept(this));
+        }
+
+        /**
+         * Describes {@code workflow:getWorkflowResult} called from inside a workflow: the runtime
+         * routes it through an implicit activity so it stays deterministic, and it therefore appears
+         * in history as the activity {@code workflow:getResult}. It is a step the author wrote —
+         * leaving it out of the graph would hide a durable wait — unlike {@code getInfo} and the
+         * agent loop's polling, which are reads.
+         */
+        private void addWorkflowModuleStep(FunctionSymbol fnSymbol, FunctionCallExpressionNode callNode) {
+            if (!isWorkflowModule(fnSymbol)) {
+                return;
+            }
+            String name = fnSymbol.getName().orElse(null);
+            if (name == null) {
+                return;
+            }
+            // Only getWorkflowResult reaches here: `workflow:run` and `workflow:sendData` are compile
+            // errors inside a workflow (WORKFLOW_138 sends the author to ctx->runChildWorkflow and
+            // ctx->sendDataToChildWorkflow), so neither can appear in a workflow's history.
+            if (WorkflowConstants.GET_WORKFLOW_RESULT_FUNCTION.equals(name)) {
+                addNode(KIND_AWAIT_RESULT, "awaitResult", null, null, callNode);
+            }
+        }
+
+        private boolean isWorkflowModule(FunctionSymbol fnSymbol) {
+            return fnSymbol.getModule()
+                    .map(module -> WorkflowConstants.PACKAGE_ORG.equals(module.id().orgName())
+                            && WorkflowConstants.PACKAGE_NAME.equals(module.id().moduleName()))
+                    .orElse(false);
         }
 
         @Override
         public void visit(MethodCallExpressionNode methodCall) {
             if (WorkflowConstants.SLEEP_METHOD.equals(methodCall.methodName().toSourceCode().trim())) {
-                addNode(KIND_SLEEP, "sleep", null, null, methodCall);
+                // `ctx.sleep` is a plain method, not a remote call, so its chosen id is read from the
+                // method's own arguments.
+                String chosen = chosenStepId(methodCall.arguments());
+                Item item = addNode(KIND_SLEEP, "sleep", null, null, methodCall, chosen);
+                sites.add(new CallSite(item.stepId, KIND_SLEEP, null, methodCall.location().lineRange()));
             }
             methodCall.arguments().forEach(arg -> arg.accept(this));
         }

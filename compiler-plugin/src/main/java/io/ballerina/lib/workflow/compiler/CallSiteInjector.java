@@ -21,6 +21,7 @@ package io.ballerina.lib.workflow.compiler;
 import io.ballerina.compiler.api.SemanticModel;
 import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
+import io.ballerina.compiler.syntax.tree.MethodCallExpressionNode;
 import io.ballerina.compiler.syntax.tree.ModulePartNode;
 import io.ballerina.compiler.syntax.tree.NamedArgumentNode;
 import io.ballerina.compiler.syntax.tree.Node;
@@ -43,7 +44,8 @@ import java.util.Map;
  * onto the invocation it records in history.
  *
  * <p>{@code ctx->callActivity(postToLedger, {…})} in the {@code else} arm of an {@code if}
- * becomes {@code ctx->callActivity(postToLedger, {…}, stepId = "postToLedger#2")}. The ids come
+ * becomes {@code ctx->callActivity(postToLedger, {…}, stepId = "postToLedger#2")}. The same applies to
+ * {@code ctx.sleep}, which is a method rather than a remote call and so has its own hook. The ids come
  * from {@link WorkflowGraphBuilder}, the same walk that writes the descriptor's graph, so the id
  * published as static structure and the id reported by a running execution cannot disagree.
  *
@@ -99,6 +101,18 @@ public class CallSiteInjector extends TreeModifier {
         } finally {
             stepIdsInScope = outer;
         }
+    }
+
+    @Override
+    public MethodCallExpressionNode transform(MethodCallExpressionNode methodCall) {
+        // `ctx.sleep` is a method, not a remote call, so it needs its own hook — but the identity and
+        // the write-back rule are the same.
+        String stepId = stepIdsInScope.get(methodCall.location().lineRange());
+        MethodCallExpressionNode rewritten = super.transform(methodCall);
+        if (stepId == null) {
+            return rewritten;
+        }
+        return rewritten.modify().withArguments(withStepId(rewritten.arguments(), stepId)).apply();
     }
 
     @Override

@@ -79,7 +79,7 @@ public final class WorkflowContextNative {
      * and unlike the activity type, which participates in replay validation. Activity *inputs*
      * are not validated on replay, so adding this key is safe for in-flight executions.
      */
-    public static final String STEP_ID_KEY = "site";
+    public static final String STEP_ID_KEY = "stepId";
 
     private WorkflowContextNative() {
         // Utility class, prevent instantiation
@@ -262,7 +262,7 @@ public final class WorkflowContextNative {
 
             // Activity failed — start a review-activity child workflow and await the human decision
             Map<String, Object> decision = callBuiltinReviewActivity(workflowType, fullActivityName,
-                    simpleActivityName, currentArgs, lastErrorMsg, reviewerRoles);
+                    simpleActivityName, currentArgs, lastErrorMsg, reviewerRoles, stepId);
 
             String action = decision.containsKey("action") ? String.valueOf(decision.get("action")) : "reject";
 
@@ -312,12 +312,14 @@ public final class WorkflowContextNative {
      * @param errorMessage     the failure message for ON_FAILURE, or empty/null for PRE_RUN
      * @param userRoles        roles permitted to decide (empty → any role)
      * @param timeoutMillis    max wait for a decision, or null to wait indefinitely
+     * @param stepId           the reviewed step's identity, so the review attaches to that step in an
+     *                         instance diagram rather than becoming a step of its own, or nil
      * @return the decision map
      */
     @SuppressWarnings("unchecked")
     static Map<String, Object> startReviewActivity(String trigger, String qualifiedTaskName, String activityType,
                                                    Map<String, Object> activityArgs, String errorMessage,
-                                                   String[] userRoles, Long timeoutMillis) {
+                                                   String[] userRoles, Long timeoutMillis, String stepId) {
         WorkflowWorkerNative.awaitWhileSuspended();
 
         String fullActivityName = qualifiedTaskName;
@@ -351,6 +353,11 @@ public final class WorkflowContextNative {
         memo.put("workflowKind", "REVIEW_ACTIVITY");
         memo.put("trigger", trigger);
         memo.put("activityName", fullActivityName);
+        if (stepId != null) {
+            // The *reviewed step's* id, not one of the review's own: a review exists nowhere in the
+            // source, so it is drawn on the activity it gates rather than as a node in the flow.
+            memo.put(STEP_ID_KEY, stepId);
+        }
         memo.put("taskName", qualifiedTaskName);
         memo.put("title", title);
         memo.put("description", description);
@@ -403,10 +410,11 @@ public final class WorkflowContextNative {
     private static Map<String, Object> callBuiltinReviewActivity(String workflowType, String activityType,
                                                                  String simpleActivityName,
                                                                  Map<String, Object> activityArgs,
-                                                                 String errorMessage, String[] reviewerRoles) {
+                                                                 String errorMessage, String[] reviewerRoles,
+                                                                 String stepId) {
         return startReviewActivity("ON_FAILURE",
                 ActivityNaming.reviewTaskNameFor(workflowType, simpleActivityName), activityType,
-                activityArgs, errorMessage, reviewerRoles, null);
+                activityArgs, errorMessage, reviewerRoles, null, stepId);
     }
 
     /**
@@ -581,12 +589,23 @@ public final class WorkflowContextNative {
      *
      * @param contextHandle Context handle
      * @param millis        Duration in milliseconds
+     * @param stepId        the step's identity, recorded as the timer's summary, or nil
      * @return null on success, error on failure
      */
-    public static Object sleepMillis(Object contextHandle, long millis) {
+    public static Object sleepMillis(Object contextHandle, long millis, Object stepId) {
         try {
             WorkflowWorkerNative.awaitWhileSuspended();
-            Workflow.sleep(Duration.ofMillis(millis));
+            String stepIdValue = stepId instanceof BString bStepId ? bStepId.getValue() : null;
+            if (stepIdValue == null) {
+                Workflow.sleep(Duration.ofMillis(millis));
+                return null;
+            }
+            // A timer's id is replay-validated and the SDK assigns it, so the step id travels as the
+            // timer's summary instead — user metadata, which replay does not compare. `Workflow.sleep`
+            // has no options overload, hence newTimer.
+            io.temporal.workflow.TimerOptions options = io.temporal.workflow.TimerOptions.newBuilder()
+                    .setSummary(stepIdValue).build();
+            Workflow.newTimer(Duration.ofMillis(millis), options).get();
             return null;
         } catch (io.temporal.worker.NonDeterministicException | io.temporal.failure.TemporalFailure e) {
             throw e;
@@ -1036,12 +1055,14 @@ public final class WorkflowContextNative {
      * @param input         the optional input for the child (nil or any anydata value)
      * @return the child workflow instance ID as a Ballerina string, or a BError if the child could not start
      */
-    public static Object runChildWorkflow(BObject self, BFunctionPointer childWorkflow, Object input) {
+    public static Object runChildWorkflow(BObject self, BFunctionPointer childWorkflow, Object input,
+                                          Object stepId) {
         try {
             WorkflowWorkerNative.awaitWhileSuspended();
             String functionName = childWorkflow.getType().getName();
             String childId = CHILD_WORKFLOW_ID_PREFIX + functionName + "-" + Workflow.randomUUID();
-            ChildWorkflowStub stub = newChildStub(functionName, childId);
+            ChildWorkflowStub stub = newChildStub(functionName, childId,
+                    stepId instanceof BString bStepId ? bStepId.getValue() : null);
             Object javaInput = input == null ? null : TypesUtil.convertBallerinaToJavaType(input);
             Promise<Object> result = stub.executeAsync(Object.class, javaInput);
             // Block (durably) until the child has actually started, so a start failure (e.g. an
@@ -1136,12 +1157,13 @@ public final class WorkflowContextNative {
      * @return the typed result, or a BError if the child failed
      */
     public static Object callWorkflow(BObject self, BFunctionPointer childWorkflow, Object input,
-                                      BTypedesc typedesc) {
+                                      BTypedesc typedesc, Object stepId) {
         try {
             WorkflowWorkerNative.awaitWhileSuspended();
             String functionName = childWorkflow.getType().getName();
             String childId = CHILD_WORKFLOW_ID_PREFIX + functionName + "-" + Workflow.randomUUID();
-            ChildWorkflowStub stub = newChildStub(functionName, childId);
+            ChildWorkflowStub stub = newChildStub(functionName, childId,
+                    stepId instanceof BString bStepId ? bStepId.getValue() : null);
             Object javaInput = input == null ? null : TypesUtil.convertBallerinaToJavaType(input);
             Object raw = stub.execute(Object.class, javaInput);
             // validateAndConvert (not cloneWithType) so a nil result against a non-nilable T
@@ -1220,7 +1242,8 @@ public final class WorkflowContextNative {
         try {
             WorkflowWorkerNative.awaitWhileSuspended();
             String childId = CHILD_AGENT_ID_PREFIX + agentName + "-" + Workflow.randomUUID();
-            ChildWorkflowStub stub = newChildStub(agentName, childId);
+            // Started by an agent's model rather than from a call site, so there is no step id.
+            ChildWorkflowStub stub = newChildStub(agentName, childId, null);
             Promise<Object> result = stub.executeAsync(Object.class, runInput);
             stub.getExecution().get();
             CHILD_HANDLES.get().put(childId, new ChildWorkflowHandle(stub, result));
@@ -1354,13 +1377,18 @@ public final class WorkflowContextNative {
      * registry. REQUEST_CANCEL (not TERMINATE) ties the child's lifecycle to the parent while letting it end as
      * CANCELED, and the memo carries the parent linkage for the management/tree views.
      */
-    private static ChildWorkflowStub newChildStub(String functionName, String childId) {
+    private static ChildWorkflowStub newChildStub(String functionName, String childId, String stepId) {
         String childType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + functionName;
 
         Map<String, Object> memo = new HashMap<>();
         memo.put("workflowKind", CHILD_WORKFLOW_KIND);
         memo.put("parentWorkflowId", Workflow.getInfo().getWorkflowId());
         memo.put("createdAt", Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString());
+        if (stepId != null) {
+            // Which call started this child, so two starts of the same workflow are distinguishable
+            // in the parent's diagram.
+            memo.put(STEP_ID_KEY, stepId);
+        }
 
         ChildWorkflowOptions options = ChildWorkflowOptions.newBuilder()
                 .setWorkflowId(childId)

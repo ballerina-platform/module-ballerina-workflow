@@ -88,6 +88,17 @@ function reconcileShipment(workflow:Context ctx, ShipmentRequest request,
 }
 
 @workflow:Workflow
+function orchestrateShipment(workflow:Context ctx, ShipmentRequest request) returns error? {
+    // Awaiting another workflow's result is routed through an implicit activity so it stays
+    // deterministic, so it appears in history and is a step the author wrote. (`workflow:run` and
+    // `workflow:sendData` are compile errors here — the child-workflow remote methods replace them.)
+    string child = check ctx->runChildWorkflow(retryShipments, request);
+    anydata outcome = check workflow:getWorkflowResult(child, 30);
+    _ = outcome;
+    return;
+}
+
+@workflow:Workflow
 function dispatchShipment(workflow:Context ctx, ShipmentRequest request) returns error? {
     // A child workflow belongs in the graph, but `runChildWorkflow` has no `stepId` parameter — so
     // this call must come out of the build untouched.

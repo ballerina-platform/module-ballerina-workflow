@@ -106,6 +106,26 @@ function testAChosenStepIdIsWhatTheExecutionReports() returns error? {
             "The chosen id reaches history, so the graph and the run agree on the same name");
 }
 
+@test:Config {
+    groups: ["integration", "branch-trace"]
+}
+function testAChildWorkflowStepIdSurvivesTheMemo() returns error? {
+    // The memo is a different carrier from the call config, and it was silently broken while every
+    // activity test passed: the writer used a constant whose value had not been renamed, the reader
+    // spelled the key as a literal. Only a memo-carried id catches that.
+    string testId = uniqueId("branch-child");
+    string workflowId = check workflow:run(childStepWorkflow, {id: testId, approved: true});
+    _ = check workflow:getWorkflowResult(workflowId, 30);
+
+    management:ActivityTreeNode[] nodes = check management:getActivityTree(workflowId, "");
+    management:ActivityTreeNode[] children = from management:ActivityTreeNode node in nodes
+        where node.'type == management:CHILD_WORKFLOW
+        select node;
+    test:assertEquals(children.length(), 1, "One child workflow ran");
+    test:assertEquals(children[0].stepId, "spawn-audit",
+            "The child's step id travels in its memo, so the parent's diagram can place the start");
+}
+
 // Returns the single activity-tree node whose name contains `activityName`.
 isolated function activityNodeFor(string workflowId, string activityName)
         returns management:ActivityTreeNode|error {

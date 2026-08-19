@@ -370,6 +370,38 @@ public class WorkflowGraphTest {
     }
 
     @Test
+    public void testEarlyReturnsAreDescribedAndEmptyBranchesAreNot() {
+        // A guard that only returns is the one thing that can explain a run that completed
+        // without reaching later steps, so it is kept — with a terminal RETURN leaf. A branch
+        // holding nothing durable is pruned entirely, and its ordinal is not reassigned: a gap
+        // means a construct existed there, and a construct gaining its first step later must not
+        // move its siblings' identities.
+        Map<String, Object> descriptor = descriptorOf("graph_early_return");
+        Map<String, Object> graph = graphOf(descriptor, "settleOrder");
+
+        Map<String, Object> guardReturn = nodeAt(graph, "return#1");
+        Assert.assertEquals(guardReturn.get("kind"), "RETURN");
+        Assert.assertEquals(guardReturn.get("parent"), "if#1");
+        Assert.assertEquals(guardReturn.get("branch"), "then");
+
+        Assert.assertFalse(hasNode(graph, "if#2"), "The nothing-durable branch is not described");
+        Assert.assertTrue(hasNode(graph, "if#3"), "but its ordinal is not reused by the next one");
+
+        // A top-level return is the body ending, not a node.
+        Assert.assertFalse(hasNode(graph, "return#3"), "Only arm-resident returns are nodes");
+
+        // Flow: the guard's exit is terminal, so the next step is reached only by skipping it.
+        Assert.assertTrue(hasEdge(graph, "if#1", "chargeCard#1", null), "flow continues past the guard");
+        Assert.assertFalse(hasEdge(graph, "return#1", "chargeCard#1", null),
+                "and never out of the return");
+        // The express arm ends in its own return, so archiveOrder is reached only on the skip path.
+        Assert.assertTrue(hasEdge(graph, "if#3", "archiveOrder#1", null));
+        Assert.assertFalse(hasEdge(graph, "bookCarrier#1", "archiveOrder#1", null),
+                "an arm that returns contributes no exit toward the next step");
+        Assert.assertFalse(hasEdge(graph, "return#2", "archiveOrder#1", null));
+    }
+
+    @Test
     public void testNestedControlFlowKeepsItsLineage() {
         // A while holding an if, whose arm holds another while and another if. A consumer
         // reconstructs the drawing from parent links alone, so what matters here is lineage:
@@ -494,6 +526,16 @@ public class WorkflowGraphTest {
     @SuppressWarnings("unchecked")
     private static List<Map<String, Object>> nodesOf(Map<String, Object> graph) {
         return (List<Map<String, Object>>) (List<?>) graph.get("nodes");
+    }
+
+    /** Whether the graph has a node with this step id — for asserting absence, which nodeAt cannot. */
+    private static boolean hasNode(Map<String, Object> graph, String stepId) {
+        for (Map<String, Object> node : nodesOf(graph)) {
+            if (stepId.equals(node.get("stepId"))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Map<String, Object> nodeAt(Map<String, Object> graph, String stepId) {

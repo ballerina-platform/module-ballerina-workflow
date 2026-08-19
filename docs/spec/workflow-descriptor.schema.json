@@ -452,13 +452,14 @@
                 "type": "string"
               },
               "kind": {
-                "description": "What the node is. Workflow graphs use the step and control-flow kinds; agent graphs use AGENT, MODEL, TOOL, HUMAN_TASK and EVENT.",
+                "description": "What the node is. Workflow graphs use the step and control-flow kinds; agent graphs use AGENT, MODEL, TOOL, HUMAN_TASK and EVENT. A RETURN is an early exit inside an arm: terminal (no outgoing edge) and never present in an execution, so a consumer may attribute a run to it only when it is the single exit consistent with the observed last step. A control-flow construct holding nothing durable is not described at all, and its ordinal is not reused — a gap in ordinals is deliberate, so emitted ordinals must not be assumed dense.",
                 "enum": [
                   "ACTIVITY",
                   "HUMAN_TASK",
                   "CHILD_WORKFLOW",
                   "EVENT_WAIT",
                   "SLEEP",
+                  "RETURN",
                   "BRANCH",
                   "LOOP",
                   "TRY",

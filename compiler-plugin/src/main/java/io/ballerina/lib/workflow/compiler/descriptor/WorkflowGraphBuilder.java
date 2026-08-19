@@ -48,6 +48,7 @@ import io.ballerina.lib.workflow.compiler.WorkflowPluginUtils;
 import io.ballerina.tools.text.LineRange;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -64,6 +65,7 @@ import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIN
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_AWAIT_RESULT;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_ACTIVITY;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_BRANCH;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_RETURN;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_CHILD_WORKFLOW;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_EVENT_WAIT;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND_HUMAN_TASK;
@@ -246,6 +248,17 @@ public final class WorkflowGraphBuilder {
         BlockCollector collector = new BlockCollector(semanticModel, chosen.ids);
         fnDef.functionBody().accept(collector);
         Block body = collector.root;
+        // A control-flow construct with nothing durable anywhere below it — no step, no return —
+        // is invisible to the runtime and would draw as an empty box, so it is not described.
+        // Pruned before linking, so flow connects straight across it, which is also what actually
+        // happens. Ordinals were assigned during the walk and are not renumbered: a gap in the
+        // emitted ordinals is deliberate, so a construct gaining its first step later does not
+        // move its siblings' identities.
+        Set<String> pruned = new HashSet<>();
+        pruneEmptyContainers(body, pruned);
+        if (!pruned.isEmpty()) {
+            collector.nodes.removeIf(node -> pruned.contains(node.get(STEP_ID)));
+        }
         if (collector.nodes.isEmpty()) {
             return Result.empty();
         }
@@ -263,6 +276,34 @@ public final class WorkflowGraphBuilder {
     // ------------------------------------------------------------------
     // Linking: a structured block tree becomes edges
     // ------------------------------------------------------------------
+
+    /**
+     * Removes containers whose subtree holds neither a step nor a return, recording what was
+     * removed. Bottom-up, so a container whose only content was another empty container goes too.
+     *
+     * @param block the block to prune
+     * @param pruned accumulates the removed step ids
+     * @return true when the block still holds anything
+     */
+    private static boolean pruneEmptyContainers(Block block, Set<String> pruned) {
+        block.items.removeIf(item -> {
+            if (item.branches.isEmpty()) {
+                return false; // a step or a return — always content
+            }
+            boolean hasContent = false;
+            for (Block arm : item.branches) {
+                if (pruneEmptyContainers(arm, pruned)) {
+                    hasContent = true;
+                }
+            }
+            if (!hasContent) {
+                pruned.add(item.stepId);
+                return true;
+            }
+            return false;
+        });
+        return !block.items.isEmpty();
+    }
 
     /**
      * Links one block's items in sequence and returns the block's exit steps — the steps a
@@ -283,7 +324,7 @@ public final class WorkflowGraphBuilder {
                 edges.add(edge(from, item.stepId, pendingLabel));
             }
             pendingLabel = null;
-            incoming = List.of(item.stepId);
+            incoming = item.terminal ? List.of() : List.of(item.stepId);
             if (!item.branches.isEmpty()) {
                 // A set, because an empty arm's exit is the container itself — which is also
                 // what a skippable branch contributes, and one edge is enough.
@@ -364,6 +405,8 @@ public final class WorkflowGraphBuilder {
         final List<Block> branches = new ArrayList<>();
         /** True when control can bypass every arm — an {@code if} with no {@code else}. */
         boolean exitsWithoutBranch;
+        /** True when flow ends at this item (a {@code return}): it contributes no exits. */
+        boolean terminal;
 
         Item(String stepId) {
             this.stepId = stepId;
@@ -397,6 +440,20 @@ public final class WorkflowGraphBuilder {
         }
 
         // ── Control flow ──────────────────────────────────────────────────
+
+        @Override
+        public void visit(io.ballerina.compiler.syntax.tree.ReturnStatementNode returnStatement) {
+            returnStatement.expression().ifPresent(expression -> expression.accept(this));
+            if (current == root) {
+                // A top-level return is just the body ending; the block's exit already says so.
+                return;
+            }
+            // Inside an arm, a return is the only thing that can explain a run that completed
+            // without reaching the steps after the branch — so it is a node, and a terminal one:
+            // the linker draws no edge out of it, because real flow has none.
+            Item item = addNode(KIND_RETURN, "return", null, null, returnStatement);
+            item.terminal = true;
+        }
 
         @Override
         public void visit(IfElseStatementNode ifElse) {

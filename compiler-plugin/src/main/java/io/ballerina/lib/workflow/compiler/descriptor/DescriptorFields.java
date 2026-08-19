@@ -139,6 +139,7 @@ public final class DescriptorFields {
     public static final String KIND_SLEEP = "SLEEP";
     /** A conditional: `if`/`else` or `match`. */
     public static final String KIND_BRANCH = "BRANCH";
+    public static final String KIND_RETURN = "RETURN";
     /** A loop: `while` or `foreach`. */
     public static final String KIND_LOOP = "LOOP";
     /** A `do`/`on fail` block. */

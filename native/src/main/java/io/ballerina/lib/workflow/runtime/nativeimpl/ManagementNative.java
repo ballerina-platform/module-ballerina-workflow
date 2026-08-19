@@ -57,6 +57,8 @@ import io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest;
 import io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionResponse;
 import io.temporal.api.workflowservice.v1.GetWorkflowExecutionHistoryRequest;
 import io.temporal.api.workflowservice.v1.GetWorkflowExecutionHistoryResponse;
+import io.temporal.api.workflowservice.v1.GetWorkflowExecutionHistoryReverseRequest;
+import io.temporal.api.workflowservice.v1.GetWorkflowExecutionHistoryReverseResponse;
 import io.temporal.api.workflowservice.v1.ListWorkflowExecutionsRequest;
 import io.temporal.api.workflowservice.v1.ListWorkflowExecutionsResponse;
 import io.temporal.api.workflowservice.v1.ResetWorkflowExecutionRequest;
@@ -2583,6 +2585,110 @@ public final class ManagementNative {
     // caller picks a point knowing exactly what it re-runs.
 
     /**
+     * Resolves the run a reset will act on, so the run whose points are validated and the run that is reset are the
+     * same one. Both calls would otherwise resolve "latest" independently, and a run that changed in between would
+     * have an event ID validated against one run submitted against another.
+     *
+     * @param workflowId the workflow instance ID
+     * @param runId      an explicit run ID, or empty for the latest run
+     * @return the concrete run ID, or an error
+     */
+    public static Object resolveRunId(BString workflowId, BString runId) {
+        if (!runId.getValue().isEmpty()) {
+            return runId;
+        }
+        try {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+            DescribeWorkflowExecutionRequest req = DescribeWorkflowExecutionRequest.newBuilder()
+                    .setNamespace(client.getOptions().getNamespace())
+                    .setExecution(WorkflowExecution.newBuilder().setWorkflowId(workflowId.getValue()).build())
+                    .build();
+            DescribeWorkflowExecutionResponse resp = client.getWorkflowServiceStubs().blockingStub()
+                    .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                    .describeWorkflowExecution(req);
+            return StringUtils.fromString(resp.getWorkflowExecutionInfo().getExecution().getRunId());
+        } catch (Exception e) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to resolve run for '" + workflowId.getValue() + "': "
+                            + e.getMessage()));
+        }
+    }
+
+    /**
+     * Finds the run's first or last workflow-task event without reading its whole history.
+     *
+     * <p>Resetting to the beginning or to the tail needs one event, not every event, and the full read both costs
+     * more and refuses runs past its event ceiling — which are exactly the long-lived and wedged runs an operator
+     * most wants to reset. The first is taken from the leading page, the last from the reverse feed.
+     *
+     * @param workflowId the workflow instance ID
+     * @param runId      the run ID, or empty for the latest run
+     * @param first      true for the first workflow task, false for the last
+     * @return the event ID, or an error when the run has no workflow task yet
+     */
+    public static Object findBoundaryWorkflowTask(BString workflowId, BString runId, boolean first) {
+        try {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+            WorkflowExecution.Builder exec = WorkflowExecution.newBuilder().setWorkflowId(workflowId.getValue());
+            if (!runId.getValue().isEmpty()) {
+                exec.setRunId(runId.getValue());
+            }
+            String ns = client.getOptions().getNamespace();
+            ByteString pageToken = ByteString.EMPTY;
+
+            if (first) {
+                // The first workflow task sits at the head of history, so the leading page holds
+                // it; paging continues only for a run whose opening page carries nothing else.
+                do {
+                    GetWorkflowExecutionHistoryResponse resp = client.getWorkflowServiceStubs().blockingStub()
+                            .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                            .getWorkflowExecutionHistory(GetWorkflowExecutionHistoryRequest.newBuilder()
+                                    .setNamespace(ns).setExecution(exec.build())
+                                    .setNextPageToken(pageToken).setMaximumPageSize(500).build());
+                    for (HistoryEvent event : resp.getHistory().getEventsList()) {
+                        if (isResettableWorkflowTask(event.getEventType())) {
+                            return event.getEventId();
+                        }
+                    }
+                    pageToken = resp.getNextPageToken();
+                } while (!pageToken.isEmpty());
+            } else {
+                do {
+                    GetWorkflowExecutionHistoryReverseResponse resp = client.getWorkflowServiceStubs().blockingStub()
+                            .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                            .getWorkflowExecutionHistoryReverse(
+                                    GetWorkflowExecutionHistoryReverseRequest.newBuilder()
+                                            .setNamespace(ns).setExecution(exec.build())
+                                            .setNextPageToken(pageToken).setMaximumPageSize(500).build());
+                    for (HistoryEvent event : resp.getHistory().getEventsList()) {
+                        if (isResettableWorkflowTask(event.getEventType())) {
+                            return event.getEventId();
+                        }
+                    }
+                    pageToken = resp.getNextPageToken();
+                } while (!pageToken.isEmpty());
+            }
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Workflow '" + workflowId.getValue() + "' has no workflow task to reset to"));
+        } catch (Exception e) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to find a reset point: " + e.getMessage()));
+        }
+    }
+
+    private static boolean isResettableWorkflowTask(EventType type) {
+        return type == EventType.EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+                || type == EventType.EVENT_TYPE_WORKFLOW_TASK_FAILED
+                || type == EventType.EVENT_TYPE_WORKFLOW_TASK_TIMED_OUT;
+    }
+
+    /**
      * Returns the events this run can be reset to: its workflow-task events, each annotated with the activity-tree
      * nodes that task scheduled. Node IDs are scheduled event IDs, matching {@code getActivityTree}, so a caller can
      * join a diagram selection to the point that re-runs it.
@@ -2611,7 +2717,11 @@ public final class ManagementNative {
             // Scheduled event ID → the reset point that scheduled it, so a failure can be
             // traced back to the task that would re-run it.
             Map<Long, Long> schedulerOf = new HashMap<>();
-            long firstFailedScheduledId = -1;
+            // Failures that nothing later undid, in history order. A step that failed and
+            // then succeeded is not where the run is broken, and the run reaching
+            // WorkflowExecutionCompleted means nothing is.
+            java.util.TreeSet<Long> unrecoveredFailures = new java.util.TreeSet<>();
+            boolean runCompleted = false;
 
             for (HistoryEvent event : events) {
                 long eid = event.getEventId();
@@ -2651,44 +2761,42 @@ public final class ManagementNative {
                         recordScheduled(pointNodeIds, pointNodeNames, schedulerOf,
                                         attrs.getWorkflowTaskCompletedEventId(), eid, "sleep");
                     }
-                    case EVENT_TYPE_ACTIVITY_TASK_FAILED -> {
-                        long scheduled = event.getActivityTaskFailedEventAttributes().getScheduledEventId();
-                        if (firstFailedScheduledId < 0) {
-                            firstFailedScheduledId = scheduled;
-                        }
-                    }
-                    case EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT -> {
-                        long scheduled = event.getActivityTaskTimedOutEventAttributes().getScheduledEventId();
-                        if (firstFailedScheduledId < 0) {
-                            firstFailedScheduledId = scheduled;
-                        }
-                    }
+                    case EVENT_TYPE_ACTIVITY_TASK_FAILED ->
+                        unrecoveredFailures.add(
+                                event.getActivityTaskFailedEventAttributes().getScheduledEventId());
+                    case EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT ->
+                        unrecoveredFailures.add(
+                                event.getActivityTaskTimedOutEventAttributes().getScheduledEventId());
+                    case EVENT_TYPE_ACTIVITY_TASK_COMPLETED ->
+                        unrecoveredFailures.remove(
+                                event.getActivityTaskCompletedEventAttributes().getScheduledEventId());
                     // Human tasks and review activities are child workflows, so a run that
                     // broke on one fails here rather than on an activity. Their initiating
                     // event is the node recorded above, so the same attribution applies.
-                    case EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED -> {
-                        long initiated =
-                                event.getChildWorkflowExecutionFailedEventAttributes().getInitiatedEventId();
-                        if (firstFailedScheduledId < 0) {
-                            firstFailedScheduledId = initiated;
-                        }
-                    }
-                    case EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TIMED_OUT -> {
-                        long initiated =
-                                event.getChildWorkflowExecutionTimedOutEventAttributes().getInitiatedEventId();
-                        if (firstFailedScheduledId < 0) {
-                            firstFailedScheduledId = initiated;
-                        }
-                    }
+                    case EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED ->
+                        unrecoveredFailures.add(
+                                event.getChildWorkflowExecutionFailedEventAttributes().getInitiatedEventId());
+                    case EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TIMED_OUT ->
+                        unrecoveredFailures.add(
+                                event.getChildWorkflowExecutionTimedOutEventAttributes().getInitiatedEventId());
+                    case EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED ->
+                        unrecoveredFailures.remove(
+                                event.getChildWorkflowExecutionCompletedEventAttributes().getInitiatedEventId());
+                    case EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED -> runCompleted = true;
                     default -> {
                     }
                 }
             }
 
-            // The point that would re-run the first failure — the default "retry from
-            // where it broke". Absent when nothing failed.
-            long firstFailurePoint = firstFailedScheduledId < 0
-                    ? -1 : schedulerOf.getOrDefault(firstFailedScheduledId, -1L);
+            // The point that would re-run the earliest step that is still broken — the
+            // default "retry from where it broke". A run that completed is not broken
+            // anywhere, however it got there: this module's own failure-review flow ends
+            // with a failed attempt in history and a healthy run, and offering to reset
+            // such a run to its first failure would discard everything the retry achieved.
+            long firstFailurePoint = -1;
+            if (!runCompleted && !unrecoveredFailures.isEmpty()) {
+                firstFailurePoint = schedulerOf.getOrDefault(unrecoveredFailures.first(), -1L);
+            }
 
             RecordType pointRecordType = (RecordType) ValueCreator.createRecordValue(
                     ModuleUtils.getManagementModule(), "ResetPoint").getType();

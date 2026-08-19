@@ -473,6 +473,30 @@ public isolated function getActivityTree(string workflowId, string runId)
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 
+# Resolves the run a reset acts on, so the run whose points are validated is the run
+# that is reset. Module-private: it exists to pin "latest" for the two calls a reset
+# makes, not as API.
+#
+# + workflowId - The workflow instance ID
+# + runId - An explicit run ID, or `""` for the latest run
+# + return - The concrete run ID, or an error
+isolated function resolveRunId(string workflowId, string runId) returns string|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
+# Finds the run's first or last workflow-task event without reading its whole history.
+# Module-private: resetting to the beginning or the tail needs one event, and the full
+# read refuses the long-lived and wedged runs those targets exist for.
+#
+# + workflowId - The workflow instance ID
+# + runId - The run ID, or `""` for the latest run
+# + first - `true` for the first workflow task, `false` for the last
+# + return - The event ID, or an error when the run has no workflow task yet
+isolated function findBoundaryWorkflowTask(string workflowId, string runId, boolean first)
+        returns int|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
 # Returns the events this run can be reset to — its workflow-task events — each
 # annotated with the activity-tree nodes that task scheduled. A reset target is a
 # workflow task, so the annotation is what lets a caller see which steps a point

@@ -582,8 +582,7 @@ isolated function opListResetPoints(string workflowId, string? runId,
     }
     ResetPoint[]|error points = listResetPoints(workflowId, runId ?: "");
     if points is error {
-        return notFoundOrExecutionError(points, "Workflow not found: " + workflowId,
-                "Failed to list reset points: ");
+        return classifyResetError(points);
     }
     return points.toJson();
 }
@@ -592,6 +591,16 @@ isolated function opListResetPoints(string workflowId, string? runId,
 # validated against the run's own reset points before the runtime is asked to reset:
 # an ineligible event ID is reported as a malformed request naming what is available,
 # rather than as the runtime's opaque failure.
+#
+# + workflowId - The workflow instance ID
+# + runId - The run to reset, or `()` for the latest
+# + resetType - `first-workflow-task`, `last-workflow-task`, or `workflow-task-id`
+# + eventId - The target event, required for `workflow-task-id`
+# + reason - Audit reason, defaulted when absent
+# + reapply - `{type, exclude}` controlling what is re-delivered, or `()`
+# + callerRoles - Roles held by the caller
+# + userId - Caller identity recorded with the reset
+# + return - The new run handle as `json`, or the reason the reset was refused
 isolated function opResetInstance(string workflowId, string? runId, string resetType, int? eventId,
         string? reason, json? reapply, [string, string...]? callerRoles, string? userId) returns json|Error {
     // A reset reads the run's history and then rewrites it, so it is gated like the
@@ -627,45 +636,60 @@ isolated function opResetInstance(string workflowId, string? runId, string reset
         return excludes;
     }
 
-    ResetPoint[]|error points = listResetPoints(workflowId, runId ?: "");
-    if points is error {
-        return notFoundOrExecutionError(points, "Workflow not found: " + workflowId,
-                "Failed to read reset points: ");
-    }
-    if points.length() == 0 {
-        // No workflow task has completed, so there is nothing to replay up to. A run
-        // this young has produced no work a reset could preserve.
-        return stateConflict("This run has no reset points: no workflow task has completed yet");
+    // Pin the run before anything reads it: validating against "latest" and then
+    // resetting "latest" are two resolutions, and a run that changed in between would
+    // have an event ID checked against one run and applied to another.
+    string|error pinnedRun = resolveRunId(workflowId, runId ?: "");
+    if pinnedRun is error {
+        return notFoundOrExecutionError(pinnedRun, "Workflow not found: " + workflowId,
+                "Failed to resolve the run: ");
     }
 
     int target;
-    if resetType == "first-workflow-task" {
-        target = points[0].eventId;
-    } else if resetType == "last-workflow-task" {
-        target = points[points.length() - 1].eventId;
+    if resetType == "first-workflow-task" || resetType == "last-workflow-task" {
+        // Resolved from one page rather than the whole history: these targets are exactly
+        // the ones long-lived and wedged runs need, and those are the runs a full read
+        // refuses.
+        int|error boundary = findBoundaryWorkflowTask(workflowId, pinnedRun,
+                resetType == "first-workflow-task");
+        if boundary is error {
+            return classifyResetError(boundary);
+        }
+        target = boundary;
     } else {
+        ResetPoint[]|error points = listResetPoints(workflowId, pinnedRun);
+        if points is error {
+            return classifyResetError(points);
+        }
+        if points.length() == 0 {
+            // No workflow task has completed, so there is nothing to replay up to.
+            return stateConflict("This run has no reset points: no workflow task has completed yet");
+        }
         int requested = <int>eventId;
         // Matched in a foreach rather than a lambda: capturing a computed local in a
         // closure breaks isolation in this Ballerina version (as in the human-task op).
         boolean eligible = false;
-        int[] eligibleIds = [];
         foreach ResetPoint point in points {
-            eligibleIds.push(point.eventId);
             if point.eventId == requested {
                 eligible = true;
+                break;
             }
         }
         if !eligible {
+            // The range and a pointer to the listing, not the listing itself: a long run
+            // has thousands of points, and the caller can already read them from there.
             return invalidRequest("Event " + requested.toString()
-                    + " is not a reset point of this run; eligible event IDs are "
-                    + eligibleIds.toString());
+                    + " is not a reset point of this run; it has " + points.length().toString()
+                    + " reset points, from " + points[0].eventId.toString() + " to "
+                    + points[points.length() - 1].eventId.toString()
+                    + ". Call the reset-points operation for the full list");
         }
         target = requested;
     }
 
     string decidedBy = userId ?: "unknown";
     string auditReason = reason ?: ("Reset to " + resetType + " by " + decidedBy + " via management API");
-    WorkflowHandle|error reset = resetWorkflowExecution(workflowId, runId ?: "", target, auditReason,
+    WorkflowHandle|error reset = resetWorkflowExecution(workflowId, pinnedRun, target, auditReason,
             reapplyType ?: "signal", excludes, "workflow-management-api/" + decidedBy);
     if reset is error {
         return classifyResetError(reset);
@@ -676,6 +700,9 @@ isolated function opResetInstance(string workflowId, string? runId, string reset
 # Validates the reapply exclusions, which arrive as a JSON array so they can cross a
 # command boundary. An unknown name is reported rather than dropped: silently ignoring
 # it would reapply events the caller asked to withhold.
+#
+# + reapplyExclude - The `exclude` value from the request, or `()`
+# + return - The validated exclusions, or the reason they are malformed
 isolated function resetReapplyExcludes(json? reapplyExclude) returns string[]|Error {
     if reapplyExclude is () {
         return [];
@@ -700,6 +727,9 @@ isolated function resetReapplyExcludes(json? reapplyExclude) returns string[]|Er
 # Classifies a reset failure. A history the server can no longer replay from — expired
 # by retention, or archived — is a state conflict rather than a runtime fault: the
 # request was well formed and the run exists, but it can no longer be reset.
+#
+# + err - The error the runtime raised
+# + return - The classified management error
 isolated function classifyResetError(error err) returns Error {
     string msg = err.message();
     if msg.includes("not found") || msg.includes("NOT_FOUND") {
@@ -708,6 +738,12 @@ isolated function classifyResetError(error err) returns Error {
     if msg.includes("expired") || msg.includes("archiv") || msg.includes("retention")
             || msg.includes("FAILED_PRECONDITION") {
         return stateConflict(msg);
+    }
+    // A history past the read ceiling is a property of the run, not a failure of the
+    // service, and the caller has a way forward: target an explicit event instead.
+    if msg.includes("exceeds") && msg.includes("events") {
+        return stateConflict(msg
+                + ". Reset this run by an explicit eventId, which does not read the full history");
     }
     return executionFailed(msg);
 }

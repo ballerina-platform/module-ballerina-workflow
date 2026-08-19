@@ -195,8 +195,13 @@ function testResetRejectsAnEventThatIsNotAResetPoint() returns error? {
             "An ineligible event must be an InvalidRequestError");
     string message = (<management:Error>result).message();
     test:assertTrue(message.includes("is not a reset point"), "Got: " + message);
-    test:assertTrue(message.includes("eligible event IDs are"),
-            "The refusal must name the valid points, got: " + message);
+    // The refusal orients the caller without inlining the listing: a long run has
+    // thousands of points, and they are already available from the reset-points
+    // operation the message names.
+    test:assertTrue(message.includes("reset points, from"),
+            "The refusal must give the range of valid points, got: " + message);
+    test:assertTrue(message.includes("Call the reset-points operation"),
+            "The refusal must say where the full list is, got: " + message);
 }
 
 @test:Config {

@@ -8,13 +8,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- **`management:ErrorCode` and `management:errorCodeOf(Error)`** — the machine-readable,
+  protocol-independent reason a management operation failed (`NOT_FOUND`, `ACCESS_DENIED`,
+  `INVALID_REQUEST`, `CONFLICT`, `INVALID_PAYLOAD`, `EXECUTION_ERROR`). Consumers that carry
+  errors across a boundary — the HTTP API in `workflow.management.rest`, the ICP bridge's
+  generated command-tunnel glue — branch on the reason instead of `is`-checking this module's
+  error subtypes, and each adapter owns mapping the reason to its wire vocabulary (the
+  management module itself names no status codes). A new error subtype now surfaces as a
+  classified reason everywhere, instead of silently degrading in hand-copied mappings.
+
 - **Failed activities can be retried or failed in bulk.** A workflow that fails several
   activities under a human-review retry policy raised one review task per failure, and an
   operator had to decide each one individually — the same decision, repeated, with no way to
   clear an inbox after a downstream system came back.
 
   The new `reviewActivities.bulkRetry` operation applies one decision to many failure reviews:
-  `POST /workflow-api/review-activities/bulk-retry` with `{"action": "retry"}` to rerun the
+  `POST /workflow/review-activities/bulk-retry` with `{"action": "retry"}` to rerun the
   activities with their original arguments, or `{"action": "fail"}` to surface the original
   failures to the workflows. Tasks are named either explicitly with `taskIds`, or by
   `parentWorkflowId` for every pending failure review of one workflow — optionally narrowed to

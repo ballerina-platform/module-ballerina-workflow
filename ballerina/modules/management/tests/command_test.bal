@@ -185,6 +185,26 @@ function testBulkRetryRejectsActivityNameWithTaskIds() {
 }
 
 @test:Config {groups: ["unit"]}
+function testBulkRetryRejectsOversizedBatch() {
+    // Rejected during resolution, so an oversized selection never gets materialized
+    // or looked up task by task.
+    string[] ids = [];
+    int i = 0;
+    while i <= maxBulkRetrySize {
+        ids.push("reviewactivity-" + i.toString());
+        i += 1;
+    }
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "fail", taskIds: ids.toJson()},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "An oversized batch must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(),
+        "Too many review activities in one bulk decision (maximum is " + maxBulkRetrySize.toString() + ")");
+}
+
+@test:Config {groups: ["unit"]}
 function testBulkRetryDeduplicatesTaskIds() returns error? {
     // A repeated ID names one task. Without deduplication the second occurrence would
     // be reported as already decided — by this same call.
@@ -243,6 +263,23 @@ function testErrorJsonRepresentation() {
     test:assertEquals(toErrorJson(error NotFoundError("Workflow not found: wf-1")),
         <json>{"error": {"message": "Workflow not found: wf-1"}},
         "Every transport serializes errors through this one representation");
+}
+
+// Adapters everywhere (the REST API, the ICP command tunnel's generated glue) branch
+// on these reason values to pick their wire-specific codes; the classification and
+// the enum's string values are a contract for all of them.
+@test:Config {groups: ["unit"]}
+function testErrorCodeClassification() {
+    test:assertEquals(errorCodeOf(error NotFoundError("missing")), NOT_FOUND);
+    test:assertEquals(errorCodeOf(error AccessDeniedError("no role")), ACCESS_DENIED);
+    test:assertEquals(errorCodeOf(error InvalidRequestError("bad param")), INVALID_REQUEST);
+    test:assertEquals(errorCodeOf(error ConflictError("already completed")), CONFLICT);
+    test:assertEquals(errorCodeOf(error InvalidPayloadError("wrong shape")), INVALID_PAYLOAD);
+    test:assertEquals(errorCodeOf(error ExecutionError("runtime failed")), EXECUTION_ERROR);
+    test:assertEquals(errorCodeOf(error Error("unclassified")), EXECUTION_ERROR,
+        "An error outside the named subtypes must classify as an execution failure");
+    // The string values are wire-visible to consumers that carry the reason as text.
+    test:assertEquals(<string>NOT_FOUND, "NOT_FOUND");
 }
 
 // ── Parameter typing ──────────────────────────────────────────────────────────
@@ -352,7 +389,9 @@ isolated function commandCases() returns CommandCase[] => [
     {operation: LIST_REVIEW_ACTIVITIES, params: {status: "PENDING", 'limit: 10}},
     {operation: GET_REVIEW_ACTIVITY, params: {taskId: "reviewactivity-x"}, required: ["taskId"]},
     {operation: DECIDE_REVIEW_ACTIVITY, params: {taskId: "reviewactivity-x", action: "proceed"},
-        required: ["taskId", "action"]}
+        required: ["taskId", "action"]},
+    {operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "fail", taskIds: ["reviewactivity-x"]}, required: ["action"]}
 ];
 
 // Every member of the enum. Kept explicit because Ballerina cannot enumerate an enum
@@ -362,7 +401,8 @@ isolated function allOperations() returns Operation[] => [
     RESUME_INSTANCE, WAKE_INSTANCE, TERMINATE_INSTANCE, CANCEL_INSTANCE, GET_INSTANCE_HISTORY,
     GET_INSTANCE_ACTIVITY_TREE, GET_INSTANCE_EXECUTION_GRAPH, LIST_HUMAN_TASKS,
     COUNT_PENDING_HUMAN_TASKS, GET_HUMAN_TASK, COMPLETE_HUMAN_TASK, FAIL_HUMAN_TASK,
-    LIST_REVIEW_ACTIVITIES, GET_REVIEW_ACTIVITY, DECIDE_REVIEW_ACTIVITY
+    LIST_REVIEW_ACTIVITIES, GET_REVIEW_ACTIVITY, DECIDE_REVIEW_ACTIVITY,
+    BULK_RETRY_REVIEW_ACTIVITIES
 ];
 
 @test:Config {groups: ["unit"]}

@@ -455,26 +455,29 @@ isolated function executeToResponse(management:Operation operation, map<json> pa
 }
 
 # Maps a management error to the HTTP status code that represents it. This module
-# owns the whole HTTP vocabulary: the management module reports *why* an operation
-# failed, and only here is that turned into a status code.
+# owns the HTTP vocabulary; the management module reports *why* an operation
+# failed as a protocol-independent `ErrorCode`, and only adapters like this one
+# turn that reason into a wire-specific code.
 #
 # + err - The error a management operation returned
 # + return - The corresponding HTTP status code
 isolated function statusCodeOf(management:Error err) returns int {
-    if err is management:NotFoundError {
-        return http:STATUS_NOT_FOUND;
-    }
-    if err is management:AccessDeniedError {
-        return http:STATUS_FORBIDDEN;
-    }
-    if err is management:InvalidRequestError {
-        return http:STATUS_BAD_REQUEST;
-    }
-    if err is management:ConflictError {
-        return http:STATUS_CONFLICT;
-    }
-    if err is management:InvalidPayloadError {
-        return http:STATUS_UNPROCESSABLE_ENTITY;
+    match management:errorCodeOf(err) {
+        management:NOT_FOUND => {
+            return http:STATUS_NOT_FOUND;
+        }
+        management:ACCESS_DENIED => {
+            return http:STATUS_FORBIDDEN;
+        }
+        management:INVALID_REQUEST => {
+            return http:STATUS_BAD_REQUEST;
+        }
+        management:CONFLICT => {
+            return http:STATUS_CONFLICT;
+        }
+        management:INVALID_PAYLOAD => {
+            return http:STATUS_UNPROCESSABLE_ENTITY;
+        }
     }
     return http:STATUS_INTERNAL_SERVER_ERROR;
 }

@@ -372,11 +372,6 @@ isolated function opBulkRetryReviewActivities(string action, json? taskIds, stri
     if resolved is Error {
         return resolved;
     }
-    if resolved.length() > maxBulkRetrySize {
-        return invalidRequest("Too many review activities in one bulk decision: "
-                + resolved.length().toString() + " (maximum is " + maxBulkRetrySize.toString() + ")");
-    }
-
     ReviewDecision decision = action == "retry"
         ? {action: "proceed"}
         : {action: "reject", feedback: feedback};
@@ -445,17 +440,20 @@ isolated function resolveBulkCandidates(json? taskIds, string? parentWorkflowId,
             return invalidRequest("taskIds must not be empty");
         }
         BulkCandidate[] candidates = [];
-        string[] seen = [];
+        map<()> seen = {};
         foreach json id in ids {
             if id !is string || id.trim().length() == 0 {
                 return invalidRequest("taskIds must contain non-empty strings");
             }
             // A repeated id names one task, so it is decided once. Reporting it twice
             // would show the second as already decided — by this very call.
-            if seen.indexOf(id) is int {
+            if seen.hasKey(id) {
                 continue;
             }
-            seen.push(id);
+            if candidates.length() >= maxBulkRetrySize {
+                return oversizedBulk();
+            }
+            seen[id] = ();
             candidates.push({taskId: id, summary: ()});
         }
         return candidates;
@@ -475,10 +473,20 @@ isolated function resolveBulkCandidates(json? taskIds, string? parentWorkflowId,
         if activityName is string && summary.activityName != activityName {
             continue;
         }
+        if candidates.length() >= maxBulkRetrySize {
+            return oversizedBulk();
+        }
         candidates.push({taskId: summary.taskId, summary: summary});
     }
     return candidates;
 }
+
+# Reports a selection larger than one batch may address. Raised as soon as the cap
+# is passed, so an oversized request is rejected without first materializing it —
+# the count is therefore deliberately absent from the message.
+isolated function oversizedBulk() returns InvalidRequestError =>
+    invalidRequest("Too many review activities in one bulk decision (maximum is "
+            + maxBulkRetrySize.toString() + ")");
 
 # Submits the decision for one task, converting every failure into an outcome. A
 # task that cannot be decided is reported in the result; it never aborts the batch.

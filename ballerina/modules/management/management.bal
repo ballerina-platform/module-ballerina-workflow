@@ -473,6 +473,41 @@ public isolated function getActivityTree(string workflowId, string runId)
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 
+# Returns the events this run can be reset to — its workflow-task events — each
+# annotated with the activity-tree nodes that task scheduled. A reset target is a
+# workflow task, so the annotation is what lets a caller see which steps a point
+# re-runs before choosing it.
+#
+# + workflowId - The workflow instance ID
+# + runId - The specific run ID (pass empty string for the latest run)
+# + return - Ordered array of reset points, or an error
+public isolated function listResetPoints(string workflowId, string runId)
+        returns ResetPoint[]|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
+# Resets a run to a workflow-task event: history up to that point is preserved and
+# everything after it re-executes as a **new run of the same workflow ID**.
+#
+# Everything downstream of the point runs again, including the error handling and
+# compensation the workflow already performed on its first pass, and replay happens
+# against the worker's current code — a workflow function that changed since the run
+# started can fail to replay.
+#
+# + workflowId - The workflow instance ID
+# + runId - The specific run ID (pass empty string for the latest run)
+# + eventId - The workflow-task event to reset to, from `listResetPoints`
+# + reason - Audit reason recorded with the reset
+# + reapplyType - `signal` | `none` | `all-eligible`
+# + reapplyExclude - Event categories to withhold from reapply
+# + identity - The caller recorded as the reset's identity
+# + return - Handle carrying the unchanged workflow ID and the new run ID, or an error
+public isolated function resetWorkflowExecution(string workflowId, string runId, int eventId,
+        string reason, string reapplyType, string[] reapplyExclude, string identity)
+        returns WorkflowHandle|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
 # Derives a directed execution graph from the workflow history suitable for
 # rendering with D3.js or React Flow. Nodes represent execution steps;
 # edges connect them in the order they were scheduled.

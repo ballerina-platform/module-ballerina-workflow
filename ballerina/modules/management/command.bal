@@ -74,7 +74,11 @@ public enum Operation {
     # Decide a review activity.
     DECIDE_REVIEW_ACTIVITY = "reviewActivities.decide",
     # Retry or fail many failed-activity reviews in one call.
-    BULK_RETRY_REVIEW_ACTIVITIES = "reviewActivities.bulkRetry"
+    BULK_RETRY_REVIEW_ACTIVITIES = "reviewActivities.bulkRetry",
+    # List the points a run can be reset to.
+    LIST_RESET_POINTS = "instances.resetPoints",
+    # Reset a run to one of those points.
+    RESET_INSTANCE = "instances.reset"
 }
 
 # Identity of the caller an operation runs on behalf of. Drives role-based
@@ -128,6 +132,10 @@ public type Command record {|
 #   `activityName` narrows a `parentWorkflowId` selection, `feedback` accompanies
 #   `"fail"`. There is no parameter for replacement arguments: a bulk decision cannot
 #   change the payload an activity is retried with.
+# - `LIST_RESET_POINTS` — `workflowId` (required), `runId`.
+# - `RESET_INSTANCE` — `workflowId` and `resetType` (required), `runId`, `eventId`
+#   (required when `resetType` is `"workflow-task-id"`), `reason`, `reapplyType`,
+#   `reapplyExclude`.
 #
 # ```ballerina
 # json|management:Error result = management:executeCommand({
@@ -299,6 +307,27 @@ public isolated function executeCommand(Command command) returns json|Error {
             return opDecideReviewActivity(taskId, action, input,
                     strParam(params, "feedback"), callerRoles, userId);
         }
+        LIST_RESET_POINTS => {
+            string|Error workflowId = requiredParam(params, "workflowId");
+            if workflowId is Error {
+                return workflowId;
+            }
+            return opListResetPoints(workflowId, strParam(params, "runId"));
+        }
+        RESET_INSTANCE => {
+            string|Error workflowId = requiredParam(params, "workflowId");
+            if workflowId is Error {
+                return workflowId;
+            }
+            string|Error resetType = requiredParam(params, "resetType");
+            if resetType is Error {
+                return resetType;
+            }
+            json rawEventId = params["eventId"];
+            return opResetInstance(workflowId, strParam(params, "runId"), resetType,
+                    rawEventId is int ? rawEventId : (), strParam(params, "reason"),
+                    strParam(params, "reapplyType"), params["reapplyExclude"], userId);
+        }
         BULK_RETRY_REVIEW_ACTIVITIES => {
             string|Error action = requiredParam(params, "action");
             if action is Error {
@@ -339,13 +368,17 @@ final readonly & map<string> PARAM_TYPES = {
     "activityName": "string",
     "details": "object",
     "closeTimeFrom": "string",
+    "eventId": "int",
     "closeTimeTo": "string",
     "feedback": "string",
     "limit": "int",
     "pageToken": "string",
     "parentWorkflowId": "string",
     "parentWorkflowType": "string",
+    "reapplyExclude": "array",
+    "reapplyType": "string",
     "reason": "string",
+    "resetType": "string",
     "runId": "string",
     "startTimeFrom": "string",
     "startTimeTo": "string",

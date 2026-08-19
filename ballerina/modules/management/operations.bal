@@ -572,6 +572,129 @@ isolated function decideOneInBulk(BulkCandidate candidate, ReviewDecision decisi
     return {taskId: candidate.taskId, outcome: APPLIED, reason: ()};
 }
 
+// ── Reset ─────────────────────────────────────────────────────────────────────
+
+isolated function opListResetPoints(string workflowId, string? runId) returns json|Error {
+    ResetPoint[]|error points = listResetPoints(workflowId, runId ?: "");
+    if points is error {
+        return notFoundOrExecutionError(points, "Workflow not found: " + workflowId,
+                "Failed to list reset points: ");
+    }
+    return points.toJson();
+}
+
+# Resets a run to one of its workflow-task events. The target is resolved and
+# validated against the run's own reset points before the runtime is asked to reset:
+# an ineligible event ID is reported as a malformed request naming what is available,
+# rather than as the runtime's opaque failure.
+isolated function opResetInstance(string workflowId, string? runId, string resetType, int? eventId,
+        string? reason, string? reapplyType, json? reapplyExclude, string? userId) returns json|Error {
+    // Everything that can be judged from the request alone is judged first, so a
+    // malformed reset never costs a history read and never reports the run's problems
+    // in place of its own.
+    if resetType != "first-workflow-task" && resetType != "last-workflow-task"
+            && resetType != "workflow-task-id" {
+        return invalidRequest("Unknown resetType: " + resetType
+                + " (expected \"first-workflow-task\", \"last-workflow-task\", or \"workflow-task-id\")");
+    }
+    if resetType == "workflow-task-id" && eventId is () {
+        return invalidRequest("eventId is required when resetType is \"workflow-task-id\"");
+    }
+    if reapplyType is string && reapplyType != "signal" && reapplyType != "none"
+            && reapplyType != "all-eligible" {
+        return invalidRequest("Unknown reapplyType: " + reapplyType
+                + " (expected \"signal\", \"none\", or \"all-eligible\")");
+    }
+    string[]|Error excludes = resetReapplyExcludes(reapplyExclude);
+    if excludes is Error {
+        return excludes;
+    }
+
+    ResetPoint[]|error points = listResetPoints(workflowId, runId ?: "");
+    if points is error {
+        return notFoundOrExecutionError(points, "Workflow not found: " + workflowId,
+                "Failed to read reset points: ");
+    }
+    if points.length() == 0 {
+        // No workflow task has completed, so there is nothing to replay up to. A run
+        // this young has produced no work a reset could preserve.
+        return stateConflict("This run has no reset points: no workflow task has completed yet");
+    }
+
+    int target;
+    if resetType == "first-workflow-task" {
+        target = points[0].eventId;
+    } else if resetType == "last-workflow-task" {
+        target = points[points.length() - 1].eventId;
+    } else {
+        int requested = <int>eventId;
+        // Matched in a foreach rather than a lambda: capturing a computed local in a
+        // closure breaks isolation in this Ballerina version (as in the human-task op).
+        boolean eligible = false;
+        int[] eligibleIds = [];
+        foreach ResetPoint point in points {
+            eligibleIds.push(point.eventId);
+            if point.eventId == requested {
+                eligible = true;
+            }
+        }
+        if !eligible {
+            return invalidRequest("Event " + requested.toString()
+                    + " is not a reset point of this run; eligible event IDs are "
+                    + eligibleIds.toString());
+        }
+        target = requested;
+    }
+
+    string decidedBy = userId ?: "unknown";
+    string auditReason = reason ?: ("Reset to " + resetType + " by " + decidedBy + " via management API");
+    WorkflowHandle|error reset = resetWorkflowExecution(workflowId, runId ?: "", target, auditReason,
+            reapplyType ?: "signal", excludes, "workflow-management-api/" + decidedBy);
+    if reset is error {
+        return classifyResetError(reset);
+    }
+    return reset.toJson();
+}
+
+# Validates the reapply exclusions, which arrive as a JSON array so they can cross a
+# command boundary. An unknown name is reported rather than dropped: silently ignoring
+# it would reapply events the caller asked to withhold.
+isolated function resetReapplyExcludes(json? reapplyExclude) returns string[]|Error {
+    if reapplyExclude is () {
+        return [];
+    }
+    if reapplyExclude !is json[] {
+        return invalidRequest("reapplyExclude must be a JSON array");
+    }
+    string[] excludes = [];
+    foreach json value in reapplyExclude {
+        if value !is string {
+            return invalidRequest("reapplyExclude must contain strings");
+        }
+        if value != "signal" && value != "update" && value != "nexus" && value != "cancel-request" {
+            return invalidRequest("Unknown reapplyExclude entry: " + value
+                    + " (expected \"signal\", \"update\", \"nexus\", or \"cancel-request\")");
+        }
+        excludes.push(value);
+    }
+    return excludes;
+}
+
+# Classifies a reset failure. A history the server can no longer replay from — expired
+# by retention, or archived — is a state conflict rather than a runtime fault: the
+# request was well formed and the run exists, but it can no longer be reset.
+isolated function classifyResetError(error err) returns Error {
+    string msg = err.message();
+    if msg.includes("not found") || msg.includes("NOT_FOUND") {
+        return notFound(msg);
+    }
+    if msg.includes("expired") || msg.includes("archiv") || msg.includes("retention")
+            || msg.includes("FAILED_PRECONDITION") {
+        return stateConflict(msg);
+    }
+    return executionFailed(msg);
+}
+
 // ================================================================================
 // SHARED HELPERS
 // ================================================================================

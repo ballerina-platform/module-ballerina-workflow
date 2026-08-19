@@ -274,6 +274,105 @@ function testBulkRetryFeedbackIsAcceptedForFail() returns error? {
     BulkRetryResult report = check payload.cloneWithType();
     test:assertEquals(report.action, "fail");
     test:assertEquals(report.requested, 1);
+
+// ── Reset request validation ──────────────────────────────────────────────────
+// A reset rewrites a run's history, so every malformed request is reported before
+// the runtime is asked to do anything.
+
+@test:Config {groups: ["unit"]}
+function testResetRequiresResetType() {
+    json|Error result = executeCommand({
+        operation: RESET_INSTANCE,
+        params: {workflowId: "wf-1"},
+        identity: {userId: "alice", roles: ["OPS"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "A missing resetType must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(), "resetType is required");
+}
+
+@test:Config {groups: ["unit"]}
+function testResetRejectsUnknownResetType() {
+    // Judged from the request alone: no such workflow exists, and the reply is still
+    // about the malformed type rather than the missing run.
+    json|Error result = executeCommand({
+        operation: RESET_INSTANCE,
+        params: {workflowId: "wf-does-not-exist", resetType: "beginning"},
+        identity: {userId: "alice", roles: ["OPS"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "An unknown resetType must be an InvalidRequestError");
+    test:assertTrue((<Error>result).message().startsWith("Unknown resetType: beginning"),
+        "The message must name the rejected type, got: " + (<Error>result).message());
+}
+
+@test:Config {groups: ["unit"]}
+function testResetRejectsUnknownReapplyType() {
+    json|Error result = executeCommand({
+        operation: RESET_INSTANCE,
+        params: {workflowId: "wf-does-not-exist", resetType: "first-workflow-task",
+            reapplyType: "everything"},
+        identity: {userId: "alice", roles: ["OPS"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "An unknown reapplyType must be an InvalidRequestError");
+    test:assertTrue((<Error>result).message().startsWith("Unknown reapplyType: everything"),
+        "The message must name the rejected value, got: " + (<Error>result).message());
+}
+
+@test:Config {groups: ["unit"]}
+function testResetRejectsUnknownReapplyExclusion() {
+    // Dropping an unrecognized exclusion would reapply events the caller asked to
+    // withhold, so it is reported rather than ignored.
+    json|Error result = executeCommand({
+        operation: RESET_INSTANCE,
+        params: {workflowId: "wf-does-not-exist", resetType: "first-workflow-task",
+            reapplyExclude: ["timer"]},
+        identity: {userId: "alice", roles: ["OPS"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "An unknown exclusion must be an InvalidRequestError");
+    test:assertTrue((<Error>result).message().startsWith("Unknown reapplyExclude entry: timer"),
+        "The message must name the rejected entry, got: " + (<Error>result).message());
+}
+
+@test:Config {groups: ["unit"]}
+function testResetRejectsNonArrayReapplyExclude() {
+    json|Error result = executeCommand({
+        operation: RESET_INSTANCE,
+        params: {workflowId: "wf-does-not-exist", resetType: "first-workflow-task",
+            reapplyExclude: "signal"},
+        identity: {userId: "alice", roles: ["OPS"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "A scalar reapplyExclude must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(), "reapplyExclude must be a JSON array");
+}
+
+@test:Config {groups: ["unit"]}
+function testResetRejectsNonIntegerEventId() {
+    json|Error result = executeCommand({
+        operation: RESET_INSTANCE,
+        params: {workflowId: "wf-does-not-exist", resetType: "workflow-task-id",
+            eventId: "not-a-number"},
+        identity: {userId: "alice", roles: ["OPS"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "A non-numeric eventId must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(), "eventId must be an integer");
+}
+
+@test:Config {groups: ["unit"]}
+function testResetRequiresEventIdForTaskIdReset() {
+    json|Error result = executeCommand({
+        operation: RESET_INSTANCE,
+        params: {workflowId: "wf-does-not-exist", resetType: "workflow-task-id"},
+        identity: {userId: "alice", roles: ["OPS"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "A missing eventId must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(),
+        "eventId is required when resetType is \"workflow-task-id\"");
+}
+
+@test:Config {groups: ["unit"]}
+function testResetAcceptsStringEventId() returns error? {
+    // A command may arrive from a channel that encodes scalars as text.
+    map<json> normalized = check normalizeParams({"eventId": "42"});
+    test:assertEquals(normalized["eventId"], 42);
 }
 
 // ── Review activity authorization ─────────────────────────────────────────────
@@ -459,7 +558,10 @@ isolated function commandCases() returns CommandCase[] => [
     {operation: DECIDE_REVIEW_ACTIVITY, params: {taskId: "reviewactivity-x", action: "proceed"},
         required: ["taskId", "action"]},
     {operation: BULK_RETRY_REVIEW_ACTIVITIES,
-        params: {action: "fail", taskIds: ["reviewactivity-x"]}, required: ["action"]}
+        params: {action: "fail", taskIds: ["reviewactivity-x"]}, required: ["action"]},
+    {operation: LIST_RESET_POINTS, params: {workflowId: "wf-1"}, required: ["workflowId"]},
+    {operation: RESET_INSTANCE, params: {workflowId: "wf-1", resetType: "first-workflow-task"},
+        required: ["workflowId", "resetType"]}
 ];
 
 // Every member of the enum. Kept explicit because Ballerina cannot enumerate an enum
@@ -470,7 +572,7 @@ isolated function allOperations() returns Operation[] => [
     GET_INSTANCE_ACTIVITY_TREE, GET_INSTANCE_EXECUTION_GRAPH, LIST_HUMAN_TASKS,
     COUNT_PENDING_HUMAN_TASKS, GET_HUMAN_TASK, COMPLETE_HUMAN_TASK, FAIL_HUMAN_TASK,
     LIST_REVIEW_ACTIVITIES, GET_REVIEW_ACTIVITY, DECIDE_REVIEW_ACTIVITY,
-    BULK_RETRY_REVIEW_ACTIVITIES
+    BULK_RETRY_REVIEW_ACTIVITIES, LIST_RESET_POINTS, RESET_INSTANCE
 ];
 
 @test:Config {groups: ["unit"]}

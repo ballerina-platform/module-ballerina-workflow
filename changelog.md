@@ -17,6 +17,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   management module itself names no status codes). A new error subtype now surfaces as a
   classified reason everywhere, instead of silently degrading in hand-copied mappings.
 
+- **A run can be restarted from a chosen point.** Recovering a run meant terminating it and
+  starting a new one, which loses the work that already succeeded — including the steps that
+  charged a card or reserved stock — and gives the new instance a different ID, so the audit
+  trail forks.
+
+  Two operations expose Temporal's reset through the management API. `instances.resetPoints`
+  (`GET /workflow/{workflowId}/reset-points`, and a `{runId}` variant) lists the events a run can
+  be restarted from; `instances.reset` (`POST .../reset`) restarts it there, preserving history
+  up to that point and re-executing everything after it as a **new run of the same workflow ID**.
+
+  `resetType` chooses the point: `"first-workflow-task"` runs the whole workflow again with the
+  input it started with, `"workflow-task-id"` (with `eventId`) starts from a selected step, and
+  `"last-workflow-task"` moves a run wedged on a failing workflow task onto fixed code.
+
+  **A reset point is a workflow task, not an activity.** Steps scheduled by one task always come
+  back together, and everything after the point re-runs — including the error handling and
+  compensation the workflow already performed. Each point therefore reports the steps it
+  schedules (`nodeIds`/`nodeNames`, joinable to the activity tree) so a caller can see what a
+  choice re-runs before making it, and the point that re-runs the first failed step is flagged
+  `isFirstFailure`. A target that is not one of the run's points is refused with the eligible
+  event IDs rather than passed to the runtime, whose error for this does not say what is valid.
+
+  `reapply` controls what is re-delivered to the new run: `{"type": "signal"}` (the engine
+  default) re-delivers signals, `"none"` nothing, and `"all-eligible"` also updates — which
+  matters for durable agents, whose turns arrive as updates and are therefore *not* re-delivered
+  under the default. `exclude` withholds individual categories. Replay runs against the worker's
+  current code, so a workflow function that changed since the run started can fail to replay.
+
 - **Failed activities can be retried or failed in bulk.** A workflow that fails several
   activities under a human-review retry policy raised one review task per failure, and an
   operator had to decide each one individually — the same decision, repeated, with no way to

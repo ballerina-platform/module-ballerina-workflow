@@ -454,6 +454,39 @@ isolated function executeToResponse(management:Operation operation, map<json> pa
     return response;
 }
 
+# Maps a reset request body to operation parameters. `reapply` is accepted as the
+# nested object the request documents (`{"type": …, "exclude": [...]}`) and flattened,
+# so the wire shape stays readable while the command vocabulary stays flat.
+#
+# + workflowId - The workflow instance ID from the path
+# + runId - The run ID from the path, or `()` for the latest run
+# + body - The request body
+# + return - Parameters for `RESET_INSTANCE`
+isolated function resetParams(string workflowId, string? runId, map<json> body) returns map<json> {
+    map<json> params = {workflowId: workflowId};
+    if runId is string {
+        params["runId"] = runId;
+    }
+    foreach string name in ["resetType", "eventId", "reason"] {
+        json value = body[name];
+        if value !is () {
+            params[name] = value;
+        }
+    }
+    json reapply = body["reapply"];
+    if reapply is map<json> {
+        json reapplyType = reapply["type"];
+        if reapplyType !is () {
+            params["reapplyType"] = reapplyType;
+        }
+        json exclude = reapply["exclude"];
+        if exclude !is () {
+            params["reapplyExclude"] = exclude;
+        }
+    }
+    return params;
+}
+
 # Maps a management error to the HTTP status code that represents it. This module
 # owns the HTTP vocabulary; the management module reports *why* an operation
 # failed as a protocol-independent `ErrorCode`, and only adapters like this one
@@ -619,6 +652,17 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
         return executeToResponse(management:GET_INSTANCE_ACTIVITY_TREE, {workflowId: workflowId}, ctx);
     }
 
+    resource isolated function get workflows/[string workflowId]/reset\-points(
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse(management:LIST_RESET_POINTS, {workflowId: workflowId}, ctx);
+    }
+
+    resource isolated function post workflows/[string workflowId]/reset(
+            http:RequestContext ctx,
+            @http:Payload map<json> body) returns http:Response {
+        return executeToResponse(management:RESET_INSTANCE, resetParams(workflowId, (), body), ctx);
+    }
+
     resource isolated function get workflows/[string workflowId]/execution\-graph(
             http:RequestContext ctx) returns http:Response {
         return executeToResponse(management:GET_INSTANCE_EXECUTION_GRAPH, {workflowId: workflowId}, ctx);
@@ -664,6 +708,17 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
     resource isolated function get workflows/[string workflowId]/[string runId]/activity\-tree(
             http:RequestContext ctx) returns http:Response {
         return executeToResponse(management:GET_INSTANCE_ACTIVITY_TREE, {workflowId: workflowId, runId: runId}, ctx);
+    }
+
+    resource isolated function get workflows/[string workflowId]/[string runId]/reset\-points(
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse(management:LIST_RESET_POINTS, {workflowId: workflowId, runId: runId}, ctx);
+    }
+
+    resource isolated function post workflows/[string workflowId]/[string runId]/reset(
+            http:RequestContext ctx,
+            @http:Payload map<json> body) returns http:Response {
+        return executeToResponse(management:RESET_INSTANCE, resetParams(workflowId, runId, body), ctx);
     }
 
     resource isolated function get workflows/[string workflowId]/[string runId]/execution\-graph(

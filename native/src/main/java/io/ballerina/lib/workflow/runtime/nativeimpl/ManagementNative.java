@@ -47,6 +47,8 @@ import io.temporal.api.common.v1.Payload;
 import io.temporal.api.common.v1.Payloads;
 import io.temporal.api.common.v1.WorkflowExecution;
 import io.temporal.api.enums.v1.EventType;
+import io.temporal.api.enums.v1.ResetReapplyExcludeType;
+import io.temporal.api.enums.v1.ResetReapplyType;
 import io.temporal.api.enums.v1.WorkflowExecutionStatus;
 import io.temporal.api.history.v1.HistoryEvent;
 import io.temporal.api.history.v1.WorkflowExecutionSignaledEventAttributes;
@@ -57,6 +59,8 @@ import io.temporal.api.workflowservice.v1.GetWorkflowExecutionHistoryRequest;
 import io.temporal.api.workflowservice.v1.GetWorkflowExecutionHistoryResponse;
 import io.temporal.api.workflowservice.v1.ListWorkflowExecutionsRequest;
 import io.temporal.api.workflowservice.v1.ListWorkflowExecutionsResponse;
+import io.temporal.api.workflowservice.v1.ResetWorkflowExecutionRequest;
+import io.temporal.api.workflowservice.v1.ResetWorkflowExecutionResponse;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
@@ -78,6 +82,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -2560,6 +2565,234 @@ public final class ManagementNative {
             String value = bs.getValue().replace("\\", "\\\\").replace("\"", "");
             clauses.add(String.format("%s %s \"%s\"", field, op, value));
         }
+    }
+
+    // ================================================================================
+    // RESET
+    // ================================================================================
+    //
+    // Temporal resets a run to a *workflow task*, not to an activity: the chosen task
+    // and everything after it re-executes, and activities scheduled by the same task
+    // always come back together. `listResetPoints` therefore reports the workflow-task
+    // events a run can be reset to, each carrying the nodes that task scheduled, so a
+    // caller picks a point knowing exactly what it re-runs.
+
+    /**
+     * Returns the events this run can be reset to: its workflow-task events, each annotated with the activity-tree
+     * nodes that task scheduled. Node IDs are scheduled event IDs, matching {@code getActivityTree}, so a caller can
+     * join a diagram selection to the point that re-runs it.
+     *
+     * @param workflowId the workflow instance ID
+     * @param runId      the run ID, or empty string for the latest run
+     * @return a Ballerina {@code ResetPoint[]} or an error
+     */
+    public static Object listResetPoints(BString workflowId, BString runId) {
+        try {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+            String wfId = workflowId.getValue();
+            String rid = runId.getValue().isEmpty() ? null : runId.getValue();
+            List<HistoryEvent> events = fetchFullHistory(client, wfId, rid);
+
+            // Eligible reset targets, in history order.
+            LinkedHashMap<Long, String> pointType = new LinkedHashMap<>();
+            LinkedHashMap<Long, String> pointTime = new LinkedHashMap<>();
+            // Reset point → the nodes the task scheduled, and the names to show for them.
+            LinkedHashMap<Long, List<String>> pointNodeIds = new LinkedHashMap<>();
+            LinkedHashMap<Long, List<String>> pointNodeNames = new LinkedHashMap<>();
+            // Scheduled event ID → the reset point that scheduled it, so a failure can be
+            // traced back to the task that would re-run it.
+            Map<Long, Long> schedulerOf = new HashMap<>();
+            long firstFailedScheduledId = -1;
+
+            for (HistoryEvent event : events) {
+                long eid = event.getEventId();
+                String ts = Instant
+                        .ofEpochSecond(event.getEventTime().getSeconds(), event.getEventTime().getNanos())
+                        .toString();
+                switch (event.getEventType()) {
+                    case EVENT_TYPE_WORKFLOW_TASK_COMPLETED, EVENT_TYPE_WORKFLOW_TASK_FAILED,
+                         EVENT_TYPE_WORKFLOW_TASK_TIMED_OUT -> {
+                        pointType.put(eid, simplifyEventType(event.getEventType()));
+                        pointTime.put(eid, ts);
+                        pointNodeIds.put(eid, new ArrayList<>());
+                        pointNodeNames.put(eid, new ArrayList<>());
+                    }
+                    case EVENT_TYPE_ACTIVITY_TASK_SCHEDULED -> {
+                        var attrs = event.getActivityTaskScheduledEventAttributes();
+                        recordScheduled(pointNodeIds, pointNodeNames, schedulerOf,
+                                        attrs.getWorkflowTaskCompletedEventId(), eid,
+                                        attrs.getActivityType().getName());
+                    }
+                    case EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED -> {
+                        var attrs = event.getStartChildWorkflowExecutionInitiatedEventAttributes();
+                        recordScheduled(pointNodeIds, pointNodeNames, schedulerOf,
+                                        attrs.getWorkflowTaskCompletedEventId(), eid,
+                                        attrs.getWorkflowType().getName());
+                    }
+                    case EVENT_TYPE_TIMER_STARTED -> {
+                        var attrs = event.getTimerStartedEventAttributes();
+                        recordScheduled(pointNodeIds, pointNodeNames, schedulerOf,
+                                        attrs.getWorkflowTaskCompletedEventId(), eid,
+                                        "timer:" + attrs.getTimerId());
+                    }
+                    case EVENT_TYPE_ACTIVITY_TASK_FAILED -> {
+                        long scheduled = event.getActivityTaskFailedEventAttributes().getScheduledEventId();
+                        if (firstFailedScheduledId < 0) {
+                            firstFailedScheduledId = scheduled;
+                        }
+                    }
+                    case EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT -> {
+                        long scheduled = event.getActivityTaskTimedOutEventAttributes().getScheduledEventId();
+                        if (firstFailedScheduledId < 0) {
+                            firstFailedScheduledId = scheduled;
+                        }
+                    }
+                    // Human tasks and review activities are child workflows, so a run that
+                    // broke on one fails here rather than on an activity. Their initiating
+                    // event is the node recorded above, so the same attribution applies.
+                    case EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED -> {
+                        long initiated =
+                                event.getChildWorkflowExecutionFailedEventAttributes().getInitiatedEventId();
+                        if (firstFailedScheduledId < 0) {
+                            firstFailedScheduledId = initiated;
+                        }
+                    }
+                    case EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TIMED_OUT -> {
+                        long initiated =
+                                event.getChildWorkflowExecutionTimedOutEventAttributes().getInitiatedEventId();
+                        if (firstFailedScheduledId < 0) {
+                            firstFailedScheduledId = initiated;
+                        }
+                    }
+                    default -> {
+                    }
+                }
+            }
+
+            // The point that would re-run the first failure — the default "retry from
+            // where it broke". Absent when nothing failed.
+            long firstFailurePoint = firstFailedScheduledId < 0
+                    ? -1 : schedulerOf.getOrDefault(firstFailedScheduledId, -1L);
+
+            RecordType pointRecordType = (RecordType) ValueCreator.createRecordValue(
+                    ModuleUtils.getManagementModule(), "ResetPoint").getType();
+            BArray result = ValueCreator.createArrayValue(TypeCreator.createArrayType(pointRecordType));
+            for (Map.Entry<Long, String> entry : pointType.entrySet()) {
+                long eid = entry.getKey();
+                BMap<BString, Object> record = ValueCreator.createRecordValue(
+                        ModuleUtils.getManagementModule(), "ResetPoint");
+                record.put(StringUtils.fromString("eventId"), eid);
+                record.put(StringUtils.fromString("eventType"), StringUtils.fromString(entry.getValue()));
+                record.put(StringUtils.fromString("timestamp"), StringUtils.fromString(pointTime.get(eid)));
+                record.put(StringUtils.fromString("nodeIds"), toStringArray(pointNodeIds.get(eid)));
+                record.put(StringUtils.fromString("nodeNames"), toStringArray(pointNodeNames.get(eid)));
+                record.put(StringUtils.fromString("isFirstFailure"), eid == firstFailurePoint);
+                result.append(record);
+            }
+            return result;
+        } catch (Exception e) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to list reset points: " + e.getMessage()));
+        }
+    }
+
+    private static void recordScheduled(Map<Long, List<String>> nodeIds, Map<Long, List<String>> nodeNames,
+                                        Map<Long, Long> schedulerOf, long schedulingTaskId, long eventId,
+                                        String name) {
+        schedulerOf.put(eventId, schedulingTaskId);
+        List<String> ids = nodeIds.get(schedulingTaskId);
+        if (ids == null) {
+            // The scheduling task is not itself an eligible point (it can be missing from a
+            // truncated or archived history); the node is simply not attributed.
+            return;
+        }
+        ids.add(Long.toString(eventId));
+        nodeNames.get(schedulingTaskId).add(name);
+    }
+
+    private static BArray toStringArray(List<String> values) {
+        BArray array = ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING));
+        for (String value : values) {
+            array.append(StringUtils.fromString(value));
+        }
+        return array;
+    }
+
+    /**
+     * Resets a run to a workflow-task event: history up to that point is preserved and everything after it
+     * re-executes as a new run of the same workflow ID.
+     *
+     * @param workflowId    the workflow instance ID
+     * @param runId         the run ID, or empty string for the latest run
+     * @param eventId       the workflow-task event to reset to
+     * @param reason        audit reason recorded with the reset
+     * @param reapplyType   {@code signal}, {@code none}, or {@code all-eligible}
+     * @param excludeTypes  event categories to withhold from reapply
+     * @param identity      the caller recorded as the reset's identity
+     * @return a Ballerina {@code WorkflowHandle} carrying the unchanged workflow ID and the new run ID, or an error
+     */
+    public static Object resetWorkflowExecution(BString workflowId, BString runId, long eventId, BString reason,
+                                                BString reapplyType, BArray excludeTypes, BString identity) {
+        try {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+            WorkflowExecution.Builder execution = WorkflowExecution.newBuilder().setWorkflowId(workflowId.getValue());
+            if (!runId.getValue().isEmpty()) {
+                execution.setRunId(runId.getValue());
+            }
+            ResetWorkflowExecutionRequest.Builder request = ResetWorkflowExecutionRequest.newBuilder()
+                    .setNamespace(client.getOptions().getNamespace())
+                    .setWorkflowExecution(execution.build())
+                    .setWorkflowTaskFinishEventId(eventId)
+                    .setReason(reason.getValue())
+                    .setIdentity(identity.getValue())
+                    // A retried request must not produce a second reset.
+                    .setRequestId(UUID.randomUUID().toString())
+                    .setResetReapplyType(toReapplyType(reapplyType.getValue()));
+            for (int i = 0; i < excludeTypes.size(); i++) {
+                ResetReapplyExcludeType exclude = toReapplyExcludeType(excludeTypes.get(i).toString());
+                if (exclude != null) {
+                    request.addResetReapplyExcludeTypes(exclude);
+                }
+            }
+
+            ResetWorkflowExecutionResponse response = client.getWorkflowServiceStubs()
+                    .blockingStub()
+                    .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                    .resetWorkflowExecution(request.build());
+
+            BMap<BString, Object> handle = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
+                                                                          "WorkflowHandle");
+            handle.put(StringUtils.fromString("workflowId"), workflowId);
+            handle.put(StringUtils.fromString("runId"), StringUtils.fromString(response.getRunId()));
+            return handle;
+        } catch (Exception e) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to reset workflow: " + e.getMessage()));
+        }
+    }
+
+    private static ResetReapplyType toReapplyType(String value) {
+        return switch (value) {
+            case "none" -> ResetReapplyType.RESET_REAPPLY_TYPE_NONE;
+            case "all-eligible" -> ResetReapplyType.RESET_REAPPLY_TYPE_ALL_ELIGIBLE;
+            default -> ResetReapplyType.RESET_REAPPLY_TYPE_SIGNAL;
+        };
+    }
+
+    private static ResetReapplyExcludeType toReapplyExcludeType(String value) {
+        return switch (value) {
+            case "signal" -> ResetReapplyExcludeType.RESET_REAPPLY_EXCLUDE_TYPE_SIGNAL;
+            case "update" -> ResetReapplyExcludeType.RESET_REAPPLY_EXCLUDE_TYPE_UPDATE;
+            case "nexus" -> ResetReapplyExcludeType.RESET_REAPPLY_EXCLUDE_TYPE_NEXUS;
+            case "cancel-request" -> ResetReapplyExcludeType.RESET_REAPPLY_EXCLUDE_TYPE_CANCEL_REQUEST;
+            default -> null;
+        };
     }
 
     private static String toWorkflowTemporalStatus(String status) {

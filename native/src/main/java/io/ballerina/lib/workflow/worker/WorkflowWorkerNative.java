@@ -1183,11 +1183,22 @@ public final class WorkflowWorkerNative {
         if (existing != null && !existing.refersToSameFunctionAs(activityRef)) {
             // Two different functions claiming one plain name — possible when packages that
             // define the same activity name share a task queue. One of them will serve every
-            // call, so say so rather than letting the dispatch look arbitrary. Registering the
-            // same activity from a second workflow of the same package is not a collision.
-            LOGGER.warn("Activity '{}' is already registered as {}; the registration from workflow "
-                    + "'{}' ({}) does not replace it. Activity names must be unique across the "
-                    + "packages sharing a task queue.", activityName, existing, workflowType, activityRef);
+            // call, so say which: during an incident this warning is what explains why the
+            // wrong code ran, and it must not claim the opposite of what the registry did.
+            // Registering the same activity from a second workflow of the same package is
+            // not a collision.
+            if (replace) {
+                LOGGER.warn("Activity '{}' was registered as {}; the registration from workflow "
+                        + "'{}' ({}) replaces it, and now serves every call scheduled under this "
+                        + "name — including calls from workflows registered earlier. Activity "
+                        + "names must be unique across the packages sharing a task queue.",
+                        activityName, existing, workflowType, activityRef);
+            } else {
+                LOGGER.warn("Activity '{}' is already registered as {}; the registration from "
+                        + "workflow '{}' ({}) does not replace it. Activity names must be unique "
+                        + "across the packages sharing a task queue.",
+                        activityName, existing, workflowType, activityRef);
+            }
         }
         String legacyName = workflowType + "." + activityName;
         if (replace) {

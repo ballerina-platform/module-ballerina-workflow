@@ -102,15 +102,39 @@ public final class WorkflowFunctionRef {
         if (pointer != null && pointer == other.pointer) {
             return true;
         }
-        if (functionName != null && functionName.equals(other.functionName)
-                && module != null && module.equals(other.module)) {
-            return true;
+        // Two pointers captured for one function are distinct objects, so identity comes from the
+        // declaration: the function's name and the module that declares it. The name alone is not
+        // enough — two packages may each declare a `notify`, and reading those as one function
+        // would suppress the collision warning exactly where it is earned.
+        String thisName = declaredName();
+        if (thisName == null || !thisName.equals(other.declaredName())) {
+            return false;
         }
-        // Two pointers captured for one function are distinct objects, so fall back to the
-        // function's own name — only a genuine name clash should read as a collision.
-        String thisName = functionType != null ? functionType.getName() : null;
-        String otherName = other.functionType != null ? other.functionType.getName() : null;
-        return thisName != null && thisName.equals(otherName);
+        Module thisModule = declaredModule();
+        Module otherModule = other.declaredModule();
+        if (thisModule != null && otherModule != null) {
+            return thisModule.equals(otherModule);
+        }
+        // A side without a resolvable module (the runtime did not record a package on the captured
+        // type) can only be compared by name; that is the pre-existing behaviour, kept for the
+        // cases the runtime genuinely cannot attribute.
+        return true;
+    }
+
+    /** The function's declared name: the symbolic coordinate, or the captured type's own name. */
+    private String declaredName() {
+        if (functionName != null) {
+            return functionName;
+        }
+        return functionType != null ? functionType.getName() : null;
+    }
+
+    /** The module declaring the function: the symbolic coordinate, or the captured type's package. */
+    private Module declaredModule() {
+        if (module != null) {
+            return module;
+        }
+        return functionType != null ? functionType.getPackage() : null;
     }
 
     @Override

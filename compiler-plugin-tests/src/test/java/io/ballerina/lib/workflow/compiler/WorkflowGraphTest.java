@@ -341,6 +341,28 @@ public class WorkflowGraphTest {
     }
 
     @Test
+    public void testAChosenStepIdWithEscapesSurvivesTheRoundTrip() {
+        // The graph reads the id decoded — escapes resolved — and the injector splices it back into
+        // source. Without re-escaping, an id holding a quote, backslash or line break would emit
+        // source that no longer parses, or parses to a different id than the graph recorded.
+        BuildProject project = loadProject("graph_step_id_escaped");
+        project.currentPackage().runCodeGenAndModifyPlugins();
+        PackageCompilation compilation = project.currentPackage().getCompilation();
+        Assert.assertEquals(compilation.diagnosticResult().errorCount(), 0,
+                "The rewritten source must still parse: " + compilation.diagnosticResult().diagnostics());
+
+        String decoded = "q\"uote b\\ack\nline";
+        Map<String, Object> descriptor = descriptorOf("graph_step_id_escaped");
+        Map<String, Object> graph = graphOf(descriptor, "shipOrder");
+        Assert.assertEquals(nodeAt(graph, decoded).get("target"), "checkStock",
+                "The graph carries the decoded id");
+
+        String rewritten = allSourcesOf(project);
+        Assert.assertTrue(rewritten.contains("stepId = \"q\\\"uote b\\\\ack\\nline\""),
+                "and the call site re-escapes it, so both name the same step: " + rewritten);
+    }
+
+    @Test
     public void testABlankStepIdFallsBackToTheGeneratedOne() {
         // Naming a node after nothing is never what was meant, and "" is what an empty form field
         // produces — so a blank id is treated as absent. Its own package, because the assertions

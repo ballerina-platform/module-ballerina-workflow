@@ -424,6 +424,11 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
      * Validates that ctx->callActivity() calls have a function with @Activity annotation
      * as the first argument.
      */
+    private void validateCallActivityUsage(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context) {
+        CallActivityValidator validator = new CallActivityValidator(context);
+        functionNode.functionBody().accept(validator);
+    }
+
     /**
      * Validates the step ids chosen at the call sites of one workflow.
      *
@@ -490,11 +495,6 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                     diagnostic.getSeverity());
             context.reportDiagnostic(DiagnosticFactory.createDiagnostic(info, location));
         }
-    }
-
-    private void validateCallActivityUsage(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context) {
-        CallActivityValidator validator = new CallActivityValidator(context);
-        functionNode.functionBody().accept(validator);
     }
 
     /**

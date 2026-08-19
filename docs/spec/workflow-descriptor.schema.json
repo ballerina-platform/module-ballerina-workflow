@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ballerina.io/spec/workflow/workflow-descriptor/1.1/workflow-descriptor.schema.json",
+  "$id": "https://ballerina.io/spec/workflow/workflow-descriptor/1.0/workflow-descriptor.schema.json",
   "title": "Workflow Definition Descriptor",
   "description": "The meta-schema of the Workflow Definition Descriptor (WDD): the versioned, structured definition file the ballerina/workflow compiler plugin generates at build time and packs into the integration's executable JAR as the fixed-name resource 'workflow.def.json'. The descriptor captures only structural facts \u2014 what registers with the workflow runtime, plus JSON Schemas \u2014 never expression-valued instance parameters (roles, titles, retry counts, timeouts, payloads).",
   "type": "object",
@@ -424,7 +424,7 @@
       ]
     },
     "graph": {
-      "description": "The structure of one workflow or agent as a directed graph, for visualization and for joining an execution back to its source. A workflow's graph is its durable steps in source order, nested under the control flow that guards them; an agent's is a star, because the model \u2014 not the code \u2014 decides what runs when. A running execution reports the step it is at (`ActivityTreeNode.stepId`, `GraphNode.metadata.stepId`), so a viewer can highlight the path actually taken. Nodes without a site in the execution predate the runtime that stamps it, so consumers must treat the join as optional.",
+      "description": "The structure of one workflow or agent as a directed graph, for visualization and for joining an execution back to its source. A workflow's graph is its durable steps in source order, nested under the control flow that guards them; an agent's is a star, because the model \u2014 not the code \u2014 decides what runs when. A running execution reports the step it is at (`ActivityTreeNode.stepId`, `GraphNode.metadata.stepId`), so a viewer can highlight the path actually taken. Nodes without a `stepId` in the execution predate the runtime that stamps it, so consumers must treat the join as optional.",
       "type": "object",
       "required": [
         "nodes",
@@ -442,7 +442,7 @@
           "items": {
             "type": "object",
             "required": [
-              "site",
+              "stepId",
               "kind"
             ],
             "additionalProperties": false,
@@ -477,7 +477,7 @@
                 "type": "string"
               },
               "parent": {
-                "description": "Site of the enclosing control-flow node, for a nested step. Absent at the top level.",
+                "description": "The `stepId` of the enclosing control-flow node, for a nested step. Absent at the top level.",
                 "type": "string"
               },
               "branch": {
@@ -504,7 +504,7 @@
           }
         },
         "edges": {
-          "description": "Directed edges by site. A workflow's edges follow control flow: sequential between siblings, into each arm of a BRANCH/LOOP/TRY, and from a loop body back to its LOOP node. An agent's edges point inbound from events and tasks to the agent, and outbound from the agent to its model and tools.",
+          "description": "Directed edges by `stepId`. A workflow's edges follow control flow: sequential between siblings, into each arm of a BRANCH/LOOP/TRY, and from a loop body back to its LOOP node. An agent's edges point inbound from events and tasks to the agent, and outbound from the agent to its model and tools.",
           "type": "array",
           "items": {
             "type": "object",

@@ -121,7 +121,11 @@ public class CallSiteInjector extends TreeModifier {
                 NodeFactory.createToken(SyntaxKind.EQUAL_TOKEN,
                         NodeFactory.createMinutiaeList(NodeFactory.createWhitespaceMinutiae(" ")),
                         NodeFactory.createMinutiaeList(NodeFactory.createWhitespaceMinutiae(" "))),
-                NodeParser.parseExpression("\"" + stepId + "\""));
+                // The id is spliced into source, so anything a string literal must escape — a chosen id
+                // may legitimately contain quotes or backslashes — is escaped, or the rewrite would emit
+                // source that no longer parses (or parses to a different id than the graph recorded).
+                NodeParser.parseExpression(
+                        "\"" + WorkflowSourceModifier.escapeBallerinaStringLiteral(stepId) + "\""));
 
         List<Node> nodes = new ArrayList<>();
         boolean replaced = false;

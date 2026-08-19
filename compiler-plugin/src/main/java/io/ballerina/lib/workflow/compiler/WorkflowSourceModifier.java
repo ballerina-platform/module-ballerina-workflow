@@ -593,7 +593,8 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                 importPrefix, semicolonToken);
     }
 
-    private static String escapeBallerinaStringLiteral(String value) {
+    /** Escapes {@code value} for splicing into generated source as a double-quoted string literal. */
+    static String escapeBallerinaStringLiteral(String value) {
         return value
                 .replace("\\", "\\\\")
                 .replace("\"", "\\\"")

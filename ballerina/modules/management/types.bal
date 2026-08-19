@@ -49,6 +49,10 @@ public type WorkflowExecutionInfo record {
     string workflowId;
     string workflowType;
     string status;
+    # What this instance is — WORKFLOW, AGENT, HUMAN_TASK, REVIEW_ACTIVITY or CHILD_WORKFLOW —
+    # from the memo its starter stamped. A consumer routes to the right view by asking this,
+    # never by parsing the id; nil only for instances started before the stamp existed.
+    string? kind = ();
     anydata? result;
     string? errorMessage;
     ActivityInvocation[] activityInvocations;

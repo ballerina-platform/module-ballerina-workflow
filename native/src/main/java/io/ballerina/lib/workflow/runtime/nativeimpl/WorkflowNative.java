@@ -637,6 +637,10 @@ public final class WorkflowNative {
                              workflowType.substring(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length()) : workflowType;
         record.put(StringUtils.fromString("workflowType"), StringUtils.fromString(displayType));
         record.put(StringUtils.fromString("status"), StringUtils.fromString(status));
+        // What this instance IS, so a consumer can route to the right view by asking rather than
+        // by parsing the id. From the memo its starter stamped; instances that predate the stamp
+        // fall back to the id prefix, which is all their era ever offered.
+        record.put(StringUtils.fromString("kind"), StringUtils.fromString(resolveKind(client, workflowId)));
 
         // No caller can know the result at describe time — it lives in the run's terminal history
         // event — so a closed run without one gets it fetched here. Reporting result: null for a
@@ -669,6 +673,48 @@ public final class WorkflowNative {
         record.put(StringUtils.fromString("activityInvocations"), activityInvocations);
 
         return record;
+    }
+
+    /**
+     * Resolves what an instance is — WORKFLOW, AGENT, HUMAN_TASK, REVIEW_ACTIVITY or
+     * CHILD_WORKFLOW — from the workflowKind memo its starter stamped, falling back to the id
+     * prefix for instances started before the stamp existed.
+     */
+    private static String resolveKind(WorkflowClient client, String workflowId) {
+        if (client != null) {
+            try {
+                DescribeWorkflowExecutionResponse describe = client
+                        .getWorkflowServiceStubs()
+                        .blockingStub()
+                        .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                        .describeWorkflowExecution(DescribeWorkflowExecutionRequest.newBuilder()
+                                .setNamespace(client.getOptions().getNamespace())
+                                .setExecution(io.temporal.api.common.v1.WorkflowExecution.newBuilder()
+                                        .setWorkflowId(workflowId).build())
+                                .build());
+                io.temporal.api.common.v1.Payload kindPayload =
+                        describe.getWorkflowExecutionInfo().getMemo().getFieldsMap().get("workflowKind");
+                if (kindPayload != null && !kindPayload.getData().isEmpty()) {
+                    String kind = client.getOptions().getDataConverter()
+                            .fromPayload(kindPayload, String.class, String.class);
+                    if (kind != null && !kind.isBlank()) {
+                        return kind;
+                    }
+                }
+            } catch (Exception e) {
+                // The kind is a routing hint; an info read must not fail over it.
+            }
+        }
+        if (workflowId.startsWith("humantask-")) {
+            return "HUMAN_TASK";
+        }
+        if (workflowId.startsWith("reviewactivity-")) {
+            return "REVIEW_ACTIVITY";
+        }
+        if (workflowId.startsWith("childwf-")) {
+            return "CHILD_WORKFLOW";
+        }
+        return "WORKFLOW";
     }
 
     /**

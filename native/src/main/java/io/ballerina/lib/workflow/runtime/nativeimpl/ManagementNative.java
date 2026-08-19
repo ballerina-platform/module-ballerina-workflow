@@ -1550,11 +1550,14 @@ public final class ManagementNative {
             if (timeoutSeconds instanceof Long secs) {
                 optBuilder.setWorkflowExecutionTimeout(Duration.ofSeconds(secs));
             }
+            // Every instance says what it is, in its memo: consumers route to the right UI by
+            // asking the instance, never by parsing its id — the prefixes stay for human eyes only.
+            Map<String, Object> memo = new HashMap<>();
+            memo.put("workflowKind", WorkflowWorkerNative.isAgentWorkflowType(type) ? "AGENT" : "WORKFLOW");
             if (startedBy instanceof BString starter && !starter.getValue().isBlank()) {
-                Map<String, Object> memo = new HashMap<>();
                 memo.put("startedBy", starter.getValue());
-                optBuilder.setMemo(memo);
             }
+            optBuilder.setMemo(memo);
 
             WorkflowStub stub = client.newUntypedWorkflowStub(type, optBuilder.build());
             Object javaInput;

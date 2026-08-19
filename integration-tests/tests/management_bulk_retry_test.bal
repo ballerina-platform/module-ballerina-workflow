@@ -24,6 +24,7 @@
 //
 // ================================================================================
 
+import ballerina/lang.runtime;
 import ballerina/test;
 import ballerina/workflow;
 import ballerina/workflow.management;
@@ -51,6 +52,27 @@ function startFailingReview(string idPrefix)
     string workflowId = check workflow:run(manualRetryFailDecisionWorkflow, input);
     management:ReviewActivitySummary review = check waitForPendingReviewActivity(workflowId);
     return [workflowId, review];
+}
+
+// Waits until a review activity has actually closed.
+//
+// `completeReviewActivity` sends the decision signal and returns; the review's child
+// workflow closes only once it has processed that signal. So a caller that re-reads
+// immediately can still see PENDING — the same interval that makes a status check an
+// unsound proxy for "already decided" in the info path. A test asserting what happens
+// to an *already-decided* task has to establish that state rather than assume it, or it
+// races the child and sees the second decision applied instead of skipped.
+function waitForReviewActivityClosed(string taskId, decimal timeoutSecs = 15) returns error? {
+    decimal elapsed = 0.0d;
+    while elapsed < timeoutSecs {
+        management:ReviewActivityInfo info = check management:getReviewActivityInfo(taskId);
+        if info.status != "PENDING" {
+            return;
+        }
+        runtime:sleep(0.3d);
+        elapsed += 0.3d;
+    }
+    return error("Timed out waiting for the review activity to close: " + taskId);
 }
 
 // Drains a workflow that must end in failure once its review is failed, and asserts
@@ -180,7 +202,10 @@ function testBulkRetryReportsPerTaskOutcomes() returns error? {
     }
 
     // Re-issuing the same decision is safe: the task is already decided, so it is
-    // skipped rather than failed.
+    // skipped rather than failed. Wait for the review to actually close first — the
+    // decision signal is sent before the child processes it, and a second decision
+    // submitted inside that window is legitimately applied, not skipped.
+    check waitForReviewActivityClosed(taskId);
     management:BulkRetryResult repeat = check bulkRetry({action: "fail", taskIds: [taskId]});
     test:assertEquals(repeat.skipped, 1, "An already-decided task must be skipped");
     test:assertEquals(repeat.applied, 0);

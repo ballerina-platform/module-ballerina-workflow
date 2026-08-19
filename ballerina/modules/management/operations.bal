@@ -574,7 +574,12 @@ isolated function decideOneInBulk(BulkCandidate candidate, ReviewDecision decisi
 
 // ── Reset ─────────────────────────────────────────────────────────────────────
 
-isolated function opListResetPoints(string workflowId, string? runId) returns json|Error {
+isolated function opListResetPoints(string workflowId, string? runId,
+        [string, string...]? callerRoles) returns json|Error {
+    AccessDeniedError? roleErr = ensureWorkflowDetailAccess(callerRoles);
+    if roleErr is AccessDeniedError {
+        return roleErr;
+    }
     ResetPoint[]|error points = listResetPoints(workflowId, runId ?: "");
     if points is error {
         return notFoundOrExecutionError(points, "Workflow not found: " + workflowId,
@@ -588,7 +593,13 @@ isolated function opListResetPoints(string workflowId, string? runId) returns js
 # an ineligible event ID is reported as a malformed request naming what is available,
 # rather than as the runtime's opaque failure.
 isolated function opResetInstance(string workflowId, string? runId, string resetType, int? eventId,
-        string? reason, string? reapplyType, json? reapplyExclude, string? userId) returns json|Error {
+        string? reason, json? reapply, [string, string...]? callerRoles, string? userId) returns json|Error {
+    // A reset reads the run's history and then rewrites it, so it is gated like the
+    // history reads it is built on.
+    AccessDeniedError? roleErr = ensureWorkflowDetailAccess(callerRoles);
+    if roleErr is AccessDeniedError {
+        return roleErr;
+    }
     // Everything that can be judged from the request alone is judged first, so a
     // malformed reset never costs a history read and never reports the run's problems
     // in place of its own.
@@ -600,12 +611,18 @@ isolated function opResetInstance(string workflowId, string? runId, string reset
     if resetType == "workflow-task-id" && eventId is () {
         return invalidRequest("eventId is required when resetType is \"workflow-task-id\"");
     }
+    map<json> reapplyOptions = reapply is map<json> ? reapply : {};
+    json reapplyTypeValue = reapplyOptions["type"];
+    if reapplyTypeValue !is () && reapplyTypeValue !is string {
+        return invalidRequest("reapply.type must be a string");
+    }
+    string? reapplyType = reapplyTypeValue is string ? reapplyTypeValue : ();
     if reapplyType is string && reapplyType != "signal" && reapplyType != "none"
             && reapplyType != "all-eligible" {
-        return invalidRequest("Unknown reapplyType: " + reapplyType
+        return invalidRequest("Unknown reapply.type: " + reapplyType
                 + " (expected \"signal\", \"none\", or \"all-eligible\")");
     }
-    string[]|Error excludes = resetReapplyExcludes(reapplyExclude);
+    string[]|Error excludes = resetReapplyExcludes(reapplyOptions["exclude"]);
     if excludes is Error {
         return excludes;
     }
@@ -664,15 +681,15 @@ isolated function resetReapplyExcludes(json? reapplyExclude) returns string[]|Er
         return [];
     }
     if reapplyExclude !is json[] {
-        return invalidRequest("reapplyExclude must be a JSON array");
+        return invalidRequest("reapply.exclude must be a JSON array");
     }
     string[] excludes = [];
     foreach json value in reapplyExclude {
         if value !is string {
-            return invalidRequest("reapplyExclude must contain strings");
+            return invalidRequest("reapply.exclude must contain strings");
         }
         if value != "signal" && value != "update" && value != "nexus" && value != "cancel-request" {
-            return invalidRequest("Unknown reapplyExclude entry: " + value
+            return invalidRequest("Unknown reapply.exclude entry: " + value
                     + " (expected \"signal\", \"update\", \"nexus\", or \"cancel-request\")");
         }
         excludes.push(value);

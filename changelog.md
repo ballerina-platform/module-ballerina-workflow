@@ -42,8 +42,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   `reapply` controls what is re-delivered to the new run: `{"type": "signal"}` (the engine
   default) re-delivers signals, `"none"` nothing, and `"all-eligible"` also updates — which
   matters for durable agents, whose turns arrive as updates and are therefore *not* re-delivered
-  under the default. `exclude` withholds individual categories. Replay runs against the worker's
-  current code, so a workflow function that changed since the run started can fail to replay.
+  under the default. `exclude` withholds individual categories. A `reapply` that is malformed, or
+  names a category that does not exist, is reported rather than ignored: dropping it would
+  re-deliver exactly what the caller asked to withhold. Both operations require caller roles, as
+  the history reads they are built on do. Replay runs against the worker's current code, so a
+  workflow function that changed since the run started can fail to replay.
 
 - **Failed activities can be retried or failed in bulk.** A workflow that fails several
   activities under a human-review retry policy raised one review task per failure, and an

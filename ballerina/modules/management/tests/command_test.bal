@@ -274,6 +274,7 @@ function testBulkRetryFeedbackIsAcceptedForFail() returns error? {
     BulkRetryResult report = check payload.cloneWithType();
     test:assertEquals(report.action, "fail");
     test:assertEquals(report.requested, 1);
+}
 
 // ── Reset request validation ──────────────────────────────────────────────────
 // A reset rewrites a run's history, so every malformed request is reported before
@@ -309,11 +310,11 @@ function testResetRejectsUnknownReapplyType() {
     json|Error result = executeCommand({
         operation: RESET_INSTANCE,
         params: {workflowId: "wf-does-not-exist", resetType: "first-workflow-task",
-            reapplyType: "everything"},
+            reapply: {"type": "everything"}},
         identity: {userId: "alice", roles: ["OPS"]}
     });
     test:assertTrue(result is InvalidRequestError, "An unknown reapplyType must be an InvalidRequestError");
-    test:assertTrue((<Error>result).message().startsWith("Unknown reapplyType: everything"),
+    test:assertTrue((<Error>result).message().startsWith("Unknown reapply.type: everything"),
         "The message must name the rejected value, got: " + (<Error>result).message());
 }
 
@@ -324,11 +325,11 @@ function testResetRejectsUnknownReapplyExclusion() {
     json|Error result = executeCommand({
         operation: RESET_INSTANCE,
         params: {workflowId: "wf-does-not-exist", resetType: "first-workflow-task",
-            reapplyExclude: ["timer"]},
+            reapply: {"exclude": ["timer"]}},
         identity: {userId: "alice", roles: ["OPS"]}
     });
     test:assertTrue(result is InvalidRequestError, "An unknown exclusion must be an InvalidRequestError");
-    test:assertTrue((<Error>result).message().startsWith("Unknown reapplyExclude entry: timer"),
+    test:assertTrue((<Error>result).message().startsWith("Unknown reapply.exclude entry: timer"),
         "The message must name the rejected entry, got: " + (<Error>result).message());
 }
 
@@ -337,11 +338,41 @@ function testResetRejectsNonArrayReapplyExclude() {
     json|Error result = executeCommand({
         operation: RESET_INSTANCE,
         params: {workflowId: "wf-does-not-exist", resetType: "first-workflow-task",
-            reapplyExclude: "signal"},
+            reapply: {"exclude": "signal"}},
         identity: {userId: "alice", roles: ["OPS"]}
     });
-    test:assertTrue(result is InvalidRequestError, "A scalar reapplyExclude must be an InvalidRequestError");
-    test:assertEquals((<Error>result).message(), "reapplyExclude must be a JSON array");
+    test:assertTrue(result is InvalidRequestError, "A scalar exclusion list must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(), "reapply.exclude must be a JSON array");
+}
+
+@test:Config {groups: ["unit"]}
+function testResetRejectsNonObjectReapply() {
+    // Dropping a malformed reapply would silently fall back to re-delivering signals —
+    // the opposite of what a caller sending it is asking for.
+    json|Error result = executeCommand({
+        operation: RESET_INSTANCE,
+        params: {workflowId: "wf-does-not-exist", resetType: "first-workflow-task", reapply: "none"},
+        identity: {userId: "alice", roles: ["OPS"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "A scalar reapply must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(), "reapply must be a JSON object");
+}
+
+@test:Config {groups: ["unit"]}
+function testResetOperationsRequireRoles() {
+    // Reset points expose the same history detail the tree and graph operations gate,
+    // and reset then rewrites that history.
+    json|Error points = executeCommand({
+        operation: LIST_RESET_POINTS,
+        params: {workflowId: "wf-does-not-exist"}
+    });
+    test:assertTrue(points is AccessDeniedError, "Listing reset points without roles must be denied");
+
+    json|Error reset = executeCommand({
+        operation: RESET_INSTANCE,
+        params: {workflowId: "wf-does-not-exist", resetType: "first-workflow-task"}
+    });
+    test:assertTrue(reset is AccessDeniedError, "Resetting without roles must be denied");
 }
 
 @test:Config {groups: ["unit"]}

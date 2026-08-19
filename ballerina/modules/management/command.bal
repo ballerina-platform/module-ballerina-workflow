@@ -134,8 +134,8 @@ public type Command record {|
 #   change the payload an activity is retried with.
 # - `LIST_RESET_POINTS` — `workflowId` (required), `runId`.
 # - `RESET_INSTANCE` — `workflowId` and `resetType` (required), `runId`, `eventId`
-#   (required when `resetType` is `"workflow-task-id"`), `reason`, `reapplyType`,
-#   `reapplyExclude`.
+#   (required when `resetType` is `"workflow-task-id"`), `reason`, and `reapply`
+#   (`{"type": …, "exclude": [...]}`).
 #
 # ```ballerina
 # json|management:Error result = management:executeCommand({
@@ -312,7 +312,7 @@ public isolated function executeCommand(Command command) returns json|Error {
             if workflowId is Error {
                 return workflowId;
             }
-            return opListResetPoints(workflowId, strParam(params, "runId"));
+            return opListResetPoints(workflowId, strParam(params, "runId"), callerRoles);
         }
         RESET_INSTANCE => {
             string|Error workflowId = requiredParam(params, "workflowId");
@@ -326,7 +326,7 @@ public isolated function executeCommand(Command command) returns json|Error {
             json rawEventId = params["eventId"];
             return opResetInstance(workflowId, strParam(params, "runId"), resetType,
                     rawEventId is int ? rawEventId : (), strParam(params, "reason"),
-                    strParam(params, "reapplyType"), params["reapplyExclude"], userId);
+                    params["reapply"], callerRoles, userId);
         }
         BULK_RETRY_REVIEW_ACTIVITIES => {
             string|Error action = requiredParam(params, "action");
@@ -375,8 +375,7 @@ final readonly & map<string> PARAM_TYPES = {
     "pageToken": "string",
     "parentWorkflowId": "string",
     "parentWorkflowType": "string",
-    "reapplyExclude": "array",
-    "reapplyType": "string",
+    "reapply": "object",
     "reason": "string",
     "resetType": "string",
     "runId": "string",

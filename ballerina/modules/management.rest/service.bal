@@ -454,9 +454,12 @@ isolated function executeToResponse(management:Operation operation, map<json> pa
     return response;
 }
 
-# Maps a reset request body to operation parameters. `reapply` is accepted as the
-# nested object the request documents (`{"type": …, "exclude": [...]}`) and flattened,
-# so the wire shape stays readable while the command vocabulary stays flat.
+# Maps a reset request body to operation parameters.
+#
+# `reapply` is forwarded verbatim rather than unpacked here: a caller that sends it as
+# something other than an object is reporting a malformed request, and this module does
+# not decide what is malformed — the management module does, and rejects it by the same
+# rule it applies to the exclusions inside it.
 #
 # + workflowId - The workflow instance ID from the path
 # + runId - The run ID from the path, or `()` for the latest run
@@ -467,21 +470,10 @@ isolated function resetParams(string workflowId, string? runId, map<json> body) 
     if runId is string {
         params["runId"] = runId;
     }
-    foreach string name in ["resetType", "eventId", "reason"] {
+    foreach string name in ["resetType", "eventId", "reason", "reapply"] {
         json value = body[name];
         if value !is () {
             params[name] = value;
-        }
-    }
-    json reapply = body["reapply"];
-    if reapply is map<json> {
-        json reapplyType = reapply["type"];
-        if reapplyType !is () {
-            params["reapplyType"] = reapplyType;
-        }
-        json exclude = reapply["exclude"];
-        if exclude !is () {
-            params["reapplyExclude"] = exclude;
         }
     }
     return params;

@@ -103,6 +103,10 @@ public final class ManagementNative {
     private static final Logger LOGGER = LoggerFactory.getLogger(ManagementNative.class);
 
     private static final long GET_INFO_DEADLINE_SECONDS = 5;
+    // Reset rewrites a run's history rather than reading it, so it gets its own,
+    // longer budget: the read deadline is sized for a describe, and a client-side
+    // timeout here can leave a reset applied that the caller was told had failed.
+    private static final long RESET_DEADLINE_SECONDS = 30;
     private static final String ERR_CLIENT_NOT_INIT = "Workflow client not initialized";
 
     private ManagementNative() {
@@ -2755,15 +2759,19 @@ public final class ManagementNative {
                     .setRequestId(UUID.randomUUID().toString())
                     .setResetReapplyType(toReapplyType(reapplyType.getValue()));
             for (int i = 0; i < excludeTypes.size(); i++) {
-                ResetReapplyExcludeType exclude = toReapplyExcludeType(excludeTypes.get(i).toString());
-                if (exclude != null) {
-                    request.addResetReapplyExcludeTypes(exclude);
+                String raw = excludeTypes.get(i).toString();
+                ResetReapplyExcludeType exclude = toReapplyExcludeType(raw);
+                if (exclude == null) {
+                    return ErrorCreator.createError(StringUtils.fromString(
+                            "Unknown reapply exclusion: " + raw
+                                    + " (expected \"signal\", \"update\", \"nexus\", or \"cancel-request\")"));
                 }
+                request.addResetReapplyExcludeTypes(exclude);
             }
 
             ResetWorkflowExecutionResponse response = client.getWorkflowServiceStubs()
                     .blockingStub()
-                    .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                    .withDeadlineAfter(RESET_DEADLINE_SECONDS, TimeUnit.SECONDS)
                     .resetWorkflowExecution(request.build());
 
             BMap<BString, Object> handle = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),

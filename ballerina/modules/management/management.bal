@@ -218,7 +218,7 @@ public isolated function listAllHumanTasks(string? status = (),
 # management:HumanTaskInfo info = check management:getHumanTaskInfo(taskId);
 # ```
 #
-# + taskId - The child workflow ID of the human task (`humantask-{parentId}-{taskName}-{uuid}`)
+# + taskId - The child workflow ID of the human task (a bare UUID; the kind travels in its memo)
 # + return - Full task info including title, userRoles, payload, and formSchema, or an error
 public isolated function getHumanTaskInfo(string taskId) returns HumanTaskInfo|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
@@ -356,7 +356,7 @@ public isolated function listAllReviewActivities(string? status = (),
 # management:ReviewActivityInfo info = check management:getReviewActivityInfo(taskId);
 # ```
 #
-# + taskId - The child workflow ID of the review activity (`reviewactivity-{parentId}-{taskName}-{uuid}`)
+# + taskId - The child workflow ID of the review activity (a bare UUID; the kind travels in its memo)
 # + return - Full review activity info including errorMessage, activityArgs, formSchema, and userRoles,
 #            or an error (including when the ID refers to a human task or any non-review workflow)
 public isolated function getReviewActivityInfo(string taskId) returns ReviewActivityInfo|error = @java:Method {

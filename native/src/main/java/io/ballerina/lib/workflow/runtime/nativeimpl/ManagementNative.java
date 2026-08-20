@@ -487,8 +487,7 @@ public final class ManagementNative {
                                 .listWorkflowExecutions(request);
 
                 for (WorkflowExecutionInfo wfInfo : response.getExecutionsList()) {
-                    String wfId = wfInfo.getExecution().getWorkflowId();
-                    if (!wfId.startsWith("humantask-")) {
+                    if (!isHumanTaskType(wfInfo.getType().getName())) {
                         continue;
                     }
                     result.append(toHumanTaskSummaryRecord(client, wfInfo));
@@ -673,7 +672,7 @@ public final class ManagementNative {
                     if (event.getEventType() == EventType.EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED) {
                         var attrs = event.getStartChildWorkflowExecutionInitiatedEventAttributes();
                         String childId = attrs.getWorkflowId();
-                        if (childId.startsWith("humantask-")) {
+                        if (isHumanTaskType(attrs.getWorkflowType().getName())) {
                             // Task name is stored in memo (not in the instance ID anymore)
                             String taskName = decodeMemoString(dc, attrs.getMemo().getFieldsMap(), "taskName", childId);
                             childIdToTaskName.put(childId, taskName);
@@ -682,7 +681,7 @@ public final class ManagementNative {
                     } else {
                         // Remove child workflows that have reached a terminal state
                         String completedChildId = getTerminalChildWorkflowId(event);
-                        if (completedChildId != null && completedChildId.startsWith("humantask-")) {
+                        if (completedChildId != null && childIdToTaskName.containsKey(completedChildId)) {
                             String taskName = childIdToTaskName.get(completedChildId);
                             if (taskName != null) {
                                 List<String> ids = byTaskName.get(taskName);
@@ -868,13 +867,23 @@ public final class ManagementNative {
     }
 
     /**
-     * Returns {@code true} when the workflow ID uses a review activity instance prefix — the current
-     * {@code reviewactivity-} form or the pre-0.7.0 {@code retrytask-} form. Legacy persisted retry
-     * tasks remain visible and completable through both the review activity API and the deprecated
-     * retry-task API.
+     * Returns {@code true} when the workflow type names a human task child. The type is the
+     * classifier — instance ids are bare UUIDs and say nothing about what an instance is.
      */
-    private static boolean isReviewActivityId(String workflowId) {
-        return workflowId.startsWith("reviewactivity-") || workflowId.startsWith("retrytask-");
+    private static boolean isHumanTaskType(String workflowType) {
+        return workflowType.startsWith(WorkflowWorkerNative.HUMANTASK_TYPE_PREFIX);
+    }
+
+    /**
+     * Returns {@code true} when the workflow type names a review activity — the current
+     * {@code reviewactivity-} types or the pre-0.7.0 shared {@code retrytask} type. Legacy
+     * persisted retry tasks remain visible and completable through both the review activity API
+     * and the deprecated retry-task API.
+     */
+    private static boolean isReviewActivityType(String workflowType) {
+        return workflowType.startsWith(WorkflowWorkerNative.REVIEW_ACTIVITY_TYPE_PREFIX)
+                || WorkflowWorkerNative.LEGACY_RETRYTASK_WORKFLOW_TYPE.equals(workflowType)
+                || workflowType.startsWith(WorkflowWorkerNative.LEGACY_RETRYTASK_WORKFLOW_TYPE + "-");
     }
 
     /**
@@ -1128,14 +1137,14 @@ public final class ManagementNative {
                     if (event.getEventType() == EventType.EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED) {
                         var attrs = event.getStartChildWorkflowExecutionInitiatedEventAttributes();
                         String childId = attrs.getWorkflowId();
-                        if (isReviewActivityId(childId)) {
+                        if (isReviewActivityType(attrs.getWorkflowType().getName())) {
                             String taskName = decodeMemoString(dc, attrs.getMemo().getFieldsMap(), "taskName", childId);
                             childIdToTaskName.put(childId, taskName);
                             byTaskName.computeIfAbsent(taskName, k -> new ArrayList<>()).add(childId);
                         }
                     } else {
                         String completedChildId = getTerminalChildWorkflowId(event);
-                        if (completedChildId != null && isReviewActivityId(completedChildId)) {
+                        if (completedChildId != null && childIdToTaskName.containsKey(completedChildId)) {
                             String taskName = childIdToTaskName.get(completedChildId);
                             if (taskName != null) {
                                 List<String> ids = byTaskName.get(taskName);
@@ -1217,8 +1226,7 @@ public final class ManagementNative {
                                 .listWorkflowExecutions(request);
 
                 for (WorkflowExecutionInfo wfInfo : response.getExecutionsList()) {
-                    String wfId = wfInfo.getExecution().getWorkflowId();
-                    if (!isReviewActivityId(wfId)) {
+                    if (!isReviewActivityType(wfInfo.getType().getName())) {
                         continue;
                     }
                     result.append(toReviewActivitySummaryRecord(client, wfInfo));
@@ -1637,10 +1645,14 @@ public final class ManagementNative {
                 String prefixedType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + wt.getValue();
                 String safeWt = prefixedType.replace("\\", "\\\\").replace("\"", "\\\"");
                 clauses.add(String.format("WorkflowType = \"%s\"", safeWt));
-            } else if (!(kind instanceof BString k && !k.getValue().isBlank())) {
+            } else if (!(kind instanceof BString k && !k.getValue().isBlank()
+                    && WorkflowWorkerNative.isKindSearchAttributeReady())) {
                 // The pre-kind way of excluding task and review children. A kind filter says
                 // precisely what the caller wants — including those very children — so it
-                // replaces this heuristic rather than being overridden by it.
+                // replaces this heuristic rather than being overridden by it. But only a kind
+                // filter that will actually be applied replaces it: on a server without the
+                // WorkflowKind attribute the kind clause is dropped (see addKindClause), and
+                // dropping this exclusion too would leak every task and review child.
                 clauses.add("WorkflowType STARTS_WITH 'workflow-'");
             }
             if (workflowId instanceof BString wi) {
@@ -1745,6 +1757,18 @@ public final class ManagementNative {
                         summary.put(StringUtils.fromString("closeTime"), null);
                     }
                     summary.put(StringUtils.fromString("input"), null);
+                    // The kind rides the visibility row's memo, so a listing can say what each
+                    // row is without a describe per row. Legacy rows without the memo fall back
+                    // to the type prefixes their era still used.
+                    String rowKind = decodeMemoString(client.getOptions().getDataConverter(),
+                                                      wfInfo.getMemo().getFieldsMap(), "workflowKind", null);
+                    if (rowKind == null) {
+                        rowKind = isHumanTaskType(rawType) ? "HUMAN_TASK"
+                                : isReviewActivityType(rawType) ? "REVIEW_ACTIVITY"
+                                : rawType.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX)
+                                        ? "WORKFLOW" : "CHILD_WORKFLOW";
+                    }
+                    summary.put(StringUtils.fromString("kind"), StringUtils.fromString(rowKind));
                     items.append(summary);
                     matchedCount++;
                     if (matchedCount >= pageSize) {
@@ -2024,13 +2048,12 @@ public final class ManagementNative {
                         var attrs = event.getStartChildWorkflowExecutionInitiatedEventAttributes();
                         String childId = attrs.getWorkflowId();
                         String childType = attrs.getWorkflowType().getName();
-                        String nodeType = childNodeType(childId);
-                        // For reviewactivity- children the instance ID no longer encodes the task name;
-                        // read it from the memo instead. Human tasks use shortTaskName() which
-                        // parses the "humantask-workflowDef.taskName" WorkflowType correctly.
-                        String nodeName = isReviewActivityId(childId) ? decodeMemoString(dc, attrs
+                        String nodeType = childNodeType(childType);
+                        // A review child's task name lives in its memo; human tasks use
+                        // shortTaskName(), which parses the "humantask-workflowDef.taskName" type.
+                        String nodeName = isReviewActivityType(childType) ? decodeMemoString(dc, attrs
                                 .getMemo()
-                                .getFieldsMap(), "taskName", childType) : shortTaskName(childType, childId);
+                                .getFieldsMap(), "taskName", childType) : shortTaskName(childType);
                         var node = newNode(eid, nodeName, nodeType, ts);
                         node.put("childWorkflowId", childId);
                         node.put("input", decodeFirstPayload(attrs.getInput(), dc));
@@ -2388,13 +2411,13 @@ public final class ManagementNative {
     }
 
     /**
-     * Determines the {@code ActivityNodeType} for a child workflow based on its ID prefix.
+     * Determines the {@code ActivityNodeType} for a child workflow from its workflow type.
      */
-    private static String childNodeType(String workflowId) {
-        if (workflowId.startsWith("humantask-")) {
+    private static String childNodeType(String workflowType) {
+        if (isHumanTaskType(workflowType)) {
             return "HUMAN_TASK";
         }
-        if (isReviewActivityId(workflowId)) {
+        if (isReviewActivityType(workflowType)) {
             return "REVIEW_ACTIVITY";
         }
         return "CHILD_WORKFLOW";
@@ -2404,20 +2427,12 @@ public final class ManagementNative {
      * Extracts a short human-readable task name from the workflow type (qualified name) for human/retry task nodes.
      * Falls back to the full type name for other child workflows.
      */
-    private static String shortTaskName(String workflowType, String workflowId) {
-        // Human tasks: workflowType = "humantask-workflowDefinition.taskName" → return "taskName"
-        if (workflowId.startsWith("humantask-")) {
-            int dot = workflowType.lastIndexOf('.');
-            if (dot >= 0) {
-                return workflowType.substring(dot + 1);
-            } else {
-                return workflowType;
-            }
-        }
-        // Review activities: workflowType = "reviewactivity-workflowDefinition.activityName" -> "activityName".
-        // Pre-rename children used the single shared "retrytask" type, whose task name only lives in the
-        // memo — callers with memo access should use decodeMemoString("taskName") for those.
-        if (workflowId.startsWith("reviewactivity-")) {
+    private static String shortTaskName(String workflowType) {
+        // Human tasks and review activities carry the qualified name in their type
+        // ("humantask-workflowDefinition.taskName") → return "taskName". Pre-rename children used
+        // the single shared "retrytask" type, whose task name only lives in the memo — callers
+        // with memo access should use decodeMemoString("taskName") for those.
+        if (isHumanTaskType(workflowType) || isReviewActivityType(workflowType)) {
             int dot = workflowType.lastIndexOf('.');
             if (dot >= 0) {
                 return workflowType.substring(dot + 1);
@@ -2565,6 +2580,15 @@ public final class ManagementNative {
     // rejects the query, which is the honest answer where filtering is genuinely unavailable.
     private static void addKindClause(List<String> clauses, Object kind) {
         if (kind instanceof BString value && !value.getValue().isBlank()) {
+            if (!WorkflowWorkerNative.isKindSearchAttributeReady()) {
+                // The clause would make the whole query fail on a server without the attribute —
+                // notably the in-memory dev server, which does not support custom search
+                // attributes. Listing unfiltered (and saying so) beats failing the listing.
+                LOGGER.warn("Kind filtering requires the WorkflowKind search attribute, which this "
+                        + "server does not provide (the in-memory dev server does not support custom "
+                        + "search attributes); listing without the kind filter.");
+                return;
+            }
             clauses.add("WorkflowKind = '" + value.getValue().replace("'", "''") + "'");
         }
     }

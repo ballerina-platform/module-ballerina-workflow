@@ -87,7 +87,7 @@ public type HumanTaskGroup record {|
 
 # Summary of a human task instance for list views.
 #
-# + taskId - Child workflow ID of this task instance (`humantask-{parentId}-{taskName}-{uuid}`)
+# + taskId - Child workflow ID of this task instance (a bare UUID; the kind travels in its memo)
 # + taskName - Task type name (the `taskName` passed to `awaitHumanTask`)
 # + parentWorkflowId - Workflow ID of the parent that created this task
 # + parentWorkflowType - Registered workflow type of the parent, or `()` if not available
@@ -183,7 +183,7 @@ public type ReviewDecision record {|
 
 # Summary of a review activity instance for list views.
 #
-# + taskId - Temporal workflow ID of this review activity (`reviewactivity-{parentId}-{taskName}-{uuid}`)
+# + taskId - Temporal workflow ID of this review activity (a bare UUID; the kind travels in its memo)
 # + taskName - User-facing task name (qualified with workflow type)
 # + activityName - Fully-qualified name of the reviewed activity (`workflowType.activityName`)
 # + parentWorkflowId - Workflow ID of the parent that triggered this review
@@ -419,6 +419,8 @@ public type GraphEdge record {|
 #            SUSPENDED is a running workflow paused via the suspend management API.
 # + startTime - ISO-8601 timestamp when the workflow started
 # + closeTime - ISO-8601 timestamp when it ended, or `()` if still running
+# + kind - What this instance is — WORKFLOW, AGENT, HUMAN_TASK, REVIEW_ACTIVITY, CHILD_WORKFLOW —
+#          from the memo its starter stamped (ids carry no classification)
 # + input - Workflow input as JSON, or `()` if not available
 public type WorkflowInstanceSummary record {|
     # The Temporal namespace the task lives in (the project scope)
@@ -431,6 +433,7 @@ public type WorkflowInstanceSummary record {|
     string status;
     string startTime;
     string? closeTime;
+    string? kind = ();
     json? input;
 |};
 

@@ -325,7 +325,9 @@ public final class WorkflowContextNative {
 
         String fullActivityName = qualifiedTaskName;
         String parentWorkflowId = Workflow.getInfo().getWorkflowId();
-        String reviewId = "reviewactivity-" + Workflow.randomUUID();
+        // A bare UUID: the kind travels in the memo and the reviewed activity in the type name,
+        // so the id carries no classification of its own.
+        String reviewId = Workflow.randomUUID().toString();
 
         // Temporal WorkflowType carries the reviewed activity's qualified name (mirroring the
         // humantask- child types) so the reviewed activity is identifiable from the type alone.
@@ -779,8 +781,9 @@ public final class WorkflowContextNative {
             // the task is completed (ballerina-library#8866).
             WorkflowWorkerNative.registerHumanTaskResultType(humanTaskTypeName, typedesc.getDescribingType());
 
-            // Compact instance ID: "humantask-" + UUID7 (deterministic across replays)
-            taskWorkflowId = "humantask-" + Workflow.randomUUID();
+            // A bare UUID (deterministic across replays): the kind travels in the memo and the
+            // task in the type name, so the id carries no classification of its own.
+            taskWorkflowId = Workflow.randomUUID().toString();
 
             // --- Memo (immutable, readable without full history) --------------------
             Map<String, Object> memo = new HashMap<>();
@@ -1044,7 +1047,6 @@ public final class WorkflowContextNative {
     // waitForChildWorkflow / callWorkflow / sendDataToChildWorkflow)
     // -----------------------------------------------------------------------------------------
 
-    private static final String CHILD_WORKFLOW_ID_PREFIX = "childwf-";
     private static final String WORKFLOW_BUSY_ERROR = "WorkflowBusyError";
     private static final String CHILD_WORKFLOW_KIND = "CHILD_WORKFLOW";
 
@@ -1081,7 +1083,7 @@ public final class WorkflowContextNative {
         try {
             WorkflowWorkerNative.awaitWhileSuspended();
             String functionName = childWorkflow.getType().getName();
-            String childId = CHILD_WORKFLOW_ID_PREFIX + functionName + "-" + Workflow.randomUUID();
+            String childId = functionName + "-" + Workflow.randomUUID();
             ChildWorkflowStub stub = newChildStub(functionName, childId,
                     stepId instanceof BString bStepId ? bStepId.getValue() : null);
             Object javaInput = input == null ? null : TypesUtil.convertBallerinaToJavaType(input);
@@ -1182,7 +1184,7 @@ public final class WorkflowContextNative {
         try {
             WorkflowWorkerNative.awaitWhileSuspended();
             String functionName = childWorkflow.getType().getName();
-            String childId = CHILD_WORKFLOW_ID_PREFIX + functionName + "-" + Workflow.randomUUID();
+            String childId = functionName + "-" + Workflow.randomUUID();
             ChildWorkflowStub stub = newChildStub(functionName, childId,
                     stepId instanceof BString bStepId ? bStepId.getValue() : null);
             Object javaInput = input == null ? null : TypesUtil.convertBallerinaToJavaType(input);
@@ -1247,7 +1249,6 @@ public final class WorkflowContextNative {
     // DurableAgent.run / result reads execute inside a workflow.
     // -----------------------------------------------------------------------------------------
 
-    private static final String CHILD_AGENT_ID_PREFIX = "childagent-";
 
     /**
      * Starts a durable agent instance as a true Temporal child workflow of the current workflow.
@@ -1262,7 +1263,7 @@ public final class WorkflowContextNative {
     public static Object startDurableAgentChild(String agentName, Map<String, Object> runInput) {
         try {
             WorkflowWorkerNative.awaitWhileSuspended();
-            String childId = CHILD_AGENT_ID_PREFIX + agentName + "-" + Workflow.randomUUID();
+            String childId = agentName + "-" + Workflow.randomUUID();
             // Started by an agent's model rather than from a call site, so there is no step id.
             ChildWorkflowStub stub = newChildStub(agentName, childId, null);
             Promise<Object> result = stub.executeAsync(Object.class, runInput);

@@ -118,6 +118,53 @@ public type HumanTaskSummary record {|
     boolean canComplete = false;
 |};
 
+# One item of a person's unified work queue: a human task, or a review activity — which is a
+# human task with a fixed decision contract. The kinds stay distinct (each opens its own UX);
+# what they share is the queue and its filters.
+#
+# + kind - `HUMAN_TASK` or `REVIEW_ACTIVITY`
+# + taskId - The instance id of the item (a bare UUID)
+# + taskName - Qualified name (`workflowDefinition.taskOrActivityName`)
+# + title - Display title, falling back to the task name when none was set
+# + trigger - Reviews only: `PRE_RUN` (approval gate) | `ON_FAILURE` (rerun decision)
+# + parentWorkflowId - The workflow instance waiting on this item
+# + parentWorkflowType - The parent's registered workflow type, when known
+# + status - The item's current state; a rejected review completes — its failure travels
+#            to the workflow, never into the review's own status
+# + startTime - ISO-8601 timestamp when the item was created
+# + closeTime - ISO-8601 timestamp when it ended, or `()` while pending
+# + userRoles - Roles permitted to act on this item
+# + canComplete - Whether the requesting caller may act on it
+public type WorkItemSummary record {|
+    string kind;
+    string taskId;
+    string taskName;
+    string title = "";
+    string? trigger = ();
+    # The Temporal namespace the item lives in (the project scope)
+    string namespace?;
+    # The task queue of the integration serving this item; route mutations there
+    string taskQueue?;
+    string parentWorkflowId;
+    string? parentWorkflowType;
+    string status;
+    string startTime;
+    string? closeTime;
+    string[] userRoles;
+    boolean canComplete = false;
+|};
+
+# One page of the unified work queue.
+#
+# + items - The page of work items
+# + nextPageToken - Cursor for the next page, or `()` on the last one
+# + hasMore - Whether more items exist past this page
+public type WorkItemPage record {|
+    WorkItemSummary[] items;
+    string? nextPageToken;
+    boolean hasMore;
+|};
+
 # Detailed info about a human task, including memo fields set at task creation.
 #
 # + taskId - Child workflow ID of this task instance

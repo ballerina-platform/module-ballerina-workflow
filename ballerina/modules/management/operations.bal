@@ -219,6 +219,134 @@ isolated function opListHumanTasks(string? status, string? parentWorkflowId, str
     return paginateHumanTasks(enriched, clampLimit('limit, maxPageSize), pageToken).toJson();
 }
 
+// ── The unified work queue ──
+//
+// A review is a human task with a fixed decision contract, and the person acting is the same —
+// so one operation lists both kinds behind one filter set and one token stream. Each kind keeps
+// its own visibility rule: a task shows only to callers whose roles may complete it, a review
+// to callers `canAccessReviewActivity` admits.
+
+isolated function opListWorkItems(string? kinds, string? status, string? parentWorkflowId,
+        string? parentWorkflowType, int 'limit, string? pageToken,
+        string? startTimeFrom, string? startTimeTo, string? closeTimeFrom, string? closeTimeTo,
+        string? taskQueue, [string, string...]? callerRoles) returns json|Error {
+    boolean wantTasks = kinds is () || kinds.includes("HUMAN_TASK");
+    boolean wantReviews = kinds is () || kinds.includes("REVIEW_ACTIVITY");
+    WorkItemSummary[] merged = [];
+
+    if wantTasks {
+        HumanTaskSummary[]|error tasks = listAllHumanTasks(status,
+                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
+        if tasks is error {
+            return executionFailed("Failed to list human tasks: " + tasks.message());
+        }
+        foreach HumanTaskSummary t in tasks {
+            if parentWorkflowId is string && t.parentWorkflowId != parentWorkflowId {
+                continue;
+            }
+            if parentWorkflowType is string && t.parentWorkflowType != parentWorkflowType {
+                continue;
+            }
+            if !hasRoleIntersection(t.userRoles, callerRoles) {
+                continue;
+            }
+            merged.push({
+                kind: "HUMAN_TASK",
+                taskId: t.taskId,
+                taskName: t.taskName,
+                title: t.title != "" ? t.title : t.taskName,
+                namespace: t.namespace,
+                taskQueue: t.taskQueue,
+                parentWorkflowId: t.parentWorkflowId,
+                parentWorkflowType: t.parentWorkflowType,
+                status: t.status,
+                startTime: t.startTime,
+                closeTime: t.closeTime,
+                userRoles: t.userRoles,
+                canComplete: true
+            });
+        }
+    }
+
+    if wantReviews {
+        ReviewActivitySummary[]|error reviews = listAllReviewActivities(status,
+                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
+        if reviews is error {
+            return executionFailed("Failed to list review activities: " + reviews.message());
+        }
+        foreach ReviewActivitySummary t in reviews {
+            if parentWorkflowId is string && t.parentWorkflowId != parentWorkflowId {
+                continue;
+            }
+            // A review's summary has no parent-type field; its qualified task name carries it.
+            string? reviewParentType = parentTypeOfQualifiedName(t.taskName);
+            if parentWorkflowType is string && reviewParentType != parentWorkflowType {
+                continue;
+            }
+            if !canAccessReviewActivity(t.userRoles, callerRoles) {
+                continue;
+            }
+            merged.push({
+                kind: "REVIEW_ACTIVITY",
+                taskId: t.taskId,
+                taskName: t.taskName,
+                title: t.title != "" ? t.title : t.taskName,
+                trigger: t.trigger,
+                namespace: t.namespace,
+                taskQueue: t.taskQueue,
+                parentWorkflowId: t.parentWorkflowId,
+                parentWorkflowType: reviewParentType,
+                status: t.status,
+                startTime: t.startTime,
+                closeTime: t.closeTime,
+                userRoles: t.userRoles,
+                canComplete: true
+            });
+        }
+    }
+
+    return paginateWorkItems(merged, clampLimit('limit, maxPageSize), pageToken).toJson();
+}
+
+# The workflow-definition part of a qualified task name (`fulfilOrder.restockApproval` →
+# `fulfilOrder`), or `()` when the name carries no qualifier.
+#
+# + qualifiedName - the qualified task or activity name
+# + return - the workflow-definition part, or `()`
+isolated function parentTypeOfQualifiedName(string qualifiedName) returns string? {
+    int? dot = qualifiedName.indexOf(".");
+    return dot is int && dot > 0 ? qualifiedName.substring(0, dot) : ();
+}
+
+isolated function paginateWorkItems(WorkItemSummary[] items, int 'limit, string? pageToken)
+        returns WorkItemPage {
+    // The same deterministic (startTime, taskId) cursor the per-kind pages use — one stream
+    // across both kinds, stable across calls.
+    WorkItemSummary[] sorted = from WorkItemSummary t in items
+        order by t.startTime ascending, t.taskId ascending select t;
+    WorkItemSummary[] remaining = sorted;
+    if pageToken is string {
+        [string, string] cursor = decodeCursorToken(pageToken);
+        string cursorTime = cursor[0];
+        string cursorId = cursor[1];
+        if cursorTime != "" {
+            remaining = from WorkItemSummary t in sorted
+                where t.startTime > cursorTime
+                    || (t.startTime == cursorTime && t.taskId > cursorId)
+                select t;
+        }
+    }
+    int count = remaining.length();
+    boolean hasMore = count > 'limit;
+    WorkItemSummary[] pageItems = hasMore ? remaining.slice(0, 'limit) : remaining;
+    string? nextToken = ();
+    if hasMore {
+        WorkItemSummary last = pageItems[pageItems.length() - 1];
+        nextToken = encodeCursorToken(last.startTime, last.taskId);
+    }
+    return {items: pageItems, nextPageToken: nextToken, hasMore: hasMore};
+}
+
 isolated function opPendingHumanTaskCount(string? taskQueue, [string, string...]? callerRoles)
         returns json|Error {
     HumanTaskSummary[]|error pending = listAllHumanTasks("PENDING", taskQueue = taskQueue);

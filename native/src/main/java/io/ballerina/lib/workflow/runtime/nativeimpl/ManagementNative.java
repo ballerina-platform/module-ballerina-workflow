@@ -463,6 +463,9 @@ public final class ManagementNative {
             addTimeClause(clauses, closeTimeFrom, "CloseTime", ">=");
             addTimeClause(clauses, closeTimeTo, "CloseTime", "<=");
             addTaskQueueClause(clauses, taskQueue);
+            // The type is the classifier, and it is queryable — filter server-side instead of
+            // scanning the namespace and discarding.
+            clauses.add("WorkflowType STARTS_WITH '" + WorkflowWorkerNative.HUMANTASK_TYPE_PREFIX + "'");
             String query = String.join(" AND ", clauses);
 
             RecordType summaryType = (RecordType) ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
@@ -1206,6 +1209,10 @@ public final class ManagementNative {
             addTimeClause(clauses, closeTimeFrom, "CloseTime", ">=");
             addTimeClause(clauses, closeTimeTo, "CloseTime", "<=");
             addTaskQueueClause(clauses, taskQueue);
+            // Server-side type filter, covering the pre-0.7.0 legacy retrytask forms too.
+            clauses.add("(WorkflowType STARTS_WITH '" + WorkflowWorkerNative.REVIEW_ACTIVITY_TYPE_PREFIX
+                    + "' OR WorkflowType = '" + WorkflowWorkerNative.LEGACY_RETRYTASK_WORKFLOW_TYPE
+                    + "' OR WorkflowType STARTS_WITH '" + WorkflowWorkerNative.LEGACY_RETRYTASK_WORKFLOW_TYPE + "-')");
             String query = String.join(" AND ", clauses);
 
             RecordType summaryType = (RecordType) ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),

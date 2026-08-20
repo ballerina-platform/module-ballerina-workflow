@@ -59,6 +59,8 @@ public enum Operation {
     GET_INSTANCE_EXECUTION_GRAPH = "instances.executionGraph",
     # List human tasks visible to the caller.
     LIST_HUMAN_TASKS = "humanTasks.list",
+    # List the caller's unified work queue: human tasks and review activities together.
+    LIST_WORK_ITEMS = "workItems.list",
     # Count the caller's pending human tasks.
     COUNT_PENDING_HUMAN_TASKS = "humanTasks.pendingCount",
     # Get one human task.
@@ -113,6 +115,9 @@ public type Command record {|
 # - `TERMINATE_INSTANCE` — `workflowId` (required), `runId`, `reason`.
 # - `LIST_HUMAN_TASKS` — `status`, `parentWorkflowId`, `parentWorkflowType`, `taskName`,
 #   `userRole`, `limit`, `pageToken`, the four time bounds, `taskQueue`.
+# - `LIST_WORK_ITEMS` — `kinds` (comma list of `HUMAN_TASK`/`REVIEW_ACTIVITY`; both when absent),
+#   `status`, `parentWorkflowId`, `parentWorkflowType`, `limit`, `pageToken`, the four time
+#   bounds, `taskQueue`.
 # - `COUNT_PENDING_HUMAN_TASKS` — `taskQueue`.
 # - `GET_HUMAN_TASK` — `taskId` (required).
 # - `COMPLETE_HUMAN_TASK` — `taskId` (required), `result`.
@@ -235,6 +240,14 @@ public isolated function executeCommand(Command command) returns json|Error {
             return opListHumanTasks(strParam(params, "status"),
                     strParam(params, "parentWorkflowId"), strParam(params, "parentWorkflowType"),
                     strParam(params, "taskName"), strParam(params, "userRole"),
+                    intParam(params, "limit", 20),
+                    strParam(params, "pageToken"), strParam(params, "startTimeFrom"),
+                    strParam(params, "startTimeTo"), strParam(params, "closeTimeFrom"),
+                    strParam(params, "closeTimeTo"), strParam(params, "taskQueue"), callerRoles);
+        }
+        LIST_WORK_ITEMS => {
+            return opListWorkItems(strParam(params, "kinds"), strParam(params, "status"),
+                    strParam(params, "parentWorkflowId"), strParam(params, "parentWorkflowType"),
                     intParam(params, "limit", 20),
                     strParam(params, "pageToken"), strParam(params, "startTimeFrom"),
                     strParam(params, "startTimeTo"), strParam(params, "closeTimeFrom"),

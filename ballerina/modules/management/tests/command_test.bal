@@ -84,6 +84,359 @@ function testCommandDecideRejectsUnknownAction() {
     test:assertEquals((<Error>result).message(), "Unknown review decision action: escalate");
 }
 
+// ── Bulk retry selection ──────────────────────────────────────────────────────
+// A bulk decision addresses many tasks, so every way of naming the wrong set is
+// reported before any task is decided — a partially applied batch is worse than a
+// rejected one.
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryRejectsUnknownAction() {
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "escalate", taskIds: ["reviewactivity-x"]},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "An unknown bulk action must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(),
+        "Unknown bulk retry action: escalate (expected \"retry\" or \"fail\")");
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryRequiresAction() {
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {taskIds: ["reviewactivity-x"]},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "A missing action must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(), "action is required");
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryRequiresASelector() {
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "retry"},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "A bulk decision with no selector must be rejected");
+    test:assertEquals((<Error>result).message(), "Either taskIds or parentWorkflowId is required");
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryRejectsBothSelectors() {
+    // Neither selector wins by precedence: naming both is ambiguous about which set
+    // of tasks the caller meant, so it is reported rather than resolved.
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "retry", taskIds: ["reviewactivity-x"], parentWorkflowId: "wf-1"},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "Naming both selectors must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(), "Specify either taskIds or parentWorkflowId, not both");
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryRejectsNonArrayTaskIds() {
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "retry", taskIds: "reviewactivity-x"},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "A scalar taskIds must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(), "taskIds must be a JSON array");
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryRejectsEmptyTaskIds() {
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "retry", taskIds: []},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "An empty taskIds must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(), "taskIds must not be empty");
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryRejectsNonStringTaskId() {
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "retry", taskIds: ["reviewactivity-x", 42]},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "A non-string task ID must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(), "taskIds must contain non-empty strings");
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryRejectsActivityNameWithTaskIds() {
+    // activityName narrows the set a parent workflow resolves to; with an explicit
+    // list the caller has already chosen, so accepting it would silently drop tasks
+    // the caller named.
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "retry", taskIds: ["reviewactivity-x"], activityName: "chargeCard"},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "activityName with taskIds must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(),
+        "activityName narrows a parentWorkflowId selection; it cannot be combined with taskIds");
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryRejectsOversizedBatch() {
+    // Rejected during resolution, so an oversized selection never gets materialized
+    // or looked up task by task.
+    string[] ids = [];
+    int i = 0;
+    while i <= maxBulkRetrySize {
+        ids.push("reviewactivity-" + i.toString());
+        i += 1;
+    }
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "fail", taskIds: ids.toJson()},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "An oversized batch must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(),
+        "Too many review activities in one bulk decision (maximum is " + maxBulkRetrySize.toString() + ")");
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryDeduplicatesTaskIds() returns error? {
+    // A repeated ID names one task. Without deduplication the second occurrence would
+    // be reported as already decided — by this same call.
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "fail", taskIds: ["reviewactivity-dup", "reviewactivity-dup"]},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertFalse(result is Error, "Duplicate IDs must not make the request malformed");
+    json payload = check result.ensureType();
+    BulkRetryResult report = check payload.cloneWithType();
+    test:assertEquals(report.requested, 1, "A repeated task ID is addressed once");
+    test:assertEquals(report.items.length(), 1);
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryReportsUnknownTaskAsFailedItem() returns error? {
+    // A task that cannot be decided is reported in the batch, not raised: the rest
+    // of the batch still runs.
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "fail", taskIds: ["reviewactivity-does-not-exist"]},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertFalse(result is Error, "An undecidable task must not fail the whole batch");
+    json payload = check result.ensureType();
+    BulkRetryResult report = check payload.cloneWithType();
+    test:assertEquals(report.requested, 1);
+    test:assertEquals(report.applied, 0);
+    test:assertEquals(report.failed, 1);
+    test:assertEquals(report.items[0].outcome, FAILED);
+    test:assertEquals(report.decidedBy, "alice");
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryWithRetryActionReportsPerTask() returns error? {
+    // The retry action takes the same path as fail, so it is exercised too: the two
+    // differ only in the decision submitted, and a batch of undecidable tasks still
+    // reports rather than raises.
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "retry", taskIds: ["reviewactivity-nope-1", "reviewactivity-nope-2"]},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertFalse(result is Error, "A batch of undecidable tasks must still report");
+    json payload = check result.ensureType();
+    BulkRetryResult report = check payload.cloneWithType();
+    test:assertEquals(report.action, "retry");
+    test:assertEquals(report.requested, 2);
+    test:assertEquals(report.failed, 2);
+    test:assertEquals(report.applied, 0);
+    foreach BulkItemResult item in report.items {
+        test:assertEquals(item.outcome, FAILED);
+        test:assertTrue(item.reason is string, "A failed item must say why");
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testBulkRetryFeedbackIsAcceptedForFail() returns error? {
+    json|Error result = executeCommand({
+        operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "fail", taskIds: ["reviewactivity-nope"], feedback: "not recoverable"},
+        identity: {userId: "alice", roles: ["approver"]}
+    });
+    test:assertFalse(result is Error, "Feedback must be accepted alongside a fail decision");
+    json payload = check result.ensureType();
+    BulkRetryResult report = check payload.cloneWithType();
+    test:assertEquals(report.action, "fail");
+    test:assertEquals(report.requested, 1);
+}
+
+// ── Reset request validation ──────────────────────────────────────────────────
+// A reset rewrites a run's history, so every malformed request is reported before
+// the runtime is asked to do anything.
+
+@test:Config {groups: ["unit"]}
+function testResetRequiresResetType() {
+    json|Error result = executeCommand({
+        operation: RESET_INSTANCE,
+        params: {workflowId: "wf-1"},
+        identity: {userId: "alice", roles: ["OPS"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "A missing resetType must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(), "resetType is required");
+}
+
+@test:Config {groups: ["unit"]}
+function testResetRejectsUnknownResetType() {
+    // Judged from the request alone: no such workflow exists, and the reply is still
+    // about the malformed type rather than the missing run.
+    json|Error result = executeCommand({
+        operation: RESET_INSTANCE,
+        params: {workflowId: "wf-does-not-exist", resetType: "beginning"},
+        identity: {userId: "alice", roles: ["OPS"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "An unknown resetType must be an InvalidRequestError");
+    test:assertTrue((<Error>result).message().startsWith("Unknown resetType: beginning"),
+        "The message must name the rejected type, got: " + (<Error>result).message());
+}
+
+@test:Config {groups: ["unit"]}
+function testResetRejectsUnknownReapplyType() {
+    json|Error result = executeCommand({
+        operation: RESET_INSTANCE,
+        params: {workflowId: "wf-does-not-exist", resetType: "first-workflow-task",
+            reapply: {"type": "everything"}},
+        identity: {userId: "alice", roles: ["OPS"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "An unknown reapplyType must be an InvalidRequestError");
+    test:assertTrue((<Error>result).message().startsWith("Unknown reapply.type: everything"),
+        "The message must name the rejected value, got: " + (<Error>result).message());
+}
+
+@test:Config {groups: ["unit"]}
+function testResetRejectsUnknownReapplyExclusion() {
+    // Dropping an unrecognized exclusion would reapply events the caller asked to
+    // withhold, so it is reported rather than ignored.
+    json|Error result = executeCommand({
+        operation: RESET_INSTANCE,
+        params: {workflowId: "wf-does-not-exist", resetType: "first-workflow-task",
+            reapply: {"exclude": ["timer"]}},
+        identity: {userId: "alice", roles: ["OPS"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "An unknown exclusion must be an InvalidRequestError");
+    test:assertTrue((<Error>result).message().startsWith("Unknown reapply.exclude entry: timer"),
+        "The message must name the rejected entry, got: " + (<Error>result).message());
+}
+
+@test:Config {groups: ["unit"]}
+function testResetRejectsNonArrayReapplyExclude() {
+    json|Error result = executeCommand({
+        operation: RESET_INSTANCE,
+        params: {workflowId: "wf-does-not-exist", resetType: "first-workflow-task",
+            reapply: {"exclude": "signal"}},
+        identity: {userId: "alice", roles: ["OPS"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "A scalar exclusion list must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(), "reapply.exclude must be a JSON array");
+}
+
+@test:Config {groups: ["unit"]}
+function testResetRejectsNonObjectReapply() {
+    // Dropping a malformed reapply would silently fall back to re-delivering signals —
+    // the opposite of what a caller sending it is asking for.
+    json|Error result = executeCommand({
+        operation: RESET_INSTANCE,
+        params: {workflowId: "wf-does-not-exist", resetType: "first-workflow-task", reapply: "none"},
+        identity: {userId: "alice", roles: ["OPS"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "A scalar reapply must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(), "reapply must be a JSON object");
+}
+
+@test:Config {groups: ["unit"]}
+function testResetOperationsRequireRoles() {
+    // Reset points expose the same history detail the tree and graph operations gate,
+    // and reset then rewrites that history.
+    json|Error points = executeCommand({
+        operation: LIST_RESET_POINTS,
+        params: {workflowId: "wf-does-not-exist"}
+    });
+    test:assertTrue(points is AccessDeniedError, "Listing reset points without roles must be denied");
+
+    json|Error reset = executeCommand({
+        operation: RESET_INSTANCE,
+        params: {workflowId: "wf-does-not-exist", resetType: "first-workflow-task"}
+    });
+    test:assertTrue(reset is AccessDeniedError, "Resetting without roles must be denied");
+}
+
+@test:Config {groups: ["unit"]}
+function testResetRejectsNonIntegerEventId() {
+    json|Error result = executeCommand({
+        operation: RESET_INSTANCE,
+        params: {workflowId: "wf-does-not-exist", resetType: "workflow-task-id",
+            eventId: "not-a-number"},
+        identity: {userId: "alice", roles: ["OPS"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "A non-numeric eventId must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(), "eventId must be an integer");
+}
+
+@test:Config {groups: ["unit"]}
+function testResetRequiresEventIdForTaskIdReset() {
+    json|Error result = executeCommand({
+        operation: RESET_INSTANCE,
+        params: {workflowId: "wf-does-not-exist", resetType: "workflow-task-id"},
+        identity: {userId: "alice", roles: ["OPS"]}
+    });
+    test:assertTrue(result is InvalidRequestError, "A missing eventId must be an InvalidRequestError");
+    test:assertEquals((<Error>result).message(),
+        "eventId is required when resetType is \"workflow-task-id\"");
+}
+
+@test:Config {groups: ["unit"]}
+function testResetAcceptsStringEventId() returns error? {
+    // A command may arrive from a channel that encodes scalars as text.
+    map<json> normalized = check normalizeParams({"eventId": "42"});
+    test:assertEquals(normalized["eventId"], 42);
+}
+
+// ── Review activity authorization ─────────────────────────────────────────────
+// The gate a bulk decision applies per task is the same one a single decision
+// applies, so it is pinned here — including the permissive default, which is easy
+// to mistake for "bulk retry is authorized" when it is not.
+
+@test:Config {groups: ["unit"]}
+function testDeclaredRolesGateAccess() {
+    // A review that declares roles admits only a caller holding one of them.
+    test:assertTrue(canAccessReviewActivity(["OPS", "APPROVER"], ["APPROVER"]),
+        "A caller holding a declared role may decide the review");
+    test:assertFalse(canAccessReviewActivity(["OPS"], ["AUDITOR"]),
+        "A caller holding none of the declared roles may not");
+    test:assertFalse(canAccessReviewActivity(["OPS"], ()),
+        "A caller presenting no roles may not decide a role-restricted review");
+}
+
+@test:Config {groups: ["unit"]}
+function testUndeclaredRolesAreOpenByDefault() {
+    // A failure review declares whatever roles its `retryPolicy` names, so most are
+    // role-restricted and the check above governs them. It declares none only for the
+    // legacy `"MANUAL_RETRY"` sentinel, which opts out of role restriction; for those,
+    // and with reviewActivityAccessRole left at (), any caller may decide — in bulk or
+    // one at a time. That combination is the only open path, and it is opted into.
+    test:assertTrue(canAccessReviewActivity([], ()),
+        "With no declared roles and no configured role, access is open by default");
+    test:assertTrue(canAccessReviewActivity([], ["ANYTHING"]),
+        "The declared-role check does not restrict a review that declares none");
+    test:assertTrue(reviewDecisionRoleError(()) is (),
+        "With no reviewActivityAccessRole configured, deciding is not gated on roles");
+}
+
 // ── Operation names on the wire ───────────────────────────────────────────────
 
 @test:Config {groups: ["unit"]}
@@ -234,7 +587,12 @@ isolated function commandCases() returns CommandCase[] => [
     {operation: LIST_REVIEW_ACTIVITIES, params: {status: "PENDING", 'limit: 10}},
     {operation: GET_REVIEW_ACTIVITY, params: {taskId: "reviewactivity-x"}, required: ["taskId"]},
     {operation: DECIDE_REVIEW_ACTIVITY, params: {taskId: "reviewactivity-x", action: "proceed"},
-        required: ["taskId", "action"]}
+        required: ["taskId", "action"]},
+    {operation: BULK_RETRY_REVIEW_ACTIVITIES,
+        params: {action: "fail", taskIds: ["reviewactivity-x"]}, required: ["action"]},
+    {operation: LIST_RESET_POINTS, params: {workflowId: "wf-1"}, required: ["workflowId"]},
+    {operation: RESET_INSTANCE, params: {workflowId: "wf-1", resetType: "first-workflow-task"},
+        required: ["workflowId", "resetType"]}
 ];
 
 // Every member of the enum. Kept explicit because Ballerina cannot enumerate an enum
@@ -244,7 +602,8 @@ isolated function allOperations() returns Operation[] => [
     RESUME_INSTANCE, WAKE_INSTANCE, TERMINATE_INSTANCE, CANCEL_INSTANCE, GET_INSTANCE_HISTORY,
     GET_INSTANCE_ACTIVITY_TREE, GET_INSTANCE_EXECUTION_GRAPH, LIST_HUMAN_TASKS,
     COUNT_PENDING_HUMAN_TASKS, GET_HUMAN_TASK, COMPLETE_HUMAN_TASK, FAIL_HUMAN_TASK,
-    LIST_REVIEW_ACTIVITIES, GET_REVIEW_ACTIVITY, DECIDE_REVIEW_ACTIVITY
+    LIST_REVIEW_ACTIVITIES, GET_REVIEW_ACTIVITY, DECIDE_REVIEW_ACTIVITY,
+    BULK_RETRY_REVIEW_ACTIVITIES, LIST_RESET_POINTS, RESET_INSTANCE
 ];
 
 @test:Config {groups: ["unit"]}

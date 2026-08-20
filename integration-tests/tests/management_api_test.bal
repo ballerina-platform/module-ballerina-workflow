@@ -577,13 +577,24 @@ function testGetReviewActivityInfo() returns error? {
                 "formSchema should describe the editable activity argument 'message', got: " + schema);
     }
 
+    // Audit fields are reported on both sides of a decision. They are read from history
+    // unconditionally: the decision signal is sent before the review closes, so a status
+    // check is not a sound proxy for its absence.
+    test:assertTrue(info.decidedBy is (), "A pending review must report no decider");
+    test:assertTrue(info.decidedAt is (), "A pending review must report no decision time");
+
     // Clean up — decide fail so the workflow terminates (workflow itself will also error out)
-    check management:completeReviewActivity(reviewTask.taskId, {action: "reject"});
+    check management:completeReviewActivity(reviewTask.taskId, {action: "reject"}, userId = "auditor");
     do {
         _ = check workflow:getWorkflowResult(workflowId, 15);
     } on fail {
         // expected — the workflow fails when the retry task action is "fail"
     }
+
+    management:ReviewActivityInfo decided = check management:getReviewActivityInfo(reviewTask.taskId);
+    test:assertFalse(decided.status == "PENDING", "The review must be closed once decided");
+    test:assertEquals(decided.decidedBy, "auditor", "A decided review must still report its decider");
+    test:assertTrue(decided.decidedAt is string, "A decided review must still report its decision time");
 }
 
 @test:Config {

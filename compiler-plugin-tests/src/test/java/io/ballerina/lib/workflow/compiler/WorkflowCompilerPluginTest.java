@@ -144,7 +144,8 @@ public class WorkflowCompilerPluginTest {
         String packagePath = "invalid_activity_typedesc_default";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertEquals(diagnosticResult.errorCount(), 1,
-                "Expected exactly 1 validation error for activity with explicitly defaultable typedesc param");
+                "Expected exactly 1 validation error for activity with explicitly defaultable typedesc param."
+                        + " Diagnostics: " + getDiagnosticMessages(diagnosticResult));
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_114);
     }
 
@@ -153,7 +154,8 @@ public class WorkflowCompilerPluginTest {
         String packagePath = "invalid_activity_typedesc_required";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertEquals(diagnosticResult.errorCount(), 1,
-                "Expected exactly 1 validation error for activity with required typedesc param");
+                "Expected exactly 1 validation error for activity with required typedesc param. Diagnostics: "
+                        + getDiagnosticMessages(diagnosticResult));
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_114);
     }
 
@@ -300,7 +302,8 @@ public class WorkflowCompilerPluginTest {
         String packagePath = "invalid_call_activity_client_non_reference";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertEquals(diagnosticResult.errorCount(), 3,
-                "Expected exactly 3 validation errors for non-reference client argument");
+                "Expected exactly 3 validation errors for non-reference client argument. Diagnostics: "
+                        + getDiagnosticMessages(diagnosticResult));
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_124);
     }
 
@@ -309,7 +312,8 @@ public class WorkflowCompilerPluginTest {
         String packagePath = "invalid_call_activity_client_not_module_final";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertEquals(diagnosticResult.errorCount(), 1,
-            "Expected exactly 1 validation error for client argument that is not module-level final/configurable");
+            "Expected exactly 1 validation error for client argument that is not module-level final/configurable."
+                        + " Diagnostics: " + getDiagnosticMessages(diagnosticResult));
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_125);
     }
 
@@ -837,9 +841,15 @@ public class WorkflowCompilerPluginTest {
     private String getDiagnosticMessages(DiagnosticResult diagnosticResult) {
         StringBuilder messages = new StringBuilder();
         for (Diagnostic diagnostic : diagnosticResult.diagnostics()) {
+            // The file is named as well as the position. A diagnostic these tests did not
+            // expect usually comes from somewhere other than the package under test — a
+            // dependency recompiled from source, say — and "at 747:13" alone cannot say
+            // where, which is exactly the case that is hard to diagnose from CI output.
             messages.append("\n").append(diagnostic.diagnosticInfo().severity())
+                    .append(" [").append(diagnostic.diagnosticInfo().code()).append("]")
                     .append(": ").append(diagnostic.message())
-                    .append(" at ").append(diagnostic.location().lineRange().startLine().line() + 1)
+                    .append(" at ").append(diagnostic.location().lineRange().fileName())
+                    .append(":").append(diagnostic.location().lineRange().startLine().line() + 1)
                     .append(":").append(diagnostic.location().lineRange().startLine().offset() + 1);
         }
         return messages.toString();

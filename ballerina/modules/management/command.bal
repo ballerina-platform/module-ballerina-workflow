@@ -74,7 +74,13 @@ public enum Operation {
     # Get one review activity.
     GET_REVIEW_ACTIVITY = "reviewActivities.get",
     # Decide a review activity.
-    DECIDE_REVIEW_ACTIVITY = "reviewActivities.decide"
+    DECIDE_REVIEW_ACTIVITY = "reviewActivities.decide",
+    # Retry or fail many failed-activity reviews in one call.
+    BULK_RETRY_REVIEW_ACTIVITIES = "reviewActivities.bulkRetry",
+    # List the points a run can be reset to.
+    LIST_RESET_POINTS = "instances.resetPoints",
+    # Reset a run to one of those points.
+    RESET_INSTANCE = "instances.reset"
 }
 
 # Identity of the caller an operation runs on behalf of. Drives role-based
@@ -126,6 +132,15 @@ public type Command record {|
 #   `pageToken`, the four time bounds, `taskQueue`.
 # - `GET_REVIEW_ACTIVITY` — `taskId` (required).
 # - `DECIDE_REVIEW_ACTIVITY` — `taskId` and `action` (required), `input`, `feedback`.
+# - `BULK_RETRY_REVIEW_ACTIVITIES` — `action` (required, `"retry"` or `"fail"`), and
+#   exactly one of `taskIds` (an array of review activity IDs) or `parentWorkflowId`;
+#   `activityName` narrows a `parentWorkflowId` selection, `feedback` accompanies
+#   `"fail"`. There is no parameter for replacement arguments: a bulk decision cannot
+#   change the payload an activity is retried with.
+# - `LIST_RESET_POINTS` — `workflowId` (required), `runId`.
+# - `RESET_INSTANCE` — `workflowId` and `resetType` (required), `runId`, `eventId`
+#   (required when `resetType` is `"workflow-task-id"`), `reason`, and `reapply`
+#   (`{"type": …, "exclude": [...]}`).
 #
 # ```ballerina
 # json|management:Error result = management:executeCommand({
@@ -306,6 +321,36 @@ public isolated function executeCommand(Command command) returns json|Error {
             return opDecideReviewActivity(taskId, action, input,
                     strParam(params, "feedback"), callerRoles, userId);
         }
+        LIST_RESET_POINTS => {
+            string|Error workflowId = requiredParam(params, "workflowId");
+            if workflowId is Error {
+                return workflowId;
+            }
+            return opListResetPoints(workflowId, strParam(params, "runId"), callerRoles);
+        }
+        RESET_INSTANCE => {
+            string|Error workflowId = requiredParam(params, "workflowId");
+            if workflowId is Error {
+                return workflowId;
+            }
+            string|Error resetType = requiredParam(params, "resetType");
+            if resetType is Error {
+                return resetType;
+            }
+            json rawEventId = params["eventId"];
+            return opResetInstance(workflowId, strParam(params, "runId"), resetType,
+                    rawEventId is int ? rawEventId : (), strParam(params, "reason"),
+                    params["reapply"], callerRoles, userId);
+        }
+        BULK_RETRY_REVIEW_ACTIVITIES => {
+            string|Error action = requiredParam(params, "action");
+            if action is Error {
+                return action;
+            }
+            return opBulkRetryReviewActivities(action, params["taskIds"],
+                    strParam(params, "parentWorkflowId"), strParam(params, "activityName"),
+                    strParam(params, "feedback"), callerRoles, userId);
+        }
         _ => {
             // Unreachable for a well-typed Command: the operation field is the enum.
             // Kept so the dispatch stays total if a member is added without a branch.
@@ -334,21 +379,26 @@ public isolated function executeCommand(Command command) returns json|Error {
 // unstartable. The decision path keeps its own check, in `opDecideReviewActivity`.
 final readonly & map<string> PARAM_TYPES = {
     "action": "string",
+    "activityName": "string",
     "details": "object",
     "closeTimeFrom": "string",
+    "eventId": "int",
     "closeTimeTo": "string",
     "feedback": "string",
     "limit": "int",
     "pageToken": "string",
     "parentWorkflowId": "string",
     "parentWorkflowType": "string",
+    "reapply": "object",
     "reason": "string",
+    "resetType": "string",
     "runId": "string",
     "startTimeFrom": "string",
     "startTimeTo": "string",
     "startedBy": "string",
     "status": "string",
     "taskId": "string",
+    "taskIds": "array",
     "taskName": "string",
     "taskQueue": "string",
     "timeoutSeconds": "int",
@@ -390,6 +440,13 @@ isolated function normalizeParams(map<json> params) returns map<json>|Error {
                 continue;
             }
             return invalidRequest(name + " must be a JSON object");
+        }
+        if expected == "array" {
+            if value is json[] {
+                normalized[name] = value;
+                continue;
+            }
+            return invalidRequest(name + " must be a JSON array");
         }
         if value !is string {
             return invalidRequest(name + " must be a string");

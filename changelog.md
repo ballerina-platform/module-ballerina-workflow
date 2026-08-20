@@ -55,6 +55,66 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   management module itself names no status codes). A new error subtype now surfaces as a
   classified reason everywhere, instead of silently degrading in hand-copied mappings.
 
+- **A run can be restarted from a chosen point.** Recovering a run meant terminating it and
+  starting a new one, which loses the work that already succeeded — including the steps that
+  charged a card or reserved stock — and gives the new instance a different ID, so the audit
+  trail forks.
+
+  Two operations expose Temporal's reset through the management API. `instances.resetPoints`
+  (`GET /workflow/workflows/{workflowId}/reset-points`, and a `{runId}` variant) lists the events a
+  run can be restarted from; `instances.reset` (`POST .../reset`) restarts it there, preserving history
+  up to that point and re-executing everything after it as a **new run of the same workflow ID**.
+
+  `resetType` chooses the point: `"first-workflow-task"` runs the whole workflow again with the
+  input it started with, `"workflow-task-id"` (with `eventId`) starts from a selected step, and
+  `"last-workflow-task"` moves a run wedged on a failing workflow task onto fixed code.
+
+  **A reset point is a workflow task, not an activity.** Steps scheduled by one task always come
+  back together, and everything after the point re-runs — including the error handling and
+  compensation the workflow already performed. Each point therefore reports the steps it
+  schedules (`nodeIds`/`nodeNames`, joinable to the activity tree) so a caller can see what a
+  choice re-runs before making it, and the point that re-runs the first failed step is flagged
+  `isFirstFailure`. A target that is not one of the run's points is refused with the eligible
+  event IDs rather than passed to the runtime, whose error for this does not say what is valid.
+
+  `reapply` controls what is re-delivered to the new run: `{"type": "signal"}` (the engine
+  default) re-delivers signals, `"none"` nothing, and `"all-eligible"` also updates — which
+  matters for durable agents, whose turns arrive as updates and are therefore *not* re-delivered
+  under the default. `exclude` withholds individual categories. A `reapply` that is malformed, or
+  names a category that does not exist, is reported rather than ignored: dropping it would
+  re-deliver exactly what the caller asked to withhold. Both operations require caller roles, as
+  the history reads they are built on do. Replay runs against the worker's current code, so a
+  workflow function that changed since the run started can fail to replay.
+
+- **Failed activities can be retried or failed in bulk.** A workflow that fails several
+  activities under a human-review retry policy raised one review task per failure, and an
+  operator had to decide each one individually — the same decision, repeated, with no way to
+  clear an inbox after a downstream system came back.
+
+  The new `reviewActivities.bulkRetry` operation applies one decision to many failure reviews:
+  `POST /workflow/review-activities/bulk-retry` with `{"action": "retry"}` to rerun the
+  activities with their original arguments, or `{"action": "fail"}` to surface the original
+  failures to the workflows. Tasks are named either explicitly with `taskIds`, or by
+  `parentWorkflowId` for every pending failure review of one workflow — optionally narrowed to
+  one activity with `activityName`.
+
+  **The decision cannot change the payload.** There is no field for replacement arguments
+  anywhere in the request, so editing what an activity is retried with stays a single-task
+  decision (`proceed-with-input`), where the reviewer sees the activity they are editing. For
+  the same reason, a `parentWorkflowId` selection covers only failure reviews: approval gates
+  (`PRE_RUN`) are a different decision and are never bulk-approved.
+
+  A bulk decision races other operators by nature, so it reports per-task outcomes instead of
+  failing as a whole — `APPLIED`, `SKIPPED` (already decided, or not a failure review), or
+  `FAILED` (unknown task, or one the caller may not decide) — with counts and the deciding
+  user. The response is `200` whenever the batch was accepted, including when some tasks were
+  skipped or failed; only a malformed selection is `400`. Re-issuing the same batch is
+  therefore safe: tasks decided in the meantime come back `SKIPPED`.
+
+  `maxBulkRetrySize` (default `100`, under `[ballerina.workflow.management]`) caps one batch. A
+  selection that resolves to more is rejected rather than truncated, so a caller is never told a
+  decision was applied to a larger set than it was.
+
 ### Changed
 
 - **Activities are scheduled under their plain name.** An activity's Temporal type was

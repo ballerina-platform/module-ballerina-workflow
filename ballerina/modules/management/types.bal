@@ -291,6 +291,135 @@ public type ReviewDecisionInfo record {|
     string decidedAt;
 |};
 
+# What deciding one review activity in bulk needs to know about it: whether it
+# reviews a failure, whether it is still open, and who may decide it.
+#
+# Deliberately not `ReviewActivityInfo`. That record also reports who decided and
+# when, which live only in the workflow's history and cost two paginated scans to
+# read — a price a batch would pay per task for fields it never looks at.
+#
+# + trigger - `ON_FAILURE` for a failed activity, `PRE_RUN` for a gated call
+# + status - `PENDING` while the review is still open
+# + userRoles - Roles permitted to decide it; empty means unrestricted
+type ReviewActivityState record {|
+    string trigger;
+    string status;
+    string[] userRoles;
+|};
+
+// ================================================================================
+// BULK RETRY TYPES
+// ================================================================================
+// Applying one decision to many failed-activity reviews. The decision is limited to
+// retry or fail: there is no field for replacement arguments anywhere in the request,
+// so a bulk decision cannot change the payload an activity is retried with. Editing
+// arguments stays a single-task operation (`proceed-with-input`), where the reviewer
+// sees the activity they are editing.
+
+# What to do with each review activity in a bulk decision.
+#
+# `"retry"` reruns the activity with its original arguments (the single-task
+# `proceed` decision); `"fail"` surfaces the original failure to the workflow (the
+# single-task `reject` decision).
+public type BulkRetryAction "retry"|"fail";
+
+# What happened to one review activity in a bulk decision.
+#
+# `APPLIED` — the decision was submitted.
+# `SKIPPED` — the task was not eligible and nothing was submitted: it was already
+# decided, or it gates a proposed call (`PRE_RUN`) rather than reviewing a failure.
+# `FAILED` — the decision could not be submitted: the task does not exist, the caller
+# may not decide it, or the runtime rejected it.
+public enum BulkItemOutcome {
+    APPLIED,
+    SKIPPED,
+    FAILED
+}
+
+# The outcome of one review activity within a bulk decision.
+#
+# + taskId - Workflow ID of the review activity this outcome belongs to
+# + outcome - Whether the decision was applied, skipped, or failed
+# + reason - Why, for `SKIPPED` and `FAILED`; `()` when the decision was applied
+public type BulkItemResult record {|
+    string taskId;
+    BulkItemOutcome outcome;
+    string? reason;
+|};
+
+# The result of a bulk decision. A bulk decision reports per-task outcomes rather
+# than failing as a whole: one task decided by another operator in the meantime, or
+# one the caller may not decide, does not stop the rest.
+#
+# + action - The decision applied to every eligible task
+# + requested - Number of tasks the selector resolved to
+# + applied - Number of tasks the decision was submitted for
+# + skipped - Number of tasks that were not eligible
+# + failed - Number of tasks the decision could not be submitted for
+# + items - Per-task outcomes, in the order the tasks were processed
+# + decidedBy - User ID of the caller, or `"unknown"` when the caller presented none
+# + decidedAt - ISO-8601 timestamp of when the bulk decision was processed
+public type BulkRetryResult record {|
+    BulkRetryAction action;
+    int requested;
+    int applied;
+    int skipped;
+    int failed;
+    BulkItemResult[] items;
+    string decidedBy;
+    string decidedAt;
+|};
+
+// ================================================================================
+// RESET TYPES
+// ================================================================================
+// Resetting replays a run up to a chosen point and re-executes everything after it
+// as a new run of the same workflow ID. The point is a *workflow task*, not an
+// activity: activities scheduled by one task always come back together, and every
+// step after the point re-runs — including the error handling and compensation the
+// workflow already performed.
+
+# An event a run can be reset to, and what resetting there re-runs.
+#
+# + eventId - Workflow-task event ID to reset to
+# + eventType - The eligible workflow-task event: `WORKFLOW_TASK_COMPLETED`,
+#               `WORKFLOW_TASK_FAILED`, or `WORKFLOW_TASK_TIMED_OUT`
+# + timestamp - ISO-8601 time of the event
+# + nodeIds - Activity-tree node IDs this task scheduled — all of them re-execute
+#             together. Empty when the task scheduled no visible work.
+# + nodeNames - Display names for `nodeIds`, in the same order
+# + isFirstFailure - True for the point that re-runs the run's first failed step —
+#                    the default "retry from where it broke"
+public type ResetPoint record {|
+    int eventId;
+    string eventType;
+    string timestamp;
+    string[] nodeIds;
+    string[] nodeNames;
+    boolean isFirstFailure;
+|};
+
+# Which point of a run to reset to.
+#
+# `"first-workflow-task"` replays the run from its first workflow task, so it runs
+# again from the beginning with the input it started with. `"last-workflow-task"`
+# resets to the most recent workflow task, which is how a run wedged on a failing
+# workflow task is moved onto fixed code. `"workflow-task-id"` targets one point
+# from `listResetPoints`, which is how a caller starts from a selected step.
+public type ResetTypeName "first-workflow-task"|"last-workflow-task"|"workflow-task-id";
+
+# Which post-reset events are re-delivered to the new run.
+#
+# + 'type - `"signal"` re-delivers signals (the engine default), `"none"` re-delivers
+#           nothing, and `"all-eligible"` also re-delivers updates. Durable agent turns
+#           arrive as updates, so an agent reset with `"signal"` replays the agent
+#           without its conversation.
+# + exclude - Event categories to withhold even when `'type` would re-deliver them
+public type ResetReapply record {|
+    "signal"|"none"|"all-eligible" 'type = "signal";
+    ("signal"|"update"|"nexus"|"cancel-request")[] exclude = [];
+|};
+
 // ================================================================================
 // EXECUTION VISUALIZATION TYPES
 // ================================================================================

@@ -339,6 +339,7 @@ public isolated function listPendingReviewActivities(string parentWorkflowId)
 # + startTimeTo - Optional ISO-8601 upper bound on task start time (inclusive)
 # + closeTimeFrom - Optional ISO-8601 lower bound on task close time (inclusive)
 # + closeTimeTo - Optional ISO-8601 upper bound on task close time (inclusive)
+# + taskQueue - Optional task queue filter; without it, every queue in the configured namespace
 # + return - Array of review activity summaries, or an error
 public isolated function listAllReviewActivities(string? status = (),
         string? startTimeFrom = (), string? startTimeTo = (),
@@ -346,6 +347,17 @@ public isolated function listAllReviewActivities(string? status = (),
         string? taskQueue = ()) returns ReviewActivitySummary[]|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative",
     name: "listAllReviewActivities"
+} external;
+
+# Reads only the facts a bulk decision needs about a review activity, with one
+# describe and no history scan. Not public: it exists so a batch does not pay
+# `getReviewActivityInfo`'s two history scans per task for audit fields it never reads.
+#
+# + taskId - The review activity's workflow ID
+# + return - Its trigger, status, and permitted roles, or an error when the ID is not
+#            a review activity
+isolated function getReviewActivityState(string taskId) returns ReviewActivityState|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 
 # Returns detailed info for a single review activity, including the failure context,
@@ -423,6 +435,7 @@ public isolated function startWorkflowByType(string workflowType, json? input,
 # + startTimeTo - Optional ISO-8601 upper bound on workflow start time (inclusive)
 # + closeTimeFrom - Optional ISO-8601 lower bound on workflow close time (inclusive)
 # + closeTimeTo - Optional ISO-8601 upper bound on workflow close time (inclusive)
+# + taskQueue - Optional task queue filter; without it, every queue in the configured namespace
 # + return - Paginated list of workflow instance summaries, or an error
 public isolated function listWorkflowInstances(string? status = (), string? workflowType = (),
     string? workflowId = (), string? startedBy = (), int 'limit = 20, string? pageToken = (),
@@ -457,6 +470,70 @@ public isolated function getWorkflowHistory(string workflowId, string runId)
 # + return - Ordered array of tree nodes, or an error
 public isolated function getActivityTree(string workflowId, string runId)
         returns ActivityTreeNode[]|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
+# Resolves the run a reset acts on, so the run whose points are validated is the run
+# that is reset. Module-private: it exists to pin "latest" for the two calls a reset
+# makes, not as API.
+#
+# + workflowId - The workflow instance ID
+# + runId - An explicit run ID, or `""` for the latest run
+# + return - The concrete run ID, or an error
+isolated function resolveRunId(string workflowId, string runId) returns string|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
+# Finds the run's first or last workflow-task event without reading its whole history.
+# Module-private: resetting to the beginning or the tail needs one event, and the full
+# read refuses the long-lived and wedged runs those targets exist for.
+#
+# + workflowId - The workflow instance ID
+# + runId - The run ID, or `""` for the latest run
+# + first - `true` for the first workflow task, `false` for the last
+# + return - The event ID, or an error when the run has no workflow task yet
+isolated function findBoundaryWorkflowTask(string workflowId, string runId, boolean first)
+        returns int|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
+# Returns the events this run can be reset to — its workflow-task events — each
+# annotated with the activity-tree nodes that task scheduled. A reset target is a
+# workflow task, so the annotation is what lets a caller see which steps a point
+# re-runs before choosing it.
+#
+# + workflowId - The workflow instance ID
+# + runId - The specific run ID (pass empty string for the latest run)
+# + return - Ordered array of reset points, or an error
+public isolated function listResetPoints(string workflowId, string runId)
+        returns ResetPoint[]|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
+# Resets a run to a workflow-task event: history up to that point is preserved and
+# everything after it re-executes as a **new run of the same workflow ID**.
+#
+# Everything downstream of the point runs again, including the error handling and
+# compensation the workflow already performed on its first pass, and replay happens
+# against the worker's current code — a workflow function that changed since the run
+# started can fail to replay.
+#
+# + workflowId - The workflow instance ID
+# + runId - The specific run ID (pass empty string for the latest run)
+# + eventId - The workflow-task event to reset to, from `listResetPoints`
+# + reason - Audit reason recorded with the reset
+# + reapplyType - `signal` | `none` | `all-eligible`
+# + reapplyExclude - Event categories to withhold from reapply
+# + identity - The caller recorded as the reset's identity
+# + idempotencyKey - Identifies the request so a retry is a no-op rather than a second
+#                    reset. Pass the request as the caller made it, not what it resolved
+#                    to: with `runId` omitted, "latest" names a different run once the
+#                    first reset has created one. Empty derives a key from the arguments.
+# + return - Handle carrying the unchanged workflow ID and the new run ID, or an error
+public isolated function resetWorkflowExecution(string workflowId, string runId, int eventId,
+        string reason, string reapplyType, string[] reapplyExclude, string identity,
+        string idempotencyKey = "")
+        returns WorkflowHandle|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 

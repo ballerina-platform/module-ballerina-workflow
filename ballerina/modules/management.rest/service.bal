@@ -259,7 +259,7 @@ isolated function buildMgmtListenerConfig() returns http:ListenerConfiguration {
 http:Listener? mgmtListener = ();
 
 # Creates the management listener, attaches the service, and starts it — only when
-# `enableManagementApi = true`. Called from the module `init()`. When the API is
+# `enableManagementApi = true`. Called from the module's init function. When the API is
 # disabled this is a no-op: no listener is created and the port stays free, so a
 # program that imports this module purely for its programmatic helpers opens no
 # port. The started listener is registered as a dynamic listener with the runtime,
@@ -454,6 +454,31 @@ isolated function executeToResponse(management:Operation operation, map<json> pa
     return response;
 }
 
+# Maps a reset request body to operation parameters.
+#
+# `reapply` is forwarded verbatim rather than unpacked here: a caller that sends it as
+# something other than an object is reporting a malformed request, and this module does
+# not decide what is malformed — the management module does, and rejects it by the same
+# rule it applies to the exclusions inside it.
+#
+# + workflowId - The workflow instance ID from the path
+# + runId - The run ID from the path, or `()` for the latest run
+# + body - The request body
+# + return - Parameters for `RESET_INSTANCE`
+isolated function resetParams(string workflowId, string? runId, map<json> body) returns map<json> {
+    map<json> params = {workflowId: workflowId};
+    if runId is string {
+        params["runId"] = runId;
+    }
+    foreach string name in ["resetType", "eventId", "reason", "reapply"] {
+        json value = body[name];
+        if value !is () {
+            params[name] = value;
+        }
+    }
+    return params;
+}
+
 # Maps a management error to the HTTP status code that represents it. This module
 # owns the HTTP vocabulary; the management module reports *why* an operation
 # failed as a protocol-independent `ErrorCode`, and only adapters like this one
@@ -619,6 +644,17 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
         return executeToResponse(management:GET_INSTANCE_ACTIVITY_TREE, {workflowId: workflowId}, ctx);
     }
 
+    resource isolated function get workflows/[string workflowId]/reset\-points(
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse(management:LIST_RESET_POINTS, {workflowId: workflowId}, ctx);
+    }
+
+    resource isolated function post workflows/[string workflowId]/reset(
+            http:RequestContext ctx,
+            @http:Payload map<json> body) returns http:Response {
+        return executeToResponse(management:RESET_INSTANCE, resetParams(workflowId, (), body), ctx);
+    }
+
     resource isolated function get workflows/[string workflowId]/execution\-graph(
             http:RequestContext ctx) returns http:Response {
         return executeToResponse(management:GET_INSTANCE_EXECUTION_GRAPH, {workflowId: workflowId}, ctx);
@@ -664,6 +700,17 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
     resource isolated function get workflows/[string workflowId]/[string runId]/activity\-tree(
             http:RequestContext ctx) returns http:Response {
         return executeToResponse(management:GET_INSTANCE_ACTIVITY_TREE, {workflowId: workflowId, runId: runId}, ctx);
+    }
+
+    resource isolated function get workflows/[string workflowId]/[string runId]/reset\-points(
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse(management:LIST_RESET_POINTS, {workflowId: workflowId, runId: runId}, ctx);
+    }
+
+    resource isolated function post workflows/[string workflowId]/[string runId]/reset(
+            http:RequestContext ctx,
+            @http:Payload map<json> body) returns http:Response {
+        return executeToResponse(management:RESET_INSTANCE, resetParams(workflowId, runId, body), ctx);
     }
 
     resource isolated function get workflows/[string workflowId]/[string runId]/execution\-graph(
@@ -790,6 +837,28 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             params["feedback"] = body["feedback"];
         }
         return executeToResponse(management:DECIDE_REVIEW_ACTIVITY, params, ctx);
+    }
+
+    // Retries or fails many failed-activity reviews in one call. The body names the
+    // decision and the tasks: `taskIds` for an explicit selection, or
+    // `parentWorkflowId` for every pending failure review of one workflow, optionally
+    // narrowed by `activityName`. The decision is limited to retry or fail — there is
+    // no body field for replacement arguments, so a bulk decision cannot change the
+    // payload an activity is retried with.
+    //
+    // Responds 200 with a per-task report whenever the batch was accepted, including
+    // when some tasks were skipped or failed; only a malformed selection is 400.
+    resource isolated function post review\-activities/bulk\-retry(
+            http:RequestContext ctx,
+            @http:Payload map<json> body) returns http:Response {
+        map<json> params = {};
+        foreach string name in ["action", "taskIds", "parentWorkflowId", "activityName", "feedback"] {
+            json value = body[name];
+            if value !is () {
+                params[name] = value;
+            }
+        }
+        return executeToResponse(management:BULK_RETRY_REVIEW_ACTIVITIES, params, ctx);
     }
 
 };

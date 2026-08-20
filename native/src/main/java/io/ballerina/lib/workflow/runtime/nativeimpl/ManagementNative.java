@@ -1301,7 +1301,7 @@ public final class ManagementNative {
             String trigger = decodeMemoString(dc, memoFields, "trigger", "ON_FAILURE");
             String title = decodeMemoString(dc, memoFields, "title",
                     ("ON_FAILURE".equals(trigger) ? "Review failed activity: " : "Approval required: ")
-                            + activityName);
+                            + activityName.substring(activityName.lastIndexOf('.') + 1));
             String description = decodeMemoString(dc, memoFields, "description", "");
             String formSchema = decodeMemoString(dc, memoFields, "formSchema", null);
 
@@ -1407,7 +1407,8 @@ public final class ManagementNative {
             record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(""));
             record.put(StringUtils.fromString("trigger"), StringUtils.fromString("ON_FAILURE"));
             record.put(StringUtils.fromString("title"),
-                       StringUtils.fromString("Review failed activity: " + fallbackTaskName));
+                       StringUtils.fromString("Review failed activity: "
+                               + fallbackTaskName.substring(fallbackTaskName.lastIndexOf('.') + 1)));
             record.put(StringUtils.fromString("status"), StringUtils.fromString("UNKNOWN"));
             record.put(StringUtils.fromString("startTime"), StringUtils.fromString(""));
             record.put(StringUtils.fromString("closeTime"), null);
@@ -1435,7 +1436,8 @@ public final class ManagementNative {
         String parentId = decodeMemoString(dc, memoFields, "parentWorkflowId", "");
         String trigger = decodeMemoString(dc, memoFields, "trigger", "ON_FAILURE");
         String title = decodeMemoString(dc, memoFields, "title",
-                ("ON_FAILURE".equals(trigger) ? "Review failed activity: " : "Approval required: ") + activityName);
+                ("ON_FAILURE".equals(trigger) ? "Review failed activity: " : "Approval required: ")
+                        + activityName.substring(activityName.lastIndexOf('.') + 1));
         String[] userRolesArr = new String[0];
         try {
             Payload rolesPl = memoFields.get("userRoles");

@@ -338,10 +338,13 @@ public final class WorkflowContextNative {
 
         // Title and description distinguish the review trigger for task inboxes: a failed
         // activity awaiting a rerun decision reads differently from a pre-run approval gate.
+        // Titles carry the short activity name — the workflow qualifier travels in taskName
+        // and parentWorkflowType, and repeating it in the title says everything twice.
         boolean onFailure = "ON_FAILURE".equals(trigger);
+        String shortActivityName = fullActivityName.substring(fullActivityName.lastIndexOf('.') + 1);
         String title = onFailure
-                ? "Review failed activity: " + fullActivityName
-                : "Approval required: " + fullActivityName;
+                ? "Review failed activity: " + shortActivityName
+                : "Approval required: " + shortActivityName;
         String description = onFailure
                 ? "Activity '" + fullActivityName + "' failed with: "
                         + (errorMessage != null && !errorMessage.isBlank() ? errorMessage : "an unknown error")

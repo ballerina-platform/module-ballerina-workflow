@@ -73,6 +73,8 @@ public final class AgentContextNative {
     private static final String RETRY_ON_ERROR_KEY = "retryOnError";
     /** Site prefixes of an agent's graph nodes — see {@code AgentGraphBuilder}. */
     private static final String AGENT_TOOL_SITE_PREFIX = "tool:";
+    private static final String EXECUTE_AGENT_TOOL_ACTIVITY = "executeAgentTool";
+    private static final String TOOL_NAME_ARG = "toolName";
     private static final String AGENT_TASK_SITE_PREFIX = "task:";
     /** The agent graph's model node: every built-in model call belongs to it, not to a tool. */
     private static final String AGENT_MODEL_SITE = "model";
@@ -1011,7 +1013,17 @@ public final class AgentContextNative {
      * @return the activity result coerced to {@code td}, or a Ballerina error
      */
     public static Object callActivity(BString nameB, BMap<BString, Object> args, BTypedesc td) {
-        return executeActivity(nameB.getValue(), argsToJavaMap(args), td);
+        String name = nameB.getValue();
+        Map<String, Object> namedArgs = argsToJavaMap(args);
+        // An AI-function tool runs inside the executeAgentTool wrapper, so the node this
+        // execution belongs to in the agent's graph is the advertised tool named in the
+        // arguments — never the wrapper's own name, which is machinery the graph doesn't show.
+        String site = null;
+        if (EXECUTE_AGENT_TOOL_ACTIVITY.equals(name)
+                && namedArgs.get(TOOL_NAME_ARG) instanceof String toolName) {
+            site = AGENT_TOOL_SITE_PREFIX + toolName;
+        }
+        return executeActivity(name, namedArgs, td, null, site);
     }
 
     /**
@@ -1045,7 +1057,9 @@ public final class AgentContextNative {
                 break;
             }
         }
-        return executeActivity(activityName, namedArgs, td, retryPolicy);
+        // The graph names the tool by its advertised name; a registration-time override may run
+        // it as a differently-named activity, but the site stays the tool the model called.
+        return executeActivity(activityName, namedArgs, td, retryPolicy, AGENT_TOOL_SITE_PREFIX + toolName);
     }
 
     private static Map<String, Object> argsToJavaMap(BMap<BString, Object> args) {
@@ -1056,10 +1070,6 @@ public final class AgentContextNative {
         return namedArgs;
     }
 
-    private static Object executeActivity(String activityName, Map<String, Object> namedArgs, BTypedesc td) {
-        return executeActivity(activityName, namedArgs, td, null);
-    }
-
     /**
      * Runs a registered agent activity durably, applying its retry policy: {@code null} → single attempt (failure
      * reported to the model), an AutoRetry {@code BMap} → Temporal backoff retries, or the {@code "MANUAL_RETRY"}
@@ -1068,7 +1078,7 @@ public final class AgentContextNative {
      */
     @SuppressWarnings("unchecked")
     private static Object executeActivity(String activityName, Map<String, Object> namedArgs, BTypedesc td,
-                                          Object retryPolicy) {
+                                          Object retryPolicy, String site) {
         String workflowType = Workflow.getInfo().getWorkflowType();
         String fullActivityName = ActivityNaming.activityTypeFor(workflowType, activityName);
         boolean manualRetry = retryPolicy instanceof BString s && "MANUAL_RETRY".equals(s.getValue());
@@ -1078,10 +1088,12 @@ public final class AgentContextNative {
         callConfig.put(CALL_CONFIG_MARKER, true);
         callConfig.put(RETRY_ON_ERROR_KEY, autoRetry);
         // An agent has no lexical call site — the model chose this tool — so the site is the
-        // node the call belongs to in the agent's graph: the model for a built-in model call,
-        // the tool itself otherwise.
-        String stepId = MODEL_ACTIVITIES.contains(activityName)
-                ? AGENT_MODEL_SITE : AGENT_TOOL_SITE_PREFIX + activityName;
+        // node the call belongs to in the agent's graph: the caller's explicit site when the
+        // activity runs under another identity (a wrapped AI tool, an overridden tool name),
+        // else the model for a built-in model call, else the tool itself.
+        String stepId = site != null ? site
+                : MODEL_ACTIVITIES.contains(activityName)
+                        ? AGENT_MODEL_SITE : AGENT_TOOL_SITE_PREFIX + activityName;
         callConfig.put(WorkflowContextNative.STEP_ID_KEY, stepId);
 
         RetryOptions retryOptions = autoRetry

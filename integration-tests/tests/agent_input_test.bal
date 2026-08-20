@@ -266,4 +266,51 @@ function testAgentStartEnforcesTheSchemasRequiredQuery() returns error? {
     string payloadless = check orderInputAgent.waitForResult(noPayload.workflowId);
     test:assertEquals(payloadless.trim(), "Place this order",
             "An omitted payload starts the agent on the query alone");
+
+    // An explicit nil is how JSON spells "no payload", so it reads the same as omitting the
+    // field rather than as a violation of the declared inputType.
+    management:WorkflowHandle nilPayload = check management:startWorkflowByType(
+            "orderInputAgent", {query: "Place this order", input: ()});
+    string nilResult = check orderInputAgent.waitForResult(nilPayload.workflowId);
+    test:assertEquals(nilResult.trim(), "Place this order",
+            "An explicit nil payload reads the same as omitting the field");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testAgentStartEnvelopeIsClosed() returns error? {
+    // The envelope carries exactly the fields the schema defines. A misspelled key used to be
+    // dropped in silence, which started the agent without the payload it was meant to carry —
+    // the same silent-wrong-run this PR exists to remove.
+    management:WorkflowHandle|error typo = management:startWorkflowByType(
+            "orderInputAgent", {query: "Place this order", inpt: {id: "ORD-9", qty: 1}});
+    test:assertTrue(typo is error, "A misspelled envelope field must be rejected");
+    if typo is error {
+        test:assertTrue(typo.message().includes("'inpt'"),
+                "The rejection must name the offending field: " + typo.message());
+    }
+
+    // A query-only agent defines no payload field, so a posted one is reported as the payload
+    // it is — including an explicit nil, which used to be accepted and ignored.
+    management:WorkflowHandle|error nilOnQueryOnly = management:startWorkflowByType(
+            "queryOnlyAgent", {query: "Just the query", input: ()});
+    test:assertTrue(nilOnQueryOnly is error,
+            "A query-only agent must reject an input field even when it is nil");
+    if nilOnQueryOnly is error {
+        test:assertTrue(nilOnQueryOnly.message().includes("takes no input payload"),
+                "The rejection must explain that no payload is accepted: " + nilOnQueryOnly.message());
+    }
+
+    // ...and the published schema says the envelope is closed, so a caller reading it knows
+    // that before sending anything.
+    management:WorkflowDefinition[] defs = check management:listWorkflowDefinitions();
+    foreach management:WorkflowDefinition def in defs {
+        if def.workflowType == "orderInputAgent" || def.workflowType == "queryOnlyAgent" {
+            map<json> schema = check (check (def.inputSchema ?: "").fromJsonString()).ensureType();
+            test:assertEquals(schema["additionalProperties"], false,
+                    def.workflowType + "'s schema must declare the envelope closed: "
+                            + schema.toString());
+        }
+    }
 }

@@ -671,6 +671,11 @@ public final class DurableAgentNative {
                             + (decl.inputType() == null ? "" : " and the payload in 'input'")));
         }
         BMap<BString, Object> envelope = (BMap<BString, Object>) input;
+        boolean takesPayload = decl.inputType() != null;
+        BError unknownField = rejectUnknownEnvelopeFields(agentName, envelope, takesPayload);
+        if (unknownField != null) {
+            return unknownField;
+        }
         Object queryValue = envelope == null ? null : envelope.get(StringUtils.fromString(START_QUERY_FIELD));
         // The published schema lists 'query' as required, so a start that omits it is
         // malformed rather than a start on an empty turn — an agent that reasons from its
@@ -687,18 +692,14 @@ public final class DurableAgentNative {
         }
         String query = ((BString) queryValue).getValue();
 
-        // A required query means the envelope itself is present by this point.
+        // A required query means the envelope itself is present by this point, and the field
+        // check above means a present 'input' belongs to an agent that declares a payload. A
+        // nil value is how JSON spells "no payload", so it reads the same as omitting the field.
         Object posted = envelope.get(StringUtils.fromString(START_INPUT_FIELD));
         Object payload = null;
         if (posted != null) {
-            BTypedesc inputType = decl.inputType();
-            if (inputType == null) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Durable agent '" + agentName + "' takes no input payload (inputType is ()): "
-                                + "start it with the 'query' field alone"));
-            }
             Type describing = io.ballerina.runtime.api.utils.TypeUtils.getImpliedType(
-                    inputType.getDescribingType());
+                    decl.inputType().getDescribingType());
             Object converted;
             try {
                 converted = io.ballerina.runtime.api.utils.ValueUtils.convert(posted, describing);
@@ -714,6 +715,46 @@ public final class DurableAgentNative {
         runInput.put("query", query);
         runInput.put("input", payload);
         return runInput;
+    }
+
+    /**
+     * Rejects any field the start envelope does not define, so a misspelled key fails loudly
+     * instead of dropping the payload it was meant to carry — the envelope is closed, and the
+     * published schema says so with {@code additionalProperties: false}. A query-only agent
+     * defines no {@code input} field at all, so a posted one is reported as the payload it is
+     * rather than as an anonymous unknown key, whether its value is nil or not.
+     *
+     * @param agentName    the agent name, for the diagnostic
+     * @param envelope     the posted envelope, or null
+     * @param takesPayload whether the agent declares an {@code inputType}
+     * @return a BError naming the offending fields, or null when every field is known
+     */
+    private static BError rejectUnknownEnvelopeFields(String agentName, BMap<BString, Object> envelope,
+                                                      boolean takesPayload) {
+        if (envelope == null) {
+            return null;
+        }
+        List<String> unknown = new ArrayList<>();
+        for (BString key : envelope.getKeys()) {
+            String field = key.getValue();
+            if (START_QUERY_FIELD.equals(field) || (takesPayload && START_INPUT_FIELD.equals(field))) {
+                continue;
+            }
+            if (START_INPUT_FIELD.equals(field)) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Durable agent '" + agentName + "' takes no input payload (inputType is ()): "
+                                + "start it with the 'query' field alone"));
+            }
+            unknown.add(field);
+        }
+        if (unknown.isEmpty()) {
+            return null;
+        }
+        return ErrorCreator.createError(StringUtils.fromString(
+                "Durable agent '" + agentName + "'s start input has no field "
+                        + String.join(", ", unknown.stream().map(f -> "'" + f + "'").toList())
+                        + ": the envelope takes 'query'"
+                        + (takesPayload ? " and 'input'" : " only")));
     }
 
     /**
@@ -753,6 +794,9 @@ public final class DurableAgentNative {
         schema.put("type", "object");
         schema.put("properties", properties);
         schema.put("required", required);
+        // The envelope is closed: the runtime rejects any other field, so the schema must not
+        // leave callers thinking one would be carried.
+        schema.put("additionalProperties", Boolean.FALSE);
         return TypesUtil.toJsonString(schema);
     }
 

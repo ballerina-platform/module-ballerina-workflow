@@ -24,6 +24,7 @@ import io.ballerina.runtime.api.creators.ValueCreator;
 import io.ballerina.runtime.api.flags.SymbolFlags;
 import io.ballerina.runtime.api.types.ArrayType;
 import io.ballerina.runtime.api.types.Field;
+import io.ballerina.runtime.api.types.FiniteType;
 import io.ballerina.runtime.api.types.IntersectionType;
 import io.ballerina.runtime.api.types.MapType;
 import io.ballerina.runtime.api.types.Parameter;
@@ -48,8 +49,10 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Utility class for type conversions between Ballerina and Java types.
@@ -468,6 +471,12 @@ public final class TypesUtil {
         if (tag == TypeTags.NULL_TAG) {
             return mapOf("type", "null");
         }
+        if (tag == TypeTags.FINITE_TYPE_TAG && type instanceof FiniteType finiteType) {
+            // A Ballerina enum member ("low"|"high") or any singleton type: a value set, which
+            // JSON schema spells as `enum` — without this, each member fell through to the
+            // generic-object fallback and enums rendered as unlabeled JSON boxes.
+            return finiteSchema(finiteType.getValueSpace());
+        }
 
         if (tag == TypeTags.ARRAY_TAG && type instanceof ArrayType arrayType) {
             Map<String, Object> schema = new LinkedHashMap<>();
@@ -529,6 +538,27 @@ public final class TypesUtil {
                 return mapOf("type", "null");
             }
 
+            // An enum is a union whose members are all finite: one value set, one schema —
+            // never an anyOf of per-member schemas.
+            boolean allFinite = true;
+            for (Type member : nonNullMembers) {
+                if (!(member.getTag() == TypeTags.FINITE_TYPE_TAG && member instanceof FiniteType)) {
+                    allFinite = false;
+                    break;
+                }
+            }
+            if (allFinite) {
+                Set<Object> valueSpace = new LinkedHashSet<>();
+                for (Type member : nonNullMembers) {
+                    valueSpace.addAll(((FiniteType) member).getValueSpace());
+                }
+                Map<String, Object> merged = finiteSchema(valueSpace);
+                if (hasNull) {
+                    merged.put("type", new ArrayList<>(List.of(merged.get("type"), "null")));
+                }
+                return merged;
+            }
+
             if (nonNullMembers.size() == 1) {
                 Object base = toJsonSchemaObject(nonNullMembers.get(0), depth + 1);
                 if (hasNull && base instanceof Map<?, ?> baseMapRaw) {
@@ -564,6 +594,36 @@ public final class TypesUtil {
 
         // For json/anydata and all other unsupported tags, return a generic object schema.
         return mapOf("type", "object");
+    }
+
+    /**
+     * Schema for a set of literal values: `enum` plus a `type` when the values agree on one
+     * (a Ballerina enum's members are strings; a mixed singleton union just keeps its enum).
+     */
+    private static Map<String, Object> finiteSchema(Set<Object> valueSpace) {
+        Map<String, Object> schema = new LinkedHashMap<>();
+        List<Object> values = new ArrayList<>();
+        String uniformType = null;
+        boolean uniform = true;
+        for (Object v : valueSpace) {
+            Object plain = v instanceof io.ballerina.runtime.api.values.BString bs ? bs.getValue()
+                    : v instanceof io.ballerina.runtime.api.values.BDecimal bd ? bd.decimalValue() : v;
+            values.add(plain);
+            String t = plain instanceof String ? "string"
+                    : plain instanceof Long || plain instanceof Integer ? "integer"
+                    : plain instanceof Boolean ? "boolean"
+                    : plain instanceof Number ? "number" : null;
+            if (uniformType == null) {
+                uniformType = t;
+            } else if (t == null || !uniformType.equals(t)) {
+                uniform = false;
+            }
+        }
+        if (uniform && uniformType != null) {
+            schema.put("type", uniformType);
+        }
+        schema.put("enum", values);
+        return schema;
     }
 
     private static Type dereferenceType(Type type, int depth) {

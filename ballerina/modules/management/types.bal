@@ -103,6 +103,8 @@ public type HumanTaskGroup record {|
 public type HumanTaskSummary record {|
     string taskId;
     string taskName;
+    # Display title given at task creation, falling back to the task name when none was set
+    string title = "";
     # The Temporal namespace the task lives in (the project scope)
     string namespace?;
     # The task queue of the integration serving this task; route mutations there

@@ -759,6 +759,9 @@ public final class ManagementNative {
         DataConverter dc = client.getOptions().getDataConverter();
 
         String taskName = decodeMemoString(dc, memoFields, "taskName", "");
+        // A work queue reads titles, not type names — the title is optional at creation, so it
+        // falls back to the task name rather than arriving empty.
+        String title = decodeMemoString(dc, memoFields, "title", taskName);
         String parentId = decodeMemoString(dc, memoFields, "parentWorkflowId", "");
         String parentWorkflowType = decodeMemoString(dc, memoFields, "parentWorkflowType", null);
 
@@ -776,6 +779,7 @@ public final class ManagementNative {
                                                                       "HumanTaskSummary");
         record.put(StringUtils.fromString("taskId"), StringUtils.fromString(wfId));
         record.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+        record.put(StringUtils.fromString("title"), StringUtils.fromString(title));
         // Identify the owning integration: callers in a shared namespace (project) route
         // follow-up operations to the integration serving this task queue.
         record.put(StringUtils.fromString("namespace"),

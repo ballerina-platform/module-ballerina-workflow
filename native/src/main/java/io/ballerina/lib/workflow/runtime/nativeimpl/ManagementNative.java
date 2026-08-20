@@ -2861,7 +2861,8 @@ public final class ManagementNative {
      * @return a Ballerina {@code WorkflowHandle} carrying the unchanged workflow ID and the new run ID, or an error
      */
     public static Object resetWorkflowExecution(BString workflowId, BString runId, long eventId, BString reason,
-                                                BString reapplyType, BArray excludeTypes, BString identity) {
+                                                BString reapplyType, BArray excludeTypes, BString identity,
+                                                BString idempotencyKey) {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
@@ -2891,13 +2892,19 @@ public final class ManagementNative {
                 excludeKey.append(exclude.name()).append(',');
             }
 
-            // Derived from the whole operation, so a retry after a client-side timeout is a
-            // no-op rather than a second reset of the run the first one created — while two
-            // resets of the same point that differ in what they re-deliver stay distinct
-            // requests. Keying on the target alone would silently swallow the second.
-            String requestKey = String.join("\0", workflowId.getValue(), runId.getValue(),
-                    Long.toString(eventId), reason.getValue(), identity.getValue(),
-                    reapply.name(), excludeKey.toString());
+            // A retry after a client-side timeout must be a no-op rather than a second reset
+            // of the run the first one created, while two resets of the same point that
+            // differ in what they re-deliver stay distinct requests.
+            //
+            // The caller supplies the key when it knows the request as it was made: a run
+            // resolved from "latest" is not stable across a retry, so keying on the resolved
+            // run here would defeat the purpose. Absent one, the arguments are the best
+            // available approximation.
+            String requestKey = idempotencyKey.getValue().isEmpty()
+                    ? String.join("\0", workflowId.getValue(), runId.getValue(),
+                            Long.toString(eventId), reason.getValue(), identity.getValue(),
+                            reapply.name(), excludeKey.toString())
+                    : idempotencyKey.getValue();
 
             ResetWorkflowExecutionRequest.Builder request = ResetWorkflowExecutionRequest.newBuilder()
                     .setNamespace(client.getOptions().getNamespace())

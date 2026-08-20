@@ -525,9 +525,14 @@ public isolated function listResetPoints(string workflowId, string runId)
 # + reapplyType - `signal` | `none` | `all-eligible`
 # + reapplyExclude - Event categories to withhold from reapply
 # + identity - The caller recorded as the reset's identity
+# + idempotencyKey - Identifies the request so a retry is a no-op rather than a second
+#                    reset. Pass the request as the caller made it, not what it resolved
+#                    to: with `runId` omitted, "latest" names a different run once the
+#                    first reset has created one. Empty derives a key from the arguments.
 # + return - Handle carrying the unchanged workflow ID and the new run ID, or an error
 public isolated function resetWorkflowExecution(string workflowId, string runId, int eventId,
-        string reason, string reapplyType, string[] reapplyExclude, string identity)
+        string reason, string reapplyType, string[] reapplyExclude, string identity,
+        string idempotencyKey = "")
         returns WorkflowHandle|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;

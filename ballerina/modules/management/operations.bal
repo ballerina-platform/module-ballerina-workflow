@@ -689,8 +689,20 @@ isolated function opResetInstance(string workflowId, string? runId, string reset
 
     string decidedBy = userId ?: "unknown";
     string auditReason = reason ?: ("Reset to " + resetType + " by " + decidedBy + " via management API");
+
+    // Keyed on the request as the caller made it, not on what it resolved to. With runId
+    // omitted, "latest" is a different run once the first reset has created one, and the
+    // boundary targets resolve to a different event in it — so keying on the resolved run
+    // and event would make a retry of the same request a *second* reset, of the run the
+    // first one produced. The resolved values still drive the reset itself.
+    string requestedRun = runId ?: "";
+    string requestedEvent = eventId is int ? eventId.toString() : "";
+    string requestedReapply = reapplyType ?: "signal";
+    string idempotencyKey = string `${workflowId}|${requestedRun}|${resetType}|${requestedEvent}`
+            + string `|${auditReason}|${decidedBy}|${requestedReapply}|${string:'join(",", ...excludes)}`;
+
     WorkflowHandle|error reset = resetWorkflowExecution(workflowId, pinnedRun, target, auditReason,
-            reapplyType ?: "signal", excludes, "workflow-management-api/" + decidedBy);
+            requestedReapply, excludes, "workflow-management-api/" + decidedBy, idempotencyKey);
     if reset is error {
         return classifyResetError(reset);
     }

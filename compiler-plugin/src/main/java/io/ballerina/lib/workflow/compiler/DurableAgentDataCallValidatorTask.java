@@ -19,7 +19,12 @@
 package io.ballerina.lib.workflow.compiler;
 
 import io.ballerina.compiler.api.SemanticModel;
+import io.ballerina.compiler.api.symbols.ArrayTypeSymbol;
+import io.ballerina.compiler.api.symbols.MapTypeSymbol;
+import io.ballerina.compiler.api.symbols.RecordFieldSymbol;
+import io.ballerina.compiler.api.symbols.RecordTypeSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
+import io.ballerina.compiler.api.symbols.TupleTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeDefinitionSymbol;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.syntax.tree.AssignmentStatementNode;
@@ -49,20 +54,29 @@ import io.ballerina.tools.diagnostics.DiagnosticFactory;
 import io.ballerina.tools.diagnostics.DiagnosticInfo;
 import io.ballerina.tools.diagnostics.Location;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Validates {@code DurableAgent.sendData} call sites against the target agent's declared
  * data-event channels — the agent-side counterpart of {@link SendDataValidatorTask}.
  *
- * <p>Two rules, both limited to what is statically decidable (the agent variable is a direct
+ * <p>Three rules, all limited to what is statically decidable (the agent variable is a direct
  * module-level reference and the channel name is a string literal):
  * <ul>
  *   <li>{@code WORKFLOW_152} — the channel must be declared in the agent's {@code events}.</li>
  *   <li>{@code WORKFLOW_153} — a one-way channel (no {@code response} type) produces no readable
  *       turn result, so the correlation token returned by {@code sendData} must be discarded
  *       ({@code _ = check agent.sendData(...)}); keeping it to read a data result is an error.</li>
+ *   <li>{@code WORKFLOW_154} — the {@code input} payload of {@code run} must fit the agent's
+ *       declared {@code inputType}: rejected outright for a query-only agent ({@code inputType:
+ *       ()}), and otherwise matched against the declared type — structurally for an inline
+ *       constructor, by subtyping for anything else.</li>
  * </ul>
  *
  * <p>Runs as a whole-compilation task so the agent declarations are always visible regardless of
@@ -72,6 +86,8 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
 
     private static final String SEND_DATA_METHOD = "sendData";
     private static final String RUN_METHOD = "run";
+    /** Matches the {@code org/module:version:} prefix a {@code TypeSymbol} signature carries. */
+    private static final Pattern MODULE_QUALIFIER = Pattern.compile("[\\w.]+/[\\w.]+:[\\d.]+:");
 
     /**
      * A declared channel.
@@ -83,11 +99,9 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
 
     /** How the agent's declared {@code inputType} constrains the {@code run} input payload. */
     private enum InputKind {
-        /** {@code inputType: ()} — the agent takes no input payload. */
+        /** {@code inputType: ()} — the agent takes only the query, no payload. */
         NONE,
-        /** {@code inputType: string} (the default) — the query text is the input. */
-        QUERY,
-        /** A data {@code inputType} — the payload must be a subtype of it. */
+        /** A JSON {@code inputType} — the payload must fit it ({@code json}, the default, fits all). */
         TYPED
     }
 
@@ -145,9 +159,9 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                 continue;
             }
             Map<String, ChannelDecl> channels = new HashMap<>();
-            InputKind inputKind = InputKind.QUERY;
+            InputKind inputKind = InputKind.TYPED;
             TypeSymbol inputType = null;
-            String inputTypeSource = "string";
+            String inputTypeSource = "json";
             for (MappingFieldNode field : config.fields()) {
                 if (!(field instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
                     continue;
@@ -157,10 +171,10 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                     inputTypeSource = inputTypeExpr.toSourceCode().strip();
                     if ("()".equals(inputTypeSource)) {
                         inputKind = InputKind.NONE;
-                    } else if ("string".equals(inputTypeSource)) {
-                        inputKind = InputKind.QUERY;
                     } else {
                         inputKind = InputKind.TYPED;
+                        // `json` (the open default) resolves to no type definition symbol, which
+                        // leaves the payload unconstrained — exactly the intended semantics.
                         inputType = resolveTypeSymbol(semanticModel, inputTypeExpr);
                     }
                     continue;
@@ -342,31 +356,220 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
             if (inputArg == null || inputArg.kind() == SyntaxKind.NIL_LITERAL) {
                 return;
             }
-            switch (agent.inputKind()) {
-                case NONE -> report(WorkflowDiagnostic.WORKFLOW_154, inputArg.location(), agentName,
-                        "the agent declares no input (inputType is '()'), so no payload can be passed");
-                case QUERY -> report(WorkflowDiagnostic.WORKFLOW_154, inputArg.location(), agentName,
-                        "the agent's inputType is 'string', so the query text itself is the input — "
-                                + "declare a data inputType to pass a structured payload");
-                case TYPED -> {
-                    // Constructor expressions ({...}, [...]) are contextually typed against the
-                    // anydata parameter, so their inferred type is broader than what the value
-                    // satisfies — those are shape-checked at runtime instead.
-                    if (inputArg.kind() == SyntaxKind.MAPPING_CONSTRUCTOR
-                            || inputArg.kind() == SyntaxKind.LIST_CONSTRUCTOR) {
-                        return;
-                    }
-                    TypeSymbol declared = agent.inputType();
-                    TypeSymbol actual = semanticModel.typeOf(inputArg).orElse(null);
-                    if (declared != null && actual != null && !actual.subtypeOf(declared)) {
-                        report(WorkflowDiagnostic.WORKFLOW_154, inputArg.location(), agentName,
-                                "the payload type '" + actual.signature()
-                                        + "' is not a subtype of the declared inputType '"
-                                        + agent.inputTypeSource() + "'");
+            if (agent.inputKind() == InputKind.NONE) {
+                report(WorkflowDiagnostic.WORKFLOW_154, inputArg.location(), agentName,
+                        "the agent takes no input payload (its inputType is '()') — pass the text in "
+                                + "'query', or declare an inputType to accept a payload");
+                return;
+            }
+            TypeSymbol declared = agent.inputType();
+            if (declared == null) {
+                // The open `json` default (or a type the model cannot resolve): nothing to check
+                // statically; the runtime conversion is the only gate.
+                return;
+            }
+            checkPayload(inputArg, declared, agentName, agent.inputTypeSource(), "");
+        }
+
+        /**
+         * Checks one payload expression against its expected type, recursing through inline
+         * constructors.
+         *
+         * <p>An inline constructor cannot be checked with {@code subtypeOf}: it is contextually
+         * typed against {@code run}'s {@code json} parameter, so its inferred type is the
+         * contextual one and a correct payload would be reported as a mismatch. Instead the
+         * constructor is matched against the declared type structurally — field by field for a
+         * mapping, member by member for a list — which is what actually catches the mistakes a
+         * developer makes here (a misspelled or missing field). Any other expression carries its
+         * own declared type and is compared directly.
+         *
+         * @param expr      the payload expression
+         * @param expected  the type the payload must fit
+         * @param agentName the agent being called, for the diagnostic
+         * @param declared  the declared inputType's source text, for the diagnostic
+         * @param path      dotted path of this expression inside the payload ("" at the root)
+         */
+        private void checkPayload(ExpressionNode expr, TypeSymbol expected, String agentName,
+                                  String declared, String path) {
+            TypeSymbol target = WorkflowPluginUtils.resolveTypeReference(expected);
+            if (expr.kind() == SyntaxKind.MAPPING_CONSTRUCTOR) {
+                if (!WorkflowPluginUtils.canAcceptConstructorExpression(expected, expr.kind())) {
+                    reportShape(expr, agentName, declared, path, "a mapping value", expected);
+                    return;
+                }
+                checkMapping((MappingConstructorExpressionNode) expr, target, agentName, declared, path);
+                return;
+            }
+            if (expr.kind() == SyntaxKind.LIST_CONSTRUCTOR) {
+                if (!WorkflowPluginUtils.canAcceptConstructorExpression(expected, expr.kind())) {
+                    reportShape(expr, agentName, declared, path, "a list value", expected);
+                    return;
+                }
+                checkList((ListConstructorExpressionNode) expr, target, agentName, declared, path);
+                return;
+            }
+            TypeSymbol actual = semanticModel.typeOf(expr).orElse(null);
+            if (actual == null || actual.subtypeOf(expected)) {
+                return;
+            }
+            report(WorkflowDiagnostic.WORKFLOW_154, expr.location(), agentName, path.isEmpty()
+                    ? "the payload type '" + shortSignature(actual)
+                            + "' is not a subtype of the declared inputType '" + declared + "'"
+                    : "'" + path + "' expects '" + shortSignature(expected) + "', but the payload gives '"
+                            + shortSignature(actual) + "'");
+        }
+
+        /** Matches a mapping constructor's fields against a record or map target. */
+        private void checkMapping(MappingConstructorExpressionNode mapping, TypeSymbol target,
+                                  String agentName, String declared, String path) {
+            if (target instanceof MapTypeSymbol mapType) {
+                // Every value shares the map's constraint, so a key this pass cannot name is
+                // still checkable — only its path is unknown.
+                for (MappingFieldNode field : mapping.fields()) {
+                    if (field instanceof SpecificFieldNode sf && sf.valueExpr().isPresent()) {
+                        String name = fieldName(sf);
+                        checkPayload(sf.valueExpr().get(), mapType.typeParam(), agentName, declared,
+                                name == null ? path : join(path, name));
                     }
                 }
-                default -> { }
+                return;
             }
+            if (!(target instanceof RecordTypeSymbol recordType)) {
+                return; // A union or another shape the structural match cannot decide.
+            }
+            Map<String, RecordFieldSymbol> fields = recordType.fieldDescriptors();
+            boolean openTarget = recordType.restTypeDescriptor().isPresent();
+            Set<String> supplied = new LinkedHashSet<>();
+            for (MappingFieldNode field : mapping.fields()) {
+                if (!(field instanceof SpecificFieldNode sf)) {
+                    // A spread (`...other`) or computed key contributes fields this pass cannot
+                    // name, so neither unknown-field nor missing-field can be decided any more.
+                    return;
+                }
+                String name = fieldName(sf);
+                if (name == null) {
+                    return;
+                }
+                supplied.add(name);
+                RecordFieldSymbol declaredField = fields.get(name);
+                if (declaredField == null) {
+                    if (!openTarget) {
+                        report(WorkflowDiagnostic.WORKFLOW_154, sf.location(), agentName,
+                                "the declared inputType '" + declared + "' has no field '"
+                                        + join(path, name) + "'");
+                    }
+                    continue;
+                }
+                // A shorthand field (`{qty}`) carries its value in a variable of the same name;
+                // the name check above is all this pass can do for it.
+                if (sf.valueExpr().isPresent()) {
+                    checkPayload(sf.valueExpr().get(), declaredField.typeDescriptor(), agentName,
+                            declared, join(path, name));
+                }
+            }
+            List<String> missing = new ArrayList<>();
+            for (Map.Entry<String, RecordFieldSymbol> entry : fields.entrySet()) {
+                RecordFieldSymbol field = entry.getValue();
+                if (!field.isOptional() && !field.hasDefaultValue() && !supplied.contains(entry.getKey())) {
+                    missing.add(join(path, entry.getKey()));
+                }
+            }
+            if (!missing.isEmpty()) {
+                report(WorkflowDiagnostic.WORKFLOW_154, mapping.location(), agentName,
+                        "the declared inputType '" + declared + "' requires "
+                                + (missing.size() == 1 ? "the field " : "the fields ")
+                                + quoteAll(missing) + ", which the payload does not set");
+            }
+        }
+
+        /** Matches a list constructor's members against an array or tuple target. */
+        private void checkList(ListConstructorExpressionNode list, TypeSymbol target,
+                               String agentName, String declared, String path) {
+            List<Node> members = new ArrayList<>();
+            boolean spread = false;
+            for (Node member : list.expressions()) {
+                // A spread member (`...rest`) contributes an unknown number of values, so
+                // neither the arity nor the per-position types can be decided any more.
+                spread |= member.kind() == SyntaxKind.SPREAD_MEMBER;
+                members.add(member);
+            }
+            if (spread) {
+                return;
+            }
+            if (target instanceof ArrayTypeSymbol arrayType) {
+                for (int i = 0; i < members.size(); i++) {
+                    if (members.get(i) instanceof ExpressionNode memberExpr) {
+                        checkPayload(memberExpr, arrayType.memberTypeDescriptor(), agentName, declared,
+                                path + "[" + i + "]");
+                    }
+                }
+                return;
+            }
+            if (!(target instanceof TupleTypeSymbol tupleType)) {
+                return;
+            }
+            List<TypeSymbol> memberTypes = tupleType.memberTypeDescriptors();
+            boolean openTuple = tupleType.restTypeDescriptor().isPresent();
+            if (members.size() < memberTypes.size() || (!openTuple && members.size() > memberTypes.size())) {
+                report(WorkflowDiagnostic.WORKFLOW_154, list.location(), agentName,
+                        position(path, declared) + " expects " + memberTypes.size()
+                                + (openTuple ? " or more members" : " members") + ", but "
+                                + members.size() + " were given");
+                return;
+            }
+            for (int i = 0; i < members.size(); i++) {
+                TypeSymbol memberType = i < memberTypes.size()
+                        ? memberTypes.get(i) : tupleType.restTypeDescriptor().orElse(null);
+                if (memberType != null && members.get(i) instanceof ExpressionNode memberExpr) {
+                    checkPayload(memberExpr, memberType, agentName, declared, path + "[" + i + "]");
+                }
+            }
+        }
+
+        private void reportShape(ExpressionNode expr, String agentName, String declared, String path,
+                                 String givenShape, TypeSymbol expected) {
+            report(WorkflowDiagnostic.WORKFLOW_154, expr.location(), agentName, path.isEmpty()
+                    ? "the declared inputType '" + declared + "' does not accept " + givenShape
+                    : "'" + path + "' expects '" + shortSignature(expected) + "', which does not accept "
+                            + givenShape);
+        }
+
+        /** Names the payload position a diagnostic is about — the inputType itself at the root. */
+        private static String position(String path, String declared) {
+            return path.isEmpty() ? "the declared inputType '" + declared + "'" : "'" + path + "'";
+        }
+
+        /**
+         * A type signature without its {@code org/module:version:} qualifiers, which a diagnostic
+         * about the developer's own payload does not need and which would tie a test assertion to
+         * the package version.
+         */
+        private static String shortSignature(TypeSymbol type) {
+            return MODULE_QUALIFIER.matcher(type.signature()).replaceAll("");
+        }
+
+        private static String join(String path, String name) {
+            return path.isEmpty() ? name : path + "." + name;
+        }
+
+        private static String quoteAll(List<String> names) {
+            StringBuilder builder = new StringBuilder();
+            for (int i = 0; i < names.size(); i++) {
+                if (i > 0) {
+                    builder.append(i == names.size() - 1 ? " and " : ", ");
+                }
+                builder.append('\'').append(names.get(i)).append('\'');
+            }
+            return builder.toString();
+        }
+
+        /** The field's name, unquoting the string-literal key form; null when it is computed. */
+        private static String fieldName(SpecificFieldNode field) {
+            String text = field.fieldName().toSourceCode().strip();
+            if (text.length() >= 2 && text.startsWith("\"") && text.endsWith("\"")) {
+                return text.substring(1, text.length() - 1);
+            }
+            return text.isEmpty() ? null : text;
         }
 
         /** True when the sendData result is discarded with {@code _ = ...}. */

@@ -96,12 +96,13 @@ public isolated function registerWorkflowDescriptor(string descriptorJson)
 # + model - The agent's `ai:ModelProvider`
 # + systemPrompt - The agent's system prompt (`role` + `instructions`)
 # + maxIter - Per-turn reasoning iteration cap
-# + inputType - The agent's workflow input type: `string` (query text), a data
-#               type for a structured `run` input, or `()` for a no-input agent
+# + inputType - The type of the structured JSON payload accepted alongside the
+#               query: `json` for any payload, a narrower type to validate its
+#               shape, or `()` for a query-only agent
 # + resultType - The agent's declared result type, or `()` for the final text response
 # + return - `true` on success, or an error for a duplicate agent name
 public isolated function registerDurableAgentDecl(string agentName, ai:ModelProvider model,
-        json systemPrompt, int maxIter, typedesc<anydata>? inputType = string,
+        json systemPrompt, int maxIter, typedesc<json>? inputType = json,
         typedesc<anydata>? resultType = ()) returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
     name: "registerDurableAgentDecl"

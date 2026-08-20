@@ -44,9 +44,11 @@ import io.temporal.client.WorkflowUpdateStage;
 import io.temporal.workflow.Workflow;
 import io.temporal.workflow.WorkflowLocal;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -234,8 +236,9 @@ public final class DurableAgentNative {
      * @param model        the ai:ModelProvider
      * @param systemPrompt the system prompt value (role + instructions)
      * @param maxIter      the per-turn reasoning iteration cap
-     * @param inputType    the agent's workflow input typedesc: string (query text), another
-     *                     data type (structured run input), or null (no-input agent)
+     * @param inputType    the typedesc of the structured JSON payload accepted alongside the
+     *                     query: json (any payload), a narrower type (validated payload), or
+     *                     null (query-only agent)
      * @return true on success, or a BError when the name is already registered
      */
     public static Object registerDurableAgentDecl(BString agentName, BObject model, Object systemPrompt,
@@ -622,73 +625,79 @@ public final class DurableAgentNative {
     private static Object validateRunInput(AgentDecl decl, Object input) {
         BTypedesc inputType = decl.inputType();
         if (input == null) {
-            return null; // Omitting the input is always allowed; the query alone starts the run.
+            return null; // Omitting the payload is always allowed; the query alone starts the run.
         }
         if (inputType == null) {
             return ErrorCreator.createError(StringUtils.fromString(
-                    "Durable agent '" + decl.agentName() + "' declares no input (inputType is ()); "
-                            + "remove the 'input' argument"));
+                    "Durable agent '" + decl.agentName() + "' takes no input payload (inputType is ()): "
+                            + "pass the text in the 'query' argument, or declare an inputType"));
         }
         Type describing = io.ballerina.runtime.api.utils.TypeUtils.getImpliedType(
                 inputType.getDescribingType());
-        if (describing.getTag() == io.ballerina.runtime.api.types.TypeTags.STRING_TAG) {
-            return ErrorCreator.createError(StringUtils.fromString(
-                    "Durable agent '" + decl.agentName() + "' declares inputType 'string': the query "
-                            + "text is the input — declare a data inputType to pass a structured payload"));
-        }
         try {
             return io.ballerina.runtime.api.utils.ValueUtils.convert(input, describing);
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
                     "The 'input' argument does not match durable agent '" + decl.agentName()
-                            + "'s declared inputType: " + e.getMessage()));
+                            + "'s declared inputType '" + describing + "': " + e.getMessage()));
         }
     }
 
+    /** Field of the management-start envelope carrying the agent's user turn. */
+    private static final String START_QUERY_FIELD = "query";
+    /** Field of the management-start envelope carrying the structured payload. */
+    private static final String START_INPUT_FIELD = "input";
+
     /**
-     * Builds the runner envelope for a management-API start of a durable agent, mapping the
-     * posted input onto the declared {@code inputType}: a {@code string} input type makes the
-     * posted string the query; another data type makes the validated payload the structured
-     * run input; a no-input agent rejects any payload.
+     * Builds the runner envelope for a management-API start of a durable agent from the posted
+     * {@code {query, input}} envelope. Every agent is started the same way — the query is the
+     * user turn, and {@code input} is the structured payload validated against the declared
+     * {@code inputType} (absent for a query-only agent, whose {@code inputType} is {@code ()}).
      *
      * @param agentName the agent name (the unprefixed workflow type)
-     * @param input     the posted input (a Ballerina value, or null)
+     * @param input     the posted start envelope (a Ballerina mapping value, or null)
      * @return the runner envelope as a Java map, or a BError for an input mismatch
      */
+    @SuppressWarnings("unchecked")
     public static Object buildStartRunInput(String agentName, Object input) {
         AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName);
         if (decl == null) {
             return unknownAgentError(agentName);
         }
-        String query = "";
+        if (input != null && !(input instanceof BMap)) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Durable agent '" + agentName + "' is started with a '{query, input}' object: "
+                            + "put the user turn in 'query'"
+                            + (decl.inputType() == null ? "" : " and the payload in 'input'")));
+        }
+        BMap<BString, Object> envelope = (BMap<BString, Object>) input;
+        Object queryValue = envelope == null ? null : envelope.get(StringUtils.fromString(START_QUERY_FIELD));
+        if (queryValue != null && !(queryValue instanceof BString)) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "The 'query' field of durable agent '" + agentName + "'s start input must be a string"));
+        }
+        String query = queryValue == null ? "" : ((BString) queryValue).getValue();
+
+        Object posted = envelope == null ? null : envelope.get(StringUtils.fromString(START_INPUT_FIELD));
         Object payload = null;
-        BTypedesc inputType = decl.inputType();
-        if (input != null) {
+        if (posted != null) {
+            BTypedesc inputType = decl.inputType();
             if (inputType == null) {
                 return ErrorCreator.createError(StringUtils.fromString(
-                        "Durable agent '" + agentName + "' declares no input (inputType is ()); "
-                                + "start it without an input"));
+                        "Durable agent '" + agentName + "' takes no input payload (inputType is ()): "
+                                + "start it with the 'query' field alone"));
             }
             Type describing = io.ballerina.runtime.api.utils.TypeUtils.getImpliedType(
                     inputType.getDescribingType());
-            if (describing.getTag() == io.ballerina.runtime.api.types.TypeTags.STRING_TAG) {
-                if (!(input instanceof BString queryInput)) {
-                    return ErrorCreator.createError(StringUtils.fromString(
-                            "Durable agent '" + agentName + "' declares inputType 'string': the input "
-                                    + "must be the query text"));
-                }
-                query = queryInput.getValue();
-            } else {
-                Object converted;
-                try {
-                    converted = io.ballerina.runtime.api.utils.ValueUtils.convert(input, describing);
-                } catch (Exception e) {
-                    return ErrorCreator.createError(StringUtils.fromString(
-                            "The input does not match durable agent '" + agentName
-                                    + "'s declared inputType: " + e.getMessage()));
-                }
-                payload = TypesUtil.convertBallerinaToJavaType(converted);
+            Object converted;
+            try {
+                converted = io.ballerina.runtime.api.utils.ValueUtils.convert(posted, describing);
+            } catch (Exception e) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "The 'input' field does not match durable agent '" + agentName
+                                + "'s declared inputType '" + describing + "': " + e.getMessage()));
             }
+            payload = TypesUtil.convertBallerinaToJavaType(converted);
         }
         Map<String, Object> runInput = new HashMap<>();
         runInput.put("agentName", agentName);
@@ -698,18 +707,43 @@ public final class DurableAgentNative {
     }
 
     /**
-     * Returns the JSON schema of a declared agent's management-start input, derived from its
-     * {@code inputType}, or {@code null} when the agent declares no input or is unknown.
+     * Returns the JSON schema of a declared agent's management-start input: the uniform
+     * {@code {query, input}} envelope, where {@code input} carries the schema of the declared
+     * {@code inputType} and is omitted entirely for a query-only agent.
      *
      * @param agentName the agent name (the unprefixed workflow type)
-     * @return the input JSON schema, or null
+     * @return the start-envelope JSON schema, or null when the agent is unknown
      */
     public static String startInputSchema(String agentName) {
         AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName);
-        if (decl == null || decl.inputType() == null) {
+        if (decl == null) {
             return null;
         }
-        return TypesUtil.toJsonSchema(decl.inputType().getDescribingType());
+        Map<String, Object> query = new LinkedHashMap<>();
+        query.put("type", "string");
+        query.put("description", "The user turn the agent reasons over");
+
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put(START_QUERY_FIELD, query);
+        List<Object> required = new ArrayList<>();
+        required.add(START_QUERY_FIELD);
+
+        BTypedesc inputType = decl.inputType();
+        if (inputType != null) {
+            Type describing = io.ballerina.runtime.api.utils.TypeUtils.getImpliedType(
+                    inputType.getDescribingType());
+            properties.put(START_INPUT_FIELD, TypesUtil.toJsonSchemaValue(describing));
+            // The open `json` default accepts nil, so the payload stays optional there; a
+            // narrower type that cannot be nil has to be supplied.
+            if (!describing.isNilable()) {
+                required.add(START_INPUT_FIELD);
+            }
+        }
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "object");
+        schema.put("properties", properties);
+        schema.put("required", required);
+        return TypesUtil.toJsonString(schema);
     }
 
     // -----------------------------------------------------------------------------------------

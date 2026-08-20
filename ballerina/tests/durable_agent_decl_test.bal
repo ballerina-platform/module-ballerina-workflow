@@ -172,6 +172,21 @@ final DurableAgent typedInputAgent = check new ({
     activities: [checkStock]
 });
 
+// inputType: () — the query is this agent's only input.
+final DurableAgent queryOnlyAgent = check new ({
+    systemPrompt: {role: "", instructions: "You are an inventory assistant."},
+    model: declTestModel,
+    inputType: (),
+    activities: [checkStock]
+});
+
+// No inputType at all: the `json` default takes any payload, unvalidated.
+final DurableAgent openInputAgent = check new ({
+    systemPrompt: {role: "", instructions: "You are an inventory assistant."},
+    model: declTestModel,
+    activities: [checkStock]
+});
+
 @test:Config {groups: ["unit"], dependsOn: [testObjectModelRunnerEndToEnd]}
 function testManagementStartAndListUnified() returns error? {
     // Mirror the plugin-generated registration for an agent with a typed input.
@@ -180,6 +195,18 @@ function testManagementStartAndListUnified() returns error? {
     _ = check wfInternal:registerDurableAgentActivity("typedInputAgent", "checkStock", checkStock);
     _ = check wfInternal:registerDurableAgentRunner("typedInputAgent");
     typedInputAgent.bindAgentName("typedInputAgent");
+
+    _ = check wfInternal:registerDurableAgentDecl("queryOnlyAgent", declTestModel,
+        {role: "", instructions: "You are an inventory assistant."}, 16, ());
+    _ = check wfInternal:registerDurableAgentActivity("queryOnlyAgent", "checkStock", checkStock);
+    _ = check wfInternal:registerDurableAgentRunner("queryOnlyAgent");
+    queryOnlyAgent.bindAgentName("queryOnlyAgent");
+
+    _ = check wfInternal:registerDurableAgentDecl("openInputAgent", declTestModel,
+        {role: "", instructions: "You are an inventory assistant."}, 16);
+    _ = check wfInternal:registerDurableAgentActivity("openInputAgent", "checkStock", checkStock);
+    _ = check wfInternal:registerDurableAgentRunner("openInputAgent");
+    openInputAgent.bindAgentName("openInputAgent");
 
     // Workflows and agents list as one set of definitions: the agent entries carry
     // kind AGENT and a schema derived from the declared inputType.
@@ -197,41 +224,78 @@ function testManagementStartAndListUnified() returns error? {
     test:assertTrue(queryAgentDef is management:WorkflowDefinition
             && typedAgentDef is management:WorkflowDefinition,
         "Both agents should appear in the unified definitions list");
+    // Every agent is started through the same `{query, input}` envelope, so every agent's
+    // schema carries a required `query`; `input` appears only when a payload is accepted.
     if queryAgentDef is management:WorkflowDefinition {
         test:assertEquals(queryAgentDef.kind, "AGENT");
-        string? schema = queryAgentDef.inputSchema;
-        test:assertTrue(schema is string && schema.includes("string"),
-            "The default string inputType should produce a string schema");
+        string schema = queryAgentDef.inputSchema ?: "";
+        test:assertTrue(schema.includes("\"query\""),
+            "The start envelope should always declare a query field: " + schema);
+        test:assertTrue(schema.includes("\"input\""),
+            "The open json default should still accept a payload: " + schema);
     }
     if typedAgentDef is management:WorkflowDefinition {
-        string? schema = typedAgentDef.inputSchema;
-        test:assertTrue(schema is string && schema.includes("qty"),
-            "A typed inputType should produce its record schema: " + (schema ?: "()"));
+        string schema = typedAgentDef.inputSchema ?: "";
+        test:assertTrue(schema.includes("\"query\"") && schema.includes("qty"),
+            "A typed inputType should nest its record schema under input: " + schema);
     }
 
-    // Starting through the same management API as workflows: the string inputType makes
-    // the posted input the query; a typed inputType validates and passes the payload.
-    management:WorkflowHandle stringStart = check management:startWorkflowByType(
-        "runnerCoverageAgent", "Is the laptop in stock?");
-    string stringResult = check runnerCoverageAgent.waitForResult(stringStart.workflowId);
-    test:assertEquals(stringResult, "Stock check result: laptop is in stock",
-        "A management-started string-input agent should treat the input as the query");
+    // Starting through the same management API as workflows: the query is the user turn
+    // and the input is the payload, validated against the declared inputType.
+    management:WorkflowHandle queryStart = check management:startWorkflowByType(
+        "runnerCoverageAgent", {query: "Is the laptop in stock?"});
+    string queryResult = check runnerCoverageAgent.waitForResult(queryStart.workflowId);
+    test:assertEquals(queryResult, "Stock check result: laptop is in stock",
+        "A management-started agent should reason over the envelope's query");
 
     management:WorkflowHandle typedStart = check management:startWorkflowByType(
-        "typedInputAgent", {id: "ORD-9", qty: 2});
+        "typedInputAgent", {query: "Place this order", input: {id: "ORD-9", qty: 2}});
     string typedResult = check typedInputAgent.waitForResult(typedStart.workflowId);
     test:assertEquals(typedResult, "Stock check result: laptop is in stock",
         "A management-started typed-input agent should receive the validated payload");
 
     // A payload that does not match the declared inputType is rejected at start.
     management:WorkflowHandle|error mismatch = management:startWorkflowByType(
-        "typedInputAgent", "not an order");
+        "typedInputAgent", {query: "Place this order", input: "not an order"});
     test:assertTrue(mismatch is error, "A mismatched input must be rejected at start");
+    if mismatch is error {
+        test:assertTrue(mismatch.message().includes("'input' field"),
+            "The rejection should name the offending envelope field: " + mismatch.message());
+    }
+
+    // The envelope is the only accepted shape: a bare payload has no query to carry.
+    management:WorkflowHandle|error bare = management:startWorkflowByType(
+        "typedInputAgent", "Place this order");
+    test:assertTrue(bare is error, "A non-envelope start input must be rejected");
+
+    // A query-only agent rejects a payload it cannot pass anywhere.
+    management:WorkflowHandle|error unexpected = management:startWorkflowByType(
+        "queryOnlyAgent", {query: "hello", input: {id: "ORD-9"}});
+    test:assertTrue(unexpected is error, "A query-only agent must reject a payload");
 
     // agent.run validates dynamically too: a typed agent rejects a wrong payload.
-    anydata wrongPayload = "still not an order";
+    json wrongPayload = "still not an order";
     string|error runMismatch = typedInputAgent.run("Place this order", wrongPayload);
     test:assertTrue(runMismatch is error, "run must reject a payload that violates inputType");
+    if runMismatch is error {
+        test:assertTrue(runMismatch.message().includes("declared inputType"),
+            "The run rejection should name the declared inputType: " + runMismatch.message());
+    }
+
+    // A query-only agent rejects a payload at run() too, and says why.
+    string|error noInputRun = queryOnlyAgent.run("hello", {id: "ORD-9"});
+    test:assertTrue(noInputRun is error, "A query-only agent must reject a run payload");
+    if noInputRun is error {
+        test:assertTrue(noInputRun.message().includes("takes no input payload"),
+            "The rejection should explain that no payload is accepted: " + noInputRun.message());
+    }
+
+    // The open json default accepts any shape, and the payload reaches the model turn.
+    string openId = check openInputAgent.run("Is the laptop in stock?",
+        {"note": "urgent", "tags": ["a", "b"]});
+    string openResult = check openInputAgent.waitForResult(openId);
+    test:assertEquals(openResult, "Stock check result: laptop is in stock",
+        "The open json default should accept an arbitrary payload");
 }
 
 @test:Config {}
@@ -290,7 +354,7 @@ final DurableAgent typedResultAgent = check new ({
 function testDeclaredResultTypeEndToEnd() returns error? {
     // Mirror the plugin-generated registration for an agent with a declared result type.
     _ = check wfInternal:registerDurableAgentDecl("typedResultAgent", declTestModel,
-        {role: "", instructions: "You are an inventory assistant."}, 16, string, CoverageSummary);
+        {role: "", instructions: "You are an inventory assistant."}, 16, json, CoverageSummary);
     _ = check wfInternal:registerDurableAgentActivity("typedResultAgent", "checkStock", checkStock);
     _ = check wfInternal:registerDurableAgentRunner("typedResultAgent");
     typedResultAgent.bindAgentName("typedResultAgent");

@@ -1024,8 +1024,9 @@ public class WorkflowCompilerPluginTest {
 
     @Test(groups = "valid")
     public void testValidDurableAgentRunInput() {
-        // Query-only runs, matching typed payloads (positional and named), inline
-        // constructors (runtime-checked), and explicit nil all compile clean.
+        // Query-only runs, matching typed payloads (positional, named, and shorthand),
+        // complete inline constructors including nested records, list/map input types,
+        // the open json default taking any shape, and explicit nil all compile clean.
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("valid_durable_agent_run_input");
         Assert.assertEquals(diagnosticResult.errorCount(), 0,
                 "Expected no errors for valid run inputs. Errors: "
@@ -1034,15 +1035,34 @@ public class WorkflowCompilerPluginTest {
 
     @Test(groups = "invalid")
     public void testInvalidDurableAgentRunInput() {
-        // A payload with the default string inputType (the query IS the input), a payload
-        // for a no-input agent, a mistyped payload, and a mistyped named argument.
+        // A payload for a query-only agent, two mistyped payloads (positional and named), a
+        // list where a record is declared, and — the cases an inline constructor used to slip
+        // past — an unknown field, missing required fields, a mistyped field, an unknown and a
+        // missing field one level down, a bad array member, and tuple arity/member mismatches.
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_durable_agent_run_input");
-        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_154").size(), 4,
-                "All four run-input misuses should be flagged. Errors: "
+        List<Diagnostic> runInputErrors = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_154");
+        Assert.assertEquals(runInputErrors.size(), 12,
+                "All twelve run-input misuses should be flagged. Errors: "
                         + getDiagnosticMessages(diagnosticResult));
-        Assert.assertEquals(diagnosticResult.errorCount(), 4,
-                "Exactly the four misuses should be flagged. Errors: "
+        Assert.assertEquals(diagnosticResult.errorCount(), 12,
+                "Exactly the twelve misuses should be flagged. Errors: "
                         + getDiagnosticMessages(diagnosticResult));
+
+        // The message must say what is wrong with the payload, not just that it is wrong.
+        // Diagnostic rendering consumes the format string's single quotes, so match without them.
+        String allMessages = getDiagnosticMessages(diagnosticResult);
+        Assert.assertTrue(allMessages.contains("takes no input payload"),
+                "The query-only agent should be named as taking no payload. Errors: " + allMessages);
+        Assert.assertTrue(allMessages.contains("has no field quantity"),
+                "The unknown field should be named. Errors: " + allMessages);
+        Assert.assertTrue(allMessages.contains("has no field shipTo.country"),
+                "A nested unknown field should be named with its path. Errors: " + allMessages);
+        Assert.assertTrue(allMessages.contains("requires the fields qty and shipTo"),
+                "Both missing required fields should be named. Errors: " + allMessages);
+        Assert.assertTrue(allMessages.contains("qty expects int, but the payload gives string"),
+                "A mistyped field should name both types. Errors: " + allMessages);
+        Assert.assertTrue(allMessages.contains("expects 2 members, but 3 were given"),
+                "A tuple arity mismatch should report both counts. Errors: " + allMessages);
     }
 
     @Test(groups = "invalid")

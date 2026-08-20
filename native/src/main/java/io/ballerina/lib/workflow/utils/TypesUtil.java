@@ -357,8 +357,20 @@ public final class TypesUtil {
      * @return JSON schema string
      */
     public static String toJsonSchema(Type type) {
-        Object schema = toJsonSchemaObject(type, 0);
-        return toJsonString(schema);
+        return toJsonString(toJsonSchemaValue(type));
+    }
+
+    /**
+     * Builds the JSON Schema for the provided Ballerina type as the underlying value, so callers can
+     * embed it into a larger schema (e.g. a durable agent's {@code {query, input}} start envelope)
+     * without a string round-trip.
+     *
+     * @param type Ballerina runtime type
+     * @return the JSON schema value ({@code Map} for object schemas, {@code Boolean} for the
+     *         always-permissive schema)
+     */
+    public static Object toJsonSchemaValue(Type type) {
+        return toJsonSchemaObject(type, 0);
     }
 
     /**

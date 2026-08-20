@@ -409,7 +409,9 @@ public isolated function cancelWorkflow(string workflowId, string runId) returns
 # Starts a new workflow instance by its registered type name.
 #
 # + workflowType - The registered workflow type (function name)
-# + input - Workflow input as a JSON-compatible value
+# + input - Workflow input as a JSON-compatible value. A durable agent is started with
+#           its `{query, input}` envelope: `query` is the user turn, and `input` is the
+#           payload validated against the agent's declared `inputType`
 # + workflowId - Optional explicit workflow ID; a UUID-v7 is generated if omitted
 # + timeoutSeconds - Optional workflow execution timeout in seconds
 # + startedBy - Optional starter user ID; stored with workflow metadata for filtering

@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **A durable agent's `inputType` is now a JSON payload type, and `run` actually checks it.**
+  The field was `typedesc<anydata>?` defaulting to `string`, which made the default declaration
+  say "the query text is the input" — a mode with no payload at all, since `run(query, input)`
+  already takes the query as its own argument. Passing a payload to such an agent produced
+  `WORKFLOW_154` telling the developer their input type was `string`, a type they never wrote.
+
+  `inputType` is now `typedesc<json>?` defaulting to `json`, and `run`'s `input` parameter is
+  `json`. The three declarations mean what they say: `json` (the default) accepts any payload,
+  a narrower type — typically a record — declares the payload's shape, and `()` declares a
+  query-only agent. `inputType: string` is no longer special: it declares a payload that must
+  be a string.
+
+  **`WORKFLOW_154` now checks inline payloads.** A mapping or list constructor is contextually
+  typed against `run`'s parameter, so `subtypeOf` cannot judge it — the validator used to skip
+  those, which meant the most common call shape, `agent.run("...", {...})`, was never checked
+  at all. It is now matched against the declared type structurally, field by field and member
+  by member, through nested records and arrays, and the diagnostic names the specific problem:
+  the unknown field, the missing required fields, the mistyped field and both types, or the
+  tuple arity. Everything else is still compared by subtyping, and the runtime conversion
+  remains the gate for values the compiler cannot see.
+
+- **A durable agent is started through a uniform `{query, input}` envelope.** The management
+  API previously mapped a `string` `inputType` onto the query and any other type onto the
+  payload, so an agent could be given a query or a payload but never both, and the posted shape
+  differed per agent. Every agent now starts with the same object: `query` is the user turn and
+  `input` is the payload. `management:WorkflowDefinition.inputSchema` describes that envelope —
+  `query` is always required, and `input` carries the declared `inputType`'s own schema, absent
+  for a query-only agent.
+
 ### Added
 
 - **`management:ErrorCode` and `management:errorCodeOf(Error)`** — the machine-readable,

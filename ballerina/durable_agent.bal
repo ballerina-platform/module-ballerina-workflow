@@ -150,11 +150,12 @@ public type PeerDecl record {|
 #                program fails at startup
 # + peers - Peer durable agents advertised as delegable tools
 # + maxIter - Hard cap on reasoning iterations per turn
-# + inputType - The agent's workflow input type, used by `run` and the management
-#               API start. `string` (the default) means the query text itself is
-#               the input; a data type declares a structured `run` input payload
-#               validated against it; `()` declares a no-input agent (started
-#               empty, typically driven by its event channels)
+# + inputType - The type of the structured JSON payload the agent's `run` (and the
+#               management API start) accepts alongside the query. `json` (the
+#               default) accepts any JSON payload unvalidated; a narrower type —
+#               typically a record — declares the payload's shape and is validated
+#               against it at the call site and at run time; `()` declares a
+#               no-payload agent whose only input is the query text
 # + resultType - When declared, the agent produces a typed final result: as the
 #                reasoning loop concludes, one more durable model call converts the
 #                conversation outcome into this type, and `waitForResult`/`getResult`
@@ -162,7 +163,7 @@ public type PeerDecl record {|
 public type DurableAgentConfig record {|
     ai:SystemPrompt systemPrompt;
     ai:ModelProvider model;
-    typedesc<anydata>? inputType = string;
+    typedesc<json>? inputType = json;
     typedesc<anydata>? resultType = ();
     (ActivityDecl|function)[] activities = [];
     (ToolDecl|ai:ToolConfig|ai:BaseToolKit|function)[] tools = [];
@@ -226,9 +227,10 @@ public isolated class DurableAgent {
     # inside a `@workflow:Workflow` the agent runs as a Temporal child workflow.
     #
     # + query - The user turn appended to the agent's system prompt
-    # + input - Optional structured input for the run
+    # + input - Optional structured JSON payload for the run; must match the
+    #           agent's declared `inputType`
     # + return - The new agent instance ID, or an error
-    public isolated function run(string query, anydata input = ()) returns string|error = @java:Method {
+    public isolated function run(string query, json input = ()) returns string|error = @java:Method {
         'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
         name: "runAgent"
     } external;

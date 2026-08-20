@@ -212,8 +212,10 @@ function testAgentStartSchemaDescribesTheEnvelope() returns error? {
     map<json> typedProps = check typed["properties"].ensureType();
     test:assertTrue(typedProps.hasKey("query") && typedProps.hasKey("input"),
             "A typed agent's schema must describe both envelope fields: " + typedSchema.toString());
-    test:assertEquals(typed["required"], <json>["query", "input"],
-            "A non-nilable inputType makes the payload required: " + typedSchema.toString());
+    // Only the query is required: omitting the payload runs the agent on the query alone,
+    // exactly as run(query) does, so the schema must not advertise a stricter contract.
+    test:assertEquals(typed["required"], <json>["query"],
+            "The payload stays optional even for a typed inputType: " + typedSchema.toString());
     map<json> inputSchema = check typedProps["input"].ensureType();
     map<json> orderProps = check inputSchema["properties"].ensureType();
     test:assertTrue(orderProps.hasKey("id") && orderProps.hasKey("qty"),
@@ -230,5 +232,38 @@ function testAgentStartSchemaDescribesTheEnvelope() returns error? {
     json openSchema = check (schemas.get("openInputAgent")).fromJsonString();
     map<json> open = check openSchema.ensureType();
     test:assertEquals(open["required"], <json>["query"],
-            "The nilable json default leaves the payload optional: " + openSchema.toString());
+            "The json default's payload is optional too: " + openSchema.toString());
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testAgentStartEnforcesTheSchemasRequiredQuery() returns error? {
+    // What the schema marks required is what the start actually enforces. `query` is
+    // required, so omitting it is a malformed request rather than a silent empty turn...
+    management:WorkflowHandle|error noQuery = management:startWorkflowByType(
+            "orderInputAgent", {input: {id: "ORD-8", qty: 1}});
+    test:assertTrue(noQuery is error, "An envelope without a query must be rejected");
+    if noQuery is error {
+        test:assertTrue(noQuery.message().includes("'query' field is required"),
+                "The rejection must name the missing field: " + noQuery.message());
+    }
+
+    management:WorkflowHandle|error empty = management:startWorkflowByType("orderInputAgent", ());
+    test:assertTrue(empty is error, "A start with no envelope at all must be rejected");
+
+    // ...while an explicitly empty query is a legitimate start for an agent whose run is
+    // driven by something other than the opening turn.
+    management:WorkflowHandle emptyQuery = check management:startWorkflowByType(
+            "queryOnlyAgent", {query: ""});
+    string turn = check queryOnlyAgent.waitForResult(emptyQuery.workflowId);
+    test:assertEquals(turn.trim(), "", "An explicitly empty query is a valid start");
+
+    // `input` is NOT required, so a typed agent starts on the query alone — the same
+    // contract `run(query)` applies.
+    management:WorkflowHandle noPayload = check management:startWorkflowByType(
+            "orderInputAgent", {query: "Place this order"});
+    string payloadless = check orderInputAgent.waitForResult(noPayload.workflowId);
+    test:assertEquals(payloadless.trim(), "Place this order",
+            "An omitted payload starts the agent on the query alone");
 }

@@ -672,13 +672,23 @@ public final class DurableAgentNative {
         }
         BMap<BString, Object> envelope = (BMap<BString, Object>) input;
         Object queryValue = envelope == null ? null : envelope.get(StringUtils.fromString(START_QUERY_FIELD));
-        if (queryValue != null && !(queryValue instanceof BString)) {
+        // The published schema lists 'query' as required, so a start that omits it is
+        // malformed rather than a start on an empty turn — an agent that reasons from its
+        // events alone still says so explicitly, with '"query": ""'.
+        if (queryValue == null) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Durable agent '" + agentName + "' is started with a '{query, input}' object: "
+                            + "the 'query' field is required (pass \"\" for an agent whose run is "
+                            + "driven by its events)"));
+        }
+        if (!(queryValue instanceof BString)) {
             return ErrorCreator.createError(StringUtils.fromString(
                     "The 'query' field of durable agent '" + agentName + "'s start input must be a string"));
         }
-        String query = queryValue == null ? "" : ((BString) queryValue).getValue();
+        String query = ((BString) queryValue).getValue();
 
-        Object posted = envelope == null ? null : envelope.get(StringUtils.fromString(START_INPUT_FIELD));
+        // A required query means the envelope itself is present by this point.
+        Object posted = envelope.get(StringUtils.fromString(START_INPUT_FIELD));
         Object payload = null;
         if (posted != null) {
             BTypedesc inputType = decl.inputType();
@@ -709,7 +719,9 @@ public final class DurableAgentNative {
     /**
      * Returns the JSON schema of a declared agent's management-start input: the uniform
      * {@code {query, input}} envelope, where {@code input} carries the schema of the declared
-     * {@code inputType} and is omitted entirely for a query-only agent.
+     * {@code inputType} and is omitted entirely for a query-only agent. Only {@code query} is
+     * required — an omitted payload starts the agent on the query alone, as {@code run(query)}
+     * does — so what the schema advertises is exactly what {@link #buildStartRunInput} accepts.
      *
      * @param agentName the agent name (the unprefixed workflow type)
      * @return the start-envelope JSON schema, or null when the agent is unknown
@@ -725,6 +737,9 @@ public final class DurableAgentNative {
 
         Map<String, Object> properties = new LinkedHashMap<>();
         properties.put(START_QUERY_FIELD, query);
+        // Only the query is required. Omitting the payload runs the agent on the query alone,
+        // exactly as `run(query)` does, so listing it as required would advertise a stricter
+        // contract than either surface applies.
         List<Object> required = new ArrayList<>();
         required.add(START_QUERY_FIELD);
 
@@ -733,11 +748,6 @@ public final class DurableAgentNative {
             Type describing = io.ballerina.runtime.api.utils.TypeUtils.getImpliedType(
                     inputType.getDescribingType());
             properties.put(START_INPUT_FIELD, TypesUtil.toJsonSchemaValue(describing));
-            // The open `json` default accepts nil, so the payload stays optional there; a
-            // narrower type that cannot be nil has to be supplied.
-            if (!describing.isNilable()) {
-                required.add(START_INPUT_FIELD);
-            }
         }
         Map<String, Object> schema = new LinkedHashMap<>();
         schema.put("type", "object");

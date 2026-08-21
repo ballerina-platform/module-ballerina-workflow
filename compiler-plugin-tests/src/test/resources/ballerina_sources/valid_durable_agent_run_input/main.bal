@@ -47,6 +47,10 @@ type LineItems LineItem[];
 
 type Counts map<int>;
 
+type ReadonlyOrder readonly & OrderInput;
+
+type Trio [int, int, int];
+
 final workflow:DurableAgent typedAgent = check new ({
     systemPrompt: {role: "Order assistant", instructions: "Help the user."},
     model: chatModel,
@@ -72,6 +76,29 @@ final workflow:DurableAgent mapAgent = check new ({
     systemPrompt: {role: "Lookup assistant", instructions: "Help the user."},
     model: chatModel,
     inputType: Counts,
+    activities: [checkInventory]
+});
+
+// A builtin inputType: carrying the pre-0.9 default forward now declares a string payload,
+// and the query keeps its own argument.
+final workflow:DurableAgent stringInputAgent = check new ({
+    systemPrompt: {role: "Legacy assistant", instructions: "Help the user."},
+    model: chatModel,
+    inputType: string,
+    activities: [checkInventory]
+});
+
+final workflow:DurableAgent readonlyOrderAgent = check new ({
+    systemPrompt: {role: "Order assistant", instructions: "Help the user."},
+    model: chatModel,
+    inputType: ReadonlyOrder,
+    activities: [checkInventory]
+});
+
+final workflow:DurableAgent trioAgent = check new ({
+    systemPrompt: {role: "Trio assistant", instructions: "Help the user."},
+    model: chatModel,
+    inputType: Trio,
     activities: [checkInventory]
 });
 
@@ -118,5 +145,19 @@ public function main() returns error? {
     string m = check listAgent.run("Process these", [{sku: "A", count: 1}, {sku: "B", count: 2}]);
     string n = check mapAgent.run("Look these up", {"a": 1, "b": 2});
 
-    _ = [a, b, c, d, e, f, g, h, i, j, k, l, m, n];
+    // A builtin inputType takes a matching payload, and the query stays its own argument.
+    string o = check stringInputAgent.run("Look this up", "a string payload");
+
+    // A readonly intersection is still matched field by field, so a complete payload passes.
+    string p = check readonlyOrderAgent.run("Place this order",
+        {id: "ORD-5", qty: 1, shipTo: {city: "Matara"}});
+
+    // A fixed-length array takes exactly its declared number of members.
+    string q = check trioAgent.run("Rank these", [1, 2, 3]);
+
+    // A spread supplies fields this pass cannot name, so the payload is not called incomplete.
+    OrderInput template = {id: "ORD-6", qty: 1, shipTo: {city: "Colombo"}};
+    string r = check typedAgent.run("Place this order", {...template});
+
+    _ = [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r];
 }

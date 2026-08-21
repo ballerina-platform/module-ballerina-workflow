@@ -47,6 +47,17 @@ type LineItems LineItem[];
 
 type Pair [string, int];
 
+type ReadonlyOrder readonly & OrderInput;
+
+type Trio [int, int, int];
+
+// Carries some of OrderInput's fields, for the spread cases: a spread that already supplied
+// 'qty' would make an explicit one a duplicate key, which the type checker rejects first.
+type OrderHead record {|
+    string id;
+    Address shipTo;
+|};
+
 final workflow:DurableAgent typedAgent = check new ({
     systemPrompt: {role: "Order assistant", instructions: "Help the user."},
     model: chatModel,
@@ -65,6 +76,28 @@ final workflow:DurableAgent pairAgent = check new ({
     systemPrompt: {role: "Pair assistant", instructions: "Help the user."},
     model: chatModel,
     inputType: Pair,
+    activities: [checkInventory]
+});
+
+// A builtin inputType: carrying the pre-0.9 default forward now declares a string payload.
+final workflow:DurableAgent stringInputAgent = check new ({
+    systemPrompt: {role: "Legacy assistant", instructions: "Help the user."},
+    model: chatModel,
+    inputType: string,
+    activities: [checkInventory]
+});
+
+final workflow:DurableAgent readonlyOrderAgent = check new ({
+    systemPrompt: {role: "Order assistant", instructions: "Help the user."},
+    model: chatModel,
+    inputType: ReadonlyOrder,
+    activities: [checkInventory]
+});
+
+final workflow:DurableAgent trioAgent = check new ({
+    systemPrompt: {role: "Trio assistant", instructions: "Help the user."},
+    model: chatModel,
+    inputType: Trio,
     activities: [checkInventory]
 });
 
@@ -121,5 +154,25 @@ public function main() returns error? {
     // ERROR 12 (WORKFLOW_154): the second tuple member is declared int.
     string l = check pairAgent.run("Pair up", ["a", "b"]);
 
-    _ = [a, b, c, d, e, f, g, h, i, j, k, l];
+    // ERROR 13 (WORKFLOW_154): a builtin inputType is checked like any other.
+    int notAString = 42;
+    string m = check stringInputAgent.run("Look this up", notAString);
+
+    // ERROR 14 (WORKFLOW_154): a readonly intersection is matched field by field too.
+    string n = check readonlyOrderAgent.run("Place this order",
+        {id: "ORD-7", qty: 1, shipTo: {city: "Matara", country: "LK"}});
+
+    // ERROR 15 (WORKFLOW_154): a fixed-length array constrains arity like a tuple.
+    string o = check trioAgent.run("Rank these", [1, 2, 3, 4]);
+
+    // ERROR 16 (WORKFLOW_154): a spread leaves the fields the payload does name just as
+    // checkable, whichever side of the spread they sit on — this one is not a field at all.
+    // (The spread carries no 'qty', so the explicit ones below are not duplicate keys.)
+    OrderHead head = {id: "ORD-8", shipTo: {city: "Colombo"}};
+    string p = check typedAgent.run("Place this order", {...head, quantity: 2});
+
+    // ERROR 17 (WORKFLOW_154): and a mistyped field after a spread is still mistyped.
+    string q = check typedAgent.run("Place this order", {...head, qty: "two"});
+
+    _ = [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q];
 }

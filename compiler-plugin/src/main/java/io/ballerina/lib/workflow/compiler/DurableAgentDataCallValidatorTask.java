@@ -20,12 +20,14 @@ package io.ballerina.lib.workflow.compiler;
 
 import io.ballerina.compiler.api.SemanticModel;
 import io.ballerina.compiler.api.symbols.ArrayTypeSymbol;
+import io.ballerina.compiler.api.symbols.IntersectionTypeSymbol;
 import io.ballerina.compiler.api.symbols.MapTypeSymbol;
 import io.ballerina.compiler.api.symbols.RecordFieldSymbol;
 import io.ballerina.compiler.api.symbols.RecordTypeSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.TupleTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeDefinitionSymbol;
+import io.ballerina.compiler.api.symbols.TypeDescKind;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.syntax.tree.AssignmentStatementNode;
 import io.ballerina.compiler.syntax.tree.BasicLiteralNode;
@@ -173,8 +175,10 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                         inputKind = InputKind.NONE;
                     } else {
                         inputKind = InputKind.TYPED;
-                        // `json` (the open default) resolves to no type definition symbol, which
-                        // leaves the payload unconstrained — exactly the intended semantics.
+                        // Builtin names resolve as readily as a type definition does, so
+                        // `inputType: string` is checked like any other declared payload type.
+                        // `json` (the open default) resolves too, and constrains nothing: every
+                        // value `run` can be handed is already a subtype of it.
                         inputType = resolveTypeSymbol(semanticModel, inputTypeExpr);
                     }
                     continue;
@@ -364,8 +368,8 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
             }
             TypeSymbol declared = agent.inputType();
             if (declared == null) {
-                // The open `json` default (or a type the model cannot resolve): nothing to check
-                // statically; the runtime conversion is the only gate.
+                // A type the semantic model cannot resolve: nothing to check statically, so the
+                // runtime conversion is the only gate.
                 return;
             }
             checkPayload(inputArg, declared, agentName, agent.inputTypeSource(), "");
@@ -391,10 +395,11 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
          */
         private void checkPayload(ExpressionNode expr, TypeSymbol expected, String agentName,
                                   String declared, String path) {
-            TypeSymbol target = WorkflowPluginUtils.resolveTypeReference(expected);
+            TypeSymbol target = effectiveTarget(expected);
             if (expr.kind() == SyntaxKind.MAPPING_CONSTRUCTOR) {
                 if (!WorkflowPluginUtils.canAcceptConstructorExpression(expected, expr.kind())) {
-                    reportShape(expr, agentName, declared, path, "a mapping value", expected);
+                    reportShape(expr, agentName, declared, path,
+                            WorkflowPluginUtils.describeConstructorExpression(expr.kind()), expected);
                     return;
                 }
                 checkMapping((MappingConstructorExpressionNode) expr, target, agentName, declared, path);
@@ -402,7 +407,8 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
             }
             if (expr.kind() == SyntaxKind.LIST_CONSTRUCTOR) {
                 if (!WorkflowPluginUtils.canAcceptConstructorExpression(expected, expr.kind())) {
-                    reportShape(expr, agentName, declared, path, "a list value", expected);
+                    reportShape(expr, agentName, declared, path,
+                            WorkflowPluginUtils.describeConstructorExpression(expr.kind()), expected);
                     return;
                 }
                 checkList((ListConstructorExpressionNode) expr, target, agentName, declared, path);
@@ -440,15 +446,21 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
             Map<String, RecordFieldSymbol> fields = recordType.fieldDescriptors();
             boolean openTarget = recordType.restTypeDescriptor().isPresent();
             Set<String> supplied = new LinkedHashSet<>();
+            // A spread (`...other`) or a computed key contributes fields this pass cannot name, so
+            // a required field it might be carrying can no longer be called missing. It says
+            // nothing about the fields that ARE named, though — an unknown name stays unknown and
+            // a mistyped value stays mistyped — so those keep being checked, wherever in the
+            // constructor they sit relative to the spread.
+            boolean namesUnknownFields = false;
             for (MappingFieldNode field : mapping.fields()) {
                 if (!(field instanceof SpecificFieldNode sf)) {
-                    // A spread (`...other`) or computed key contributes fields this pass cannot
-                    // name, so neither unknown-field nor missing-field can be decided any more.
-                    return;
+                    namesUnknownFields = true;
+                    continue;
                 }
                 String name = fieldName(sf);
                 if (name == null) {
-                    return;
+                    namesUnknownFields = true;
+                    continue;
                 }
                 supplied.add(name);
                 RecordFieldSymbol declaredField = fields.get(name);
@@ -466,6 +478,9 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                     checkPayload(sf.valueExpr().get(), declaredField.typeDescriptor(), agentName,
                             declared, join(path, name));
                 }
+            }
+            if (namesUnknownFields) {
+                return;
             }
             List<String> missing = new ArrayList<>();
             for (Map.Entry<String, RecordFieldSymbol> entry : fields.entrySet()) {
@@ -497,6 +512,13 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                 return;
             }
             if (target instanceof ArrayTypeSymbol arrayType) {
+                Integer fixedLength = arrayType.size().orElse(null);
+                if (fixedLength != null && fixedLength >= 0 && fixedLength != members.size()) {
+                    report(WorkflowDiagnostic.WORKFLOW_154, list.location(), agentName,
+                            position(path, declared) + " expects " + fixedLength + " members, but "
+                                    + members.size() + " were given");
+                    return;
+                }
                 for (int i = 0; i < members.size(); i++) {
                     if (members.get(i) instanceof ExpressionNode memberExpr) {
                         checkPayload(memberExpr, arrayType.memberTypeDescriptor(), agentName, declared,
@@ -532,6 +554,25 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                     ? "the declared inputType '" + declared + "' does not accept " + givenShape
                     : "'" + path + "' expects '" + shortSignature(expected) + "', which does not accept "
                             + givenShape);
+        }
+
+        /**
+         * The type a payload value has to match, with the wrappers that do not change its shape
+         * removed: a type reference, and the {@code readonly} half of an intersection. Without the
+         * latter, {@code readonly & OrderInput} clears the shape gate and then reaches neither the
+         * record nor the map branch, so its fields go unchecked.
+         */
+        private static TypeSymbol effectiveTarget(TypeSymbol type) {
+            TypeSymbol resolved = WorkflowPluginUtils.resolveTypeReference(type);
+            if (resolved instanceof IntersectionTypeSymbol intersection) {
+                for (TypeSymbol member : intersection.memberTypeDescriptors()) {
+                    TypeSymbol effective = WorkflowPluginUtils.resolveTypeReference(member);
+                    if (effective.typeKind() != TypeDescKind.READONLY) {
+                        return effectiveTarget(effective);
+                    }
+                }
+            }
+            return resolved;
         }
 
         /** Names the payload position a diagnostic is about — the inputType itself at the root. */

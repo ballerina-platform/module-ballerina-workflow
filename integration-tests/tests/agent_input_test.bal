@@ -220,6 +220,11 @@ function testAgentStartSchemaDescribesTheEnvelope() returns error? {
     map<json> orderProps = check inputSchema["properties"].ensureType();
     test:assertTrue(orderProps.hasKey("id") && orderProps.hasKey("qty"),
             "The input schema must be the declared record's own schema: " + typedSchema.toString());
+    // The payload schema marks a field required exactly when the start needs it: `note` carries a
+    // default, and testAgentTypedInputReachesTheModelTurn starts without it, so demanding it here
+    // would send a launcher UI after a field the API does not want.
+    test:assertEquals(inputSchema["required"], <json>["id", "qty"],
+            "Only the fields without a default are required: " + typedSchema.toString());
 
     json queryOnlySchema = check (schemas.get("queryOnlyAgent")).fromJsonString();
     map<json> queryOnly = check queryOnlySchema.ensureType();
@@ -233,6 +238,11 @@ function testAgentStartSchemaDescribesTheEnvelope() returns error? {
     map<json> open = check openSchema.ensureType();
     test:assertEquals(open["required"], <json>["query"],
             "The json default's payload is optional too: " + openSchema.toString());
+    // The open json default accepts an object, a list, or a bare scalar — as
+    // testAgentOpenJsonInputAcceptsAnyShape shows — so its payload schema constrains nothing.
+    map<json> openProps = check open["properties"].ensureType();
+    test:assertEquals(openProps["input"], true,
+            "The json default's payload schema must not constrain the value: " + openSchema.toString());
 }
 
 @test:Config {

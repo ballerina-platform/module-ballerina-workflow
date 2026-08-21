@@ -1025,8 +1025,9 @@ public class WorkflowCompilerPluginTest {
     @Test(groups = "valid")
     public void testValidDurableAgentRunInput() {
         // Query-only runs, matching typed payloads (positional, named, and shorthand),
-        // complete inline constructors including nested records, list/map input types,
-        // the open json default taking any shape, and explicit nil all compile clean.
+        // complete inline constructors including nested records, list/map/fixed-array/readonly
+        // input types, a builtin inputType, a spread payload, the open json default taking any
+        // shape, and explicit nil all compile clean.
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("valid_durable_agent_run_input");
         Assert.assertEquals(diagnosticResult.errorCount(), 0,
                 "Expected no errors for valid run inputs. Errors: "
@@ -1038,31 +1039,35 @@ public class WorkflowCompilerPluginTest {
         // A payload for a query-only agent, two mistyped payloads (positional and named), a
         // list where a record is declared, and — the cases an inline constructor used to slip
         // past — an unknown field, missing required fields, a mistyped field, an unknown and a
-        // missing field one level down, a bad array member, and tuple arity/member mismatches.
+        // missing field one level down, a bad array member, tuple arity/member mismatches, a
+        // builtin inputType, a readonly intersection, fixed-array arity, and the two fields a
+        // spread does not excuse.
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_durable_agent_run_input");
         List<Diagnostic> runInputErrors = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_154");
-        Assert.assertEquals(runInputErrors.size(), 12,
-                "All twelve run-input misuses should be flagged. Errors: "
+        Assert.assertEquals(runInputErrors.size(), 17,
+                "All seventeen run-input misuses should be flagged. Errors: "
                         + getDiagnosticMessages(diagnosticResult));
-        Assert.assertEquals(diagnosticResult.errorCount(), 12,
-                "Exactly the twelve misuses should be flagged. Errors: "
+        Assert.assertEquals(diagnosticResult.errorCount(), 17,
+                "Exactly the seventeen misuses should be flagged. Errors: "
                         + getDiagnosticMessages(diagnosticResult));
 
-        // The message must say what is wrong with the payload, not just that it is wrong.
-        // Diagnostic rendering consumes the format string's single quotes, so match without them.
+        // The message must say what is wrong with the payload, not just that it is wrong — and
+        // it must keep the quotes that tell an identifier apart from the prose around it.
         String allMessages = getDiagnosticMessages(diagnosticResult);
         Assert.assertTrue(allMessages.contains("takes no input payload"),
                 "The query-only agent should be named as taking no payload. Errors: " + allMessages);
-        Assert.assertTrue(allMessages.contains("has no field quantity"),
+        Assert.assertTrue(allMessages.contains("has no field 'quantity'"),
                 "The unknown field should be named. Errors: " + allMessages);
-        Assert.assertTrue(allMessages.contains("has no field shipTo.country"),
+        Assert.assertTrue(allMessages.contains("has no field 'shipTo.country'"),
                 "A nested unknown field should be named with its path. Errors: " + allMessages);
-        Assert.assertTrue(allMessages.contains("requires the fields qty and shipTo"),
+        Assert.assertTrue(allMessages.contains("requires the fields 'qty' and 'shipTo'"),
                 "Both missing required fields should be named. Errors: " + allMessages);
-        Assert.assertTrue(allMessages.contains("qty expects int, but the payload gives string"),
+        Assert.assertTrue(allMessages.contains("'qty' expects 'int', but the payload gives 'string'"),
                 "A mistyped field should name both types. Errors: " + allMessages);
         Assert.assertTrue(allMessages.contains("expects 2 members, but 3 were given"),
                 "A tuple arity mismatch should report both counts. Errors: " + allMessages);
+        Assert.assertTrue(allMessages.contains("expects 3 members, but 4 were given"),
+                "A fixed-length array arity mismatch should report both counts. Errors: " + allMessages);
     }
 
     @Test(groups = "invalid")
@@ -1100,18 +1105,19 @@ public class WorkflowCompilerPluginTest {
         // The message has to name the parameter and its type, or it does not say what to bind.
         // The type is rendered fully qualified (ballerina/http:<version>:Client), so the
         // assertion pins the name and the type's tail rather than a version-specific string.
+        // The tail carries the closing quote so that ':Client'' does not also match ':Client[]''.
         long clientDiags = diags.stream()
                 .map(Diagnostic::message)
-                .filter(message -> message.contains("parameter connection of type")
-                        && message.contains(":Client,"))
+                .filter(message -> message.contains("parameter 'connection' of type")
+                        && message.contains(":Client',"))
                 .count();
         Assert.assertEquals(clientDiags, 3,
                 "Expected the client-parameter errors to name 'connection' and its type. Errors: "
                         + diagnosticResult.errors());
         long restDiags = diags.stream()
                 .map(Diagnostic::message)
-                .filter(message -> message.contains("parameter targets of type")
-                        && message.contains(":Client[],"))
+                .filter(message -> message.contains("parameter 'targets' of type")
+                        && message.contains(":Client[]',"))
                 .count();
         Assert.assertEquals(restDiags, 2,
                 "Expected the rest-parameter errors to name 'targets' and its type. Errors: "

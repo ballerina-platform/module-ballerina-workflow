@@ -33,9 +33,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   API previously mapped a `string` `inputType` onto the query and any other type onto the
   payload, so an agent could be given a query or a payload but never both, and the posted shape
   differed per agent. Every agent now starts with the same object: `query` is the user turn and
-  `input` is the payload. `management:WorkflowDefinition.inputSchema` describes that envelope —
-  `query` is always required, and `input` carries the declared `inputType`'s own schema, absent
-  for a query-only agent.
+  `input` is the payload.
+
+  The envelope is enforced, and `management:WorkflowDefinition.inputSchema` advertises exactly
+  what it enforces. **Callers that post an agent start today have to change:** the input must be
+  the envelope object rather than a bare value, `query` is required (omitting it is an error, not
+  a start on an empty turn — pass `""` for an agent driven by its events), and an unknown field is
+  rejected instead of being dropped, so a misspelled key can no longer start an agent without the
+  payload it was meant to carry. The payload itself stays optional: omitting it, or passing an
+  explicit `null`, runs the agent on the query alone, exactly as `run(query)` does. The published
+  schema mirrors all of this — `query` in `required`, `input` carrying the declared `inputType`'s
+  own schema (absent for a query-only agent), and `additionalProperties: false`.
+
+- **A generated JSON Schema marks a record field required only when Ballerina does.**
+  `required` was derived from "not declared `?` and not nilable", which is neither half of
+  Ballerina's rule. A defaultable field (`string note = "none"`) was published as required
+  although a value that omits it is valid, and a nilable field with no default (`string? b`) was
+  published as optional although Ballerina rejects a value that omits it. Requiredness now comes
+  from the field's own `REQUIRED` flag. A `json` or `anydata` type also no longer publishes
+  `{"type": "object"}` — it accepts an object, a list, or a bare scalar, so its schema is the
+  permissive `true`. Both affect every generated schema: workflow start inputs, durable agent
+  start envelopes, and human task forms.
 
 ### Added
 

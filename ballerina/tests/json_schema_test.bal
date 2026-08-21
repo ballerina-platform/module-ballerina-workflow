@@ -180,7 +180,34 @@ function testSchemaReadonlyIntersection() returns error? {
 
 @test:Config {groups: ["unit"]}
 function testSchemaBroadJson() returns error? {
-    // json / anydata fall back to a generic object schema
-    test:assertEquals((check schemaOf(json))["type"], "object", "json → generic object");
-    test:assertEquals((check schemaOf(anydata))["type"], "object", "anydata → generic object");
+    // json and anydata accept an object, a list, or a bare scalar alike, so their schema is the
+    // permissive `true` — `{"type": "object"}` would reject the lists and scalars they take.
+    test:assertEquals(buildJsonSchema(json), "true", "json → the always-permissive schema");
+    test:assertEquals(buildJsonSchema(anydata), "true", "anydata → the always-permissive schema");
+}
+
+type SchemaDefaults record {|
+    string required1;
+    string? nilableRequired;
+    string defaulted = "x";
+    int optional?;
+|};
+
+@test:Config {groups: ["unit"]}
+function testSchemaRequiredMatchesBallerinasOwnRule() returns error? {
+    // A field is required exactly when Ballerina requires it at construction — declared without
+    // `?` and without a default. Nilability is not part of that rule: `string? nilableRequired`
+    // has no default, so a value that omits it is rejected ("missing non-defaultable required
+    // record field"), while `defaulted` may be omitted even though its type cannot be nil.
+    map<json> schema = check schemaOf(SchemaDefaults);
+    json[] required = check schema["required"].ensureType();
+
+    test:assertTrue(required.indexOf("required1") is int,
+            "a plain required field must be listed: " + required.toString());
+    test:assertTrue(required.indexOf("nilableRequired") is int,
+            "a nilable field with no default is still required: " + required.toString());
+    test:assertTrue(required.indexOf("defaulted") is (),
+            "a defaultable field must not be required: " + required.toString());
+    test:assertTrue(required.indexOf("optional") is (),
+            "an optional field must not be required: " + required.toString());
 }

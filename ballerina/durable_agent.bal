@@ -287,9 +287,14 @@ public isolated class DurableAgent {
     # Sends an event to a running instance on a declared channel and returns a
     # correlation token for reading that turn's response.
     #
-    # + instanceId - The agent instance ID returned by `run`
+    # The instance must be one of **this** agent's: the compiler plugin checks the
+    # channel and its payload against this declaration, and the runtime checks them
+    # against the target instance's. The two agree exactly when the instance came
+    # from this agent's `run`.
+    #
+    # + instanceId - An instance ID this agent's `run` returned
     # + eventName - A channel declared in the agent's `events`
-    # + data - The payload; must match the channel's declared `request` type
+    # + data - The payload; validated against the channel's declared `request` type
     # + return - A correlation token for `getDataResult`/`waitForDataResult`,
     #            or an error
     public isolated function sendData(string instanceId, string eventName, anydata data)

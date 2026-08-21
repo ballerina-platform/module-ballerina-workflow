@@ -69,6 +69,13 @@ import java.util.regex.Pattern;
  * Validates {@code DurableAgent.sendData} call sites against the target agent's declared
  * data-event channels — the agent-side counterpart of {@link SendDataValidatorTask}.
  *
+ * <p>All checks are keyed on the receiver object's declaration, which is the documented
+ * contract: {@code sendData}'s instance ID is one this agent's {@code run} returned. An
+ * instance that actually belongs to another agent is outside that contract — such a send
+ * written directly on the wrong agent variable is flagged here, while one routed through a
+ * parameter or local is skipped and validated at run time against the target instance's own
+ * declaration.
+ *
  * <p>Three rules, all limited to what is statically decidable (the agent variable is a direct
  * module-level reference and the channel name is a string literal):
  * <ul>

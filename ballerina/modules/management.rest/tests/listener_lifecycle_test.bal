@@ -14,6 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import ballerina/workflow.management;
+
 import ballerina/http;
 import ballerina/lang.runtime as langRuntime;
 import ballerina/test;
@@ -39,4 +41,23 @@ function testManagementListenerLifecycle() returns error? {
     http:Response|error afterStop = mgmtClient->get("/workflow/definitions");
     test:assertTrue(afterStop is error,
         "Stopping the management service must release the port");
+}
+
+// The task queue is runtime state a control plane reads to scope a shared Temporal namespace
+// down to one integration. Exposing it only as a Ballerina function left an HTTP consumer
+// unable to answer "which worker am I talking to?", so it has a route of its own.
+@test:Config {}
+function testRuntimeRouteReportsTheTaskQueue() returns error? {
+    check startManagementListener();
+    http:Client mgmtClient = check new (string `http://localhost:${port}`, timeout = 5);
+    http:Response response = check mgmtClient->get("/workflow/runtime");
+    test:assertEquals(response.statusCode, 200);
+
+    json body = check response.getJsonPayload();
+    map<json> info = check body.ensureType();
+    test:assertEquals(info["taskQueue"], management:getWorkflowTaskQueue(),
+        "GET /workflow/runtime must report the queue this worker polls");
+
+    check stopManagementService();
+    langRuntime:sleep(0.1);
 }

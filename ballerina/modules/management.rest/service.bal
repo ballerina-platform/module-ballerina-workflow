@@ -552,6 +552,17 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
         return new ManagementGatewayInterceptor();
     }
 
+    // ── Runtime ──────────────────────────────────────────────────────────────
+
+    # Reports this worker's runtime state: the Temporal task queue it polls.
+    #
+    # + ctx - The request context carrying the resolved caller identity
+    # + return - `{"taskQueue": "..."}`
+    resource isolated function get runtime(
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse(management:GET_RUNTIME_INFO, {}, ctx);
+    }
+
     // ── Definitions ──────────────────────────────────────────────────────────
 
     resource isolated function get definitions(

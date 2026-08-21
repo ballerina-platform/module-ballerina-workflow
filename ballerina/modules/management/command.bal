@@ -35,6 +35,8 @@
 public enum Operation {
     # List the workflow definitions registered with this worker.
     LIST_DEFINITIONS = "definitions.list",
+    # Report this worker's runtime state — currently its Temporal task queue.
+    GET_RUNTIME_INFO = "runtime.info",
     # List workflow instances.
     LIST_INSTANCES = "instances.list",
     # Start a new workflow instance. This is the only operation that creates one.
@@ -109,6 +111,7 @@ public type Command record {|
 #
 # Parameters per operation, all optional unless stated:
 # - `LIST_DEFINITIONS` — none.
+# - `GET_RUNTIME_INFO` — none.
 # - `LIST_INSTANCES` — `status`, `workflowType`, `workflowId`, `startedBy`, `limit`,
 #   `pageToken`, `startTimeFrom`, `startTimeTo`, `closeTimeFrom`, `closeTimeTo`, `taskQueue`.
 # - `START_INSTANCE` — `workflowType` (required), `input`, `workflowId`, `timeoutSeconds`.
@@ -165,6 +168,9 @@ public isolated function executeCommand(Command command) returns json|Error {
     string? userId = command.identity.userId;
 
     match command.operation {
+        GET_RUNTIME_INFO => {
+            return opRuntimeInfo();
+        }
         LIST_DEFINITIONS => {
             return opListDefinitions();
         }

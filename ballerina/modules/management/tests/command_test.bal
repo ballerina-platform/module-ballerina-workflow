@@ -564,6 +564,7 @@ final Identity & readonly caseIdentity = {userId: "alice", roles: ["APPROVER", "
 
 isolated function commandCases() returns CommandCase[] => [
     {operation: LIST_DEFINITIONS},
+    {operation: GET_RUNTIME_INFO},
     {operation: LIST_INSTANCES, params: {status: "RUNNING", 'limit: 10}},
     {operation: START_INSTANCE, params: {workflowType: "someWorkflow", input: {}},
         required: ["workflowType"]},
@@ -598,7 +599,7 @@ isolated function commandCases() returns CommandCase[] => [
 // Every member of the enum. Kept explicit because Ballerina cannot enumerate an enum
 // at run time; the coverage test below fails if the case table falls behind it.
 isolated function allOperations() returns Operation[] => [
-    LIST_DEFINITIONS, LIST_INSTANCES, START_INSTANCE, GET_INSTANCE, SUSPEND_INSTANCE,
+    LIST_DEFINITIONS, GET_RUNTIME_INFO, LIST_INSTANCES, START_INSTANCE, GET_INSTANCE, SUSPEND_INSTANCE,
     RESUME_INSTANCE, WAKE_INSTANCE, TERMINATE_INSTANCE, CANCEL_INSTANCE, GET_INSTANCE_HISTORY,
     GET_INSTANCE_ACTIVITY_TREE, GET_INSTANCE_EXECUTION_GRAPH, LIST_HUMAN_TASKS,
     COUNT_PENDING_HUMAN_TASKS, GET_HUMAN_TASK, COMPLETE_HUMAN_TASK, FAIL_HUMAN_TASK,
@@ -652,4 +653,16 @@ function testEveryRequiredParamIsReportedByName() {
                 string `Operation '${commandCase.operation}' must name the missing parameter`);
         }
     }
+}
+
+@test:Config {groups: ["unit"]}
+function testRuntimeInfoReportsTheTaskQueue() returns error? {
+    // The queue is what a control plane uses to scope a shared namespace to one integration,
+    // so it has to be readable through the same surface as everything else - not only from
+    // Ballerina code that can call getWorkflowTaskQueue directly.
+    json|Error result = executeCommand({operation: GET_RUNTIME_INFO});
+    test:assertFalse(result is Error, "runtime.info must succeed on a running worker");
+    map<json> body = check result.ensureType();
+    test:assertEquals(body["taskQueue"], getWorkflowTaskQueue(),
+        "runtime.info must report the queue this worker polls");
 }

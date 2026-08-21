@@ -49,7 +49,7 @@ type Pair [string, int];
 
 type ReadonlyOrder readonly & OrderInput;
 
-type Trio [int, int, int];
+type Trio int[3];
 
 // Carries some of OrderInput's fields, for the spread cases: a spread that already supplied
 // 'qty' would make an explicit one a duplicate key, which the type checker rejects first.

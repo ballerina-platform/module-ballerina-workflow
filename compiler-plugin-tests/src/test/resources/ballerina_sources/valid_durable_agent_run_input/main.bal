@@ -49,7 +49,7 @@ type Counts map<int>;
 
 type ReadonlyOrder readonly & OrderInput;
 
-type Trio [int, int, int];
+type Trio int[3];
 
 final workflow:DurableAgent typedAgent = check new ({
     systemPrompt: {role: "Order assistant", instructions: "Help the user."},

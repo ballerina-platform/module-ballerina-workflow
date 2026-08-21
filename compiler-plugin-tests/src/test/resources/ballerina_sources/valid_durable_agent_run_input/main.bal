@@ -107,9 +107,9 @@ final workflow:DurableAgent noInputAgent = check new ({
     model: chatModel,
     inputType: (),
     activities: [checkInventory],
-    events: [
-        {name: "chat", request: string, response: string}
-    ]
+    events: {
+        chat: {request: string, response: string}
+    }
 });
 
 public function main() returns error? {

@@ -1023,6 +1023,89 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "valid")
+    public void testValidDurableAgentMapCapabilities() {
+        // The mapping form of events/humanTasks: keys are the names, constant by construction.
+        // Channels declared this way drive sendData validation (declared channels, typed
+        // payloads, one-way token discard) exactly as the array form did — with no
+        // deprecation warning, since this IS the primary form.
+        DiagnosticResult validationResult = getValidationDiagnosticResult("valid_durable_agent_map_capabilities");
+        Assert.assertEquals(validationResult.errorCount(), 0,
+                "Expected no errors for the mapping-form call sites. Errors: "
+                        + getDiagnosticMessages(validationResult));
+        // The declaration-side diagnostics (deprecation, computed keys, callbackChannel) run
+        // in the code-modify phase.
+        DiagnosticResult declResult = getDiagnosticResult("valid_durable_agent_map_capabilities");
+        Assert.assertEquals(declResult.errorCount(), 0,
+                "Expected no declaration errors for the mapping form. Errors: "
+                        + getDiagnosticMessages(declResult));
+        Assert.assertEquals(getDiagnosticsWithCode(declResult, "WORKFLOW_159").size(), 0,
+                "The mapping form must not be flagged as deprecated. Diagnostics: "
+                        + getDiagnosticMessages(declResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentSendDataPayload() {
+        // The data argument of sendData must fit the channel's declared request type — the
+        // sendData counterpart of run's WORKFLOW_154: a mistyped scalar, a scalar where a
+        // record is declared, an unknown field, a missing required field (the defaulted one
+        // is not demanded), a mistyped field, and the named-argument form.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_durable_agent_send_data_payload");
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_158").size(), 6,
+                "All six sendData payload misuses should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        Assert.assertEquals(diagnosticResult.errorCount(), 6,
+                "Exactly the six misuses should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+
+        String allMessages = getDiagnosticMessages(diagnosticResult);
+        Assert.assertTrue(allMessages.contains("data-event channel 'orders' of durable agent 'orderAgent'"),
+                "The channel and agent should be named. Errors: " + allMessages);
+        Assert.assertTrue(allMessages.contains("has no field 'quantity'"),
+                "The unknown field should be named. Errors: " + allMessages);
+        Assert.assertTrue(allMessages.contains("requires the field 'qty'"),
+                "The missing required field should be named — and only it, 'note' has a default. "
+                        + "Errors: " + allMessages);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentMapNames() {
+        // A computed key in the mapping form has no static name (WORKFLOW_156, for a channel
+        // and a human task alike), and an async peer's callbackChannel must name a declared
+        // channel (WORKFLOW_152) — its reply would otherwise be swallowed silently.
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_map_names");
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_156").size(), 2,
+                "Both computed keys should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_152").size(), 1,
+                "The undeclared callbackChannel should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        Assert.assertEquals(diagnosticResult.errorCount(), 3,
+                "Exactly the three declaration misuses should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "valid")
+    public void testDeprecatedDurableAgentCapabilityArrays() {
+        // The array forms still work — declarations register, and the channel they declare
+        // still validates the sendData call site — but each array is flagged once as
+        // deprecated, as a warning rather than an error.
+        DiagnosticResult diagnosticResult =
+                getDiagnosticResult("deprecated_durable_agent_capability_arrays");
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "The deprecated forms must stay usable. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        List<Diagnostic> deprecations = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_159");
+        Assert.assertEquals(deprecations.size(), 2,
+                "The events array and the humanTasks array should each be flagged once. "
+                        + "Diagnostics: " + getDiagnosticMessages(diagnosticResult));
+        for (Diagnostic deprecation : deprecations) {
+            Assert.assertEquals(deprecation.diagnosticInfo().severity(),
+                    io.ballerina.tools.diagnostics.DiagnosticSeverity.WARNING,
+                    "Deprecation must be a warning, not an error");
+        }
+    }
+
+    @Test(groups = "valid")
     public void testValidDurableAgentRunInput() {
         // Query-only runs, matching typed payloads (positional, named, and shorthand),
         // complete inline constructors including nested records, list/map/fixed-array/readonly

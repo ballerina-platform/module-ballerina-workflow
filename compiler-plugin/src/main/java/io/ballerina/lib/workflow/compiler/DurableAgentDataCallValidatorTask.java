@@ -47,6 +47,7 @@ import io.ballerina.compiler.syntax.tree.PositionalArgumentNode;
 import io.ballerina.compiler.syntax.tree.SimpleNameReferenceNode;
 import io.ballerina.compiler.syntax.tree.SpecificFieldNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
+import io.ballerina.compiler.syntax.tree.Token;
 import io.ballerina.projects.Document;
 import io.ballerina.projects.DocumentId;
 import io.ballerina.projects.Module;
@@ -94,10 +95,12 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
     /**
      * A declared channel.
      *
-     * @param name   the channel name
-     * @param duplex whether a response type (request-response channel) is declared
+     * @param name          the channel name
+     * @param duplex        whether a response type (request-response channel) is declared
+     * @param request       the declared request payload type symbol (best effort)
+     * @param requestSource the declared request type's source text, for diagnostics
      */
-    private record ChannelDecl(String name, boolean duplex) { }
+    private record ChannelDecl(String name, boolean duplex, TypeSymbol request, String requestSource) { }
 
     /** How the agent's declared {@code inputType} constrains the {@code run} input payload. */
     private enum InputKind {
@@ -186,7 +189,24 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                 if (!"events".equals(sf.fieldName().toSourceCode().strip())) {
                     continue;
                 }
-                if (!(sf.valueExpr().get() instanceof ListConstructorExpressionNode list)) {
+                ExpressionNode eventsValue = sf.valueExpr().get();
+                // Primary form: a mapping keyed by channel name.
+                if (eventsValue instanceof MappingConstructorExpressionNode channelsMapping) {
+                    for (MappingFieldNode channelField : channelsMapping.fields()) {
+                        if (!(channelField instanceof SpecificFieldNode ef) || ef.valueExpr().isEmpty()
+                                || !(ef.valueExpr().get()
+                                        instanceof MappingConstructorExpressionNode channelConfig)) {
+                            continue;
+                        }
+                        String name = mappingFieldKey(ef);
+                        if (name != null) {
+                            channels.put(name, channelDecl(name, channelConfig, semanticModel));
+                        }
+                    }
+                    continue;
+                }
+                // Deprecated array form: the name is the entry's `name` field.
+                if (!(eventsValue instanceof ListConstructorExpressionNode list)) {
                     continue;
                 }
                 for (Node event : list.expressions()) {
@@ -194,26 +214,67 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                         continue;
                     }
                     String name = null;
-                    boolean duplex = false;
                     for (MappingFieldNode eventField : eventMapping.fields()) {
-                        if (!(eventField instanceof SpecificFieldNode ef) || ef.valueExpr().isEmpty()) {
-                            continue;
-                        }
-                        String key = ef.fieldName().toSourceCode().strip();
-                        if ("name".equals(key)) {
+                        if (eventField instanceof SpecificFieldNode ef && ef.valueExpr().isPresent()
+                                && "name".equals(ef.fieldName().toSourceCode().strip())) {
                             name = stringLiteralValue(ef.valueExpr().get());
-                        } else if ("response".equals(key)) {
-                            duplex = true;
                         }
                     }
                     if (name != null) {
-                        channels.put(name, new ChannelDecl(name, duplex));
+                        channels.put(name, channelDecl(name, eventMapping, semanticModel));
                     }
                 }
             }
             out.put(capture.variableName().text(),
                     new AgentSummary(channels, inputKind, inputType, inputTypeSource));
         }
+    }
+
+    /**
+     * Builds a channel declaration from its config mapping — the mapping-form value, or the
+     * whole array-form entry (whose extra {@code name} field is simply not a config key).
+     */
+    private static ChannelDecl channelDecl(String name, MappingConstructorExpressionNode config,
+                                           SemanticModel semanticModel) {
+        boolean duplex = false;
+        TypeSymbol request = null;
+        String requestSource = null;
+        for (MappingFieldNode field : config.fields()) {
+            if (!(field instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
+                continue;
+            }
+            String key = sf.fieldName().toSourceCode().strip();
+            if ("response".equals(key)) {
+                duplex = true;
+            } else if ("request".equals(key)) {
+                requestSource = sf.valueExpr().get().toSourceCode().strip();
+                request = resolveTypeSymbol(semanticModel, sf.valueExpr().get());
+            }
+        }
+        return new ChannelDecl(name, duplex, request, requestSource);
+    }
+
+    /**
+     * The name a mapping field is keyed by: the identifier itself, or the unquoted string
+     * literal. A computed key has no static name and returns null.
+     */
+    private static String mappingFieldKey(SpecificFieldNode field) {
+        Node keyNode = field.fieldName();
+        // Token text, not toSourceCode(): the latter carries leading trivia, so a comment
+        // line above the field would become part of the "name".
+        if (keyNode instanceof BasicLiteralNode literal
+                && literal.kind() == SyntaxKind.STRING_LITERAL) {
+            String text = literal.literalToken().text();
+            return text.length() >= 2 ? text.substring(1, text.length() - 1) : null;
+        }
+        if (keyNode instanceof Token token) {
+            String text = token.text().strip();
+            if (text.startsWith("'")) {
+                text = text.substring(1);
+            }
+            return text.isEmpty() ? null : text;
+        }
+        return null;
     }
 
     /**
@@ -306,18 +367,26 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
             }
             Map<String, ChannelDecl> channels = agent.channels();
             // sendData(instanceId, eventName, data): the channel is the second positional
-            // argument, or an explicit `eventName = ...` named argument.
+            // argument (or the `eventName =` named argument), the payload the third (or
+            // `data =`).
             String eventName = null;
+            ExpressionNode dataArg = null;
             int positional = 0;
             for (FunctionArgumentNode arg : methodCall.arguments()) {
                 if (arg instanceof PositionalArgumentNode positionalArg) {
                     positional++;
                     if (positional == 2) {
                         eventName = stringLiteralValue(positionalArg.expression());
+                    } else if (positional == 3) {
+                        dataArg = positionalArg.expression();
                     }
-                } else if (arg instanceof NamedArgumentNode namedArg
-                        && "eventName".equals(namedArg.argumentName().name().text())) {
-                    eventName = stringLiteralValue(namedArg.expression());
+                } else if (arg instanceof NamedArgumentNode namedArg) {
+                    String argName = namedArg.argumentName().name().text();
+                    if ("eventName".equals(argName)) {
+                        eventName = stringLiteralValue(namedArg.expression());
+                    } else if ("data".equals(argName)) {
+                        dataArg = namedArg.expression();
+                    }
                 }
             }
             if (eventName == null) {
@@ -332,6 +401,15 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
             if (!channel.duplex() && !isTokenDiscarded(methodCall)) {
                 report(WorkflowDiagnostic.WORKFLOW_153, methodCall.location(),
                         eventName, receiver.name().text());
+            }
+            // The payload must fit the channel's declared request type — the sendData
+            // counterpart of run's WORKFLOW_154 input check, reported as WORKFLOW_158.
+            if (dataArg != null && channel.request() != null) {
+                String channelName = eventName;
+                String agentName = receiver.name().text();
+                checkPayload(dataArg, channel.request(), channel.requestSource(), "",
+                        (location, detail) -> report(WorkflowDiagnostic.WORKFLOW_158, location,
+                                channelName, agentName, detail));
             }
         }
 
@@ -372,7 +450,9 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                 // runtime conversion is the only gate.
                 return;
             }
-            checkPayload(inputArg, declared, agentName, agent.inputTypeSource(), "");
+            checkPayload(inputArg, declared, agent.inputTypeSource(), "",
+                    (location, detail) -> report(WorkflowDiagnostic.WORKFLOW_154, location,
+                            agentName, detail));
         }
 
         /**
@@ -387,55 +467,65 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
          * developer makes here (a misspelled or missing field). Any other expression carries its
          * own declared type and is compared directly.
          *
-         * @param expr      the payload expression
-         * @param expected  the type the payload must fit
-         * @param agentName the agent being called, for the diagnostic
-         * @param declared  the declared inputType's source text, for the diagnostic
-         * @param path      dotted path of this expression inside the payload ("" at the root)
+         * @param expr     the payload expression
+         * @param expected the type the payload must fit
+         * @param declared the declared payload type's source text, for the diagnostic
+         * @param path     dotted path of this expression inside the payload ("" at the root)
+         * @param reporter receives each mismatch as (location, detail); the caller binds it to
+         *                 the surface's diagnostic — WORKFLOW_154 for run's input, WORKFLOW_158
+         *                 for sendData's data
          */
-        private void checkPayload(ExpressionNode expr, TypeSymbol expected, String agentName,
-                                  String declared, String path) {
+        private void checkPayload(ExpressionNode expr, TypeSymbol expected,
+                                  String declared, String path, PayloadReporter reporter) {
             TypeSymbol target = effectiveTarget(expected);
             if (expr.kind() == SyntaxKind.MAPPING_CONSTRUCTOR) {
                 if (!WorkflowPluginUtils.canAcceptConstructorExpression(expected, expr.kind())) {
-                    reportShape(expr, agentName, declared, path,
-                            WorkflowPluginUtils.describeConstructorExpression(expr.kind()), expected);
+                    reportShape(expr, declared, path,
+                            WorkflowPluginUtils.describeConstructorExpression(expr.kind()), expected,
+                            reporter);
                     return;
                 }
-                checkMapping((MappingConstructorExpressionNode) expr, target, agentName, declared, path);
+                checkMapping((MappingConstructorExpressionNode) expr, target, declared, path, reporter);
                 return;
             }
             if (expr.kind() == SyntaxKind.LIST_CONSTRUCTOR) {
                 if (!WorkflowPluginUtils.canAcceptConstructorExpression(expected, expr.kind())) {
-                    reportShape(expr, agentName, declared, path,
-                            WorkflowPluginUtils.describeConstructorExpression(expr.kind()), expected);
+                    reportShape(expr, declared, path,
+                            WorkflowPluginUtils.describeConstructorExpression(expr.kind()), expected,
+                            reporter);
                     return;
                 }
-                checkList((ListConstructorExpressionNode) expr, target, agentName, declared, path);
+                checkList((ListConstructorExpressionNode) expr, target, declared, path, reporter);
                 return;
             }
             TypeSymbol actual = semanticModel.typeOf(expr).orElse(null);
             if (actual == null || actual.subtypeOf(expected)) {
                 return;
             }
-            report(WorkflowDiagnostic.WORKFLOW_154, expr.location(), agentName, path.isEmpty()
+            reporter.accept(expr.location(), path.isEmpty()
                     ? "the payload type '" + shortSignature(actual)
-                            + "' is not a subtype of the declared inputType '" + declared + "'"
+                            + "' is not a subtype of the declared type '" + declared + "'"
                     : "'" + path + "' expects '" + shortSignature(expected) + "', but the payload gives '"
                             + shortSignature(actual) + "'");
         }
 
+        /** How payload mismatches reach the caller's diagnostic. */
+        @FunctionalInterface
+        private interface PayloadReporter {
+            void accept(Location location, String detail);
+        }
+
         /** Matches a mapping constructor's fields against a record or map target. */
         private void checkMapping(MappingConstructorExpressionNode mapping, TypeSymbol target,
-                                  String agentName, String declared, String path) {
+                                  String declared, String path, PayloadReporter reporter) {
             if (target instanceof MapTypeSymbol mapType) {
                 // Every value shares the map's constraint, so a key this pass cannot name is
                 // still checkable — only its path is unknown.
                 for (MappingFieldNode field : mapping.fields()) {
                     if (field instanceof SpecificFieldNode sf && sf.valueExpr().isPresent()) {
                         String name = fieldName(sf);
-                        checkPayload(sf.valueExpr().get(), mapType.typeParam(), agentName, declared,
-                                name == null ? path : join(path, name));
+                        checkPayload(sf.valueExpr().get(), mapType.typeParam(), declared,
+                                name == null ? path : join(path, name), reporter);
                     }
                 }
                 return;
@@ -466,8 +556,8 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                 RecordFieldSymbol declaredField = fields.get(name);
                 if (declaredField == null) {
                     if (!openTarget) {
-                        report(WorkflowDiagnostic.WORKFLOW_154, sf.location(), agentName,
-                                "the declared inputType '" + declared + "' has no field '"
+                        reporter.accept(sf.location(),
+                                "the declared type '" + declared + "' has no field '"
                                         + join(path, name) + "'");
                     }
                     continue;
@@ -475,8 +565,8 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                 // A shorthand field (`{qty}`) carries its value in a variable of the same name;
                 // the name check above is all this pass can do for it.
                 if (sf.valueExpr().isPresent()) {
-                    checkPayload(sf.valueExpr().get(), declaredField.typeDescriptor(), agentName,
-                            declared, join(path, name));
+                    checkPayload(sf.valueExpr().get(), declaredField.typeDescriptor(),
+                            declared, join(path, name), reporter);
                 }
             }
             if (namesUnknownFields) {
@@ -490,8 +580,8 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                 }
             }
             if (!missing.isEmpty()) {
-                report(WorkflowDiagnostic.WORKFLOW_154, mapping.location(), agentName,
-                        "the declared inputType '" + declared + "' requires "
+                reporter.accept(mapping.location(),
+                        "the declared type '" + declared + "' requires "
                                 + (missing.size() == 1 ? "the field " : "the fields ")
                                 + quoteAll(missing) + ", which the payload does not set");
             }
@@ -499,7 +589,7 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
 
         /** Matches a list constructor's members against an array or tuple target. */
         private void checkList(ListConstructorExpressionNode list, TypeSymbol target,
-                               String agentName, String declared, String path) {
+                               String declared, String path, PayloadReporter reporter) {
             List<Node> members = new ArrayList<>();
             boolean spread = false;
             for (Node member : list.expressions()) {
@@ -514,15 +604,15 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
             if (target instanceof ArrayTypeSymbol arrayType) {
                 Integer fixedLength = arrayType.size().orElse(null);
                 if (fixedLength != null && fixedLength >= 0 && fixedLength != members.size()) {
-                    report(WorkflowDiagnostic.WORKFLOW_154, list.location(), agentName,
+                    reporter.accept(list.location(),
                             position(path, declared) + " expects " + fixedLength + " members, but "
                                     + members.size() + " were given");
                     return;
                 }
                 for (int i = 0; i < members.size(); i++) {
                     if (members.get(i) instanceof ExpressionNode memberExpr) {
-                        checkPayload(memberExpr, arrayType.memberTypeDescriptor(), agentName, declared,
-                                path + "[" + i + "]");
+                        checkPayload(memberExpr, arrayType.memberTypeDescriptor(), declared,
+                                path + "[" + i + "]", reporter);
                     }
                 }
                 return;
@@ -533,7 +623,7 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
             List<TypeSymbol> memberTypes = tupleType.memberTypeDescriptors();
             boolean openTuple = tupleType.restTypeDescriptor().isPresent();
             if (members.size() < memberTypes.size() || (!openTuple && members.size() > memberTypes.size())) {
-                report(WorkflowDiagnostic.WORKFLOW_154, list.location(), agentName,
+                reporter.accept(list.location(),
                         position(path, declared) + " expects " + memberTypes.size()
                                 + (openTuple ? " or more members" : " members") + ", but "
                                 + members.size() + " were given");
@@ -543,15 +633,15 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                 TypeSymbol memberType = i < memberTypes.size()
                         ? memberTypes.get(i) : tupleType.restTypeDescriptor().orElse(null);
                 if (memberType != null && members.get(i) instanceof ExpressionNode memberExpr) {
-                    checkPayload(memberExpr, memberType, agentName, declared, path + "[" + i + "]");
+                    checkPayload(memberExpr, memberType, declared, path + "[" + i + "]", reporter);
                 }
             }
         }
 
-        private void reportShape(ExpressionNode expr, String agentName, String declared, String path,
-                                 String givenShape, TypeSymbol expected) {
-            report(WorkflowDiagnostic.WORKFLOW_154, expr.location(), agentName, path.isEmpty()
-                    ? "the declared inputType '" + declared + "' does not accept " + givenShape
+        private void reportShape(ExpressionNode expr, String declared, String path,
+                                 String givenShape, TypeSymbol expected, PayloadReporter reporter) {
+            reporter.accept(expr.location(), path.isEmpty()
+                    ? "the declared type '" + declared + "' does not accept " + givenShape
                     : "'" + path + "' expects '" + shortSignature(expected) + "', which does not accept "
                             + givenShape);
         }
@@ -575,9 +665,9 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
             return resolved;
         }
 
-        /** Names the payload position a diagnostic is about — the inputType itself at the root. */
+        /** Names the payload position a diagnostic is about — the declared type at the root. */
         private static String position(String path, String declared) {
-            return path.isEmpty() ? "the declared inputType '" + declared + "'" : "'" + path + "'";
+            return path.isEmpty() ? "the declared type '" + declared + "'" : "'" + path + "'";
         }
 
         /**
@@ -606,11 +696,7 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
 
         /** The field's name, unquoting the string-literal key form; null when it is computed. */
         private static String fieldName(SpecificFieldNode field) {
-            String text = field.fieldName().toSourceCode().strip();
-            if (text.length() >= 2 && text.startsWith("\"") && text.endsWith("\"")) {
-                return text.substring(1, text.length() - 1);
-            }
-            return text.isEmpty() ? null : text;
+            return mappingFieldKey(field);
         }
 
         /** True when the sendData result is discarded with {@code _ = ...}. */

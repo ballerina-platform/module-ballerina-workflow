@@ -56,19 +56,18 @@ final workflow:DurableAgent orderAgent = check new ({
     },
     model: orderModel,
     activities: [checkInventory],
-    events: [
-        {name: "chat", request: string, response: string, cardinality: workflow:MULTI_EVENT}
-    ],
-    humanTasks: [
-        {
-            name: "approveExpedite",
+    events: {
+        chat: {request: string, response: string, cardinality: workflow:MULTI_EVENT}
+    },
+    humanTasks: {
+        approveExpedite: {
             roles: "MANAGER",
             resultType: ExpediteApproval,
             title: "Approve expedited shipping",
             description: "Requests a manager's approval to expedite the order's shipping. "
                 + "Pass the order id and the customer's reason as fields."
         }
-    ]
+    }
 });
 
 // The chat turn blocks while the agent waits on the manager, so the listener

@@ -55,6 +55,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   permissive `true`. Both affect every generated schema: workflow start inputs, durable agent
   start envelopes, and human task forms.
 
+- **A durable agent's `events` and `humanTasks` are declared as mappings keyed by name.**
+  `events: {chat: {request: string, response: string}}` and `humanTasks: {signoff: {roles:
+  "manager"}}` — the mapping key is a compile-time constant by construction, so the name needs
+  no separate validation (`WORKFLOW_156` still rejects a computed key). The array forms
+  (`EventDecl[]`, `HumanTaskDecl[]`) keep working unchanged but are deprecated: each array is
+  flagged once with the new `WORKFLOW_159` warning.
+
+- **`sendData`'s payload is validated against the channel's declared `request` type.** It never
+  was, at any level — and a send to an *undeclared* channel was a black hole: the turn was
+  enqueued under a name nobody waits on, so the update parked forever and `waitForDataResult`
+  hung instead of erroring. Now the compiler plugin checks the statically visible call sites
+  (new `WORKFLOW_158`, with the same structural field-by-field matching as `run`'s
+  `WORKFLOW_154`), and at run time the send is validated against the *target instance's*
+  declaration before delivery — an undeclared channel and a mistyped payload are immediate
+  errors naming the declared channels and the declared type. The payload is converted, not
+  just checked, so declared record defaults are filled exactly as on the run-input path.
+
+- **An async peer's `callbackChannel` must name a declared event channel.** The reply
+  self-injects into that channel, so an undeclared one swallowed it silently. Rejected at
+  compile time (`WORKFLOW_152` on the declaration) and again at module-init registration —
+  which is also where `wait: false` with no `callbackChannel` now fails, instead of inside
+  the runner workflow.
+
 ### Added
 
 - **`management:ErrorCode` and `management:errorCodeOf(Error)`** — the machine-readable,

@@ -40,12 +40,12 @@ final DurableAgent declTestAgent = check new ({
     systemPrompt: {role: "Test assistant", instructions: "Assist with tests."},
     model: declTestModel,
     activities: [declTestActivity],
-    events: [
-        {name: "chat", request: string, response: string, cardinality: MULTI_EVENT}
-    ],
-    humanTasks: [
-        {name: "signoff", roles: "manager"}
-    ]
+    events: {
+        chat: {request: string, response: string, cardinality: MULTI_EVENT}
+    },
+    humanTasks: {
+        signoff: {roles: "manager"}
+    }
 });
 
 @test:Config {}
@@ -126,12 +126,12 @@ final DurableAgent runnerCoverageAgent = check new ({
     systemPrompt: {role: "", instructions: "You are an inventory assistant."},
     model: declTestModel,
     activities: [checkStock],
-    events: [
-        {name: "status", request: string, response: string, cardinality: SINGLE_EVENT}
-    ],
-    humanTasks: [
-        {name: "signoffCoverage", roles: "manager", timeout: {minutes: 5}}
-    ]
+    events: {
+        status: {request: string, response: string, cardinality: SINGLE_EVENT}
+    },
+    humanTasks: {
+        signoffCoverage: {roles: "manager", timeout: {minutes: 5}}
+    }
 });
 
 @test:Config {groups: ["unit"]}
@@ -296,6 +296,67 @@ function testManagementStartAndListUnified() returns error? {
     string openResult = check openInputAgent.waitForResult(openId);
     test:assertEquals(openResult, "Stock check result: laptop is in stock",
         "The open json default should accept an arbitrary payload");
+}
+
+@test:Config {groups: ["unit"], dependsOn: [testObjectModelRunnerEndToEnd]}
+function testSendDataValidatesAgainstTheTargetsDeclaration() returns error? {
+    // sendData is validated against the TARGET instance's declaration before anything is
+    // sent. An undeclared channel used to be a black hole: the update parked under a name
+    // nobody waits on and waitForDataResult hung — now it is an immediate error that names
+    // the declared channels.
+    string agentId = check runnerCoverageAgent.run("Is the laptop in stock?");
+    string _ = check runnerCoverageAgent.waitForResult(agentId);
+
+    string|error unknownChannel = runnerCoverageAgent.sendData(agentId, "nope", "hello");
+    test:assertTrue(unknownChannel is error, "An undeclared channel must be rejected at send");
+    if unknownChannel is error {
+        test:assertTrue(unknownChannel.message().includes("declares no data-event channel named 'nope'")
+                && unknownChannel.message().includes("status"),
+            "The rejection should name the channel and list the declared ones: "
+                + unknownChannel.message());
+    }
+
+    // A payload that does not fit the channel's declared request type is rejected the same
+    // way — before delivery, naming the declared type.
+    string|error wrongPayload = runnerCoverageAgent.sendData(agentId, "status", {bad: "shape"});
+    test:assertTrue(wrongPayload is error, "A mistyped payload must be rejected at send");
+    if wrongPayload is error {
+        test:assertTrue(wrongPayload.message().includes("declared request type"),
+            "The rejection should name the declared request type: " + wrongPayload.message());
+    }
+}
+
+@test:Config {}
+function testPeerCallbackChannelValidatedAtRegistration() returns error? {
+    // An async peer's reply self-injects into its callbackChannel, so the channel must be
+    // declared — otherwise the reply is swallowed silently. Both misdeclarations fail at
+    // module-init registration, before any instance runs.
+    _ = check wfInternal:registerDurableAgentDecl("cbAgent", declTestModel,
+        {role: "", instructions: "Assist."}, 8);
+    _ = check wfInternal:registerDurableAgentEvent("cbAgent", "replies", string, string,
+        "MULTI_EVENT");
+
+    boolean|error undeclared = wfInternal:registerDurableAgentPeer("cbAgent", "askOther",
+        "declTestAgent", {"wait": false, "callbackChannel": "answers"});
+    test:assertTrue(undeclared is error, "An undeclared callbackChannel must be rejected");
+    if undeclared is error {
+        test:assertTrue(undeclared.message().includes("no data-event channel named 'answers'")
+                && undeclared.message().includes("replies"),
+            "The rejection should name the channel and list the declared ones: "
+                + undeclared.message());
+    }
+
+    boolean|error noChannel = wfInternal:registerDurableAgentPeer("cbAgent", "askAnother",
+        "declTestAgent", {"wait": false});
+    test:assertTrue(noChannel is error, "wait = false without a callbackChannel must be rejected");
+    if noChannel is error {
+        test:assertTrue(noChannel.message().includes("no callbackChannel"),
+            "The rejection should explain what is missing: " + noChannel.message());
+    }
+
+    // A declared channel registers cleanly.
+    _ = check wfInternal:registerDurableAgentPeer("cbAgent", "askDeclared",
+        "declTestAgent", {"wait": false, "callbackChannel": "replies"});
 }
 
 @test:Config {}

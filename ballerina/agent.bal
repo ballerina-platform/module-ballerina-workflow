@@ -659,7 +659,9 @@ isolated function recordToolConfig(handle agentCtx, ai:ToolConfig config, boolea
 #
 # + agentCtx - The native agent context handle
 # + name - The event channel name (e.g. `"chat"`)
-# + requestType - The request payload type; validated when a request arrives
+# + requestType - The request payload type: senders (`sendData`) validate each
+#                 payload against it before delivery, and it shapes the channel's
+#                 model-facing wait-tool schema
 # + responseType - The expected response type; when provided, the turn answer
 #                  is validated against it before completing the event turn
 # + return - An error if the channel cannot be registered, otherwise nil

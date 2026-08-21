@@ -104,6 +104,17 @@ final workflow:DurableAgent queryOnlyAgent = check new ({
     inputType: ()
 });
 
+# A typed data-event channel (mapping form): every `sendData` payload is validated
+# against `AgentOrder` — and converted, so the declared default fills in — before the
+# turn is delivered.
+final workflow:DurableAgent orderChannelAgent = check new ({
+    systemPrompt: {role: "", instructions: "You are an order assistant."},
+    model: payloadEchoModel,
+    events: {
+        chat: {request: AgentOrder, response: string, cardinality: workflow:MULTI_EVENT}
+    }
+});
+
 # A validated payload and a declared result type together: the run input is checked on
 # the way in, and the loop's outcome is converted to `AgentOrderSummary` on the way out.
 final workflow:DurableAgent orderSummaryAgent = check new ({

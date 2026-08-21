@@ -939,6 +939,30 @@ public final class DurableAgentNative {
         if (duplicate != null) {
             return duplicate;
         }
+        // An async peer's reply self-injects into its callbackChannel: a channel this agent does
+        // not declare would swallow the reply silently, and wait = false with no channel has
+        // nowhere to reply at all. Both fail here — at module init, before any instance runs —
+        // rather than inside the runner workflow. Event channels register before peers (the
+        // generated registration order), so the declared set is complete by now.
+        if (meta instanceof BMap<?, ?> metaMap) {
+            Object waitValue = metaMap.get(StringUtils.fromString("wait"));
+            Object callbackValue = metaMap.get(StringUtils.fromString("callbackChannel"));
+            String callbackChannel = callbackValue instanceof BString channel ? channel.getValue() : null;
+            if (Boolean.FALSE.equals(waitValue) && (callbackChannel == null || callbackChannel.isBlank())) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Peer agent '" + peerName.getValue() + "' of durable agent '" + agentName.getValue()
+                                + "' declares wait = false but no callbackChannel to receive the reply"));
+            }
+            if (callbackChannel != null && !callbackChannel.isBlank()
+                    && !decl.events().containsKey(callbackChannel)) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Durable agent '" + agentName.getValue() + "' declares no data-event channel named '"
+                                + callbackChannel + "' for peer '" + peerName.getValue()
+                                + "'s callbackChannel"
+                                + (decl.events().isEmpty() ? ""
+                                        : "; declared channels: " + String.join(", ", decl.events().keySet()))));
+            }
+        }
         decl.peers().put(peerName.getValue(),
                 new PeerDecl(peerName.getValue(), targetAgent.getValue(), meta));
         return true;
@@ -1059,6 +1083,7 @@ public final class DurableAgentNative {
                 // rejects them, but the embedded test server can report acceptance-stage
                 // rejections only at result-read time, which would surface as a confusing
                 // "update not found" much later.
+                Object sendPayload = javaData;
                 try {
                     String targetType = stub.describe().getWorkflowType();
                     if (WorkflowWorkerNative.isRegisteredWorkflowType(targetType)
@@ -1067,6 +1092,44 @@ public final class DurableAgentNative {
                                 "sendData turns are only supported for workflow:DurableAgent instances; '"
                                         + instance + "' is a regular workflow — use workflow:sendData instead"));
                     }
+                    // Validate the turn against the TARGET instance's declaration (its workflow
+                    // type names the agent), not this object's: sendData is instance-addressed,
+                    // so one driver object may legitimately send turns to another agent's
+                    // instance. Rejecting here matters — an undeclared channel would otherwise
+                    // enqueue under a name nobody ever waits on, so the update parks forever and
+                    // the sender's waitForDataResult hangs instead of erroring.
+                    if (targetType.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX)) {
+                        String targetAgent = targetType.substring(
+                                WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length());
+                        AgentDecl targetDecl = AGENT_DECL_REGISTRY.get(targetAgent);
+                        if (targetDecl != null) {
+                            EventDecl channel = targetDecl.events().get(event);
+                            if (channel == null) {
+                                return ErrorCreator.createError(StringUtils.fromString(
+                                        "Durable agent '" + targetAgent
+                                                + "' declares no data-event channel named '" + event + "'"
+                                                + (targetDecl.events().isEmpty() ? ""
+                                                        : "; declared channels: "
+                                                                + String.join(", ",
+                                                                        targetDecl.events().keySet()))));
+                            }
+                            // Convert rather than merely check, so declared record defaults are
+                            // filled exactly as on the run-input path.
+                            Type requestType = io.ballerina.runtime.api.utils.TypeUtils.getImpliedType(
+                                    channel.request().getDescribingType());
+                            try {
+                                Object converted = io.ballerina.runtime.api.utils.ValueUtils.convert(
+                                        data, requestType);
+                                sendPayload = TypesUtil.convertBallerinaToJavaType(converted);
+                            } catch (Exception conversion) {
+                                return ErrorCreator.createError(StringUtils.fromString(
+                                        "The 'data' argument does not match data-event channel '" + event
+                                                + "' of durable agent '" + targetAgent
+                                                + "': the declared request type is '" + requestType + "': "
+                                                + conversion.getMessage()));
+                            }
+                        }
+                    }
                 } catch (Exception ignore) {
                     // The target may live on another worker; the handler-side validator decides.
                 }
@@ -1074,7 +1137,7 @@ public final class DurableAgentNative {
                         .setUpdateName(WorkflowWorkerNative.AGENT_SEND_DATA_UPDATE)
                         .setWaitForStage(WorkflowUpdateStage.ACCEPTED)
                         .build();
-                WorkflowUpdateHandle<Object> handle = stub.startUpdate(options, event, javaData);
+                WorkflowUpdateHandle<Object> handle = stub.startUpdate(options, event, sendPayload);
                 return StringUtils.fromString(handle.getId());
             } catch (Exception e) {
                 Throwable cause = e.getCause();

@@ -238,7 +238,16 @@ public enum WorkflowDiagnostic {
                     + "data the model can supply: fix the argument at registration by declaring the "
                     + "activity as '{activity: %s, bindings: {%s: <value>}}', or expose an activity "
                     + "whose parameters are all data",
-            DiagnosticSeverity.ERROR);
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_158("WORKFLOW_158",
+            "The 'data' argument of 'sendData' does not match data-event channel '%s' of durable "
+                    + "agent '%s': %s",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_159("WORKFLOW_159",
+            "The array form of '%s' is deprecated: declare each entry as a mapping field keyed by "
+                    + "its name — %s: {%s: {...}} — which makes the name a compile-time constant "
+                    + "by construction",
+            DiagnosticSeverity.WARNING);
 
     private final String code;
     private final String message;

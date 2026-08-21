@@ -100,6 +100,23 @@ public type WorkflowMetadata record {|
     json? descriptor = ();
 |};
 
+# Returns the Temporal task queue this program's worker serves, or nil before the worker
+# has registered. The queue is chosen at program startup — worker configuration, not
+# workflow metadata — which is why it is exposed on its own rather than inside the
+# metadata document: a control plane treats it as runtime state, like capabilities.
+# Integrations in one project share a Temporal namespace, so the queue is the only
+# attribute separating one integration's executions from its neighbours'.
+#
+# ```ballerina
+# string? queue = management:getWorkflowTaskQueue();
+# ```
+#
+# + return - The worker's task queue, or nil before the worker has registered
+public isolated function getWorkflowTaskQueue() returns string? = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowMetadataNative",
+    name: "getWorkflowTaskQueue"
+} external;
+
 # Returns the workflow metadata document for this program: registered workflow
 # definitions, human tasks, activities, and durable agents, with their JSON schemas.
 # The document is complete at module init — before any workflow has executed — so it

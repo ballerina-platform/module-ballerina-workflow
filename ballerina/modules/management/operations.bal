@@ -53,6 +53,18 @@ isolated function opListDefinitions() returns json|Error {
     return {definitions: defs.toJson()};
 }
 
+# This worker's runtime state, as distinct from the workflows it hosts.
+#
+# The task queue is chosen at program startup and is not a property of any workflow, which is
+# why it is reported here rather than inside the metadata document. A control plane needs it
+# to scope a shared Temporal namespace down to one integration; a person reading the API needs
+# it to know which worker they are talking to.
+#
+# Its own operation rather than a field on an existing one: the answer is about the worker, so
+# a caller asking "which queue is this?" should not have to fetch a list of definitions to
+# find out.
+isolated function opRuntimeInfo() returns json|Error => {taskQueue: getWorkflowTaskQueue()};
+
 // ── Workflow instances ────────────────────────────────────────────────────────
 
 isolated function opListWorkflows(string? status, string? workflowType, string? workflowId,

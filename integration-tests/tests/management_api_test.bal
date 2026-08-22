@@ -391,10 +391,10 @@ function testStartWorkflowByType() returns error? {
     groups: ["integration"]
 }
 function testStartAgentByTypeUnified() returns error? {
-    // A durable agent starts through the same management API as a workflow. With the
-    // default `string` inputType, the posted input is the query text.
+    // A durable agent starts through the same management API as a workflow, with the
+    // uniform `{query, input}` envelope: the query is the user turn every agent takes.
     management:WorkflowHandle agentHandle = check management:startWorkflowByType(
-            "stockCheckAgent", "Is the laptop in stock?");
+            "stockCheckAgent", {query: "Is the laptop in stock?"});
 
     test:assertFalse(agentHandle.workflowId == "", "Agent start must return a non-empty workflowId");
     string result = check stockCheckAgent.waitForResult(agentHandle.workflowId);
@@ -425,9 +425,9 @@ function testDefinitionsListWorkflowsAndAgentsUnified() returns error? {
             "The durable agent should appear in the unified definitions list");
     if agentDef is management:WorkflowDefinition {
         test:assertEquals(agentDef.kind, "AGENT", "Agent definitions carry kind AGENT");
-        string? schema = agentDef.inputSchema;
-        test:assertTrue(schema is string && schema.includes("string"),
-                "The default string inputType should produce a string input schema");
+        string schema = agentDef.inputSchema ?: "";
+        test:assertTrue(schema.includes("\"query\""),
+                "An agent's input schema is the {query, input} start envelope: " + schema);
     }
 
     test:assertTrue(workflowDef is management:WorkflowDefinition,

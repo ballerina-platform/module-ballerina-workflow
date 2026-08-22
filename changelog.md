@@ -6,6 +6,78 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **A durable agent's `inputType` is now a JSON payload type, and `run` actually checks it.**
+  The field was `typedesc<anydata>?` defaulting to `string`, which made the default declaration
+  say "the query text is the input" — a mode with no payload at all, since `run(query, input)`
+  already takes the query as its own argument. Passing a payload to such an agent produced
+  `WORKFLOW_154` telling the developer their input type was `string`, a type they never wrote.
+
+  `inputType` is now `typedesc<json>?` defaulting to `json`, and `run`'s `input` parameter is
+  `json`. The three declarations mean what they say: `json` (the default) accepts any payload,
+  a narrower type — typically a record — declares the payload's shape, and `()` declares a
+  query-only agent. `inputType: string` is no longer special: it declares a payload that must
+  be a string.
+
+  **`WORKFLOW_154` now checks inline payloads.** A mapping or list constructor is contextually
+  typed against `run`'s parameter, so `subtypeOf` cannot judge it — the validator used to skip
+  those, which meant the most common call shape, `agent.run("...", {...})`, was never checked
+  at all. It is now matched against the declared type structurally, field by field and member
+  by member, through nested records and arrays, and the diagnostic names the specific problem:
+  the unknown field, the missing required fields, the mistyped field and both types, or the
+  tuple arity. Everything else is still compared by subtyping, and the runtime conversion
+  remains the gate for values the compiler cannot see.
+
+- **A durable agent is started through a uniform `{query, input}` envelope.** The management
+  API previously mapped a `string` `inputType` onto the query and any other type onto the
+  payload, so an agent could be given a query or a payload but never both, and the posted shape
+  differed per agent. Every agent now starts with the same object: `query` is the user turn and
+  `input` is the payload.
+
+  The envelope is enforced, and `management:WorkflowDefinition.inputSchema` advertises exactly
+  what it enforces. **Callers that post an agent start today have to change:** the input must be
+  the envelope object rather than a bare value, `query` is required (omitting it is an error, not
+  a start on an empty turn — pass `""` for an agent driven by its events), and an unknown field is
+  rejected instead of being dropped, so a misspelled key can no longer start an agent without the
+  payload it was meant to carry. The payload itself stays optional: omitting it, or passing an
+  explicit `null`, runs the agent on the query alone, exactly as `run(query)` does. The published
+  schema mirrors all of this — `query` in `required`, `input` carrying the declared `inputType`'s
+  own schema (absent for a query-only agent), and `additionalProperties: false`.
+
+- **A generated JSON Schema marks a record field required only when Ballerina does.**
+  `required` was derived from "not declared `?` and not nilable", which is neither half of
+  Ballerina's rule. A defaultable field (`string note = "none"`) was published as required
+  although a value that omits it is valid, and a nilable field with no default (`string? b`) was
+  published as optional although Ballerina rejects a value that omits it. Requiredness now comes
+  from the field's own `REQUIRED` flag. A `json` or `anydata` type also no longer publishes
+  `{"type": "object"}` — it accepts an object, a list, or a bare scalar, so its schema is the
+  permissive `true`. Both affect every generated schema: workflow start inputs, durable agent
+  start envelopes, and human task forms.
+
+- **A durable agent's `events` and `humanTasks` are declared as mappings keyed by name.**
+  `events: {chat: {request: string, response: string}}` and `humanTasks: {signoff: {roles:
+  "manager"}}` — the mapping key is a compile-time constant by construction, so the name needs
+  no separate validation (`WORKFLOW_156` still rejects a computed key). The array forms
+  (`EventDecl[]`, `HumanTaskDecl[]`) keep working unchanged but are deprecated: each array is
+  flagged once with the new `WORKFLOW_159` warning.
+
+- **`sendData`'s payload is validated against the channel's declared `request` type.** It never
+  was, at any level — and a send to an *undeclared* channel was a black hole: the turn was
+  enqueued under a name nobody waits on, so the update parked forever and `waitForDataResult`
+  hung instead of erroring. Now the compiler plugin checks the statically visible call sites
+  (new `WORKFLOW_158`, with the same structural field-by-field matching as `run`'s
+  `WORKFLOW_154`), and at run time the send is validated against the *target instance's*
+  declaration before delivery — an undeclared channel and a mistyped payload are immediate
+  errors naming the declared channels and the declared type. The payload is converted, not
+  just checked, so declared record defaults are filled exactly as on the run-input path.
+
+- **An async peer's `callbackChannel` must name a declared event channel.** The reply
+  self-injects into that channel, so an undeclared one swallowed it silently. Rejected at
+  compile time (`WORKFLOW_152` on the declaration) and again at module-init registration —
+  which is also where `wait: false` with no `callbackChannel` now fails, instead of inside
+  the runner workflow.
+
 ### Added
 
 - **`management:ErrorCode` and `management:errorCodeOf(Error)`** — the machine-readable,

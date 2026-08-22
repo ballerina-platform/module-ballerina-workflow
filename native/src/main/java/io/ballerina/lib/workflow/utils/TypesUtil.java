@@ -357,8 +357,20 @@ public final class TypesUtil {
      * @return JSON schema string
      */
     public static String toJsonSchema(Type type) {
-        Object schema = toJsonSchemaObject(type, 0);
-        return toJsonString(schema);
+        return toJsonString(toJsonSchemaValue(type));
+    }
+
+    /**
+     * Builds the JSON Schema for the provided Ballerina type as the underlying value, so callers can
+     * embed it into a larger schema (e.g. a durable agent's {@code {query, input}} start envelope)
+     * without a string round-trip.
+     *
+     * @param type Ballerina runtime type
+     * @return the JSON schema value ({@code Map} for object schemas, {@code Boolean} for the
+     *         always-permissive schema)
+     */
+    public static Object toJsonSchemaValue(Type type) {
+        return toJsonSchemaObject(type, 0);
     }
 
     /**
@@ -493,9 +505,11 @@ public final class TypesUtil {
                 String fieldName = entry.getKey();
                 Field field = entry.getValue();
                 properties.put(fieldName, toJsonSchemaObject(field.getFieldType(), depth + 1));
-                // A field is required only when it must be present (not declared optional with `?`) and cannot be nil.
-                boolean optional = SymbolFlags.isFlagOn(field.getFlags(), SymbolFlags.OPTIONAL);
-                if (!optional && !isNilableType(field.getFieldType(), depth + 1)) {
+                // Required exactly when Ballerina requires it at construction: not declared optional
+                // with `?`, and not given a default. Nilability does not enter into it — `string? b;`
+                // must still be supplied ("missing non-defaultable required record field"), while
+                // `string c = "x";` may be omitted even though its type cannot be nil.
+                if (SymbolFlags.isFlagOn(field.getFlags(), SymbolFlags.REQUIRED)) {
                     required.add(fieldName);
                 }
             }
@@ -562,7 +576,14 @@ public final class TypesUtil {
             return anyOf;
         }
 
-        // For json/anydata and all other unsupported tags, return a generic object schema.
+        // json and anydata accept any value — an object, a list, or a bare scalar — which JSON
+        // Schema spells as the boolean `true` schema. Claiming `{"type": "object"}` here would
+        // advertise a constraint that nothing downstream applies.
+        if (tag == TypeTags.JSON_TAG || tag == TypeTags.ANYDATA_TAG) {
+            return Boolean.TRUE;
+        }
+
+        // For all other unsupported tags, return a generic object schema.
         return mapOf("type", "object");
     }
 

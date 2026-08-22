@@ -321,7 +321,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                 .append(", ").append(decl.modelSource())
                 .append(", ").append(decl.systemPromptSource())
                 .append(", ").append(decl.maxIterSource() != null ? decl.maxIterSource() : "16")
-                .append(", ").append(decl.inputTypeSource() != null ? decl.inputTypeSource() : "string")
+                .append(", ").append(decl.inputTypeSource() != null ? decl.inputTypeSource() : "json")
                 .append(", ").append(decl.resultTypeSource() != null ? decl.resultTypeSource() : "()")
                 .append(");").append(System.lineSeparator());
         for (DurableAgentDeclInfo.ActivityDecl activity : decl.activities()) {

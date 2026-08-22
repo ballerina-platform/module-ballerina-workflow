@@ -1023,9 +1023,94 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "valid")
+    public void testValidDurableAgentMapCapabilities() {
+        // The mapping form of events/humanTasks: keys are the names, constant by construction.
+        // Channels declared this way drive sendData validation (declared channels, typed
+        // payloads, one-way token discard) exactly as the array form did — with no
+        // deprecation warning, since this IS the primary form.
+        DiagnosticResult validationResult = getValidationDiagnosticResult("valid_durable_agent_map_capabilities");
+        Assert.assertEquals(validationResult.errorCount(), 0,
+                "Expected no errors for the mapping-form call sites. Errors: "
+                        + getDiagnosticMessages(validationResult));
+        // The declaration-side diagnostics (deprecation, computed keys, callbackChannel) run
+        // in the code-modify phase.
+        DiagnosticResult declResult = getDiagnosticResult("valid_durable_agent_map_capabilities");
+        Assert.assertEquals(declResult.errorCount(), 0,
+                "Expected no declaration errors for the mapping form. Errors: "
+                        + getDiagnosticMessages(declResult));
+        Assert.assertEquals(getDiagnosticsWithCode(declResult, "WORKFLOW_159").size(), 0,
+                "The mapping form must not be flagged as deprecated. Diagnostics: "
+                        + getDiagnosticMessages(declResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentSendDataPayload() {
+        // The data argument of sendData must fit the channel's declared request type — the
+        // sendData counterpart of run's WORKFLOW_154: a mistyped scalar, a scalar where a
+        // record is declared, an unknown field, a missing required field (the defaulted one
+        // is not demanded), a mistyped field, and the named-argument form.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_durable_agent_send_data_payload");
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_158").size(), 6,
+                "All six sendData payload misuses should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        Assert.assertEquals(diagnosticResult.errorCount(), 6,
+                "Exactly the six misuses should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+
+        String allMessages = getDiagnosticMessages(diagnosticResult);
+        Assert.assertTrue(allMessages.contains("data-event channel 'orders' of durable agent 'orderAgent'"),
+                "The channel and agent should be named. Errors: " + allMessages);
+        Assert.assertTrue(allMessages.contains("has no field 'quantity'"),
+                "The unknown field should be named. Errors: " + allMessages);
+        Assert.assertTrue(allMessages.contains("requires the field 'qty'"),
+                "The missing required field should be named — and only it, 'note' has a default. "
+                        + "Errors: " + allMessages);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentMapNames() {
+        // A computed key in the mapping form has no static name (WORKFLOW_156, for a channel
+        // and a human task alike), and an async peer's callbackChannel must name a declared
+        // channel (WORKFLOW_152) — its reply would otherwise be swallowed silently.
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_map_names");
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_156").size(), 2,
+                "Both computed keys should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_152").size(), 1,
+                "The undeclared callbackChannel should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        Assert.assertEquals(diagnosticResult.errorCount(), 3,
+                "Exactly the three declaration misuses should be flagged. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "valid")
+    public void testDeprecatedDurableAgentCapabilityArrays() {
+        // The array forms still work — declarations register, and the channel they declare
+        // still validates the sendData call site — but each array is flagged once as
+        // deprecated, as a warning rather than an error.
+        DiagnosticResult diagnosticResult =
+                getDiagnosticResult("deprecated_durable_agent_capability_arrays");
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "The deprecated forms must stay usable. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        List<Diagnostic> deprecations = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_159");
+        Assert.assertEquals(deprecations.size(), 2,
+                "The events array and the humanTasks array should each be flagged once. "
+                        + "Diagnostics: " + getDiagnosticMessages(diagnosticResult));
+        for (Diagnostic deprecation : deprecations) {
+            Assert.assertEquals(deprecation.diagnosticInfo().severity(),
+                    io.ballerina.tools.diagnostics.DiagnosticSeverity.WARNING,
+                    "Deprecation must be a warning, not an error");
+        }
+    }
+
+    @Test(groups = "valid")
     public void testValidDurableAgentRunInput() {
-        // Query-only runs, matching typed payloads (positional and named), inline
-        // constructors (runtime-checked), and explicit nil all compile clean.
+        // Query-only runs, matching typed payloads (positional, named, and shorthand),
+        // complete inline constructors including nested records, list/map/fixed-array/readonly
+        // input types, a builtin inputType, a spread payload, the open json default taking any
+        // shape, and explicit nil all compile clean.
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("valid_durable_agent_run_input");
         Assert.assertEquals(diagnosticResult.errorCount(), 0,
                 "Expected no errors for valid run inputs. Errors: "
@@ -1034,15 +1119,38 @@ public class WorkflowCompilerPluginTest {
 
     @Test(groups = "invalid")
     public void testInvalidDurableAgentRunInput() {
-        // A payload with the default string inputType (the query IS the input), a payload
-        // for a no-input agent, a mistyped payload, and a mistyped named argument.
+        // A payload for a query-only agent, two mistyped payloads (positional and named), a
+        // list where a record is declared, and — the cases an inline constructor used to slip
+        // past — an unknown field, missing required fields, a mistyped field, an unknown and a
+        // missing field one level down, a bad array member, tuple arity/member mismatches, a
+        // builtin inputType, a readonly intersection, fixed-array arity, and the two fields a
+        // spread does not excuse.
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_durable_agent_run_input");
-        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_154").size(), 4,
-                "All four run-input misuses should be flagged. Errors: "
+        List<Diagnostic> runInputErrors = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_154");
+        Assert.assertEquals(runInputErrors.size(), 17,
+                "All seventeen run-input misuses should be flagged. Errors: "
                         + getDiagnosticMessages(diagnosticResult));
-        Assert.assertEquals(diagnosticResult.errorCount(), 4,
-                "Exactly the four misuses should be flagged. Errors: "
+        Assert.assertEquals(diagnosticResult.errorCount(), 17,
+                "Exactly the seventeen misuses should be flagged. Errors: "
                         + getDiagnosticMessages(diagnosticResult));
+
+        // The message must say what is wrong with the payload, not just that it is wrong — and
+        // it must keep the quotes that tell an identifier apart from the prose around it.
+        String allMessages = getDiagnosticMessages(diagnosticResult);
+        Assert.assertTrue(allMessages.contains("takes no input payload"),
+                "The query-only agent should be named as taking no payload. Errors: " + allMessages);
+        Assert.assertTrue(allMessages.contains("has no field 'quantity'"),
+                "The unknown field should be named. Errors: " + allMessages);
+        Assert.assertTrue(allMessages.contains("has no field 'shipTo.country'"),
+                "A nested unknown field should be named with its path. Errors: " + allMessages);
+        Assert.assertTrue(allMessages.contains("requires the fields 'qty' and 'shipTo'"),
+                "Both missing required fields should be named. Errors: " + allMessages);
+        Assert.assertTrue(allMessages.contains("'qty' expects 'int', but the payload gives 'string'"),
+                "A mistyped field should name both types. Errors: " + allMessages);
+        Assert.assertTrue(allMessages.contains("expects 2 members, but 3 were given"),
+                "A tuple arity mismatch should report both counts. Errors: " + allMessages);
+        Assert.assertTrue(allMessages.contains("expects 3 members, but 4 were given"),
+                "A fixed-length array arity mismatch should report both counts. Errors: " + allMessages);
     }
 
     @Test(groups = "invalid")
@@ -1080,18 +1188,19 @@ public class WorkflowCompilerPluginTest {
         // The message has to name the parameter and its type, or it does not say what to bind.
         // The type is rendered fully qualified (ballerina/http:<version>:Client), so the
         // assertion pins the name and the type's tail rather than a version-specific string.
+        // The tail carries the closing quote so that ':Client'' does not also match ':Client[]''.
         long clientDiags = diags.stream()
                 .map(Diagnostic::message)
-                .filter(message -> message.contains("parameter connection of type")
-                        && message.contains(":Client,"))
+                .filter(message -> message.contains("parameter 'connection' of type")
+                        && message.contains(":Client',"))
                 .count();
         Assert.assertEquals(clientDiags, 3,
                 "Expected the client-parameter errors to name 'connection' and its type. Errors: "
                         + diagnosticResult.errors());
         long restDiags = diags.stream()
                 .map(Diagnostic::message)
-                .filter(message -> message.contains("parameter targets of type")
-                        && message.contains(":Client[],"))
+                .filter(message -> message.contains("parameter 'targets' of type")
+                        && message.contains(":Client[]',"))
                 .count();
         Assert.assertEquals(restDiags, 2,
                 "Expected the rest-parameter errors to name 'targets' and its type. Errors: "

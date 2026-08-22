@@ -39,17 +39,41 @@ public enum EventCardinality {
     MULTI_EVENT
 }
 
-# A named event channel of a durable agent. `request`/`response` capture both
-# sides' types and the channel's duplexity: a `response` type declares a duplex
+# One event channel of a durable agent, declared in the mapping form of `events`
+# where the mapping key is the channel name — constant by construction, so the
+# name needs no separate validation. `request`/`response` capture both sides'
+# types and the channel's duplexity: a `response` type declares a duplex
 # (request-response) channel whose turn answers are read with
 # `getDataResult`/`waitForDataResult`; a nil `response` declares a one-way
 # channel — data flows in, no result is read back.
 #
-# + name - The channel name (unique across all of the agent's capabilities)
-# + request - Type of the payload sent to the agent on this channel
+# + request - Type of the payload sent to the agent on this channel; `sendData`
+#             validates each payload against it
 # + response - Type of the agent's reply for this channel; `()` for one-way channels
 # + cardinality - Business cardinality of the channel: re-armed per turn
 #                 (`MULTI_EVENT`, the default) or consumed once (`SINGLE_EVENT`)
+public type EventConfig record {|
+    typedesc<anydata> request;
+    typedesc<anydata>? response = ();
+    EventCardinality cardinality = MULTI_EVENT;
+|};
+
+# A named event channel of a durable agent — the array form of `events`, kept for
+# existing declarations.
+#
+# # Deprecated
+# Declare channels in the mapping form instead, keyed by name:
+# `events: {chat: {request: string, response: string}}`. The mapping key is a
+# compile-time constant by construction, which the `name` field has to be
+# validated to be.
+#
+# + name - The channel name (unique across all of the agent's capabilities)
+# + request - Type of the payload sent to the agent on this channel; `sendData`
+#             validates each payload against it
+# + response - Type of the agent's reply for this channel; `()` for one-way channels
+# + cardinality - Business cardinality of the channel: re-armed per turn
+#                 (`MULTI_EVENT`, the default) or consumed once (`SINGLE_EVENT`)
+@deprecated
 public type EventDecl record {|
     string name;
     typedesc<anydata> request;
@@ -94,7 +118,29 @@ public type ToolDecl record {|
     string|string[] userRoles?;
 |};
 
-# A human task capability of a durable agent.
+# One human task capability of a durable agent, declared in the mapping form of
+# `humanTasks` where the mapping key is the task name — constant by construction.
+#
+# + roles - Role(s) permitted to complete the task
+# + resultType - Expected result type; drives form schema generation and validation
+# + title - Short summary shown in the inbox; defaults to the task name
+# + description - Additional context shown alongside the form
+# + timeout - Maximum time to wait for completion; omit to wait indefinitely
+public type HumanTaskConfig record {|
+    string|string[] roles;
+    typedesc<anydata> resultType = anydata;
+    string title?;
+    string description?;
+    Duration timeout?;
+|};
+
+# A named human task capability of a durable agent — the array form of
+# `humanTasks`, kept for existing declarations.
+#
+# # Deprecated
+# Declare tasks in the mapping form instead, keyed by name:
+# `humanTasks: {signoff: {roles: "manager"}}`. The mapping key is a compile-time
+# constant by construction, which the `name` field has to be validated to be.
 #
 # + name - The task name (unique across all of the agent's capabilities)
 # + roles - Role(s) permitted to complete the task
@@ -102,6 +148,7 @@ public type ToolDecl record {|
 # + title - Short summary shown in the inbox; defaults to `name`
 # + description - Additional context shown alongside the form
 # + timeout - Maximum time to wait for completion; omit to wait indefinitely
+@deprecated
 public type HumanTaskDecl record {|
     string name;
     string|string[] roles;
@@ -143,18 +190,21 @@ public type PeerDecl record {|
 #                gating/roles/bindings are needed
 # + tools - AI tools: `@ai:AgentTool` functions, `ai:ToolConfig`s, toolkits, or
 #           `ToolDecl` when gating is needed
-# + events - Named event channels with request/response types and cardinality
-# + humanTasks - Human task capabilities. Capability names share one namespace
-#                across activities, tools, events, human tasks, and peers: a name
-#                claimed twice is rejected when the agent registers, so the
-#                program fails at startup
+# + events - Event channels keyed by channel name (`{chat: {request: string,
+#            response: string}}`); the array form (`EventDecl[]`) is deprecated
+# + humanTasks - Human task capabilities keyed by task name (`{signoff: {roles:
+#                "manager"}}`); the array form (`HumanTaskDecl[]`) is deprecated.
+#                Capability names share one namespace across activities, tools,
+#                events, human tasks, and peers: a name claimed twice is rejected
+#                when the agent registers, so the program fails at startup
 # + peers - Peer durable agents advertised as delegable tools
 # + maxIter - Hard cap on reasoning iterations per turn
-# + inputType - The agent's workflow input type, used by `run` and the management
-#               API start. `string` (the default) means the query text itself is
-#               the input; a data type declares a structured `run` input payload
-#               validated against it; `()` declares a no-input agent (started
-#               empty, typically driven by its event channels)
+# + inputType - The type of the structured JSON payload the agent's `run` (and the
+#               management API start) accepts alongside the query. `json` (the
+#               default) accepts any JSON payload unvalidated; a narrower type —
+#               typically a record — declares the payload's shape and is validated
+#               against it at the call site and at run time; `()` declares a
+#               no-payload agent whose only input is the query text
 # + resultType - When declared, the agent produces a typed final result: as the
 #                reasoning loop concludes, one more durable model call converts the
 #                conversation outcome into this type, and `waitForResult`/`getResult`
@@ -162,12 +212,12 @@ public type PeerDecl record {|
 public type DurableAgentConfig record {|
     ai:SystemPrompt systemPrompt;
     ai:ModelProvider model;
-    typedesc<anydata>? inputType = string;
+    typedesc<json>? inputType = json;
     typedesc<anydata>? resultType = ();
     (ActivityDecl|function)[] activities = [];
     (ToolDecl|ai:ToolConfig|ai:BaseToolKit|function)[] tools = [];
-    EventDecl[] events = [];
-    HumanTaskDecl[] humanTasks = [];
+    map<EventConfig>|EventDecl[] events = {};
+    map<HumanTaskConfig>|HumanTaskDecl[] humanTasks = {};
     PeerDecl[] peers = [];
     int maxIter = 16;
 |};
@@ -192,7 +242,7 @@ public type AgentBusyError distinct error;
 #     systemPrompt: {role: "Order assistant", instructions: "Help the user."},
 #     model: wso2Model,
 #     activities: [checkInventory, reserveStock],
-#     events: [{name: "chat", request: string, response: string, cardinality: workflow:MULTI_EVENT}]
+#     events: {chat: {request: string, response: string, cardinality: workflow:MULTI_EVENT}}
 # });
 # ```
 public isolated class DurableAgent {
@@ -226,9 +276,10 @@ public isolated class DurableAgent {
     # inside a `@workflow:Workflow` the agent runs as a Temporal child workflow.
     #
     # + query - The user turn appended to the agent's system prompt
-    # + input - Optional structured input for the run
+    # + input - Optional structured JSON payload for the run; must match the
+    #           agent's declared `inputType`
     # + return - The new agent instance ID, or an error
-    public isolated function run(string query, anydata input = ()) returns string|error = @java:Method {
+    public isolated function run(string query, json input = ()) returns string|error = @java:Method {
         'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
         name: "runAgent"
     } external;
@@ -236,9 +287,14 @@ public isolated class DurableAgent {
     # Sends an event to a running instance on a declared channel and returns a
     # correlation token for reading that turn's response.
     #
-    # + instanceId - The agent instance ID returned by `run`
+    # The instance must be one of **this** agent's: the compiler plugin checks the
+    # channel and its payload against this declaration, and the runtime checks them
+    # against the target instance's. The two agree exactly when the instance came
+    # from this agent's `run`.
+    #
+    # + instanceId - An instance ID this agent's `run` returned
     # + eventName - A channel declared in the agent's `events`
-    # + data - The payload; must match the channel's declared `request` type
+    # + data - The payload; validated against the channel's declared `request` type
     # + return - A correlation token for `getDataResult`/`waitForDataResult`,
     #            or an error
     public isolated function sendData(string instanceId, string eventName, anydata data)

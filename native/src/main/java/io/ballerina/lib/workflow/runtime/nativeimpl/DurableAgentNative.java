@@ -44,9 +44,11 @@ import io.temporal.client.WorkflowUpdateStage;
 import io.temporal.workflow.Workflow;
 import io.temporal.workflow.WorkflowLocal;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -234,8 +236,9 @@ public final class DurableAgentNative {
      * @param model        the ai:ModelProvider
      * @param systemPrompt the system prompt value (role + instructions)
      * @param maxIter      the per-turn reasoning iteration cap
-     * @param inputType    the agent's workflow input typedesc: string (query text), another
-     *                     data type (structured run input), or null (no-input agent)
+     * @param inputType    the typedesc of the structured JSON payload accepted alongside the
+     *                     query: json (any payload), a narrower type (validated payload), or
+     *                     null (query-only agent)
      * @return true on success, or a BError when the name is already registered
      */
     public static Object registerDurableAgentDecl(BString agentName, BObject model, Object systemPrompt,
@@ -622,73 +625,90 @@ public final class DurableAgentNative {
     private static Object validateRunInput(AgentDecl decl, Object input) {
         BTypedesc inputType = decl.inputType();
         if (input == null) {
-            return null; // Omitting the input is always allowed; the query alone starts the run.
+            return null; // Omitting the payload is always allowed; the query alone starts the run.
         }
         if (inputType == null) {
             return ErrorCreator.createError(StringUtils.fromString(
-                    "Durable agent '" + decl.agentName() + "' declares no input (inputType is ()); "
-                            + "remove the 'input' argument"));
+                    "Durable agent '" + decl.agentName() + "' takes no input payload (inputType is ()): "
+                            + "pass the text in the 'query' argument, or declare an inputType"));
         }
         Type describing = io.ballerina.runtime.api.utils.TypeUtils.getImpliedType(
                 inputType.getDescribingType());
-        if (describing.getTag() == io.ballerina.runtime.api.types.TypeTags.STRING_TAG) {
-            return ErrorCreator.createError(StringUtils.fromString(
-                    "Durable agent '" + decl.agentName() + "' declares inputType 'string': the query "
-                            + "text is the input — declare a data inputType to pass a structured payload"));
-        }
         try {
             return io.ballerina.runtime.api.utils.ValueUtils.convert(input, describing);
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
                     "The 'input' argument does not match durable agent '" + decl.agentName()
-                            + "'s declared inputType: " + e.getMessage()));
+                            + "'s declared inputType '" + describing + "': " + e.getMessage()));
         }
     }
 
+    /** Field of the management-start envelope carrying the agent's user turn. */
+    private static final String START_QUERY_FIELD = "query";
+    /** Field of the management-start envelope carrying the structured payload. */
+    private static final String START_INPUT_FIELD = "input";
+
     /**
-     * Builds the runner envelope for a management-API start of a durable agent, mapping the
-     * posted input onto the declared {@code inputType}: a {@code string} input type makes the
-     * posted string the query; another data type makes the validated payload the structured
-     * run input; a no-input agent rejects any payload.
+     * Builds the runner envelope for a management-API start of a durable agent from the posted
+     * {@code {query, input}} envelope. Every agent is started the same way — the query is the
+     * user turn, and {@code input} is the structured payload validated against the declared
+     * {@code inputType} (absent for a query-only agent, whose {@code inputType} is {@code ()}).
      *
      * @param agentName the agent name (the unprefixed workflow type)
-     * @param input     the posted input (a Ballerina value, or null)
+     * @param input     the posted start envelope (a Ballerina mapping value, or null)
      * @return the runner envelope as a Java map, or a BError for an input mismatch
      */
+    @SuppressWarnings("unchecked")
     public static Object buildStartRunInput(String agentName, Object input) {
         AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName);
         if (decl == null) {
             return unknownAgentError(agentName);
         }
-        String query = "";
+        if (input != null && !(input instanceof BMap)) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Durable agent '" + agentName + "' is started with a '{query, input}' object: "
+                            + "put the user turn in 'query'"
+                            + (decl.inputType() == null ? "" : " and the payload in 'input'")));
+        }
+        BMap<BString, Object> envelope = (BMap<BString, Object>) input;
+        boolean takesPayload = decl.inputType() != null;
+        BError unknownField = rejectUnknownEnvelopeFields(agentName, envelope, takesPayload);
+        if (unknownField != null) {
+            return unknownField;
+        }
+        Object queryValue = envelope == null ? null : envelope.get(StringUtils.fromString(START_QUERY_FIELD));
+        // The published schema lists 'query' as required, so a start that omits it is
+        // malformed rather than a start on an empty turn — an agent that reasons from its
+        // events alone still says so explicitly, with '"query": ""'.
+        if (queryValue == null) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Durable agent '" + agentName + "' is started with a '{query, input}' object: "
+                            + "the 'query' field is required (pass \"\" for an agent whose run is "
+                            + "driven by its events)"));
+        }
+        if (!(queryValue instanceof BString)) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "The 'query' field of durable agent '" + agentName + "'s start input must be a string"));
+        }
+        String query = ((BString) queryValue).getValue();
+
+        // A required query means the envelope itself is present by this point, and the field
+        // check above means a present 'input' belongs to an agent that declares a payload. A
+        // nil value is how JSON spells "no payload", so it reads the same as omitting the field.
+        Object posted = envelope.get(StringUtils.fromString(START_INPUT_FIELD));
         Object payload = null;
-        BTypedesc inputType = decl.inputType();
-        if (input != null) {
-            if (inputType == null) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Durable agent '" + agentName + "' declares no input (inputType is ()); "
-                                + "start it without an input"));
-            }
+        if (posted != null) {
             Type describing = io.ballerina.runtime.api.utils.TypeUtils.getImpliedType(
-                    inputType.getDescribingType());
-            if (describing.getTag() == io.ballerina.runtime.api.types.TypeTags.STRING_TAG) {
-                if (!(input instanceof BString queryInput)) {
-                    return ErrorCreator.createError(StringUtils.fromString(
-                            "Durable agent '" + agentName + "' declares inputType 'string': the input "
-                                    + "must be the query text"));
-                }
-                query = queryInput.getValue();
-            } else {
-                Object converted;
-                try {
-                    converted = io.ballerina.runtime.api.utils.ValueUtils.convert(input, describing);
-                } catch (Exception e) {
-                    return ErrorCreator.createError(StringUtils.fromString(
-                            "The input does not match durable agent '" + agentName
-                                    + "'s declared inputType: " + e.getMessage()));
-                }
-                payload = TypesUtil.convertBallerinaToJavaType(converted);
+                    decl.inputType().getDescribingType());
+            Object converted;
+            try {
+                converted = io.ballerina.runtime.api.utils.ValueUtils.convert(posted, describing);
+            } catch (Exception e) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "The 'input' field does not match durable agent '" + agentName
+                                + "'s declared inputType '" + describing + "': " + e.getMessage()));
             }
+            payload = TypesUtil.convertBallerinaToJavaType(converted);
         }
         Map<String, Object> runInput = new HashMap<>();
         runInput.put("agentName", agentName);
@@ -698,18 +718,86 @@ public final class DurableAgentNative {
     }
 
     /**
-     * Returns the JSON schema of a declared agent's management-start input, derived from its
-     * {@code inputType}, or {@code null} when the agent declares no input or is unknown.
+     * Rejects any field the start envelope does not define, so a misspelled key fails loudly
+     * instead of dropping the payload it was meant to carry — the envelope is closed, and the
+     * published schema says so with {@code additionalProperties: false}. A query-only agent
+     * defines no {@code input} field at all, so a posted one is reported as the payload it is
+     * rather than as an anonymous unknown key, whether its value is nil or not.
+     *
+     * @param agentName    the agent name, for the diagnostic
+     * @param envelope     the posted envelope, or null
+     * @param takesPayload whether the agent declares an {@code inputType}
+     * @return a BError naming the offending fields, or null when every field is known
+     */
+    private static BError rejectUnknownEnvelopeFields(String agentName, BMap<BString, Object> envelope,
+                                                      boolean takesPayload) {
+        if (envelope == null) {
+            return null;
+        }
+        List<String> unknown = new ArrayList<>();
+        for (BString key : envelope.getKeys()) {
+            String field = key.getValue();
+            if (START_QUERY_FIELD.equals(field) || (takesPayload && START_INPUT_FIELD.equals(field))) {
+                continue;
+            }
+            if (START_INPUT_FIELD.equals(field)) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Durable agent '" + agentName + "' takes no input payload (inputType is ()): "
+                                + "start it with the 'query' field alone"));
+            }
+            unknown.add(field);
+        }
+        if (unknown.isEmpty()) {
+            return null;
+        }
+        return ErrorCreator.createError(StringUtils.fromString(
+                "Durable agent '" + agentName + "'s start input has no field "
+                        + String.join(", ", unknown.stream().map(f -> "'" + f + "'").toList())
+                        + ": the envelope takes 'query'"
+                        + (takesPayload ? " and 'input'" : " only")));
+    }
+
+    /**
+     * Returns the JSON schema of a declared agent's management-start input: the uniform
+     * {@code {query, input}} envelope, where {@code input} carries the schema of the declared
+     * {@code inputType} and is omitted entirely for a query-only agent. Only {@code query} is
+     * required — an omitted payload starts the agent on the query alone, as {@code run(query)}
+     * does — so what the schema advertises is exactly what {@link #buildStartRunInput} accepts.
      *
      * @param agentName the agent name (the unprefixed workflow type)
-     * @return the input JSON schema, or null
+     * @return the start-envelope JSON schema, or null when the agent is unknown
      */
     public static String startInputSchema(String agentName) {
         AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName);
-        if (decl == null || decl.inputType() == null) {
+        if (decl == null) {
             return null;
         }
-        return TypesUtil.toJsonSchema(decl.inputType().getDescribingType());
+        Map<String, Object> query = new LinkedHashMap<>();
+        query.put("type", "string");
+        query.put("description", "The user turn the agent reasons over");
+
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put(START_QUERY_FIELD, query);
+        // Only the query is required. Omitting the payload runs the agent on the query alone,
+        // exactly as `run(query)` does, so listing it as required would advertise a stricter
+        // contract than either surface applies.
+        List<Object> required = new ArrayList<>();
+        required.add(START_QUERY_FIELD);
+
+        BTypedesc inputType = decl.inputType();
+        if (inputType != null) {
+            Type describing = io.ballerina.runtime.api.utils.TypeUtils.getImpliedType(
+                    inputType.getDescribingType());
+            properties.put(START_INPUT_FIELD, TypesUtil.toJsonSchemaValue(describing));
+        }
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "object");
+        schema.put("properties", properties);
+        schema.put("required", required);
+        // The envelope is closed: the runtime rejects any other field, so the schema must not
+        // leave callers thinking one would be carried.
+        schema.put("additionalProperties", Boolean.FALSE);
+        return TypesUtil.toJsonString(schema);
     }
 
     // -----------------------------------------------------------------------------------------
@@ -851,6 +939,30 @@ public final class DurableAgentNative {
         if (duplicate != null) {
             return duplicate;
         }
+        // An async peer's reply self-injects into its callbackChannel: a channel this agent does
+        // not declare would swallow the reply silently, and wait = false with no channel has
+        // nowhere to reply at all. Both fail here — at module init, before any instance runs —
+        // rather than inside the runner workflow. Event channels register before peers (the
+        // generated registration order), so the declared set is complete by now.
+        if (meta instanceof BMap<?, ?> metaMap) {
+            Object waitValue = metaMap.get(StringUtils.fromString("wait"));
+            Object callbackValue = metaMap.get(StringUtils.fromString("callbackChannel"));
+            String callbackChannel = callbackValue instanceof BString channel ? channel.getValue() : null;
+            if (Boolean.FALSE.equals(waitValue) && (callbackChannel == null || callbackChannel.isBlank())) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Peer agent '" + peerName.getValue() + "' of durable agent '" + agentName.getValue()
+                                + "' declares wait = false but no callbackChannel to receive the reply"));
+            }
+            if (callbackChannel != null && !callbackChannel.isBlank()
+                    && !decl.events().containsKey(callbackChannel)) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Durable agent '" + agentName.getValue() + "' declares no data-event channel named '"
+                                + callbackChannel + "' for peer '" + peerName.getValue()
+                                + "'s callbackChannel"
+                                + (decl.events().isEmpty() ? ""
+                                        : "; declared channels: " + String.join(", ", decl.events().keySet()))));
+            }
+        }
         decl.peers().put(peerName.getValue(),
                 new PeerDecl(peerName.getValue(), targetAgent.getValue(), meta));
         return true;
@@ -971,6 +1083,7 @@ public final class DurableAgentNative {
                 // rejects them, but the embedded test server can report acceptance-stage
                 // rejections only at result-read time, which would surface as a confusing
                 // "update not found" much later.
+                Object sendPayload = javaData;
                 try {
                     String targetType = stub.describe().getWorkflowType();
                     if (WorkflowWorkerNative.isRegisteredWorkflowType(targetType)
@@ -979,6 +1092,44 @@ public final class DurableAgentNative {
                                 "sendData turns are only supported for workflow:DurableAgent instances; '"
                                         + instance + "' is a regular workflow — use workflow:sendData instead"));
                     }
+                    // Validate the turn against the TARGET instance's declaration (its workflow
+                    // type names the agent), not this object's: sendData is instance-addressed,
+                    // so one driver object may legitimately send turns to another agent's
+                    // instance. Rejecting here matters — an undeclared channel would otherwise
+                    // enqueue under a name nobody ever waits on, so the update parks forever and
+                    // the sender's waitForDataResult hangs instead of erroring.
+                    if (targetType.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX)) {
+                        String targetAgent = targetType.substring(
+                                WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length());
+                        AgentDecl targetDecl = AGENT_DECL_REGISTRY.get(targetAgent);
+                        if (targetDecl != null) {
+                            EventDecl channel = targetDecl.events().get(event);
+                            if (channel == null) {
+                                return ErrorCreator.createError(StringUtils.fromString(
+                                        "Durable agent '" + targetAgent
+                                                + "' declares no data-event channel named '" + event + "'"
+                                                + (targetDecl.events().isEmpty() ? ""
+                                                        : "; declared channels: "
+                                                                + String.join(", ",
+                                                                        targetDecl.events().keySet()))));
+                            }
+                            // Convert rather than merely check, so declared record defaults are
+                            // filled exactly as on the run-input path.
+                            Type requestType = io.ballerina.runtime.api.utils.TypeUtils.getImpliedType(
+                                    channel.request().getDescribingType());
+                            try {
+                                Object converted = io.ballerina.runtime.api.utils.ValueUtils.convert(
+                                        data, requestType);
+                                sendPayload = TypesUtil.convertBallerinaToJavaType(converted);
+                            } catch (Exception conversion) {
+                                return ErrorCreator.createError(StringUtils.fromString(
+                                        "The 'data' argument does not match data-event channel '" + event
+                                                + "' of durable agent '" + targetAgent
+                                                + "': the declared request type is '" + requestType + "': "
+                                                + conversion.getMessage()));
+                            }
+                        }
+                    }
                 } catch (Exception ignore) {
                     // The target may live on another worker; the handler-side validator decides.
                 }
@@ -986,7 +1137,7 @@ public final class DurableAgentNative {
                         .setUpdateName(WorkflowWorkerNative.AGENT_SEND_DATA_UPDATE)
                         .setWaitForStage(WorkflowUpdateStage.ACCEPTED)
                         .build();
-                WorkflowUpdateHandle<Object> handle = stub.startUpdate(options, event, javaData);
+                WorkflowUpdateHandle<Object> handle = stub.startUpdate(options, event, sendPayload);
                 return StringUtils.fromString(handle.getId());
             } catch (Exception e) {
                 Throwable cause = e.getCause();

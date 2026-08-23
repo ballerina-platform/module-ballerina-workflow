@@ -300,8 +300,11 @@ function testManualRetryWithInputRecovery() returns error? {
         "A review id should no longer classify itself with a prefix");
     test:assertEquals(reviewTask.taskId.length(), 36,
         "A review id should be a bare UUID: " + reviewTask.taskId);
-    test:assertEquals(reviewTask.activityName, "recoverableByInputActivity",
-        "The reviewed activity should name itself, which is what the prefix used to carry");
+    // Qualified on purpose, and not the qualifier this branch dropped: an activity is now
+    // SCHEDULED under its plain name, while a review still reports which workflow's activity is
+    // under review. That attribution is what the id's prefix never carried.
+    test:assertEquals(reviewTask.activityName, "manualRetryWithInputWorkflow.recoverableByInputActivity",
+        "A review should name the reviewed activity and the workflow it belongs to");
 
     check management:completeReviewActivity(reviewTask.taskId,
         {action: "proceed-with-input", input: {mode: "ok"}});

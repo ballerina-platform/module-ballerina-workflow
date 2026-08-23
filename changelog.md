@@ -80,6 +80,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- **A human task listing now says who decided it.** `HumanTaskSummary` gains `completedBy` and
+  `completedAt`, so a work queue can show who completed or rejected each task without opening it.
+  The completer already existed on `HumanTaskDetail`, read back from the `taskCompletion` signal —
+  one history read per task, which is affordable for one task and not for a page of them. The task
+  workflow now records it in its own memo when it is decided, where it rides the visibility row
+  alongside `kind` and `userRoles`, so listings pay nothing extra for it. Rejections record it too,
+  so a failed task also names who rejected it.
+
+  Both fields are `()` for a task that is still pending, and for tasks decided before the memo
+  carried this — the information exists only in those runs' history, and is not backfilled. The
+  value is a user ID: resolving it to a display name belongs to whatever holds the user directory.
+
 - **The descriptor now carries each workflow's graph, and executions say where they are in it.**
   A workflow that calls the same activity from both arms of an `if` produced two invocations that
   history could not tell apart, which is what stopped the control plane from drawing the workflow

@@ -292,8 +292,16 @@ function testManualRetryWithInputRecovery() returns error? {
     string workflowId = check workflow:run(manualRetryWithInputWorkflow, input);
 
     management:ReviewActivitySummary reviewTask = check waitForPendingReviewActivity(workflowId);
-    test:assertTrue(reviewTask.taskId.startsWith("reviewactivity-"),
-        "Manual retry review ID should use the reviewactivity prefix");
+    // A bare id, deliberately. What a task IS now travels in its memo and its Temporal type,
+    // not in a prefix on its id — so the assertion is that the id classifies nothing and the
+    // activity is still identifiable from the fields that do. The runtime keeps reading the old
+    // prefixes as a fallback, for instances started before the memo existed.
+    test:assertFalse(reviewTask.taskId.startsWith("reviewactivity-"),
+        "A review id should no longer classify itself with a prefix");
+    test:assertEquals(reviewTask.taskId.length(), 36,
+        "A review id should be a bare UUID: " + reviewTask.taskId);
+    test:assertEquals(reviewTask.activityName, "recoverableByInputActivity",
+        "The reviewed activity should name itself, which is what the prefix used to carry");
 
     check management:completeReviewActivity(reviewTask.taskId,
         {action: "proceed-with-input", input: {mode: "ok"}});

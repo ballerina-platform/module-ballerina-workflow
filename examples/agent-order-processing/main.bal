@@ -45,9 +45,9 @@ final workflow:DurableAgent orderAgent = check new ({
     },
     model: orderModel,
     activities: [checkInventory],
-    events: [
-        {name: "chat", request: string, response: string, cardinality: workflow:MULTI_EVENT}
-    ]
+    events: {
+        chat: {request: string, response: string, cardinality: workflow:MULTI_EVENT}
+    }
 });
 
 public function main() returns error? {

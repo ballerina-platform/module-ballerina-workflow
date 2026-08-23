@@ -96,9 +96,9 @@ final EchoModelProvider chatModel = new;
 final workflow:DurableAgent chatAgent = check new ({
     systemPrompt: {role: "Chat assistant", instructions: "Echo the user's messages."},
     model: chatModel,
-    events: [
-        {name: "chat", request: string, response: string, cardinality: workflow:MULTI_EVENT}
-    ],
+    events: {
+        chat: {request: string, response: string, cardinality: workflow:MULTI_EVENT}
+    },
     maxIter: 4
 });
 
@@ -142,12 +142,12 @@ final workflow:DurableAgent orderAgent = check new ({
         {activity: reserveStock, name: "reserve", requiresApproval: true}
     ],
     tools: [priceLookup],
-    events: [
-        {name: "escalate", request: EscalationReq}
-    ],
-    humanTasks: [
-        {name: "approval", roles: "manager", title: "Approve the order"}
-    ],
+    events: {
+        escalate: {request: EscalationReq}
+    },
+    humanTasks: {
+        approval: {roles: "manager", title: "Approve the order"}
+    },
     maxIter: 8
 });
 

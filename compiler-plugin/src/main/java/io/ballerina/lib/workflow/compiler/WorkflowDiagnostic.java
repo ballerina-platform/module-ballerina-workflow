@@ -240,11 +240,23 @@ public enum WorkflowDiagnostic {
                     + "whose parameters are all data",
             DiagnosticSeverity.ERROR),
     WORKFLOW_158("WORKFLOW_158",
+            "The 'data' argument of 'sendData' does not match data-event channel '%s' of durable "
+                    + "agent '%s': %s",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_159("WORKFLOW_159",
+            "The array form of '%s' is deprecated: declare each entry as a mapping field keyed by "
+                    + "its name — %s: {%s: {...}} — which makes the name a compile-time constant "
+                    + "by construction",
+            DiagnosticSeverity.WARNING),
+    // 160 and 161, not 158 and 159: those codes went to main while this branch was open, and a
+    // diagnostic code is part of the published contract — a user's suppression or a docs link
+    // keyed on 158 must keep meaning what it meant.
+    WORKFLOW_160("WORKFLOW_160",
             "Step id '%s' is already used by another step in this workflow. A step id identifies one "
                     + "step of the workflow's graph, so this one is described with a numeric suffix "
                     + "instead. Give it an id of its own to control what it is called",
             DiagnosticSeverity.WARNING),
-    WORKFLOW_159("WORKFLOW_159",
+    WORKFLOW_161("WORKFLOW_161",
             "A step id must be a constant string: it is recorded in the workflow's graph at build "
                     + "time, so an expression evaluated per execution cannot be described. Use a "
                     + "literal, or omit it and let the compiler generate one",
@@ -275,7 +287,7 @@ public enum WorkflowDiagnostic {
      * @return the diagnostic message
      */
     public String getMessage() {
-        return message;
+        return escapeForDisplay(message);
     }
 
     /**
@@ -285,7 +297,42 @@ public enum WorkflowDiagnostic {
      * @return the formatted message
      */
     public String getMessage(Object... args) {
-        return String.format(message, args);
+        return escapeForDisplay(String.format(message, args));
+    }
+
+    /**
+     * Turns a finished message into a {@code MessageFormat} pattern that renders back to itself.
+     *
+     * <p>A {@code DiagnosticInfo}'s message is run through {@code MessageFormat} once more when the
+     * diagnostic is displayed, and that pass reads three characters as syntax rather than text:
+     * <ul>
+     *   <li>{@code '} quotes the text after it, so a message handed over verbatim reaches the
+     *       developer with every quote it was written with stripped out — {@code the field
+     *       'shipTo.country'} prints as {@code the field shipTo.country}. A doubled {@code ''} is
+     *       how the pattern language spells a literal quote.</li>
+     *   <li>{@code &#123;} opens a format element, so a message that shows Ballerina syntax
+     *       ({@code new (&#123;...&#125;)}, a record body) fails to parse outright once its
+     *       surrounding quotes stop protecting it. Quoting each brace makes it literal.</li>
+     * </ul>
+     *
+     * <p>The quote doubling has to happen in the same pass as the brace quoting, not before it:
+     * the quotes this method adds around a brace are syntax and must not themselves be doubled.
+     *
+     * @param rendered the fully formatted message
+     * @return the message escaped for the display pass
+     */
+    private static String escapeForDisplay(String rendered) {
+        StringBuilder escaped = new StringBuilder(rendered.length());
+        for (int i = 0; i < rendered.length(); i++) {
+            char c = rendered.charAt(i);
+            switch (c) {
+                case '\'' -> escaped.append("''");
+                case '{' -> escaped.append("'{'");
+                case '}' -> escaped.append("'}'");
+                default -> escaped.append(c);
+            }
+        }
+        return escaped.toString();
     }
 
     /**

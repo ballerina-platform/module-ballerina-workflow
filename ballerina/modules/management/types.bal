@@ -25,8 +25,10 @@
 #          or a `workflow:DurableAgent` declaration (`AGENT`). Both start through the
 #          same endpoint and list as one set of definitions
 # + inputSchema - JSON Schema of the start input for form rendering: a workflow's
-#                 input parameters, or an agent's declared `inputType`. `()` when the
-#                 schema is unavailable or the agent declares no input
+#                 input parameters, or — for an agent — the uniform `{query, input}`
+#                 start envelope, where `input` carries the declared `inputType`'s own
+#                 schema and is absent when the agent declares no payload.
+#                 `()` when the schema is unavailable
 # + isActive - Whether this workflow type has an active registered worker
 # + workerCount - Number of workers currently registered for this workflow type
 public type WorkflowDefinition record {|

@@ -30,6 +30,7 @@ import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.api.symbols.VariableSymbol;
 import io.ballerina.compiler.syntax.tree.AnnotationNode;
+import io.ballerina.compiler.syntax.tree.BasicLiteralNode;
 import io.ballerina.compiler.syntax.tree.CaptureBindingPatternNode;
 import io.ballerina.compiler.syntax.tree.CheckExpressionNode;
 import io.ballerina.compiler.syntax.tree.ExplicitNewExpressionNode;
@@ -48,6 +49,7 @@ import io.ballerina.compiler.syntax.tree.QualifiedNameReferenceNode;
 import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
 import io.ballerina.compiler.syntax.tree.SpecificFieldNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
+import io.ballerina.compiler.syntax.tree.Token;
 import io.ballerina.compiler.syntax.tree.TypeDescriptorNode;
 import io.ballerina.compiler.syntax.tree.VariableDeclarationNode;
 import io.ballerina.projects.Document;
@@ -232,6 +234,9 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         List<DurableAgentDeclInfo.EventDecl> events = new ArrayList<>();
         List<DurableAgentDeclInfo.HumanTaskDecl> humanTasks = new ArrayList<>();
         List<DurableAgentDeclInfo.PeerDecl> peers = new ArrayList<>();
+        // Async peers' callbackChannel references, checked against the declared channels after
+        // the whole config is read (the peers field may precede the events field in source).
+        List<CallbackChannelRef> callbackChannels = new ArrayList<>();
 
         Set<String> seenNames = new HashSet<>();
 
@@ -259,16 +264,60 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 case "tools" -> extractTools(value, aiToolRefs, seenNames, agentName, context);
                 case "events" -> extractEvents(value, events, seenNames, agentName, context);
                 case "humanTasks" -> extractHumanTasks(value, humanTasks, seenNames, agentName, context);
-                case "peers" -> extractPeers(value, peers, seenNames, agentName, context);
+                case "peers" -> extractPeers(value, peers, seenNames, agentName, callbackChannels, context);
                 default -> {
                     // systemPrompt/model handled above; unknown fields are the type checker's concern
                 }
             }
         }
 
+        // An async peer's reply self-injects into its callbackChannel; a channel the agent does
+        // not declare would swallow the reply silently, so the reference must resolve here.
+        Set<String> channelNames = new HashSet<>();
+        for (DurableAgentDeclInfo.EventDecl event : events) {
+            channelNames.add(event.name());
+        }
+        for (CallbackChannelRef callback : callbackChannels) {
+            if (!channelNames.contains(callback.channel())) {
+                reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_152, callback.location(),
+                        agentName, callback.channel());
+            }
+        }
+
         return new DurableAgentDeclInfo(agentName, modelSource, systemPromptSource,
                 maxIterSource, inputTypeSource, resultTypeSource, typeRefPrefixes, activities, aiToolRefs,
                 events, humanTasks, peers);
+    }
+
+    /**
+     * An async peer's {@code callbackChannel} reference.
+     *
+     * @param channel  the referenced channel name
+     * @param location where the reference was written, for the diagnostic
+     */
+    private record CallbackChannelRef(String channel, Location location) { }
+
+    /**
+     * The name a mapping field is keyed by: the identifier itself, or the unquoted string
+     * literal. A computed key ({@code [expr]}) has no static name and returns null.
+     */
+    private static String mappingKeyName(SpecificFieldNode field) {
+        Node keyNode = field.fieldName();
+        // Token text, not toSourceCode(): the latter carries leading trivia, so a comment
+        // line above the field would become part of the "name".
+        if (keyNode instanceof BasicLiteralNode literal
+                && literal.kind() == SyntaxKind.STRING_LITERAL) {
+            String text = literal.literalToken().text();
+            return text.length() >= 2 ? text.substring(1, text.length() - 1) : null;
+        }
+        if (keyNode instanceof Token token) {
+            String text = token.text().strip();
+            if (text.startsWith("'")) {
+                text = text.substring(1);
+            }
+            return text.isEmpty() ? null : text;
+        }
+        return null;
     }
 
     private void extractActivities(ExpressionNode value, List<DurableAgentDeclInfo.ActivityDecl> activities,
@@ -411,95 +460,183 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
     private void extractEvents(ExpressionNode value, List<DurableAgentDeclInfo.EventDecl> events,
                                Set<String> seenNames, String agentName,
                                SyntaxNodeAnalysisContext context) {
+        // Primary form: a mapping keyed by channel name — the key is a compile-time constant
+        // by construction, so no name validation is needed.
+        if (value instanceof MappingConstructorExpressionNode channelsMapping) {
+            for (MappingFieldNode channelField : channelsMapping.fields()) {
+                if (!(channelField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
+                    // A computed key ({[expr]: ...}) has no static name, which the registration
+                    // needs; a spread has no keys this pass can see at all.
+                    reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_156,
+                            channelField.location(), "data-event channel");
+                    continue;
+                }
+                String name = mappingKeyName(sf);
+                if (name == null || !(sf.valueExpr().get() instanceof MappingConstructorExpressionNode config)) {
+                    continue;
+                }
+                extractEventConfig(name, sf.fieldName().location(), config, events, seenNames,
+                        agentName, context);
+            }
+            return;
+        }
         if (!(value instanceof ListConstructorExpressionNode list)) {
             return;
         }
+        reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_159, value.location(),
+                "events", "events", "chat");
         for (Node member : list.expressions()) {
             if (!(member instanceof MappingConstructorExpressionNode eventMapping)) {
                 continue;
             }
             String name = null;
-            String requestSource = null;
-            String responseSource = null;
-            String cardinality = "MULTI_EVENT";
+            MappingConstructorExpressionNode config = eventMapping;
             Location nameLocation = eventMapping.location();
             for (MappingFieldNode eventField : eventMapping.fields()) {
                 if (!(eventField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
                     continue;
                 }
-                String key = sf.fieldName().toSourceCode().strip();
-                ExpressionNode fieldValue = sf.valueExpr().get();
-                switch (key) {
-                    case "name" -> {
-                        name = stringLiteralValue(fieldValue);
-                        nameLocation = fieldValue.location();
-                        if (name == null) {
-                            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_156,
-                                    fieldValue.location(), "data-event channel");
-                        }
+                if ("name".equals(sf.fieldName().toSourceCode().strip())) {
+                    ExpressionNode fieldValue = sf.valueExpr().get();
+                    name = stringLiteralValue(fieldValue);
+                    nameLocation = fieldValue.location();
+                    if (name == null) {
+                        reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_156,
+                                fieldValue.location(), "data-event channel");
                     }
-                    case "request" -> requestSource = fieldValue.toSourceCode().strip();
-                    case "response" -> responseSource = fieldValue.toSourceCode().strip();
-                    case "cardinality" -> cardinality = simpleName(fieldValue.toSourceCode().strip());
-                    default -> {
-                        // no other fields
-                    }
-                }
-            }
-            if (name == null || requestSource == null) {
-                continue;
-            }
-            checkUnique(name, seenNames, agentName, nameLocation, context);
-            events.add(new DurableAgentDeclInfo.EventDecl(name, requestSource, responseSource,
-                    cardinality));
-        }
-    }
-
-    private void extractHumanTasks(ExpressionNode value, List<DurableAgentDeclInfo.HumanTaskDecl> humanTasks,
-                                   Set<String> seenNames, String agentName,
-                                   SyntaxNodeAnalysisContext context) {
-        if (!(value instanceof ListConstructorExpressionNode list)) {
-            return;
-        }
-        for (Node member : list.expressions()) {
-            if (!(member instanceof MappingConstructorExpressionNode taskMapping)) {
-                continue;
-            }
-            String name = null;
-            String resultTypeSource = null;
-            StringBuilder meta = new StringBuilder();
-            Location nameLocation = taskMapping.location();
-            for (MappingFieldNode taskField : taskMapping.fields()) {
-                if (!(taskField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
-                    continue;
-                }
-                String key = sf.fieldName().toSourceCode().strip();
-                ExpressionNode fieldValue = sf.valueExpr().get();
-                switch (key) {
-                    case "name" -> {
-                        name = stringLiteralValue(fieldValue);
-                        nameLocation = fieldValue.location();
-                        if (name == null) {
-                            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_156,
-                                    fieldValue.location(), "human task");
-                        }
-                    }
-                    // The result typedesc travels separately (it is not json).
-                    case "resultType" -> resultTypeSource = fieldValue.toSourceCode().strip();
-                    default -> appendMetaField(meta, key, fieldValue.toSourceCode().strip());
                 }
             }
             if (name == null) {
                 continue;
             }
-            checkUnique(name, seenNames, agentName, nameLocation, context);
-            humanTasks.add(new DurableAgentDeclInfo.HumanTaskDecl(name,
-                    meta.isEmpty() ? null : "{" + meta + "}", resultTypeSource));
+            extractEventConfig(name, nameLocation, config, events, seenNames, agentName, context);
         }
+    }
+
+    /**
+     * Reads one channel's config fields (request/response/cardinality) and records the
+     * declaration — shared by the mapping form (name = the key) and the deprecated array form
+     * (name = the {@code name} field).
+     */
+    private void extractEventConfig(String name, Location nameLocation,
+                                    MappingConstructorExpressionNode config,
+                                    List<DurableAgentDeclInfo.EventDecl> events,
+                                    Set<String> seenNames, String agentName,
+                                    SyntaxNodeAnalysisContext context) {
+        String requestSource = null;
+        String responseSource = null;
+        String cardinality = "MULTI_EVENT";
+        for (MappingFieldNode eventField : config.fields()) {
+            if (!(eventField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
+                continue;
+            }
+            String key = sf.fieldName().toSourceCode().strip();
+            ExpressionNode fieldValue = sf.valueExpr().get();
+            switch (key) {
+                case "request" -> requestSource = fieldValue.toSourceCode().strip();
+                case "response" -> responseSource = fieldValue.toSourceCode().strip();
+                case "cardinality" -> cardinality = simpleName(fieldValue.toSourceCode().strip());
+                default -> {
+                    // "name" in the array form is read by the caller; no other fields
+                }
+            }
+        }
+        if (requestSource == null) {
+            return;
+        }
+        checkUnique(name, seenNames, agentName, nameLocation, context);
+        events.add(new DurableAgentDeclInfo.EventDecl(name, requestSource, responseSource,
+                cardinality));
+    }
+
+    private void extractHumanTasks(ExpressionNode value, List<DurableAgentDeclInfo.HumanTaskDecl> humanTasks,
+                                   Set<String> seenNames, String agentName,
+                                   SyntaxNodeAnalysisContext context) {
+        // Primary form: a mapping keyed by task name — constant by construction.
+        if (value instanceof MappingConstructorExpressionNode tasksMapping) {
+            for (MappingFieldNode taskField : tasksMapping.fields()) {
+                if (!(taskField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
+                    reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_156,
+                            taskField.location(), "human task");
+                    continue;
+                }
+                String name = mappingKeyName(sf);
+                if (name == null || !(sf.valueExpr().get() instanceof MappingConstructorExpressionNode config)) {
+                    continue;
+                }
+                extractHumanTaskConfig(name, sf.fieldName().location(), config, humanTasks,
+                        seenNames, agentName, context);
+            }
+            return;
+        }
+        if (!(value instanceof ListConstructorExpressionNode list)) {
+            return;
+        }
+        reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_159, value.location(),
+                "humanTasks", "humanTasks", "signoff");
+        for (Node member : list.expressions()) {
+            if (!(member instanceof MappingConstructorExpressionNode taskMapping)) {
+                continue;
+            }
+            String name = null;
+            Location nameLocation = taskMapping.location();
+            for (MappingFieldNode taskField : taskMapping.fields()) {
+                if (!(taskField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
+                    continue;
+                }
+                if ("name".equals(sf.fieldName().toSourceCode().strip())) {
+                    ExpressionNode fieldValue = sf.valueExpr().get();
+                    name = stringLiteralValue(fieldValue);
+                    nameLocation = fieldValue.location();
+                    if (name == null) {
+                        reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_156,
+                                fieldValue.location(), "human task");
+                    }
+                }
+            }
+            if (name == null) {
+                continue;
+            }
+            extractHumanTaskConfig(name, nameLocation, taskMapping, humanTasks, seenNames,
+                    agentName, context);
+        }
+    }
+
+    /**
+     * Reads one human task's config fields and records the declaration — shared by the mapping
+     * form (name = the key) and the deprecated array form (name = the {@code name} field, which
+     * the caller has already read and which is skipped here).
+     */
+    private void extractHumanTaskConfig(String name, Location nameLocation,
+                                        MappingConstructorExpressionNode config,
+                                        List<DurableAgentDeclInfo.HumanTaskDecl> humanTasks,
+                                        Set<String> seenNames, String agentName,
+                                        SyntaxNodeAnalysisContext context) {
+        String resultTypeSource = null;
+        StringBuilder meta = new StringBuilder();
+        for (MappingFieldNode taskField : config.fields()) {
+            if (!(taskField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
+                continue;
+            }
+            String key = sf.fieldName().toSourceCode().strip();
+            ExpressionNode fieldValue = sf.valueExpr().get();
+            switch (key) {
+                case "name" -> {
+                    // Array form only: already read by the caller.
+                }
+                // The result typedesc travels separately (it is not json).
+                case "resultType" -> resultTypeSource = fieldValue.toSourceCode().strip();
+                default -> appendMetaField(meta, key, fieldValue.toSourceCode().strip());
+            }
+        }
+        checkUnique(name, seenNames, agentName, nameLocation, context);
+        humanTasks.add(new DurableAgentDeclInfo.HumanTaskDecl(name,
+                meta.isEmpty() ? null : "{" + meta + "}", resultTypeSource));
     }
 
     private void extractPeers(ExpressionNode value, List<DurableAgentDeclInfo.PeerDecl> peers,
                               Set<String> seenNames, String agentName,
+                              List<CallbackChannelRef> callbackChannels,
                               SyntaxNodeAnalysisContext context) {
         if (!(value instanceof ListConstructorExpressionNode list)) {
             return;
@@ -526,6 +663,13 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     // The peer's identity is its module-level variable name — the same name
                     // its own declaration registers under.
                     case "agent" -> targetAgent = simpleName(fieldValue.toSourceCode().strip());
+                    case "callbackChannel" -> {
+                        String channel = stringLiteralValue(fieldValue);
+                        if (channel != null) {
+                            callbackChannels.add(new CallbackChannelRef(channel, fieldValue.location()));
+                        }
+                        appendMetaField(meta, key, fieldValue.toSourceCode().strip());
+                    }
                     default -> appendMetaField(meta, key, fieldValue.toSourceCode().strip());
                 }
             }

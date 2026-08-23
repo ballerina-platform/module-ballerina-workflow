@@ -476,7 +476,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
             }
             String stepId = WorkflowGraphBuilder.constantStepId(argument);
             if (stepId == null) {
-                report(argument.location(), WorkflowDiagnostic.WORKFLOW_159);
+                report(argument.location(), WorkflowDiagnostic.WORKFLOW_161);
                 return;
             }
             if (stepId.isBlank()) {
@@ -485,7 +485,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                 return;
             }
             if (seen.containsKey(stepId)) {
-                report(argument.location(), WorkflowDiagnostic.WORKFLOW_158, stepId);
+                report(argument.location(), WorkflowDiagnostic.WORKFLOW_160, stepId);
                 return;
             }
             seen.put(stepId, argument.location());

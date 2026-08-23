@@ -115,7 +115,10 @@ public type Command record {|
 # - `LIST_DEFINITIONS` — none.
 # - `GET_RUNTIME_INFO` — none.
 # - `LIST_INSTANCES` — `status`, `workflowType`, `workflowId`, `startedBy`, `limit`,
-#   `pageToken`, `startTimeFrom`, `startTimeTo`, `closeTimeFrom`, `closeTimeTo`, `taskQueue`.
+#   `pageToken`, `startTimeFrom`, `startTimeTo`, `closeTimeFrom`, `closeTimeTo`, `taskQueue`,
+#   `kind` (`WORKFLOW`, `HUMAN_TASK`, `REVIEW_ACTIVITY`, `CHILD_WORKFLOW`, `AGENT`). Without a
+#   `kind` the listing excludes task and review children, as it did before kinds existed; each
+#   row reports its own `kind`, so an unfiltered listing is still self-describing.
 # - `START_INSTANCE` — `workflowType` (required), `input`, `workflowId`, `timeoutSeconds`.
 # - `GET_INSTANCE`, `SUSPEND_INSTANCE`, `RESUME_INSTANCE`, `CANCEL_INSTANCE`,
 #   `GET_INSTANCE_HISTORY`, `GET_INSTANCE_ACTIVITY_TREE`, `GET_INSTANCE_EXECUTION_GRAPH` —
@@ -391,6 +394,7 @@ final readonly & map<string> PARAM_TYPES = {
     "eventId": "int",
     "closeTimeTo": "string",
     "feedback": "string",
+    "kind": "string",
     "limit": "int",
     "pageToken": "string",
     "parentWorkflowId": "string",

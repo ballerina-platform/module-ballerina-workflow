@@ -779,6 +779,13 @@ public final class ManagementNative {
         String title = decodeMemoString(dc, memoFields, "title", taskName);
         String parentId = decodeMemoString(dc, memoFields, "parentWorkflowId", "");
         String parentWorkflowType = decodeMemoString(dc, memoFields, "parentWorkflowType", null);
+        // The task workflow upserts these when it is decided, so a listing can say who acted
+        // without reading each task's history to find the completion signal. Absent for tasks
+        // still pending, and for tasks decided before the memo carried it.
+        String completedBy = decodeMemoString(dc, memoFields,
+                WorkflowWorkerNative.COMPLETED_BY_MEMO_KEY, null);
+        String completedAt = decodeMemoString(dc, memoFields,
+                WorkflowWorkerNative.COMPLETED_AT_MEMO_KEY, null);
 
         String[] userRolesArr = new String[0];
         try {
@@ -795,6 +802,10 @@ public final class ManagementNative {
         record.put(StringUtils.fromString("taskId"), StringUtils.fromString(wfId));
         record.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
         record.put(StringUtils.fromString("title"), StringUtils.fromString(title));
+        record.put(StringUtils.fromString("completedBy"),
+                   completedBy != null ? StringUtils.fromString(completedBy) : null);
+        record.put(StringUtils.fromString("completedAt"),
+                   completedAt != null ? StringUtils.fromString(completedAt) : null);
         // Identify the owning integration: callers in a shared namespace (project) route
         // follow-up operations to the integration serving this task queue.
         record.put(StringUtils.fromString("namespace"),
@@ -1748,14 +1759,18 @@ public final class ManagementNative {
                 String prefixedType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + wt.getValue();
                 String safeWt = prefixedType.replace("\\", "\\\\").replace("\"", "\\\"");
                 clauses.add(String.format("WorkflowType = \"%s\"", safeWt));
-            } else if (!(kind instanceof BString k && !k.getValue().isBlank()
-                    && WorkflowWorkerNative.isKindSearchAttributeReady())) {
+            } else if (!(kind instanceof BString k && !k.getValue().isBlank())) {
                 // The pre-kind way of excluding task and review children. A kind filter says
                 // precisely what the caller wants — including those very children — so it
-                // replaces this heuristic rather than being overridden by it. But only a kind
-                // filter that will actually be applied replaces it: on a server without the
-                // WorkflowKind attribute the kind clause is dropped (see addKindClause), and
-                // dropping this exclusion too would leak every task and review child.
+                // replaces this heuristic rather than being overridden by it.
+                //
+                // Requested-but-unsupported counts as requested. This used to keep the exclusion
+                // when the WorkflowKind attribute was unavailable, on the reasoning that dropping
+                // both would leak every child; but addKindClause drops the kind clause in that
+                // case, so `kind = "HUMAN_TASK"` came back as workflows only — the one thing the
+                // caller definitely did not ask for. addKindClause says it is listing without the
+                // filter, and this now matches that: unfiltered, and said out loud, rather than
+                // confidently wrong.
                 clauses.add("WorkflowType STARTS_WITH 'workflow-'");
             }
             if (workflowId instanceof BString wi) {

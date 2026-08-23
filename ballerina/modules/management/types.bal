@@ -100,6 +100,8 @@ public type HumanTaskGroup record {|
 #            `TERMINATED` (an admin terminated the task workflow)
 # + startTime - ISO-8601 timestamp when the task was created
 # + closeTime - ISO-8601 timestamp when the task ended, or `()` if still pending
+# + completedBy - User ID of whoever completed or rejected it, or `()` while pending
+# + completedAt - When that decision was recorded, or `()` when unknown
 # + userRoles - Roles permitted to complete this task
 # + canComplete - Whether the requesting caller has a role that permits completion
 public type HumanTaskSummary record {|
@@ -116,6 +118,11 @@ public type HumanTaskSummary record {|
     string status;
     string startTime;
     string? closeTime;
+    # Who completed or rejected the task, or `()` while it is pending — and for tasks decided
+    # before the completer was recorded on the visibility row
+    string? completedBy = ();
+    # When that decision was recorded, or `()` when unknown
+    string? completedAt = ();
     string[] userRoles;
     boolean canComplete = false;
 |};

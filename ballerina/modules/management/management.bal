@@ -438,6 +438,12 @@ public isolated function startWorkflowByType(string workflowType, json? input,
 # + closeTimeFrom - Optional ISO-8601 lower bound on workflow close time (inclusive)
 # + closeTimeTo - Optional ISO-8601 upper bound on workflow close time (inclusive)
 # + taskQueue - Optional task queue filter; without it, every queue in the configured namespace
+# + kind - Optional kind filter: `WORKFLOW`, `HUMAN_TASK`, `REVIEW_ACTIVITY`, `CHILD_WORKFLOW`
+#          or `AGENT`. Without it the listing excludes task and review children, as it did
+#          before kinds existed. Each summary reports its own `kind`, so an unfiltered listing
+#          is still self-describing. Filtering needs the `WorkflowKind` search attribute; where
+#          the server has none — the in-memory dev server, which supports no custom attributes —
+#          the listing comes back unfiltered with a warning rather than failing.
 # + return - Paginated list of workflow instance summaries, or an error
 public isolated function listWorkflowInstances(string? status = (), string? workflowType = (),
     string? workflowId = (), string? startedBy = (), int 'limit = 20, string? pageToken = (),

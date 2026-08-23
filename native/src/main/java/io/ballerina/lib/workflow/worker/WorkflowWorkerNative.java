@@ -126,6 +126,10 @@ public final class WorkflowWorkerNative {
      * status without querying the workflow (visible via DescribeWorkflowExecution and visibility listings).
      */
     public static final String SUSPENDED_MEMO_KEY = "wfSuspended";
+    /** Who completed (or rejected) a human task, so a listing need not read its history. */
+    public static final String COMPLETED_BY_MEMO_KEY = "completedBy";
+    /** When that decision was recorded, on the workflow's own clock. */
+    public static final String COMPLETED_AT_MEMO_KEY = "completedAt";
     /**
      * Prefix applied to all user-defined workflow types registered with Temporal. Allows
      * {@code WorkflowType STARTS_WITH 'workflow-'} queries to exclude internal child workflow types (humantask-*,
@@ -1923,7 +1927,13 @@ public final class WorkflowWorkerNative {
         }
 
         private static String escape(String text) {
-            return text.replace("\\", "\\\\").replace("\"", "\\\"");
+            // Line breaks too: these values include exception messages, and a message carrying a
+            // newline could otherwise close its line and write further fields of its own —
+            // forging entries in a log an operator is reading as fact.
+            return text.replace("\\", "\\\\")
+                    .replace("\r", "\\r")
+                    .replace("\n", "\\n")
+                    .replace("\"", "\\\"");
         }
     }
 
@@ -2686,6 +2696,19 @@ public final class WorkflowWorkerNative {
                 // rejection. Fail the task workflow instead of completing it so its terminal status is
                 // FAILED — matching the task status model (ballerina-library#8892). The reason is
                 // propagated to the parent's awaitHumanTask through the failure message.
+                // Who acted, recorded where a LISTING can see it. `completedBy` otherwise lives
+                // only in the taskCompletion signal, so reading it back means one history read
+                // per task — fine for a detail view, N reads for a page, which is the same
+                // reason `kind` and `userRoles` ride the memo. Written before the rejection
+                // check so a rejected task also says who rejected it.
+                if (signalData.data() instanceof Map<?, ?> actorMap
+                        && actorMap.get("completedBy") instanceof String actor && !actor.isBlank()) {
+                    Map<String, Object> completion = new HashMap<>();
+                    completion.put(COMPLETED_BY_MEMO_KEY, actor);
+                    completion.put(COMPLETED_AT_MEMO_KEY, java.time.Instant
+                            .ofEpochMilli(Workflow.currentTimeMillis()).toString());
+                    Workflow.upsertMemo(completion);
+                }
                 if (signalData.data() instanceof Map<?, ?> payloadMap
                         && Boolean.TRUE.equals(payloadMap.get("__rejected"))) {
                     Object reason = payloadMap.get("reason");

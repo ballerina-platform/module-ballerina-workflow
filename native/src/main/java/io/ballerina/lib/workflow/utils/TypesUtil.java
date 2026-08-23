@@ -568,7 +568,20 @@ public final class TypesUtil {
                 }
                 Map<String, Object> merged = finiteSchema(valueSpace);
                 if (hasNull) {
-                    merged.put("type", new ArrayList<>(List.of(merged.get("type"), "null")));
+                    // The enum is what a validator checks against, so null has to be IN it —
+                    // widening `type` alone still rejects the null that `"a"|"b"|()` permits.
+                    Object enumValues = merged.get("enum");
+                    if (enumValues instanceof List<?> listed) {
+                        List<Object> withNull = new ArrayList<>(listed);
+                        withNull.add(null);
+                        merged.put("enum", withNull);
+                    }
+                    // And only widen `type` when there is one: a mixed finite union
+                    // (`1|"a"|()`) has no uniform type, and List.of rejects the null element.
+                    Object declared = merged.get("type");
+                    if (declared != null) {
+                        merged.put("type", new ArrayList<>(List.of(declared, "null")));
+                    }
                 }
                 return merged;
             }

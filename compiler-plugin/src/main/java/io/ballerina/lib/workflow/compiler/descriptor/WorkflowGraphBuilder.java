@@ -694,7 +694,14 @@ public final class WorkflowGraphBuilder {
 
         @Override
         public void visit(MethodCallExpressionNode methodCall) {
-            if (WorkflowConstants.SLEEP_METHOD.equals(methodCall.methodName().toSourceCode().trim())) {
+            // Matched on the receiver's type as well as the name. On the name alone, any
+            // user-defined `sleep()` in a workflow body became a sleep node — and the modifier
+            // would then inject a stepId argument into a method that has no such parameter.
+            boolean onContext = semanticModel.typeOf(methodCall.expression())
+                    .map(WorkflowPluginUtils::isContextType)
+                    .orElse(false);
+            if (onContext && WorkflowConstants.SLEEP_METHOD.equals(
+                    methodCall.methodName().toSourceCode().trim())) {
                 // `ctx.sleep` is a plain method, not a remote call, so its chosen id is read from the
                 // method's own arguments.
                 String chosen = chosenStepId(methodCall.arguments());

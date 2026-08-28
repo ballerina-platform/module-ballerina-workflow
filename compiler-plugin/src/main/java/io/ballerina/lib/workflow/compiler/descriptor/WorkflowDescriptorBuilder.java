@@ -51,6 +51,7 @@ import io.ballerina.compiler.syntax.tree.RemoteMethodCallActionNode;
 import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
 import io.ballerina.compiler.syntax.tree.SpecificFieldNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
+import io.ballerina.compiler.syntax.tree.Token;
 import io.ballerina.compiler.syntax.tree.VariableDeclarationNode;
 import io.ballerina.lib.workflow.compiler.WorkflowConstants;
 import io.ballerina.lib.workflow.compiler.WorkflowPluginUtils;
@@ -245,6 +246,30 @@ public final class WorkflowDescriptorBuilder {
     // ------------------------------------------------------------------
     // Workflows
     // ------------------------------------------------------------------
+
+    /**
+     * The mapping field's key as written, from token text rather than {@code toSourceCode()}:
+     * the latter carries leading trivia, so a comment line above the field would become part
+     * of the "name" and the field would silently stop matching.
+     *
+     * @param field the mapping field
+     * @return the key name, or {@code null} for a key with no static name
+     */
+    private static String fieldKeyName(SpecificFieldNode field) {
+        Node keyNode = field.fieldName();
+        if (keyNode instanceof BasicLiteralNode literal && literal.kind() == SyntaxKind.STRING_LITERAL) {
+            String text = literal.literalToken().text();
+            return text.length() >= 2 ? text.substring(1, text.length() - 1) : null;
+        }
+        if (keyNode instanceof Token token) {
+            String text = token.text().strip();
+            if (text.startsWith("'")) {
+                text = text.substring(1);
+            }
+            return text.isEmpty() ? null : text;
+        }
+        return null;
+    }
 
     private static Map<String, Object> buildWorkflowEntry(FunctionDefinitionNode fnDef, SemanticModel semanticModel,
                                                    String moduleQName, String major) {
@@ -625,7 +650,10 @@ public final class WorkflowDescriptorBuilder {
                 if (!(field instanceof SpecificFieldNode specific) || specific.valueExpr().isEmpty()) {
                     continue;
                 }
-                String fieldName = specific.fieldName().toSourceCode().trim();
+                String fieldName = fieldKeyName(specific);
+                if (fieldName == null) {
+                    continue;
+                }
                 ExpressionNode value = specific.valueExpr().get();
                 switch (fieldName) {
                     case WorkflowConstants.AGENT_CONFIG_INPUT_TYPE ->
@@ -733,7 +761,10 @@ public final class WorkflowDescriptorBuilder {
                 if (!(field instanceof SpecificFieldNode specific) || specific.valueExpr().isEmpty()) {
                     continue;
                 }
-                String fieldName = specific.fieldName().toSourceCode().trim();
+                String fieldName = fieldKeyName(specific);
+                if (fieldName == null) {
+                    continue;
+                }
                 ExpressionNode expr = specific.valueExpr().get();
                 switch (fieldName) {
                     case WorkflowConstants.DECL_NAME -> name = constantStringValue(expr);
@@ -770,7 +801,10 @@ public final class WorkflowDescriptorBuilder {
                 if (!(field instanceof SpecificFieldNode specific) || specific.valueExpr().isEmpty()) {
                     continue;
                 }
-                String fieldName = specific.fieldName().toSourceCode().trim();
+                String fieldName = fieldKeyName(specific);
+                if (fieldName == null) {
+                    continue;
+                }
                 ExpressionNode expr = specific.valueExpr().get();
                 if (WorkflowConstants.DECL_NAME.equals(fieldName)) {
                     name = constantStringValue(expr);
@@ -803,7 +837,10 @@ public final class WorkflowDescriptorBuilder {
                     if (!(field instanceof SpecificFieldNode specific) || specific.valueExpr().isEmpty()) {
                         continue;
                     }
-                    String fieldName = specific.fieldName().toSourceCode().trim();
+                    String fieldName = fieldKeyName(specific);
+                    if (fieldName == null) {
+                        continue;
+                    }
                     ExpressionNode expr = specific.valueExpr().get();
                     switch (fieldName) {
                         case WorkflowConstants.DECL_ACTIVITY -> fnRef = expr;
@@ -812,8 +849,10 @@ public final class WorkflowDescriptorBuilder {
                             if (expr instanceof MappingConstructorExpressionNode bindings) {
                                 for (MappingFieldNode binding : bindings.fields()) {
                                     if (binding instanceof SpecificFieldNode b) {
-                                        boundNames.add(b.fieldName().toSourceCode().trim()
-                                                .replace("\"", ""));
+                                        String boundName = fieldKeyName(b);
+                                        if (boundName != null) {
+                                            boundNames.add(boundName);
+                                        }
                                     }
                                 }
                             }
@@ -862,7 +901,7 @@ public final class WorkflowDescriptorBuilder {
             if (member instanceof MappingConstructorExpressionNode mapping) {
                 for (MappingFieldNode field : mapping.fields()) {
                     if (field instanceof SpecificFieldNode specific && specific.valueExpr().isPresent()
-                            && WorkflowConstants.DECL_TOOL.equals(specific.fieldName().toSourceCode().trim())) {
+                            && WorkflowConstants.DECL_TOOL.equals(fieldKeyName(specific))) {
                         ref = specific.valueExpr().get();
                     }
                 }
@@ -896,7 +935,7 @@ public final class WorkflowDescriptorBuilder {
             String name = null;
             for (MappingFieldNode field : mapping.fields()) {
                 if (field instanceof SpecificFieldNode specific && specific.valueExpr().isPresent()
-                        && WorkflowConstants.DECL_NAME.equals(specific.fieldName().toSourceCode().trim())) {
+                        && WorkflowConstants.DECL_NAME.equals(fieldKeyName(specific))) {
                     name = constantStringValue(specific.valueExpr().get());
                 }
             }

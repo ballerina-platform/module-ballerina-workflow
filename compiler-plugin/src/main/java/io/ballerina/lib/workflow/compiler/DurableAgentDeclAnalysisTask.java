@@ -245,7 +245,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     || specificField.valueExpr().isEmpty()) {
                 continue;
             }
-            String fieldName = specificField.fieldName().toSourceCode().strip();
+            String fieldName = mappingKeyName(specificField);
+            if (fieldName == null) {
+                continue;
+            }
             ExpressionNode value = specificField.valueExpr().get();
             switch (fieldName) {
                 case "model" -> modelSource = value.toSourceCode().strip();
@@ -356,7 +359,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             if (!(declField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
                 continue;
             }
-            String key = sf.fieldName().toSourceCode().strip();
+            String key = mappingKeyName(sf);
+            if (key == null) {
+                continue;
+            }
             ExpressionNode declValue = sf.valueExpr().get();
             switch (key) {
                 case "activity" -> {
@@ -432,7 +438,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                             || specificField.valueExpr().isEmpty()) {
                         continue;
                     }
-                    String fieldName = specificField.fieldName().toSourceCode().strip();
+                    String fieldName = mappingKeyName(specificField);
+                    if (fieldName == null) {
+                        continue;
+                    }
                     String valueSource = specificField.valueExpr().get().toSourceCode().strip();
                     switch (fieldName) {
                         case "tool" -> {
@@ -496,7 +505,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 if (!(eventField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
                     continue;
                 }
-                if ("name".equals(sf.fieldName().toSourceCode().strip())) {
+                if ("name".equals(mappingKeyName(sf))) {
                     ExpressionNode fieldValue = sf.valueExpr().get();
                     name = stringLiteralValue(fieldValue);
                     nameLocation = fieldValue.location();
@@ -530,7 +539,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             if (!(eventField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
                 continue;
             }
-            String key = sf.fieldName().toSourceCode().strip();
+            String key = mappingKeyName(sf);
+            if (key == null) {
+                continue;
+            }
             ExpressionNode fieldValue = sf.valueExpr().get();
             switch (key) {
                 case "request" -> requestSource = fieldValue.toSourceCode().strip();
@@ -584,7 +596,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 if (!(taskField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
                     continue;
                 }
-                if ("name".equals(sf.fieldName().toSourceCode().strip())) {
+                if ("name".equals(mappingKeyName(sf))) {
                     ExpressionNode fieldValue = sf.valueExpr().get();
                     name = stringLiteralValue(fieldValue);
                     nameLocation = fieldValue.location();
@@ -618,7 +630,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             if (!(taskField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
                 continue;
             }
-            String key = sf.fieldName().toSourceCode().strip();
+            String key = mappingKeyName(sf);
+            if (key == null) {
+                continue;
+            }
             ExpressionNode fieldValue = sf.valueExpr().get();
             switch (key) {
                 case "name" -> {
@@ -653,7 +668,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 if (!(peerField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
                     continue;
                 }
-                String key = sf.fieldName().toSourceCode().strip();
+                String key = mappingKeyName(sf);
+                if (key == null) {
+                    continue;
+                }
                 ExpressionNode fieldValue = sf.valueExpr().get();
                 switch (key) {
                     case "name" -> {
@@ -711,7 +729,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             }
             for (MappingFieldNode field : annotation.annotValue().get().fields()) {
                 if (field instanceof SpecificFieldNode specificField
-                        && "auth".equals(specificField.fieldName().toSourceCode().strip())) {
+                        && "auth".equals(mappingKeyName(specificField))) {
                     reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_155,
                             toolRefNode.location(), functionDef.functionName().text(), agentName);
                     return;
@@ -820,7 +838,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         Set<String> names = new HashSet<>();
         for (MappingFieldNode field : mapping.fields()) {
             if (field instanceof SpecificFieldNode specificField) {
-                String key = specificField.fieldName().toSourceCode().strip();
+                String key = mappingKeyName(specificField);
                 names.add(key.length() > 1 && key.startsWith("\"") && key.endsWith("\"")
                         ? key.substring(1, key.length() - 1) : key);
             }

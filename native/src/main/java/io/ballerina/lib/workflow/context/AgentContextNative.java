@@ -88,13 +88,17 @@ public final class AgentContextNative {
     private static final String KIND_EVENT_PREFIX = "event:";
     private static final String KIND_END = "end";
     private static final String KIND_SLEEP = "sleep";
+    private static final String KIND_WORKFLOW_ID = "workflowid";
+    private static final String KIND_CURRENT_TIME = "currenttime";
     private static final String SLEEP_TOOL = "sleep";
+    private static final String WORKFLOW_ID_TOOL = "getWorkflowId";
+    private static final String CURRENT_TIME_TOOL = "getCurrentTime";
     private static final String EVENT_TOOL_PREFIX = "awaitEvent_";
     private static final String END_CONVERSATION_TOOL = "endConversation";
     // Names of built-in tools published by getAgentToolDefs; user registrations must not
     // shadow them, or the model would see duplicate definitions with diverging dispatch.
     private static final java.util.Set<String> RESERVED_TOOL_NAMES =
-            java.util.Set.of(SLEEP_TOOL, END_CONVERSATION_TOOL);
+            java.util.Set.of(SLEEP_TOOL, END_CONVERSATION_TOOL, WORKFLOW_ID_TOOL, CURRENT_TIME_TOOL);
 
     private static BError reservedToolNameError(String name) {
         return ErrorCreator.createError(StringUtils.fromString(
@@ -655,6 +659,21 @@ public final class AgentContextNative {
                         + "restarts while sleeping and resumes exactly where it left off; a wake signal "
                         + "from the management API ends the sleep early.",
                 sleepSchema, KIND_SLEEP));
+        // Workflow-context reads a plain workflow gets from ctx: the agent loop answers these
+        // deterministically on the workflow thread, so no activity (and no worker slot) is spent.
+        Map<String, Object> emptySchema = new LinkedHashMap<>();
+        emptySchema.put("type", "object");
+        emptySchema.put("properties", new LinkedHashMap<>());
+        defs.add(toolDef(WORKFLOW_ID_TOOL,
+                "Returns this run's workflow instance ID - the durable reference identifier of this "
+                        + "agent execution. Use it whenever the user or an external system needs a "
+                        + "reference ID for this run or conversation.",
+                emptySchema, KIND_WORKFLOW_ID));
+        defs.add(toolDef(CURRENT_TIME_TOOL,
+                "Returns the current date and time as an ISO-8601 UTC timestamp. This is the "
+                        + "workflow's deterministic clock - always call this instead of guessing "
+                        + "the current date or time.",
+                emptySchema, KIND_CURRENT_TIME));
         return StringUtils.fromString(TypesUtil.toJsonString(defs));
     }
 

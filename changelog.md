@@ -80,6 +80,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- **A durable agent can now read its own workflow context: `getWorkflowId` and `getCurrentTime`
+  join `sleep` as always-available built-in tools.** In a plain workflow these are `ctx` methods;
+  the agent's tools had no `ctx`, so an agent could not hand out its own run's reference ID or
+  know the date without hallucinating one. Both are answered deterministically on the workflow
+  thread — a context read, never an activity, so no worker slot and no history entry is spent.
+  `getWorkflowId` returns the run's instance ID (the durable reference identifier to give to a
+  user or an external system); `getCurrentTime` returns the workflow's deterministic clock as an
+  ISO-8601 UTC instant. Their names are reserved alongside the other built-ins: a user capability
+  registered under either name is rejected.
+
 - **A human task listing now says who decided it.** `HumanTaskSummary` gains `completedBy` and
   `completedAt`, so a work queue can show who completed or rejected each task without opening it.
   The completer already existed on `HumanTaskDetail`, read back from the `taskCompletion` signal —

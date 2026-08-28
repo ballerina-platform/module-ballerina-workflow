@@ -26,6 +26,7 @@ import ballerina/ai;
 import ballerina/jballerina.java;
 import ballerina/lang.runtime;
 import ballerina/test;
+import ballerina/time;
 import ballerina/workflow.internal as wfInternal;
 import ballerina/workflow.management;
 
@@ -571,4 +572,77 @@ function testWakeSignalInterruptsSleep() returns error? {
     test:assertEquals(result,
         "Awake: Sleep was interrupted by a wake signal before the 300 seconds elapsed.",
         "The wake signal should end the built-in sleep early");
+}
+
+// Calls the two workflow-context builtins in one turn and answers with both results,
+// so the test can assert what the model was actually told.
+isolated client class ContextReadMockModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        if messages is ai:ChatMessage[] {
+            string? workflowId = ();
+            string? currentTime = ();
+            foreach ai:ChatMessage message in messages {
+                if message is ai:ChatFunctionMessage {
+                    if message.name == "getWorkflowId" {
+                        workflowId = message.content;
+                    } else if message.name == "getCurrentTime" {
+                        currentTime = message.content;
+                    }
+                }
+            }
+            if workflowId is string && currentTime is string {
+                return {role: ai:ASSISTANT, content: "id=" + workflowId + ";time=" + currentTime};
+            }
+        }
+        return {
+            role: ai:ASSISTANT,
+            toolCalls: [
+                {name: "getWorkflowId", arguments: {}},
+                {name: "getCurrentTime", arguments: {}}
+            ]
+        };
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final ContextReadMockModelProvider contextReadMockModel = new;
+
+final DurableAgent contextReadAgent = check new ({
+    systemPrompt: {role: "", instructions: "Report your workflow id and the current time."},
+    model: contextReadMockModel
+});
+
+@test:Config {groups: ["unit"], dependsOn: [testWakeSignalInterruptsSleep]}
+function testBuiltinWorkflowContextTools() returns error? {
+    _ = check wfInternal:registerDurableAgentDecl("contextReadAgent", contextReadMockModel,
+        {role: "", instructions: "Report your workflow id and the current time."}, 8);
+    _ = check wfInternal:registerDurableAgentRunner("contextReadAgent");
+    contextReadAgent.bindAgentName("contextReadAgent");
+
+    string|error runResult = contextReadAgent.run("Who are you and what time is it?");
+    if runResult is error {
+        if runResult.message().includes("Workflow client not initialized") {
+            return;
+        }
+        return runResult;
+    }
+    string result = check contextReadAgent.waitForResult(runResult);
+    // getWorkflowId must feed the model this very run's instance id - the reference
+    // identifier an agent hands out - and getCurrentTime an ISO-8601 UTC instant.
+    test:assertEquals(result.substring(0, 3 + runResult.length()), "id=" + runResult,
+        "The built-in getWorkflowId tool should return the run's own instance id");
+    int timeAt = <int>result.indexOf(";time=");
+    string timeText = result.substring(timeAt + 6);
+    time:Utc|error parsed = time:utcFromString(timeText);
+    test:assertTrue(parsed is time:Utc,
+        "The built-in getCurrentTime tool should return an ISO-8601 UTC instant, got: " + timeText);
 }

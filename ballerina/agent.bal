@@ -16,6 +16,7 @@
 
 import ballerina/ai;
 import ballerina/jballerina.java;
+import ballerina/time;
 
 // ============================================================================
 // anydata mirrors of the ballerina/ai chat message types.
@@ -292,6 +293,18 @@ isolated function dispatchAgentTool(handle ctxHandle, string agentName, AgentFun
         return string `Sleep was interrupted by a wake signal before the ${seconds} seconds elapsed.`;
     }
 
+    // Workflow-context reads: what a plain workflow gets from ctx (getWorkflowId,
+    // currentTime) the agent gets as always-available built-in tools. Both are
+    // deterministic workflow-thread reads - answered in place, never an activity.
+    if kind == "workflowid" {
+        return agentWorkflowId(ctxHandle);
+    }
+    if kind == "currenttime" {
+        int millis = agentCurrentTimeMillis(ctxHandle);
+        time:Utc utc = [millis / 1000, <decimal>(millis % 1000) / 1000d];
+        return time:utcToString(utc);
+    }
+
     if kind == "activity" {
         // Resolved through the context so registration-time bindings (fixed
         // arguments, connection markers) are merged in and a tool-name override
@@ -372,6 +385,20 @@ isolated function executeAgentTool(string agentName, string toolName, json argum
 isolated function agentInterruptibleSleep(handle nativeContext, int millis) returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "agentInterruptibleSleep"
+} external;
+
+// The run's workflow instance ID, read deterministically on the workflow thread
+// (backs the built-in getWorkflowId tool).
+isolated function agentWorkflowId(handle nativeContext) returns string|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
+    name: "getWorkflowId"
+} external;
+
+// The deterministic workflow clock in epoch milliseconds (backs the built-in
+// getCurrentTime tool).
+isolated function agentCurrentTimeMillis(handle nativeContext) returns int = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
+    name: "currentTimeMillis"
 } external;
 
 // Whether the registered tool is an MCP tool (its caller takes mcp:CallToolParams).

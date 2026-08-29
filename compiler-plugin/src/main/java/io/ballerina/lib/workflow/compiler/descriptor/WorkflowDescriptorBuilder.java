@@ -752,8 +752,9 @@ public final class WorkflowDescriptorBuilder {
 
     private static List<Object> buildAgentEvents(SemanticModel semanticModel, ExpressionNode value) {
         Map<String, Map<String, Object>> events = new TreeMap<>();
-        for (MappingConstructorExpressionNode mapping : mappingsOf(value)) {
-            String name = null;
+        for (NamedEntry namedEntry : namedMappingsOf(value)) {
+            MappingConstructorExpressionNode mapping = namedEntry.config();
+            String name = namedEntry.name();
             Map<String, Object> request = null;
             Map<String, Object> response = null;
             String cardinality = CARDINALITY_MULTI;
@@ -794,8 +795,9 @@ public final class WorkflowDescriptorBuilder {
 
     private static List<Object> buildAgentHumanTasks(SemanticModel semanticModel, ExpressionNode value) {
         Map<String, Map<String, Object>> tasks = new TreeMap<>();
-        for (MappingConstructorExpressionNode mapping : mappingsOf(value)) {
-            String name = null;
+        for (NamedEntry namedEntry : namedMappingsOf(value)) {
+            MappingConstructorExpressionNode mapping = namedEntry.config();
+            String name = namedEntry.name();
             Map<String, Object> result = null;
             for (MappingFieldNode field : mapping.fields()) {
                 if (!(field instanceof SpecificFieldNode specific) || specific.valueExpr().isEmpty()) {
@@ -948,6 +950,41 @@ public final class WorkflowDescriptorBuilder {
             tools.put(name, tool);
         }
     }
+
+    /**
+     * A named config entry from either declaration form. The mapping form ({@code
+     * events: {chat: {...}}}) is the primary style: the key IS the name and the value is the
+     * config. The deprecated array form carries the name as a {@code name} field inside each
+     * entry, which the caller reads — so array entries come back with a null name.
+     *
+     * @param value the field's value expression
+     * @return the entries, in source order
+     */
+    private static List<NamedEntry> namedMappingsOf(ExpressionNode value) {
+        List<NamedEntry> entries = new ArrayList<>();
+        if (value instanceof MappingConstructorExpressionNode mapping) {
+            for (MappingFieldNode field : mapping.fields()) {
+                if (field instanceof SpecificFieldNode specific && specific.valueExpr().isPresent()
+                        && specific.valueExpr().get() instanceof MappingConstructorExpressionNode config) {
+                    String key = fieldKeyName(specific);
+                    if (key != null) {
+                        entries.add(new NamedEntry(key, config));
+                    }
+                }
+            }
+            return entries;
+        }
+        if (value instanceof ListConstructorExpressionNode list) {
+            for (Node member : list.expressions()) {
+                if (member instanceof MappingConstructorExpressionNode config) {
+                    entries.add(new NamedEntry(null, config));
+                }
+            }
+        }
+        return entries;
+    }
+
+    private record NamedEntry(String name, MappingConstructorExpressionNode config) { }
 
     private static List<MappingConstructorExpressionNode> mappingsOf(ExpressionNode value) {
         List<MappingConstructorExpressionNode> mappings = new ArrayList<>();

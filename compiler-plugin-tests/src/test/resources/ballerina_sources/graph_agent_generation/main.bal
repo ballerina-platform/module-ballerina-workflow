@@ -36,6 +36,8 @@ final workflow:DurableAgent expenseAgent = check new ({
     resultType: ExpenseOutcome,
     activities: [{activity: makePayment}],
     tools: [validateClaim],
-    events: [{name: "billSubmitted", request: string}],
-    humanTasks: [{name: "approveExpense", roles: "MANAGER", resultType: ApprovalDecision}]
+    // The mapping form on purpose: the descriptor must read the primary declaration
+    // style, or the agent map loses its whole inbound column.
+    events: {billSubmitted: {request: string}},
+    humanTasks: {approveExpense: {roles: "MANAGER", resultType: ApprovalDecision}}
 });

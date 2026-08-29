@@ -182,6 +182,20 @@ public final class AgentContextNative {
         private String closingFailure = null;
         // The model provider configured via ctx.setModelProvider; consumed by runDurableAgent.
         private BObject modelProvider = null;
+        // Where the loop is durably parked right now (a human-readable phrase, used verbatim
+        // in side-turn park notes), or null while it is reasoning. parkedEventName is set
+        // when the park is an event wait, so chat-wait parks keep normal update delivery.
+        private String parkedOn = null;
+        private String parkedEventName = null;
+        private long parkedAtMillis = 0;
+        // One side turn at a time: a second question waits for the first to answer.
+        private boolean sideTurnActive = false;
+        // The clean conversation transcript (system, user, and content-bearing assistant
+        // messages) as Java values, published by the loop; side turns reason over it.
+        private List<Object> chatTranscript = new ArrayList<>();
+        // Question/answer pairs answered by side turns while the loop was parked; the loop
+        // merges them into its history before its next model call.
+        private final List<Map<String, Object>> asides = new ArrayList<>();
 
         public AgentContextInfo(String workflowId, String workflowType, SignalAwaitWrapper signalWrapper,
                                 Set<String> eventNames) {
@@ -193,6 +207,40 @@ public final class AgentContextNative {
 
         public String finalResponse() {
             return finalResponse;
+        }
+
+        void beginPark(String description, String eventName) {
+            this.parkedOn = description;
+            this.parkedEventName = eventName;
+            this.parkedAtMillis = Workflow.currentTimeMillis();
+        }
+
+        void endPark() {
+            this.parkedOn = null;
+            this.parkedEventName = null;
+        }
+
+        /**
+         * Whether an incoming update on the named channel should be answered by a side turn:
+         * a conversational agent (a MULTI_EVENT chat channel), a chat message, and the loop
+         * durably parked on something OTHER than the chat wait itself. A message arriving
+         * while the loop waits on chat is the next turn — it takes the normal path.
+         *
+         * @param eventName the update's channel
+         * @return true when a side turn should answer this update
+         */
+        public boolean sideTurnEligible(String eventName) {
+            return multiEvent && CHAT_EVENT.equals(eventName)
+                    && eventNames != null && eventNames.contains(CHAT_EVENT)
+                    && parkedOn != null && !CHAT_EVENT.equals(parkedEventName);
+        }
+
+        public boolean sideTurnActive() {
+            return sideTurnActive;
+        }
+
+        public void setSideTurnActive(boolean active) {
+            this.sideTurnActive = active;
         }
 
         /**
@@ -378,9 +426,15 @@ public final class AgentContextNative {
                 argsMap.putAll((Map<String, Object>) m);
             }
 
-            Map<String, Object> decision = WorkflowContextNative.startReviewActivity(
-                    "PRE_RUN", reviewTaskName, activityType, argsMap, "", reviewRoles,
-                    info.approvalTimeoutMillis, AGENT_TOOL_SITE_PREFIX + activityName);
+            info.beginPark("a human approval decision for the gated tool '" + activityName + "'", null);
+            Map<String, Object> decision;
+            try {
+                decision = WorkflowContextNative.startReviewActivity(
+                        "PRE_RUN", reviewTaskName, activityType, argsMap, "", reviewRoles,
+                        info.approvalTimeoutMillis, AGENT_TOOL_SITE_PREFIX + activityName);
+            } finally {
+                info.endPark();
+            }
             return StringUtils.fromString(TypesUtil.toJsonString(decision));
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -513,8 +567,15 @@ public final class AgentContextNative {
     public static Object agentInterruptibleSleep(BHandle handle, long millis) {
         try {
             io.ballerina.lib.workflow.worker.WorkflowWorkerNative.awaitWhileSuspended();
-            boolean woken = Workflow.await(java.time.Duration.ofMillis(millis),
-                    io.ballerina.lib.workflow.worker.WorkflowWorkerNative::isWakeRequested);
+            AgentContextInfo info = (AgentContextInfo) handle.getValue();
+            info.beginPark("a timer (the built-in sleep tool)", null);
+            boolean woken;
+            try {
+                woken = Workflow.await(java.time.Duration.ofMillis(millis),
+                        io.ballerina.lib.workflow.worker.WorkflowWorkerNative::isWakeRequested);
+            } finally {
+                info.endPark();
+            }
             if (woken) {
                 io.ballerina.lib.workflow.worker.WorkflowWorkerNative.clearWakeRequest();
             }
@@ -904,6 +965,122 @@ public final class AgentContextNative {
      * @param eventName the event field name declared in the agent's signature
      * @return the event data, or a Ballerina error
      */
+    /**
+     * Stores the loop's published conversation transcript — the clean view (system, user,
+     * and content-bearing assistant messages) side turns reason over.
+     *
+     * @param handle the agent context handle
+     * @param transcript the transcript as JSON (an AgentChatMessage array)
+     */
+    @SuppressWarnings("unchecked")
+    public static void publishTranscript(BHandle handle, Object transcript) {
+        AgentContextInfo info = (AgentContextInfo) handle.getValue();
+        Object javaValue = TypesUtil.convertBallerinaToJavaType(transcript);
+        List<Object> messages = new ArrayList<>();
+        if (javaValue instanceof List<?> list) {
+            messages.addAll((List<Object>) list);
+        }
+        info.chatTranscript = messages;
+    }
+
+    /**
+     * Drains the question/answer pairs side turns answered while the loop was parked, as a
+     * JSON array of {@code {question, answer}} — the loop merges them into its history
+     * before its next model call, so the main conversation sees everything that was said.
+     *
+     * @param handle the agent context handle
+     * @return a JSON array string
+     */
+    public static BString drainAsides(BHandle handle) {
+        AgentContextInfo info = (AgentContextInfo) handle.getValue();
+        if (info.asides.isEmpty()) {
+            return StringUtils.fromString("[]");
+        }
+        List<Map<String, Object>> drained = new ArrayList<>(info.asides);
+        info.asides.clear();
+        return StringUtils.fromString(TypesUtil.toJsonString(drained));
+    }
+
+    /**
+     * Answers one chat update with a side turn while the main loop is durably parked: one
+     * bounded, tool-less model call over the published transcript plus a park-state note.
+     * The update completes with the side answer — still exactly one response per request —
+     * and the pair is recorded for the loop to merge into its history when it resumes.
+     * This is what keeps a parked agent conversational (and breaks the mutual wait where
+     * the agent holds for an event while the user holds for a reply before sending it).
+     * <p>
+     * Runs on the update handler's own workflow coroutine; the model call is a recorded
+     * activity, so the whole side turn replays deterministically. Side turns never touch
+     * the event queues, the turn pairing, or the event-wait budget.
+     *
+     * @param info the agent context state
+     * @param payload the update's chat message
+     * @return the side answer
+     */
+    public static String sideTurnAnswer(AgentContextInfo info, Object payload) {
+        Object javaPayload = TypesUtil.convertBallerinaToJavaType(payload);
+        String question = String.valueOf(javaPayload);
+        String parkedDescription = info.parkedOn != null ? info.parkedOn : "its current step";
+        String since = java.time.Instant.ofEpochMilli(
+                info.parkedAtMillis > 0 ? info.parkedAtMillis : Workflow.currentTimeMillis()).toString();
+        String parkNote = "You are the same assistant, answering a quick side question while your main "
+                + "work is paused: you are currently waiting on " + parkedDescription + " (since " + since
+                + "). Answer briefly from the conversation so far and this status. You cannot run tools "
+                + "or take any action right now and must not claim to; the main work continues "
+                + "automatically once the wait resolves.";
+
+        List<Object> messages = new ArrayList<>(info.chatTranscript);
+        Map<String, Object> note = new LinkedHashMap<>();
+        note.put("role", "system");
+        note.put("content", parkNote);
+        messages.add(note);
+        Map<String, Object> userMessage = new LinkedHashMap<>();
+        userMessage.put("role", "user");
+        userMessage.put("content", question);
+        messages.add(userMessage);
+
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("agentName", info.workflowType);
+        args.put("messages", messages);
+        args.put("tools", new ArrayList<>());
+        Map<String, Object> callConfig = new LinkedHashMap<>();
+        callConfig.put(CALL_CONFIG_MARKER, true);
+        callConfig.put(RETRY_ON_ERROR_KEY, false);
+        callConfig.put(WorkflowContextNative.STEP_ID_KEY, AGENT_MODEL_SITE);
+
+        String answer = null;
+        try {
+            ActivityOptions options = ActivityOptions.newBuilder()
+                    .setStartToCloseTimeout(Duration.ofMinutes(5))
+                    .setRetryOptions(RetryOptions.newBuilder().setMaximumAttempts(1).build())
+                    .setSummary(AGENT_MODEL_SITE)
+                    .build();
+            io.temporal.workflow.ActivityStub stub = Workflow.newUntypedActivityStub(options);
+            String activityType = ActivityNaming.activityTypeFor(info.workflowType, "llmChat");
+            Object result = stub.execute(activityType, Object.class, new Object[]{args, callConfig});
+            if (result instanceof Map<?, ?> reply && reply.get("content") instanceof String content
+                    && !content.isBlank()) {
+                answer = content;
+            }
+        } catch (NonDeterministicException e) {
+            throw e;
+        } catch (Exception e) {
+            // The side answer must never fail the user's update: fall through to the
+            // deterministic status line below.
+        }
+        if (answer == null) {
+            // The model was unavailable or tried to act anyway — answer with the status the
+            // framework knows for certain.
+            answer = "I'm still working on it - currently waiting on " + parkedDescription
+                    + ". I'll pick the conversation back up as soon as that resolves.";
+        }
+        Map<String, Object> aside = new LinkedHashMap<>();
+        aside.put("question", question);
+        aside.put("answer", answer);
+        info.asides.add(aside);
+        return answer;
+    }
+
     public static Object awaitEvent(BHandle handle, BString eventName) {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
@@ -961,6 +1138,7 @@ public final class AgentContextNative {
         if (tracked) {
             WaitingEventsTracker.beginWait(eventName);
         }
+        info.beginPark("the external event '" + eventName + "'", eventName);
         try {
             if (info.eventTimeoutMillis != null) {
                 boolean arrived = Workflow.await(Duration.ofMillis(info.eventTimeoutMillis),
@@ -976,6 +1154,7 @@ public final class AgentContextNative {
                 Workflow.await(future::isCompleted);
             }
         } finally {
+            info.endPark();
             if (tracked) {
                 WaitingEventsTracker.endWait(eventName);
             }
@@ -1015,10 +1194,15 @@ public final class AgentContextNative {
         BMap<BString, Object> payloadMap = payload instanceof BMap
                 ? (BMap<BString, Object>) payload
                 : ValueCreator.createMapValue();
-        return WorkflowContextNative.awaitHumanTask(null, taskName, meta.userRoles(), payloadMap,
-                StringUtils.fromString(meta.title()), StringUtils.fromString(meta.description()),
-                meta.timeout(), meta.resultType(),
-                StringUtils.fromString(AGENT_TASK_SITE_PREFIX + taskName.getValue()));
+        info.beginPark("a person to complete the task '" + taskName.getValue() + "'", null);
+        try {
+            return WorkflowContextNative.awaitHumanTask(null, taskName, meta.userRoles(), payloadMap,
+                    StringUtils.fromString(meta.title()), StringUtils.fromString(meta.description()),
+                    meta.timeout(), meta.resultType(),
+                    StringUtils.fromString(AGENT_TASK_SITE_PREFIX + taskName.getValue()));
+        } finally {
+            info.endPark();
+        }
     }
 
     /**

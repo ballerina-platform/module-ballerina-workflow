@@ -2189,6 +2189,26 @@ public final class WorkflowWorkerNative {
                             return info.finalResponse();
                         }
 
+                        // A chat message while the loop is durably parked elsewhere (a gate, a
+                        // human task, another channel's event, a sleep) is answered by a SIDE
+                        // TURN — a bounded, tool-less model call over the conversation plus the
+                        // park state — instead of queueing mutely behind the park. This keeps a
+                        // parked agent conversational and breaks the mutual wait where the agent
+                        // holds for an event the user won't send until they get an answer.
+                        if (info != null && info.sideTurnEligible(eventName)) {
+                            // One side turn at a time; re-check the park after any wait — it may
+                            // have resolved, in which case the message is the next turn.
+                            Workflow.await(() -> !info.sideTurnActive());
+                            if (info.sideTurnEligible(eventName)) {
+                                info.setSideTurnActive(true);
+                                try {
+                                    return AgentContextNative.sideTurnAnswer(info, payload);
+                                } finally {
+                                    info.setSideTurnActive(false);
+                                }
+                            }
+                        }
+
                         String updateId = Workflow.getCurrentUpdateInfo()
                                 .map(io.temporal.workflow.UpdateInfo::getUpdateId).orElse("");
                         if (!updateId.isEmpty()) {

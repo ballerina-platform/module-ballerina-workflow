@@ -80,6 +80,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- **A parked agent stays conversational: chat messages during a durable wait are answered
+  by side turns.** A conversational agent's reasoning loop runs one turn at a time, so a chat
+  message sent while the loop was durably parked — a gated tool awaiting approval, a human
+  task, another channel's event, the sleep timer — queued mutely until the park resolved,
+  which could be hours. Worse, it deadlocked the conversation's two sides: an agent waiting
+  on an event (say, a file upload) while the user waits for an answer before sending it.
+
+  Such a message is now answered by a **side turn**: one bounded, tool-less model call over
+  the conversation so far plus a framework-injected note stating exactly what the agent is
+  waiting on and since when. The update completes with the side answer — still exactly one
+  response per request — and the question/answer pair is merged into the main history when
+  the loop resumes, so the conversation stays whole. Side turns cannot run tools or mutate
+  anything (the main turn owns all state), never touch the event queues, the turn pairing,
+  or the event-wait budget, and are answered with a deterministic status line when the model
+  itself is unavailable. A message arriving while the loop waits on the chat channel itself
+  is the next turn, exactly as before.
+
 - **A durable agent can now read its own workflow context: `getWorkflowId` and `getCurrentTime`
   join `sleep` as always-available built-in tools.** In a plain workflow these are `ctx` methods;
   the agent's tools had no `ctx`, so an agent could not hand out its own run's reference ID or

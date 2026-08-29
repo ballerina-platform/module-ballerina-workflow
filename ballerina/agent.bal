@@ -147,20 +147,28 @@ isolated function runAgentLoop(handle ctxHandle, string agentName, AgentRunConfi
     } else {
         // No initial prompt: wait durably for one chat event, if the agent
         // declared one in its signature.
+        publishTranscript(ctxHandle, history);
         string? chatMessage = check awaitAgentChatEvent(ctxHandle);
         if chatMessage is string {
             history.push(<AgentUserMessage>{content: chatMessage});
         }
     }
+    publishTranscript(ctxHandle, history);
 
     int maxIterations = int:max(1, config.maxIter);
     while true {
         // One conversation turn: a bounded ReAct loop over LLM + tool calls.
         boolean turnAnswered = false;
         foreach int _ in 0 ..< maxIterations {
+            // Whatever side turns answered while the loop was parked joins the history
+            // first, so the main conversation sees everything that was said. This point —
+            // after any prior tool results, before the next model call — is the one place
+            // an insertion can never split a tool call from its results.
+            check mergeAsides(ctxHandle, history);
             AgentAssistantMessage assistant = check callAgentActivity("llmChat",
                     {"agentName": agentName, "messages": history.toJson(), "tools": llmToolDefs.toJson()});
             history.push(assistant);
+            publishTranscript(ctxHandle, history);
 
             // Record every content-bearing reply (not only the final one): in a
             // multi-turn conversation the memo/response always holds the latest turn.
@@ -218,7 +226,51 @@ isolated function runAgentLoop(handle ctxHandle, string agentName, AgentRunConfi
             return next;
         }
         history.push(<AgentUserMessage>{content: next is string ? next : next.toJsonString()});
+        publishTranscript(ctxHandle, history);
     }
+}
+
+// Publishes the clean conversation view — system, user, and content-bearing assistant
+// messages — that a side turn reasons over while the loop is parked. Tool calls and
+// their results are deliberately absent: the park note carries the current state, and
+// a transcript cut mid-tool-exchange would hand the side model an unanswered call.
+isolated function publishTranscript(handle ctxHandle, AgentChatMessage[] history) {
+    AgentChatMessage[] transcript = [];
+    foreach AgentChatMessage message in history {
+        if message is AgentSystemMessage|AgentUserMessage {
+            transcript.push(message);
+        } else if message is AgentAssistantMessage {
+            string? content = message.content;
+            if content is string && content != "" {
+                transcript.push(<AgentAssistantMessage>{content: content});
+            }
+        }
+    }
+    publishAgentTranscript(ctxHandle, transcript.toJson());
+}
+
+// Merges the question/answer pairs side turns answered while the loop was parked into
+// the history, verbatim, so the model knows what was already said on its behalf.
+isolated function mergeAsides(handle ctxHandle, AgentChatMessage[] history) returns error? {
+    string asidesJson = drainAgentAsides(ctxHandle);
+    json parsed = check asidesJson.fromJsonString();
+    if parsed !is json[] || parsed.length() == 0 {
+        return;
+    }
+    foreach json aside in parsed {
+        if aside !is map<json> {
+            continue;
+        }
+        json question = aside["question"];
+        json answer = aside["answer"];
+        if question is string {
+            history.push(<AgentUserMessage>{content: question});
+        }
+        if answer is string {
+            history.push(<AgentAssistantMessage>{content: answer});
+        }
+    }
+    publishTranscript(ctxHandle, history);
 }
 
 // Dispatches one tool call by kind and renders the result as text for the model.
@@ -533,6 +585,19 @@ isolated function awaitAgentHumanTask(handle nativeContext, string taskName, jso
 isolated function setAgentResponse(handle nativeContext, string response) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "setResponse"
+} external;
+
+// Publishes the conversation transcript side turns reason over while the loop is parked.
+isolated function publishAgentTranscript(handle nativeContext, json transcript) = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.AgentContextNative",
+    name: "publishTranscript"
+} external;
+
+// Drains the side-turn question/answer pairs recorded while the loop was parked,
+// as a JSON array of {question, answer}.
+isolated function drainAgentAsides(handle nativeContext) returns string = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.AgentContextNative",
+    name: "drainAsides"
 } external;
 
 // Looks up the model provider registered for an agent workflow type.

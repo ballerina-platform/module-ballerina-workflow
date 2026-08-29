@@ -103,7 +103,7 @@ public isolated function registerWorkflowDescriptor(string descriptorJson)
 # + return - `true` on success, or an error for a duplicate agent name
 public isolated function registerDurableAgentDecl(string agentName, ai:ModelProvider model,
         json systemPrompt, int maxIter, typedesc<json>? inputType = json,
-        typedesc<anydata>? resultType = ()) returns boolean|error = @java:Method {
+        typedesc<anydata>? resultType = (), json eventTimeout = ()) returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
     name: "registerDurableAgentDecl"
 } external;

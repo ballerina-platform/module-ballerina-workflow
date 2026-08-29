@@ -226,6 +226,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         String modelSource = null;
         String systemPromptSource = null;
         String maxIterSource = null;
+        String eventTimeoutSource = null;
         String inputTypeSource = null;
         String resultTypeSource = null;
         List<String> typeRefPrefixes = new ArrayList<>();
@@ -254,6 +255,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 case "model" -> modelSource = value.toSourceCode().strip();
                 case "systemPrompt" -> systemPromptSource = value.toSourceCode().strip();
                 case "maxIter" -> maxIterSource = value.toSourceCode().strip();
+                case "eventTimeout" -> eventTimeoutSource = value.toSourceCode().strip();
                 case "inputType" -> {
                     inputTypeSource = value.toSourceCode().strip();
                     collectQualifiedPrefixes(value, typeRefPrefixes);
@@ -288,8 +290,8 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         }
 
         return new DurableAgentDeclInfo(agentName, modelSource, systemPromptSource,
-                maxIterSource, inputTypeSource, resultTypeSource, typeRefPrefixes, activities, aiToolRefs,
-                events, humanTasks, peers);
+                maxIterSource, eventTimeoutSource, inputTypeSource, resultTypeSource, typeRefPrefixes,
+                activities, aiToolRefs, events, humanTasks, peers);
     }
 
     /**

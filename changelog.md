@@ -8,6 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- **A conversation no longer dies of a default timeout: `eventTimeout` is now opt-in.**
+  Every MULTI_EVENT wait was required to carry an `eventTimeout`, and the object-model runner
+  silently injected 30 minutes — so a durable agent's chat session ended mid-conversation the
+  moment the user stepped away past it, which is the opposite of what "durable" promises.
+  `DurableAgentConfig` now declares `eventTimeout` explicitly; when omitted, every event wait is
+  open-ended and the conversation lives as long as it takes. `maxEventWaits` remains the runaway
+  backstop, and a declared timeout still tells the model when a wait expires so it can wrap up.
+
+- **The descriptor now reads the mapping form of `events` and `humanTasks`.** The agent entry's
+  channel and task lists (and with them the agent map's whole inbound column — `event:` and
+  `task:` nodes) were built only from the deprecated array form; a declaration in the primary
+  mapping style (`events: {chat: {...}}`) produced an agent graph with no inbound side at all.
+
 - **A durable agent's `inputType` is now a JSON payload type, and `run` actually checks it.**
   The field was `typedesc<anydata>?` defaulting to `string`, which made the default declaration
   say "the query text is the input" — a mode with no payload at all, since `run(query, input)`

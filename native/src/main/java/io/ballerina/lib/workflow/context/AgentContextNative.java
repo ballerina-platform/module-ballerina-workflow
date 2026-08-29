@@ -333,10 +333,8 @@ public final class AgentContextNative {
             Long timeoutMillis = eventTimeout instanceof BMap
                     ? WorkflowContextNative.computeTimeoutMillis((BMap<BString, Object>) eventTimeout)
                     : null;
-            if (multiEvent && timeoutMillis == null) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "MULTI_EVENT interaction requires an eventTimeout as its safety mechanism"));
-            }
+            // No timeout means each event wait is open-ended — a chat session lives as long
+            // as the conversation does. The maxEventWaits cap remains the runaway backstop.
             if (maxEventWaits < 1) {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "maxEventWaits must be at least 1"));

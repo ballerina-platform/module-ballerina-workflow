@@ -634,7 +634,7 @@ type AgentRunConfig record {|
     EventCardinality interaction = SINGLE_EVENT;
 
     # Maximum wait per event. On timeout the model is told the wait timed
-    # out so it can wrap up gracefully. Required for `MULTI_EVENT`
+    # out so it can wrap up gracefully. Omit to wait indefinitely
     Duration? eventTimeout = ();
 
     # Hard cap on the total number of event waits per run; exceeding it fails
@@ -984,14 +984,20 @@ isolated function runDurableAgentObject(handle agentCtx, map<anydata> runInput)
     string effectiveQuery = payload is () ? query
         : query + "\n\nInput:\n" + payload.toJsonString();
 
+    // Only a declared eventTimeout bounds the waits: an unbounded chat session is the
+    // point of a durable agent, and a default here silently killed conversations that
+    // idled past it. maxEventWaits remains the runaway backstop.
+    Duration? eventTimeout = ();
+    json declaredTimeout = spec.eventTimeout;
+    if declaredTimeout != () {
+        eventTimeout = check declaredTimeout.cloneWithType();
+    }
     check buildAndRun(agentCtx, effectiveQuery,
         systemPrompt = systemPrompt,
         model = spec.model,
         maxIter = spec.maxIter,
         interaction = multiEvent ? MULTI_EVENT : SINGLE_EVENT,
-        // Per-channel cardinality (and its timeout policy) lands with typed events;
-        // until then a multi-event agent uses a bounded default wait per turn.
-        eventTimeout = multiEvent ? {minutes: 30} : ()
+        eventTimeout = eventTimeout
     );
     typedesc<anydata>? declaredResultType = spec.resultType;
     if declaredResultType is () {

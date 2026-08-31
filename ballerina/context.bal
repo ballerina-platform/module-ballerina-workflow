@@ -172,13 +172,11 @@ public client class Context {
     #
     # + taskName - Identifies the task type; used as the Temporal workflow type and child workflow ID
     # + userRoles - One or more roles permitted to complete this task
-    # + payload - Read-only JSON object rendered as key-value pairs next to the form
-    # + title - Short summary shown in the inbox. Defaults to `taskName` when omitted
-    # + description - Additional context shown alongside the form. Optional
-    # + timeout - Maximum time to wait. Omit (or pass `()`) to wait indefinitely
     # + T - Expected result type; drives form schema generation and runtime validation
-    # + stepId - Identity of this step within the workflow, as for `callActivity`: name it to
-    #            follow this task across edits, or omit it for a generated `<taskName>#<ordinal>`.
+    # + options - Everything else the task carries — payload, title, description, timeout,
+    #             stepId — as an included record, so each travels as a named argument
+    #             exactly as before and a future option is a new record field rather than
+    #             a new parameter
     # + return - The typed value submitted by the human, or a `HumanTaskError`: a
     #            `HumanTaskTimeoutError` if the deadline passed, a `HumanTaskRejectedError`
     #            if someone rejected the task (carrying their reason and details), or a
@@ -186,12 +184,8 @@ public client class Context {
     remote isolated function awaitHumanTask(
             string taskName,
             string|string[] userRoles,
-            map<json> payload = {},
-            string? title = (),
-            string? description = (),
-            Duration? timeout = (),
             typedesc<anydata> T = <>,
-            string? stepId = ())
+            *HumanTaskOptions options)
             returns T|HumanTaskError = @java:Method {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
         name: "awaitHumanTask"

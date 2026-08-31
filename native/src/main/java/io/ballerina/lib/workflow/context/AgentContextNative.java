@@ -1198,7 +1198,7 @@ public final class AgentContextNative {
                 : ValueCreator.createMapValue();
         info.beginPark("a person to complete the task '" + taskName.getValue() + "'", null);
         try {
-            return WorkflowContextNative.awaitHumanTask(null, taskName, meta.userRoles(), payloadMap,
+            return WorkflowContextNative.awaitHumanTaskExploded(null, taskName, meta.userRoles(), payloadMap,
                     StringUtils.fromString(meta.title()), StringUtils.fromString(meta.description()),
                     meta.timeout(), meta.resultType(),
                     StringUtils.fromString(AGENT_TASK_SITE_PREFIX + taskName.getValue()));

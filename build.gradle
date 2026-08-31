@@ -186,11 +186,32 @@ def stopTestServerIfRunning = {
         if (pidFile.exists()) {
             def pid = pidFile.text.trim().toLong()
             logger.lifecycle("Stopping Temporal dev server (PID: ${pid})...")
-            ProcessHandle.of(pid).ifPresent { it.destroy() }
+            // WAIT for the exit, don't just signal: the next test phase starts its own
+            // server immediately, and a server still shutting down holds the SQLite
+            // lock — the next start then dies with "database is locked (SQLITE_BUSY)".
+            ProcessHandle.of(pid).ifPresent { handle ->
+                handle.destroy()
+                try {
+                    handle.onExit().get(15, java.util.concurrent.TimeUnit.SECONDS)
+                } catch (Exception slowExit) {
+                    logger.warn("Temporal dev server did not exit in 15s; killing it")
+                    handle.destroyForcibly()
+                    try {
+                        handle.onExit().get(5, java.util.concurrent.TimeUnit.SECONDS)
+                    } catch (Exception ignored) {
+                        // Nothing left to do; the unique per-start db file below keeps a
+                        // straggler from wedging the next phase anyway.
+                    }
+                }
+            }
             pidFile.delete()
             logger.lifecycle("Temporal dev server stopped")
         } else if (testServerProcess != null && testServerProcess.isAlive()) {
             testServerProcess.destroy()
+            testServerProcess.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)
+            if (testServerProcess.isAlive()) {
+                testServerProcess.destroyForcibly()
+            }
             logger.lifecycle("Temporal dev server stopped")
         }
     } catch (Exception e) {
@@ -369,7 +390,17 @@ task startSharedTestServer {
 
         testServerWorkDir.mkdirs()
 
-        def dbFile = new File(testServerWorkDir, "temporal-test.db")
+        // A unique db per start: phases within one CI job each start their own server,
+        // and sharing a filename means inheriting the previous server's SQLite lock when
+        // its shutdown overlaps this startup. Sweep older files best-effort — a straggler
+        // may still hold one, which is exactly why the new name never collides.
+        testServerWorkDir.listFiles()?.each { staleFile ->
+            if (staleFile.name.startsWith('temporal-test') && staleFile.name.endsWith('.db')) {
+                staleFile.delete()
+            }
+        }
+        def dbFile = new File(testServerWorkDir,
+                "temporal-test-${ProcessHandle.current().pid()}-${System.currentTimeMillis()}.db")
 
         def command = [
             temporalBinary,

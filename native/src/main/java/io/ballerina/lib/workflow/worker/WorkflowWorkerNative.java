@@ -3180,6 +3180,22 @@ public final class WorkflowWorkerNative {
             info.put("workflowId", workflowId);
             info.put("workflowType", workflowType);
             info.put("status", statusStr);
+            // The kind memo is only readable off the workflow thread, so resolve it here and
+            // let the caller carry it into the record — its id-prefix fallback cannot classify
+            // the bare ids new executions issue.
+            try {
+                io.temporal.api.common.v1.Payload kindPayload =
+                        execInfo.getMemo().getFieldsMap().get("workflowKind");
+                if (kindPayload != null && !kindPayload.getData().isEmpty()) {
+                    String kind = client.getOptions().getDataConverter()
+                            .fromPayload(kindPayload, String.class, String.class);
+                    if (kind != null && !kind.isBlank()) {
+                        info.put("kind", kind);
+                    }
+                }
+            } catch (Exception e) {
+                // The kind is a routing hint; an info read must not fail over it.
+            }
             return info;
         }
     }

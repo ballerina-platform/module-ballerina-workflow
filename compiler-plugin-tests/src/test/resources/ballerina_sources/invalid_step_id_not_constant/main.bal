@@ -6,6 +6,8 @@ import ballerina/workflow;
 function shipOrder(workflow:Context ctx, string id) returns error? {
     string chosen = "book-" + id;
     string booked = check ctx->callActivity(bookCarrier, {"id": id}, stepId = chosen);
+    // ctx.sleep chooses step ids too — a plain method call, not a remote call.
+    check ctx.sleep({seconds: 1}, stepId = chosen);
     _ = booked;
     return;
 }

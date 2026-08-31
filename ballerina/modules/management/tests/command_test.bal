@@ -585,6 +585,7 @@ isolated function commandCases() returns CommandCase[] => [
         required: ["taskId"]},
     {operation: FAIL_HUMAN_TASK, params: {taskId: "humantask-x", reason: "boom"},
         required: ["taskId", "reason"]},
+    {operation: LIST_WORK_ITEMS, params: {kinds: "HUMAN_TASK,REVIEW_ACTIVITY", status: "PENDING", 'limit: 10}},
     {operation: LIST_REVIEW_ACTIVITIES, params: {status: "PENDING", 'limit: 10}},
     {operation: GET_REVIEW_ACTIVITY, params: {taskId: "reviewactivity-x"}, required: ["taskId"]},
     {operation: DECIDE_REVIEW_ACTIVITY, params: {taskId: "reviewactivity-x", action: "proceed"},
@@ -603,7 +604,7 @@ isolated function allOperations() returns Operation[] => [
     RESUME_INSTANCE, WAKE_INSTANCE, TERMINATE_INSTANCE, CANCEL_INSTANCE, GET_INSTANCE_HISTORY,
     GET_INSTANCE_ACTIVITY_TREE, GET_INSTANCE_EXECUTION_GRAPH, LIST_HUMAN_TASKS,
     COUNT_PENDING_HUMAN_TASKS, GET_HUMAN_TASK, COMPLETE_HUMAN_TASK, FAIL_HUMAN_TASK,
-    LIST_REVIEW_ACTIVITIES, GET_REVIEW_ACTIVITY, DECIDE_REVIEW_ACTIVITY,
+    LIST_WORK_ITEMS, LIST_REVIEW_ACTIVITIES, GET_REVIEW_ACTIVITY, DECIDE_REVIEW_ACTIVITY,
     BULK_RETRY_REVIEW_ACTIVITIES, LIST_RESET_POINTS, RESET_INSTANCE
 ];
 

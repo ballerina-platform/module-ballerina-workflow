@@ -152,6 +152,8 @@ public class WorkflowGraphTest {
         String rewritten = allSourcesOf(project);
         Assert.assertTrue(rewritten.contains("stepId = \"book#2\""),
                 "The suffixed id must be written back to the call, so the run reports what the graph says");
+        Assert.assertTrue(rewritten.contains("stepId = \"book#3\""),
+                "A sleep claiming the same id is the same collision: suffixed, and written back");
     }
 
     // ── Structure ─────────────────────────────────────────────────────────────

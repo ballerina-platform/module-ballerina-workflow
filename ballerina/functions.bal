@@ -81,9 +81,9 @@ public isolated function getWorkflowResult(string workflowId, int timeoutSeconds
 } external;
 
 # Completes a pending human task by sending the result back to the waiting workflow.
-# The `taskWorkflowId` is the child workflow ID of the task, which is
-# available via the inbox/task-listing API and is composed as:
-# `"humantask-<parentWorkflowId>-<taskName>-<uuid>"`.
+# The `taskWorkflowId` is the child workflow ID of the task, available via the
+# inbox/task-listing API. It is an opaque UUID — the task's kind and name travel in the
+# execution's memo and type, not in the ID.
 #
 # ```ballerina
 # check workflow:completeHumanTask(taskWorkflowId, {approved: true, comment: "LGTM"});

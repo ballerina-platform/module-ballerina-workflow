@@ -9,6 +9,9 @@ import ballerina/workflow;
 function shipOrder(workflow:Context ctx, string id) returns error? {
     string first = check ctx->callActivity(bookCarrier, {"id": id}, stepId = "book");
     string second = check ctx->callActivity(bookCarrier, {"id": id}, stepId = "book");
+    // A sleep's chosen id joins the same claim set: sharing the activity's id is the
+    // same collision, announced the same way.
+    check ctx.sleep({seconds: 1}, stepId = "book");
     _ = first + second;
     return;
 }

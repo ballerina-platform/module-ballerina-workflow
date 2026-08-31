@@ -470,14 +470,29 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                 Optional<TypeSymbol> receiverType = context.semanticModel()
                         .typeOf(remoteCall.expression());
                 if (receiverType.isPresent() && WorkflowPluginUtils.isContextType(receiverType.get())) {
-                    checkStepId(remoteCall);
+                    checkStepId(WorkflowGraphBuilder.stepIdArgument(remoteCall));
                 }
             }
             remoteCall.arguments().forEach(argument -> argument.accept(this));
         }
 
-        private void checkStepId(RemoteMethodCallActionNode remoteCall) {
-            Node argument = WorkflowGraphBuilder.stepIdArgument(remoteCall);
+        @Override
+        public void visit(MethodCallExpressionNode methodCall) {
+            // `ctx.sleep` is a plain method call, not a remote call, but it chooses step ids
+            // all the same — an unvalidated sleep id is one the modifier would silently
+            // overwrite. Matched by receiver type for the same reason as the remote calls.
+            if (WorkflowConstants.SLEEP_METHOD.equals(methodCall.methodName().toSourceCode().trim())) {
+                Optional<TypeSymbol> receiverType = context.semanticModel()
+                        .typeOf(methodCall.expression());
+                if (receiverType.isPresent() && WorkflowPluginUtils.isContextType(receiverType.get())) {
+                    checkStepId(WorkflowGraphBuilder.stepIdArgument(
+                            methodCall.arguments(), WorkflowConstants.SLEEP_METHOD));
+                }
+            }
+            methodCall.arguments().forEach(argument -> argument.accept(this));
+        }
+
+        private void checkStepId(Node argument) {
             if (argument == null) {
                 return;
             }
@@ -499,8 +514,10 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         }
 
         private void report(Location location, WorkflowDiagnostic diagnostic, Object... args) {
-            DiagnosticInfo info = new DiagnosticInfo(diagnostic.getCode(),
-                    args.length == 0 ? diagnostic.getMessage() : String.format(diagnostic.getMessage(), args),
+            // Format first, escape second (getMessage(args) does both, in that order): the
+            // arguments are user-chosen step ids, and splicing them into an already-escaped
+            // pattern would hand MessageFormat an unescaped `{` or `'` at render time.
+            DiagnosticInfo info = new DiagnosticInfo(diagnostic.getCode(), diagnostic.getMessage(args),
                     diagnostic.getSeverity());
             context.reportDiagnostic(DiagnosticFactory.createDiagnostic(info, location));
         }

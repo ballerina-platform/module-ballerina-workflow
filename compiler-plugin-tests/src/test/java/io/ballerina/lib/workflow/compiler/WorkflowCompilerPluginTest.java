@@ -126,8 +126,8 @@ public class WorkflowCompilerPluginTest {
     @Test(groups = "invalid")
     public void testInvalidStepIdNotConstant() {
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_step_id_not_constant");
-        Assert.assertEquals(diagnosticResult.errorCount(), 1,
-                "Expected exactly 1 error for a step id computed per execution");
+        Assert.assertEquals(diagnosticResult.errorCount(), 2,
+                "Expected one error per step id computed per execution — the callActivity's and the sleep's");
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_161);
     }
 
@@ -137,6 +137,11 @@ public class WorkflowCompilerPluginTest {
         Assert.assertEquals(diagnosticResult.errorCount(), 0,
                 "A duplicate step id is repaired, not rejected: " + getDiagnosticMessages(diagnosticResult));
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_160);
+        long duplicateWarnings = diagnosticResult.warnings().stream()
+                .filter(d -> WorkflowDiagnostic.WORKFLOW_160.getCode().equals(d.diagnosticInfo().code()))
+                .count();
+        Assert.assertEquals(duplicateWarnings, 2,
+                "Both later claims of 'book' — the second callActivity's and the sleep's — must warn");
     }
 
     @Test(groups = "invalid")

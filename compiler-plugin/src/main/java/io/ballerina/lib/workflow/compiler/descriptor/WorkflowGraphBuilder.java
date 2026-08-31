@@ -112,10 +112,10 @@ public final class WorkflowGraphBuilder {
     private static final int MAX_LABEL_LENGTH = 120;
 
     // Where the step id lands when a caller passes it positionally rather than by name:
-    // callActivity(activityFunction, args, T, retryPolicy, stepId) and
-    // awaitHumanTask(taskName, userRoles, payload, title, description, timeout, T, stepId).
-    private static final int CALL_ACTIVITY_STEP_ID_POSITION = 4;
-    private static final int AWAIT_HUMAN_TASK_STEP_ID_POSITION = 7;
+    // callActivity(activityFunction, args, T, stepId, *options) and
+    // awaitHumanTask(taskName, T, stepId, *options).
+    private static final int CALL_ACTIVITY_STEP_ID_POSITION = 3;
+    private static final int AWAIT_HUMAN_TASK_STEP_ID_POSITION = 2;
     // runChildWorkflow(childWorkflow, input, stepId)
     private static final int RUN_CHILD_WORKFLOW_STEP_ID_POSITION = 2;
     // callWorkflow(childWorkflow, input, T, stepId)

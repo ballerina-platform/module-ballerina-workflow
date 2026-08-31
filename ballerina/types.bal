@@ -207,6 +207,8 @@ public type WorkflowBusyError distinct error;
 # version understands it). People-assignment is expected to grow this way: `userRoles`
 # names the task's potential owners today, and richer WS-HumanTask-style assignments
 # (actual owner, business administrators, four-eye constraints) arrive as new fields.
+# The step identity (`stepId`) is deliberately NOT a field: it is workflow mechanics,
+# not part of what the task is, and stays a function parameter as on `callActivity`.
 # Tooling that renders task forms should derive its fields from this record rather than
 # a fixed list, so new options appear without a tooling release.
 #
@@ -216,15 +218,26 @@ public type WorkflowBusyError distinct error;
 # + title - Short summary shown in the inbox. Defaults to the task name when omitted
 # + description - Additional context shown alongside the form. Optional
 # + timeout - Maximum time to wait. Omit (or pass `()`) to wait indefinitely
-# + stepId - Identity of this step within the workflow, as for `callActivity`: name it to
-#            follow this task across edits, or omit it for a generated `<taskName>#<ordinal>`
 public type HumanTaskOptions record {
     string|string[] userRoles;
     map<json> payload = {};
     string? title = ();
     string? description = ();
     Duration? timeout = ();
-    string? stepId = ();
+};
+
+# How a `Context.callActivity` invocation behaves, passed as an included record
+# parameter. Like `HumanTaskOptions`, deliberately an OPEN record so a future behaviour
+# option — an approval gate, a heartbeat policy, a per-call timeout — is a new field
+# here rather than a new parameter, and tooling derives its forms from this record.
+# The step identity (`stepId`) is NOT here: it is workflow mechanics, not invocation
+# behaviour, and stays a function parameter on every context operation.
+#
+# + retryPolicy - Failure behaviour: `NoAutomaticRetry` (fail the workflow),
+#                 `AutoRetry` (durable backoff retries), or `HumanReview` (create a
+#                 review activity on failure so a person decides to rerun or fail)
+public type CallActivityOptions record {
+    AutoRetry|HumanReview|NoAutomaticRetry retryPolicy = NoAutomaticRetry;
 };
 
 # A time duration, structurally identical to `time:Duration`. Declared in this module so

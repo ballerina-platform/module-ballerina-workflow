@@ -840,9 +840,12 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         Set<String> names = new HashSet<>();
         for (MappingFieldNode field : mapping.fields()) {
             if (field instanceof SpecificFieldNode specificField) {
+                // Null while the author is mid-edit (an empty identifier under error recovery)
+                // — and mappingKeyName already unquotes literal keys, so the name is final.
                 String key = mappingKeyName(specificField);
-                names.add(key.length() > 1 && key.startsWith("\"") && key.endsWith("\"")
-                        ? key.substring(1, key.length() - 1) : key);
+                if (key != null) {
+                    names.add(key);
+                }
             }
         }
         return names;

@@ -149,15 +149,7 @@ public final class WorkflowGraphBuilder {
      * @return the chosen step id, or {@code null}
      */
     public static String chosenStepId(SeparatedNodeList<FunctionArgumentNode> args) {
-        for (FunctionArgumentNode arg : args) {
-            if (arg instanceof NamedArgumentNode named
-                    && WorkflowConstants.ARG_STEP_ID.equals(named.argumentName().name().text())) {
-                return blankAsAbsent(named.expression());
-            }
-        }
-        // sleep(duration, stepId): the second positional argument.
-        return args.size() > 1 && args.get(1) instanceof PositionalArgumentNode positional
-                ? blankAsAbsent(positional.expression()) : null;
+        return blankAsAbsent(stepIdArgument(args, WorkflowConstants.SLEEP_METHOD));
     }
 
     private static String blankAsAbsent(Node expression) {
@@ -181,15 +173,28 @@ public final class WorkflowGraphBuilder {
      * @return the step id expression, or {@code null}
      */
     public static Node stepIdArgument(RemoteMethodCallActionNode remoteCall) {
-        for (FunctionArgumentNode arg : remoteCall.arguments()) {
+        return stepIdArgument(remoteCall.arguments(), remoteCall.methodName().name().text());
+    }
+
+    /**
+     * The expression an argument list passes as its step id, named or positional, or {@code null}
+     * when it passes none. The list form serves the calls that are not remote calls —
+     * {@code ctx.sleep} — while reading both forms exactly as the remote-call form does.
+     *
+     * @param args       the call's arguments
+     * @param methodName the context operation's method name, which fixes the positional index
+     * @return the step id expression, or {@code null}
+     */
+    public static Node stepIdArgument(SeparatedNodeList<FunctionArgumentNode> args, String methodName) {
+        for (FunctionArgumentNode arg : args) {
             if (arg instanceof NamedArgumentNode named
                     && WorkflowConstants.ARG_STEP_ID.equals(named.argumentName().name().text())) {
                 return named.expression();
             }
         }
-        int position = positionalStepIdIndex(remoteCall.methodName().name().text());
-        if (position >= 0 && remoteCall.arguments().size() > position
-                && remoteCall.arguments().get(position) instanceof PositionalArgumentNode positional) {
+        int position = positionalStepIdIndex(methodName);
+        if (position >= 0 && args.size() > position
+                && args.get(position) instanceof PositionalArgumentNode positional) {
             return positional.expression();
         }
         return null;
@@ -261,7 +266,7 @@ public final class WorkflowGraphBuilder {
      * @return the graph and its call sites
      */
     public static Result build(FunctionDefinitionNode fnDef, SemanticModel semanticModel) {
-        ChosenIdCollector chosen = new ChosenIdCollector();
+        ChosenIdCollector chosen = new ChosenIdCollector(semanticModel);
         fnDef.functionBody().accept(chosen);
         BlockCollector collector = new BlockCollector(semanticModel, chosen.ids);
         fnDef.functionBody().accept(collector);
@@ -391,7 +396,12 @@ public final class WorkflowGraphBuilder {
      */
     private static final class ChosenIdCollector extends NodeVisitor {
 
+        private final SemanticModel semanticModel;
         private final Set<String> ids = new LinkedHashSet<>();
+
+        ChosenIdCollector(SemanticModel semanticModel) {
+            this.semanticModel = semanticModel;
+        }
 
         @Override
         public void visit(RemoteMethodCallActionNode remoteCall) {
@@ -400,6 +410,23 @@ public final class WorkflowGraphBuilder {
                 ids.add(chosen);
             }
             remoteCall.arguments().forEach(argument -> argument.accept(this));
+        }
+
+        @Override
+        public void visit(MethodCallExpressionNode methodCall) {
+            // `ctx.sleep` chooses ids too, and a chosen id this pass misses is one a generated
+            // id can silently take — resolveChosen would then rename the sleep with no warning.
+            boolean onContext = semanticModel.typeOf(methodCall.expression())
+                    .map(WorkflowPluginUtils::isContextType)
+                    .orElse(false);
+            if (onContext && WorkflowConstants.SLEEP_METHOD.equals(
+                    methodCall.methodName().toSourceCode().trim())) {
+                String chosen = chosenStepId(methodCall.arguments());
+                if (chosen != null) {
+                    ids.add(chosen);
+                }
+            }
+            methodCall.arguments().forEach(argument -> argument.accept(this));
         }
     }
 

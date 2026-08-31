@@ -185,7 +185,7 @@ function processProcurementRequest(workflow:Context ctx, ProcurementRequest inpu
     if input.amount > APPROVAL_THRESHOLD {
         io:println(string `[Workflow] Requesting approval for ${input.requestId} ($${input.amount})`);
 
-        ApprovalDecision decision = check ctx->awaitHumanTask("approveRequest", userRoles = "MANAGER",
+        ApprovalDecision decision = check ctx->awaitHumanTask("approveRequest", "MANAGER",
                 payload = {
                     requestId: input.requestId,
                     item: input.item,

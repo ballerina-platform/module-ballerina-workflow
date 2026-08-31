@@ -158,8 +158,7 @@ public client class Context {
     # from the workflow descriptor the compiler plugin generates at build time.
     #
     # ```ballerina
-    # ApprovalDecision d = check ctx->awaitHumanTask("approveExpense",
-    #     userRoles = "FINANCE_APPROVER",
+    # ApprovalDecision d = check ctx->awaitHumanTask("approveExpense", "FINANCE_APPROVER",
     #     payload = {"amount": 1200, "currency": "USD"},
     #     title = "Approve order",
     #     timeout = {hours: 24}
@@ -172,17 +171,19 @@ public client class Context {
     # ```
     #
     # + taskName - Identifies the task type; used as the Temporal workflow type and child workflow ID
+    # + userRoles - One or more roles permitted to complete this task
     # + T - Expected result type; drives form schema generation and runtime validation
-    # + options - Everything the task IS — who may decide it (`userRoles`, required),
-    #             payload, title, description, timeout, stepId — as an included record:
-    #             each travels as a named argument, and a future option is a new record
-    #             field rather than a new parameter
+    # + options - Everything else the task carries — payload, title, description, timeout,
+    #             stepId — as an included record, so each travels as a named argument
+    #             exactly as before and a future option is a new record field rather than
+    #             a new parameter
     # + return - The typed value submitted by the human, or a `HumanTaskError`: a
     #            `HumanTaskTimeoutError` if the deadline passed, a `HumanTaskRejectedError`
     #            if someone rejected the task (carrying their reason and details), or a
     #            `HumanTaskFailedError` if the task could not produce a result
     remote isolated function awaitHumanTask(
             string taskName,
+            string|string[] userRoles,
             typedesc<anydata> T = <>,
             *HumanTaskOptions options)
             returns T|HumanTaskError = @java:Method {

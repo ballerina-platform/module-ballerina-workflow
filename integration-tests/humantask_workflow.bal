@@ -89,7 +89,7 @@ isolated function htNotifyEscalation(string orderId, string taskName, string tim
 function expenseApprovalWorkflow(workflow:Context ctx, ExpenseRequest input) returns ExpenseResult|error {
     string _ = check ctx->callActivity(htValidateExpense, {"orderId": input.orderId});
 
-    ApprovalDecision decision = check ctx->awaitHumanTask("approveExpense", userRoles = ["FINANCE_APPROVER"],
+    ApprovalDecision decision = check ctx->awaitHumanTask("approveExpense", ["FINANCE_APPROVER"],
             payload = {orderId: input.orderId, amount: input.amount.toString()},
             title = "Approve $" + input.amount.toString() + " for " + input.requester);
 
@@ -111,7 +111,7 @@ function expenseApprovalWithTimeoutWorkflow(workflow:Context ctx, ExpenseRequest
 
     ApprovalDecision decision;
     do {
-        decision = check ctx->awaitHumanTask("approveExpenseWithTimeout", userRoles = ["FINANCE_APPROVER"],
+        decision = check ctx->awaitHumanTask("approveExpenseWithTimeout", ["FINANCE_APPROVER"],
                 payload = {orderId: input.orderId},
                 title = "Approve $" + input.amount.toString() + " for " + input.requester,
                 timeout = {seconds: 5});
@@ -147,7 +147,7 @@ function expenseApprovalWithTimeoutWorkflow(workflow:Context ctx, ExpenseRequest
 # + return - Approval result, or an error if a step fails
 @workflow:Workflow
 function expenseApprovalMinimalWorkflow(workflow:Context ctx, ExpenseRequest input) returns ExpenseResult|error {
-    ApprovalDecision decision = check ctx->awaitHumanTask("approveExpenseMinimal", userRoles = "admin");
+    ApprovalDecision decision = check ctx->awaitHumanTask("approveExpenseMinimal", "admin");
 
     if decision.approved {
         string msg = check ctx->callActivity(htProcessReimbursement, {"orderId": input.orderId});
@@ -164,7 +164,7 @@ function expenseApprovalMinimalWorkflow(workflow:Context ctx, ExpenseRequest inp
 @workflow:Workflow
 function expenseApprovalMultiRoleWorkflow(workflow:Context ctx, ExpenseRequest input) returns ExpenseResult|error {
     ApprovalDecision decision = check ctx->awaitHumanTask("approveExpenseMultiRole",
-            userRoles = ["FINANCE_APPROVER", "MANAGER"],
+            ["FINANCE_APPROVER", "MANAGER"],
             payload = {orderId: input.orderId, amount: input.amount.toString(), requester: input.requester},
             title = "High-value approval for $" + input.amount.toString());
 

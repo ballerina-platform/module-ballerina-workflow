@@ -708,17 +708,17 @@ public final class WorkflowContextNative {
      *
      * @param self         the Context BObject (unused; present for Ballerina calling convention)
      * @param taskNameBStr identifies the task type; used as the Temporal workflow type
+     * @param userRolesObj one or more roles permitted to complete this task (BString or BArray)
      * @param typedesc     the expected result type descriptor (for dependent-typing and coercion)
-     * @param options      the {@code HumanTaskOptions} record: userRoles (required), payload,
-     *                     title, description, timeout, stepId — an open record, so unknown
-     *                     future fields simply ride along until a version understands them
+     * @param options      the {@code HumanTaskOptions} record: payload, title, description,
+     *                     timeout, stepId — an open record, so unknown future fields simply
+     *                     ride along until a version understands them
      * @return the coerced result value, or a {@code HumanTaskTimeoutError} BError
      */
     @SuppressWarnings("unchecked")
-    public static Object awaitHumanTask(BObject self, BString taskNameBStr,
+    public static Object awaitHumanTask(BObject self, BString taskNameBStr, Object userRolesObj,
                                         BTypedesc typedesc, BMap<BString, Object> options) {
-        return awaitHumanTaskExploded(self, taskNameBStr,
-                options.get(StringUtils.fromString("userRoles")),
+        return awaitHumanTaskExploded(self, taskNameBStr, userRolesObj,
                 options.get(StringUtils.fromString("payload")) instanceof BMap<?, ?> payload
                         ? (BMap<BString, Object>) payload : null,
                 options.get(StringUtils.fromString("title")),

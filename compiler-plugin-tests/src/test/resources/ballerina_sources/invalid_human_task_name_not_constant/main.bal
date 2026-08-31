@@ -37,5 +37,5 @@ final workflow:DurableAgent orderAgent = check new ({
 // ERROR: the workflow human task name is a variable — not a compile-time constant.
 @workflow:Workflow
 function reviewFlow(workflow:Context ctx, string data) returns error? {
-    anydata _ = check ctx->awaitHumanTask(taskId, userRoles = "manager");
+    anydata _ = check ctx->awaitHumanTask(taskId, "manager");
 }

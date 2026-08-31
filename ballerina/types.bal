@@ -196,22 +196,17 @@ public type PendingAgentEvent record {|
 # the child completes.
 public type WorkflowBusyError distinct error;
 
-# Everything a human task is, beyond its name and result type. Passed to
-# `Context.awaitHumanTask` as an included record parameter, so each field travels as a
-# plain named argument (`userRoles = "MANAGER"`, `title = "..."`).
+# Everything a human task carries beyond its name, roles, and result type. Passed to
+# `Context.awaitHumanTask` as an included record parameter, so each option travels as a
+# plain named argument (`title = "..."`), and the same shape reads as a declaration.
 #
 # Deliberately an OPEN record: forward compatibility is the point. A new option is a new
 # field here — never a new parameter — so today's code keeps compiling against tomorrow's
-# module, and an option written for a newer module still compiles against this one, as a
-# member of the options record literal (it lands in the rest and is ignored until a
-# version understands it). People-assignment is expected to grow this way: `userRoles`
-# names the task's potential owners today, and richer WS-HumanTask-style assignments
-# (actual owner, business administrators, four-eye constraints) arrive as new fields.
-# Tooling that renders task forms should derive its fields from this record rather than
-# a fixed list, so new options appear without a tooling release.
+# module, and an option written for a newer module still compiles against this one (an
+# unknown field lands in the rest and is ignored until a version understands it). Tooling
+# that renders task forms should derive its fields from this record rather than a fixed
+# list, so new options appear without a tooling release.
 #
-# + userRoles - One or more roles permitted to complete this task (its potential owners).
-#               Required: a task must say who may decide it
 # + payload - Read-only JSON object rendered as key-value pairs next to the form
 # + title - Short summary shown in the inbox. Defaults to the task name when omitted
 # + description - Additional context shown alongside the form. Optional
@@ -219,7 +214,6 @@ public type WorkflowBusyError distinct error;
 # + stepId - Identity of this step within the workflow, as for `callActivity`: name it to
 #            follow this task across edits, or omit it for a generated `<taskName>#<ordinal>`
 public type HumanTaskOptions record {
-    string|string[] userRoles;
     map<json> payload = {};
     string? title = ();
     string? description = ();

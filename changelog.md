@@ -8,21 +8,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
-- **`awaitHumanTask`'s options are a record now: `HumanTaskOptions`, passed as an included
-  record parameter.** Everything a task carries beyond its name, roles, and result type —
-  payload, title, description, timeout, stepId — was an individual parameter, so every new
-  option was a signature change; the durable agent had meanwhile settled on records for the
-  same declaration. The options now live in one OPEN record: each still travels as a plain
-  named argument (`title = "..."`), so every existing call site compiles unchanged, and a
-  future option is a new record field rather than a new parameter. The record's openness is
-  the forward-compatibility door in the other direction: an option a given module version
-  does not know yet can be written today as a member of the options record literal
-  (`ctx->awaitHumanTask("t", "MANAGER", T, {payload: ..., "futureOption": ...})`) — it rides
-  the rest and is ignored until a version understands it. (An unknown NAMED argument remains
-  a compile error — typo safety is kept.) Tooling that renders task forms should derive its
-  fields from this record rather than a fixed list, so new options appear without a tooling
-  release.
-
 - **A conversation no longer dies of a default timeout: `eventTimeout` is now opt-in.**
   Every MULTI_EVENT wait was required to carry an `eventTimeout`, and the object-model runner
   silently injected 30 minutes — so a durable agent's chat session ended mid-conversation the

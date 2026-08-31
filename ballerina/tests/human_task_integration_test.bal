@@ -48,18 +48,6 @@ function htRecordWorkflow(Context ctx, string orderId) returns HtDecision|error 
     return decision;
 }
 
-// The forward-compatibility contract of HumanTaskOptions: the record is open, so an
-// option this module version does not know yet ("futureOption") can be written today —
-// as a member of the options record literal (an unknown NAMED ARGUMENT is still a
-// compile error; the record's open rest is the door). It rides along and changes
-// nothing until a version understands it.
-@Workflow
-function htFutureOptionWorkflow(Context ctx, string orderId) returns HtDecision|error {
-    HtDecision decision = check ctx->awaitHumanTask("htApproveFuture", "APPROVER", HtDecision,
-            {payload: {"orderId": orderId}, "futureOption": "understood-by-a-later-version"});
-    return decision;
-}
-
 // Workflow whose human decision is nilable, so an empty completion is valid.
 @Workflow
 function htNilableWorkflow(Context ctx, string orderId) returns HtDecision?|error {
@@ -112,35 +100,6 @@ function testCompleteHumanTaskWithValidRecordPayload() returns error? {
     if decision is HtDecision {
         test:assertEquals(decision, expected, "Returned decision should match the completion payload");
     }
-}
-
-@test:Config {groups: ["unit"]}
-function testUnknownOptionRidesAlongTheOpenRecord() returns error? {
-    // A named argument no field declares lands in the open record's rest: the task is
-    // created, waits, and completes exactly as if the option were not there.
-    _ = check registerWorkflowForTest(htFutureOptionWorkflow, "human-task-future-option-test");
-
-    map<string> input = {id: "test-ht-future-001", orderId: "ORD-HT-FUT"};
-    string|error runResult = run(htFutureOptionWorkflow, input);
-    if runResult is error {
-        return; // No server available — skip.
-    }
-    string workflowId = runResult;
-    runtime:sleep(2);
-
-    string? taskId = firstPendingHumanTaskId(workflowId);
-    if taskId is () {
-        return; // Task not visible — skip.
-    }
-    HtDecision expected = {approved: true, comment: "future-proof"};
-    error? completeResult = management:completeHumanTask(taskId, expected, ["APPROVER"]);
-    test:assertTrue(completeResult is (), "Completion should succeed with an unknown option present");
-    anydata|error wfResult = getWorkflowResult(workflowId, 15);
-    if wfResult is error {
-        return;
-    }
-    test:assertEquals(check wfResult.ensureType(HtDecision), expected,
-        "An unknown future option must not change the task's behaviour");
 }
 
 @test:Config {groups: ["unit"]}

@@ -706,35 +706,19 @@ public final class WorkflowContextNative {
      * <p>When {@code timeout} is absent (nil) the workflow waits indefinitely.
      * When a timeout is set and fires, a {@code HumanTaskTimeoutError} distinct error is returned.
      *
-     * @param self         the Context BObject (unused; present for Ballerina calling convention)
-     * @param taskNameBStr identifies the task type; used as the Temporal workflow type
-     * @param userRolesObj one or more roles permitted to complete this task (BString or BArray)
-     * @param typedesc     the expected result type descriptor (for dependent-typing and coercion)
-     * @param options      the {@code HumanTaskOptions} record: payload, title, description,
-     *                     timeout, stepId — an open record, so unknown future fields simply
-     *                     ride along until a version understands them
+     * @param self           the Context BObject (unused; present for Ballerina calling convention)
+     * @param taskNameBStr   identifies the task type; used as the Temporal workflow type
+     * @param userRolesObj   one or more roles permitted to complete this task (BString or BArray)
+     * @param payloadObj     read-only JSON object rendered next to the form (BMap or null)
+     * @param titleObj       short summary shown in the inbox; defaults to taskName when null
+     * @param descriptionObj additional context shown alongside the form (BString or null)
+     * @param timeoutObj     maximum wait duration (BMap time:Duration or null for indefinite)
+     * @param typedesc       the expected result type descriptor (for dependent-typing and coercion)
+     * @param stepId       the compiler-injected call-site identity, or nil
      * @return the coerced result value, or a {@code HumanTaskTimeoutError} BError
      */
     @SuppressWarnings("unchecked")
     public static Object awaitHumanTask(BObject self, BString taskNameBStr, Object userRolesObj,
-                                        BTypedesc typedesc, BMap<BString, Object> options) {
-        return awaitHumanTaskExploded(self, taskNameBStr, userRolesObj,
-                options.get(StringUtils.fromString("payload")) instanceof BMap<?, ?> payload
-                        ? (BMap<BString, Object>) payload : null,
-                options.get(StringUtils.fromString("title")),
-                options.get(StringUtils.fromString("description")),
-                options.get(StringUtils.fromString("timeout")),
-                typedesc,
-                options.get(StringUtils.fromString("stepId")));
-    }
-
-    /**
-     * The exploded form of {@link #awaitHumanTask}: one argument per option. The Ballerina
-     * surface passes the options record; the agent path ({@code AgentContextNative}) still
-     * calls this directly with the values its own declaration carries.
-     */
-    @SuppressWarnings("unchecked")
-    public static Object awaitHumanTaskExploded(BObject self, BString taskNameBStr, Object userRolesObj,
                                         BMap<BString, Object> payloadObj, Object titleObj, Object descriptionObj,
                                         Object timeoutObj, BTypedesc typedesc, Object stepId) {
         // Named outside the try so a failure can report which task it belongs to.

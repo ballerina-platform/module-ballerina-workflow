@@ -30,7 +30,7 @@ function invalidTimeoutNotFutureWorkflow(
     string input,
     record {| future<int> ticketCount; |} events
 ) returns ApprovalDecision|error {
-    ApprovalDecision decision = check ctx->awaitHumanTask("reviewItem", ["admin"],
+    ApprovalDecision decision = check ctx->awaitHumanTask("reviewItem", userRoles = ["admin"],
             timeout = events.ticketCount);  // ERROR: future<int> is not time:Duration?
     return decision;
 }

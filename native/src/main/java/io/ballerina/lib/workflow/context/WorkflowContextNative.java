@@ -108,16 +108,13 @@ public final class WorkflowContextNative {
      * @param activityFunction the activity function to execute
      * @param args             the map&lt;anydata&gt; args containing arguments to pass to the activity
      * @param typedesc         the expected return type descriptor for dependent typing
-     * @param stepId           the compiler-injected call-site identity, or nil
-     * @param options          the {@code CallActivityOptions} record; carries {@code retryPolicy}
-     *                         (null for NoRetry, AutoRetry BMap, or ManualRetry string sentinel)
-     *                         and, being open, whatever a future version adds
+     * @param retryPolicy      null for NoRetry, AutoRetry BMap, or ManualRetry string sentinel
+     * @param stepId         the compiler-injected call-site identity, or nil
      * @return the result of the activity execution converted to the expected type, or an error
      */
     @SuppressWarnings("unchecked")
     public static Object callActivity(BObject self, BFunctionPointer activityFunction, BMap<BString, Object> args,
-                                      BTypedesc typedesc, Object stepId, BMap<BString, Object> options) {
-        Object retryPolicy = options.get(StringUtils.fromString("retryPolicy"));
+                                      BTypedesc typedesc, Object retryPolicy, Object stepId) {
         try {
             WorkflowWorkerNative.awaitWhileSuspended();
             String simpleActivityName = activityFunction.getType().getName();
@@ -712,16 +709,14 @@ public final class WorkflowContextNative {
      * @param self         the Context BObject (unused; present for Ballerina calling convention)
      * @param taskNameBStr identifies the task type; used as the Temporal workflow type
      * @param typedesc     the expected result type descriptor (for dependent-typing and coercion)
-     * @param stepId       the compiler-injected call-site identity, or nil — workflow
-     *                     mechanics, so a parameter rather than an options field
      * @param options      the {@code HumanTaskOptions} record: userRoles (required), payload,
-     *                     title, description, timeout — an open record, so unknown future
-     *                     fields simply ride along until a version understands them
+     *                     title, description, timeout, stepId — an open record, so unknown
+     *                     future fields simply ride along until a version understands them
      * @return the coerced result value, or a {@code HumanTaskTimeoutError} BError
      */
     @SuppressWarnings("unchecked")
     public static Object awaitHumanTask(BObject self, BString taskNameBStr,
-                                        BTypedesc typedesc, Object stepId, BMap<BString, Object> options) {
+                                        BTypedesc typedesc, BMap<BString, Object> options) {
         return awaitHumanTaskExploded(self, taskNameBStr,
                 options.get(StringUtils.fromString("userRoles")),
                 options.get(StringUtils.fromString("payload")) instanceof BMap<?, ?> payload
@@ -730,7 +725,7 @@ public final class WorkflowContextNative {
                 options.get(StringUtils.fromString("description")),
                 options.get(StringUtils.fromString("timeout")),
                 typedesc,
-                stepId);
+                options.get(StringUtils.fromString("stepId")));
     }
 
     /**

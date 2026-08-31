@@ -138,6 +138,7 @@ public final class WorkflowDescriptorBuilder {
 
     // callActivity(activityFunction, args, T, retryPolicy): the policy is the fourth
     // positional parameter, reachable when the caller supplies the typedesc explicitly.
+    private static final int RETRY_POLICY_POSITION = 3;
 
     /** Display labels are capped so one long expression cannot dominate the document. */
     private static final int MAX_LABEL_LENGTH = 120;
@@ -449,9 +450,11 @@ public final class WorkflowDescriptorBuilder {
          * {@code AutoRetry}/{@code NoAutomaticRetry} record, or a type too dynamic to
          * classify, does not create a review activity in the descriptor.
          *
-         * <p>{@code retryPolicy} is a {@code CallActivityOptions} field, so it only ever
-         * travels as a named argument (a positional form no longer exists in the
-         * signature).
+         * <p>Both call forms are recognized. {@code retryPolicy} is usually named, because
+         * the typedesc parameter before it is normally inferred; but a caller that supplies
+         * that typedesc explicitly can pass the policy positionally as the fourth argument —
+         * {@code ctx->callActivity(fn, {}, string, "OPS")} — and that review activity must
+         * appear in the descriptor too.
          */
         private boolean hasHumanReviewRetryPolicy(SeparatedNodeList<FunctionArgumentNode> args) {
             for (FunctionArgumentNode arg : args) {
@@ -459,6 +462,10 @@ public final class WorkflowDescriptorBuilder {
                         && WorkflowConstants.ARG_RETRY_POLICY.equals(named.argumentName().name().text())) {
                     return isHumanReviewTyped(named.expression());
                 }
+            }
+            if (args.size() > RETRY_POLICY_POSITION
+                    && args.get(RETRY_POLICY_POSITION) instanceof PositionalArgumentNode positional) {
+                return isHumanReviewTyped(positional.expression());
             }
             return false;
         }

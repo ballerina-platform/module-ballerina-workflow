@@ -196,6 +196,31 @@ public type PendingAgentEvent record {|
 # the child completes.
 public type WorkflowBusyError distinct error;
 
+# Everything a human task carries beyond its name, roles, and result type. Passed to
+# `Context.awaitHumanTask` as an included record parameter, so each option travels as a
+# plain named argument (`title = "..."`), and the same shape reads as a declaration.
+#
+# Deliberately an OPEN record: forward compatibility is the point. A new option is a new
+# field here — never a new parameter — so today's code keeps compiling against tomorrow's
+# module, and an option written for a newer module still compiles against this one (an
+# unknown field lands in the rest and is ignored until a version understands it). Tooling
+# that renders task forms should derive its fields from this record rather than a fixed
+# list, so new options appear without a tooling release.
+#
+# + payload - Read-only JSON object rendered as key-value pairs next to the form
+# + title - Short summary shown in the inbox. Defaults to the task name when omitted
+# + description - Additional context shown alongside the form. Optional
+# + timeout - Maximum time to wait. Omit (or pass `()`) to wait indefinitely
+# + stepId - Identity of this step within the workflow, as for `callActivity`: name it to
+#            follow this task across edits, or omit it for a generated `<taskName>#<ordinal>`
+public type HumanTaskOptions record {
+    map<json> payload = {};
+    string? title = ();
+    string? description = ();
+    Duration? timeout = ();
+    string? stepId = ();
+};
+
 # A time duration, structurally identical to `time:Duration`. Declared in this module so
 # timeout fields render as first-class workflow forms without a cross-module type reference;
 # `time:Duration` values remain assignable.

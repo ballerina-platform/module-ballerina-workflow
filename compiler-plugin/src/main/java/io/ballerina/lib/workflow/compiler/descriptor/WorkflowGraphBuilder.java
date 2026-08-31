@@ -43,6 +43,7 @@ import io.ballerina.compiler.syntax.tree.PositionalArgumentNode;
 import io.ballerina.compiler.syntax.tree.RemoteMethodCallActionNode;
 import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
 import io.ballerina.compiler.syntax.tree.SimpleNameReferenceNode;
+import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.compiler.syntax.tree.WaitActionNode;
 import io.ballerina.compiler.syntax.tree.WhileStatementNode;
 import io.ballerina.lib.workflow.compiler.WorkflowConstants;
@@ -198,8 +199,11 @@ public final class WorkflowGraphBuilder {
                 && args.get(position) instanceof PositionalArgumentNode positional
                 // A mapping constructor is never a step id (a step id is a string?): reading it
                 // as one would draw WORKFLOW_161 noise on top of the compiler's own type error
-                // for the ill-typed call. Treat it as "no step id chosen".
-                && !(positional.expression() instanceof MappingConstructorExpressionNode)) {
+                // for the ill-typed call. And an explicit `()` is the parameter's documented
+                // "none chosen" placeholder — the way a caller reaches the options record
+                // positionally — not a choice to validate. Both read as "no step id chosen".
+                && !(positional.expression() instanceof MappingConstructorExpressionNode)
+                && positional.expression().kind() != SyntaxKind.NIL_LITERAL) {
             return positional.expression();
         }
         return null;

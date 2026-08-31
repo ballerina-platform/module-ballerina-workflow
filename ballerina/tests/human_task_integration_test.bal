@@ -55,7 +55,7 @@ function htRecordWorkflow(Context ctx, string orderId) returns HtDecision|error 
 // nothing until a version understands it.
 @Workflow
 function htFutureOptionWorkflow(Context ctx, string orderId) returns HtDecision|error {
-    HtDecision decision = check ctx->awaitHumanTask("htApproveFuture", HtDecision,
+    HtDecision decision = check ctx->awaitHumanTask("htApproveFuture", HtDecision, (),
             {userRoles: "APPROVER", payload: {"orderId": orderId},
                 "futureOption": "understood-by-a-later-version"});
     return decision;

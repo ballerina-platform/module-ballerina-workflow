@@ -22,7 +22,7 @@ type OrderEvents record {|
 
 @workflow:Workflow
 function expenseApproval(workflow:Context ctx, ExpenseRequest expense) returns error? {
-    ApprovalDecision decision = check ctx->awaitHumanTask("managerApproval", "MANAGER");
+    ApprovalDecision decision = check ctx->awaitHumanTask("managerApproval", userRoles = "MANAGER");
     if decision.approved {
         PostingResult|error posting = ctx->callActivity(postToLedger,
             {"expense": expense}, retryPolicy = "FINANCE");

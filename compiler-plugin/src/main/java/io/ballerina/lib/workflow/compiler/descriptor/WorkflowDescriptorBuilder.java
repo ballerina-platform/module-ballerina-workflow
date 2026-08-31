@@ -136,9 +136,6 @@ public final class WorkflowDescriptorBuilder {
     // The agent object type and the human-review retry policy are named in
     // WorkflowConstants, with the rest of the API vocabulary this builder matches.
 
-    // callActivity(activityFunction, args, T, retryPolicy): the policy is the fourth
-    // positional parameter, reachable when the caller supplies the typedesc explicitly.
-
     /** Display labels are capped so one long expression cannot dominate the document. */
     private static final int MAX_LABEL_LENGTH = 120;
 
@@ -449,18 +446,43 @@ public final class WorkflowDescriptorBuilder {
          * {@code AutoRetry}/{@code NoAutomaticRetry} record, or a type too dynamic to
          * classify, does not create a review activity in the descriptor.
          *
-         * <p>{@code retryPolicy} is a {@code CallActivityOptions} field, so it only ever
-         * travels as a named argument (a positional form no longer exists in the
-         * signature).
+         * <p>{@code retryPolicy} is a {@code CallActivityOptions} field, so it travels either
+         * as a named argument or as a field of a positionally-passed options record — the
+         * open-record door the API advertises. The runtime honours both, so the descriptor
+         * must see both, or a gated activity would review at run time with no review activity
+         * drawn in the graph. A mapping before the step-id index is the activity's own
+         * {@code args} map, never an options record.
          */
         private boolean hasHumanReviewRetryPolicy(SeparatedNodeList<FunctionArgumentNode> args) {
+            int optionsFrom = WorkflowGraphBuilder.positionalStepIdIndex(WorkflowConstants.CALL_ACTIVITY_FUNCTION);
+            int positional = -1;
             for (FunctionArgumentNode arg : args) {
                 if (arg instanceof NamedArgumentNode named
                         && WorkflowConstants.ARG_RETRY_POLICY.equals(named.argumentName().name().text())) {
                     return isHumanReviewTyped(named.expression());
                 }
+                if (arg instanceof PositionalArgumentNode pos) {
+                    positional++;
+                    if (positional >= optionsFrom
+                            && pos.expression() instanceof MappingConstructorExpressionNode mapping) {
+                        for (MappingFieldNode field : mapping.fields()) {
+                            if (field instanceof SpecificFieldNode specific
+                                    && WorkflowConstants.ARG_RETRY_POLICY.equals(mappingFieldName(specific))
+                                    && specific.valueExpr().isPresent()) {
+                                return isHumanReviewTyped(specific.valueExpr().get());
+                            }
+                        }
+                    }
+                }
             }
             return false;
+        }
+
+        /** A specific field's key, unquoted for a literal key, trivia stripped. */
+        private static String mappingFieldName(SpecificFieldNode field) {
+            String name = field.fieldName().toSourceCode().strip();
+            return name.length() > 1 && name.startsWith("\"") && name.endsWith("\"")
+                    ? name.substring(1, name.length() - 1) : name;
         }
 
         private boolean isHumanReviewTyped(ExpressionNode expression) {

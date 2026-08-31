@@ -913,7 +913,8 @@ function testManualRetryWorkflowCreatesReviewActivity() returns error? {
             "Should have at least one pending retry task, got " + pendingTasks.length().toString());
 
     management:ReviewActivitySummary task = pendingTasks[0];
-    test:assertTrue(!task.taskId.startsWith("reviewactivity-") && task.taskId.length() == 36,
+    test:assertTrue(re `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`
+            .isFullMatch(task.taskId),
             "Task ID should be a bare UUID (the kind travels in the memo), got: " + task.taskId);
     test:assertEquals(task.parentWorkflowId, workflowId, "parentWorkflowId should match");
     test:assertEquals(task.status, "PENDING", "Pending review activity should be in PENDING status");
@@ -1114,7 +1115,8 @@ function testListAllReviewActivitiesReturnsCreatedTask() returns error? {
 
     // Instance ids are bare UUIDs — what a task is travels in its memo and type, never its id.
     foreach management:ReviewActivitySummary t in allTasks {
-        test:assertTrue(!t.taskId.startsWith("reviewactivity-") && t.taskId.length() == 36,
+        test:assertTrue(re `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`
+                .isFullMatch(t.taskId),
                 "All returned task ids should be bare UUIDs, got: " + t.taskId);
     }
 }

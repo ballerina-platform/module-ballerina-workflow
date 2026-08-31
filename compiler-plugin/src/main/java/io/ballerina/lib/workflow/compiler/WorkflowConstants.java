@@ -89,6 +89,8 @@ public final class WorkflowConstants {
 
     /** {@code awaitHumanTask(taskName = ...)}. */
     public static final String ARG_TASK_NAME = "taskName";
+    /** {@code callActivity(args = ...)} — the activity's named-argument map. */
+    public static final String ARG_ARGS = "args";
     /** {@code callActivity(retryPolicy = ...)}. */
     public static final String ARG_RETRY_POLICY = "retryPolicy";
     /** {@code callActivity(stepId = ...)} — the compiler-injected call-site identity. */

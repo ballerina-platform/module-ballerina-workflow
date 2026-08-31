@@ -157,7 +157,7 @@ public type HumanTaskRejectedDetail record {|
 # workflow can compensate on what the rejecting user said:
 #
 # ```ballerina
-# Approval|workflow:HumanTaskError approval = ctx->awaitHumanTask("approve", "FINANCE");
+# Approval|workflow:HumanTaskError approval = ctx->awaitHumanTask("approve", userRoles = "FINANCE");
 # if approval is workflow:HumanTaskRejectedError {
 #     _ = check ctx->callActivity(notifyRejected, args = {"reason": approval.detail().reason});
 # }

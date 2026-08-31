@@ -435,7 +435,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
   ```ballerina
   do {
-      decision = check ctx->awaitHumanTask("approve", "FINANCE", timeout = {hours: 24});
+      decision = check ctx->awaitHumanTask("approve", userRoles = "FINANCE", timeout = {hours: 24});
   } on fail workflow:HumanTaskError e {
       if e !is workflow:HumanTaskTimeoutError {
           return e;                       // a rejection is an answer, not an escalation

@@ -555,12 +555,14 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                         if (!hasActivityAnnotation(expression)) {
                             reportCallActivityDiagnostic(remoteCallNode);
                         } else {
-                            // Validate parameters match
-                            // If second argument is provided, validate it matches activity params
-                            // If no second argument, validate activity has no required params
-                            if (arguments.size() >= 2) {
-                                FunctionArgumentNode secondArg = arguments.get(1);
-                                validateParametersMatch(remoteCallNode, expression, secondArg);
+                            // Validate parameters match. The args map is found by NAME first,
+                            // then by its positional slot: `callActivity(payClaim, args = {...})`
+                            // is as legal as the positional form, and reading only arguments[1]
+                            // reported every required parameter missing for the named form
+                            // (ballerina-library#9092) — or mistook a named stepId for the map.
+                            FunctionArgumentNode argsArg = argsArgument(arguments);
+                            if (argsArg != null) {
+                                validateParametersMatch(remoteCallNode, expression, argsArg);
                             } else {
                                 // No args provided - validate activity has no required parameters
                                 validateNoArgsActivity(remoteCallNode, expression);
@@ -761,11 +763,8 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
             if (clientParamNames.isEmpty()) {
                 return;
             }
-            if (!(paramsArg instanceof PositionalArgumentNode posArg)) {
-                return;
-            }
-            ExpressionNode expr = posArg.expression();
-            if (expr.kind() != SyntaxKind.MAPPING_CONSTRUCTOR) {
+            ExpressionNode expr = argumentExpression(paramsArg);
+            if (expr == null || expr.kind() != SyntaxKind.MAPPING_CONSTRUCTOR) {
                 return;
             }
             MappingConstructorExpressionNode mapping = (MappingConstructorExpressionNode) expr;
@@ -821,14 +820,40 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         /**
          * Extracts parameter names from the args map (second argument).
          */
+        /**
+         * The {@code args} argument of a {@code callActivity} call — written as the named
+         * argument anywhere in the list, or positionally in the second slot — or {@code null}
+         * when the call passes none.
+         */
+        private static FunctionArgumentNode argsArgument(SeparatedNodeList<FunctionArgumentNode> arguments) {
+            int positional = -1;
+            for (FunctionArgumentNode arg : arguments) {
+                if (arg instanceof NamedArgumentNode named
+                        && WorkflowConstants.ARG_ARGS.equals(named.argumentName().name().text())) {
+                    return arg;
+                }
+                if (arg instanceof PositionalArgumentNode && ++positional == 1) {
+                    return arg;
+                }
+            }
+            return null;
+        }
+
+        /** The expression an argument carries, whichever form it was written in. */
+        private static ExpressionNode argumentExpression(FunctionArgumentNode arg) {
+            if (arg instanceof PositionalArgumentNode positional) {
+                return positional.expression();
+            }
+            return arg instanceof NamedArgumentNode named ? named.expression() : null;
+        }
+
         private Set<String> extractProvidedParamNames(FunctionArgumentNode paramsArg) {
             Set<String> paramNames = new HashSet<>();
-            
-            if (!(paramsArg instanceof PositionalArgumentNode posArg)) {
+
+            ExpressionNode expr = argumentExpression(paramsArg);
+            if (expr == null) {
                 return paramNames;
             }
-
-            ExpressionNode expr = posArg.expression();
             
             // Check if it's a mapping constructor expression like {"param1": value1, "param2": value2}
             if (expr.kind() == SyntaxKind.MAPPING_CONSTRUCTOR) {

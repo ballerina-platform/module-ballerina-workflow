@@ -27,6 +27,8 @@ import io.ballerina.projects.ProjectEnvironmentBuilder;
 import io.ballerina.projects.directory.BuildProject;
 import io.ballerina.projects.environment.Environment;
 import io.ballerina.projects.environment.EnvironmentBuilder;
+import io.ballerina.tools.diagnostics.Diagnostic;
+import io.ballerina.tools.diagnostics.DiagnosticSeverity;
 import org.testng.Assert;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
@@ -154,6 +156,68 @@ public class WorkflowGraphTest {
                 "The suffixed id must be written back to the call, so the run reports what the graph says");
         Assert.assertTrue(rewritten.contains("stepId = \"book#3\""),
                 "A sleep claiming the same id is the same collision: suffixed, and written back");
+    }
+
+    @Test
+    public void testAPositionalOptionsRecordSurvivesTheStepIdInjection() {
+        // The options record is the API's forward-compatibility door, and it can travel
+        // positionally in three shapes: at the step-id index with no id written, after an
+        // explicit `()`, and after a chosen id. The injector must not mistake it for a step
+        // id (dropping the caller's retryPolicy compiles and silently un-gates the activity),
+        // and must not strand it behind a named argument (which does not parse).
+        BuildProject project = loadProject("options_record_positional");
+        project.currentPackage().runCodeGenAndModifyPlugins();
+        PackageCompilation compilation = project.currentPackage().getCompilation();
+        Assert.assertEquals(compilation.diagnosticResult().errorCount(), 0,
+                "Every record shape must still compile after the rewrite: "
+                        + compilation.diagnosticResult().diagnostics());
+
+        // Whitespace-flattened: a retained record keeps its original line break, and the
+        // assertions are about argument order, not layout.
+        String rewritten = allSourcesOf(project).replaceAll("\\s+", " ");
+        Assert.assertTrue(rewritten.contains("\"postToLedger#1\", {retryPolicy: [\"OPS\"]}"),
+                "Shape 1: the explicit () is replaced POSITIONALLY and the record survives");
+        Assert.assertTrue(rewritten.contains("\"firstReview#1\", {userRoles: \"MANAGER\""),
+                "Shape 2: same door on awaitHumanTask, ride-along field intact");
+        Assert.assertFalse(rewritten.contains("stepId = \"firstReview#1\"")
+                        || rewritten.contains("stepId = \"postToLedger#1\""),
+                "A named replacement would strand the record behind a named argument");
+        Assert.assertTrue(rewritten.contains("\"final-signoff\", {userRoles: [\"MANAGER\", \"AUDITOR\"]}"),
+                "Shape 3: a chosen id is preserved verbatim, record intact");
+
+        // And the descriptor saw the retryPolicy riding the positional record: the gated
+        // activity must carry its ON_FAILURE review activity, or the ICP has nothing to draw.
+        Map<String, Object> workflow = asObject(((List<?>) descriptorOf("options_record_positional")
+                .get("workflows")).get(0));
+        List<?> reviews = (List<?>) workflow.get("reviewActivities");
+        Assert.assertTrue(reviews != null && reviews.stream().map(WorkflowGraphTest::asObject)
+                        .anyMatch(r -> "postToLedger".equals(r.get("activity"))),
+                "A HumanReview retryPolicy inside the positional options record gates the activity");
+    }
+
+    @Test
+    public void testAnOptionsRecordAtTheStepIdIndexIsLeftForTheCompiler() {
+        // An options record written one parameter early is ill-typed source — a step id is a
+        // string?. The injector must not "repair" it: replacing the mapping silently drops what
+        // the author wrote, appending a named stepId adds a bogus "redeclared argument" error,
+        // and reading the mapping as a chosen id adds WORKFLOW_161 noise. The author gets the
+        // compiler's own type diagnostic, and only that.
+        BuildProject project = loadProject("invalid_options_record_at_step_id");
+        project.currentPackage().runCodeGenAndModifyPlugins();
+        PackageCompilation compilation = project.currentPackage().getCompilation();
+        List<Diagnostic> errors = new ArrayList<>();
+        compilation.diagnosticResult().diagnostics().forEach(d -> {
+            if (d.diagnosticInfo().severity() == DiagnosticSeverity.ERROR) {
+                errors.add(d);
+            }
+        });
+        Assert.assertTrue(errors.stream().anyMatch(e -> e.message().contains("string?")),
+                "The compiler's own type mismatch is the message: " + errors);
+        Assert.assertTrue(errors.stream().noneMatch(e -> e.message().contains("redeclared argument")),
+                "An appended stepId would redeclare the argument the mapping already (ill-)binds: " + errors);
+        compilation.diagnosticResult().diagnostics().forEach(d ->
+                Assert.assertNotEquals(d.diagnosticInfo().code(), "WORKFLOW_161",
+                        "A mapping is never read as a chosen step id"));
     }
 
     // ── Structure ─────────────────────────────────────────────────────────────

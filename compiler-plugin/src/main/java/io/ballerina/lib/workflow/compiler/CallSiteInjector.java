@@ -19,8 +19,10 @@
 package io.ballerina.lib.workflow.compiler;
 
 import io.ballerina.compiler.api.SemanticModel;
+import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
+import io.ballerina.compiler.syntax.tree.MappingConstructorExpressionNode;
 import io.ballerina.compiler.syntax.tree.MethodCallExpressionNode;
 import io.ballerina.compiler.syntax.tree.ModulePartNode;
 import io.ballerina.compiler.syntax.tree.NamedArgumentNode;
@@ -134,22 +136,40 @@ public class CallSiteInjector extends TreeModifier {
      * whether it was written as the named argument or positionally at the operation's step-id
      * index. Replacing (not appending) matters for the positional form: appending a named
      * {@code stepId} beside a positional one passes the same parameter twice, which does not
-     * compile. The step id is the LAST positional-able parameter of every operation, so a
-     * positional-to-named replacement never strands a later positional argument.
+     * compile. Two further rules keep the rewrite honest:
+     * <ul>
+     *   <li>a positional step id is replaced by a POSITIONAL literal, so an argument written
+     *       after it is never stranded behind a named one;</li>
+     *   <li>a mapping constructor at the step-id index is never a step id — a step id is a
+     *       {@code string?} — so the whole call is left untouched. The source is ill-typed
+     *       (usually an options record arriving one parameter early), and the compiler's own
+     *       diagnostic tells the author exactly that; replacing the mapping would silently
+     *       drop what they wrote, and appending would add a bogus "redeclared argument"
+     *       error on top.</li>
+     * </ul>
      */
     private static SeparatedNodeList<FunctionArgumentNode> withStepId(
             SeparatedNodeList<FunctionArgumentNode> args, String stepId, int positionalIndex) {
-        NamedArgumentNode argument = NodeFactory.createNamedArgumentNode(
+        int scan = -1;
+        for (FunctionArgumentNode arg : args) {
+            if (arg instanceof PositionalArgumentNode pos && ++scan == positionalIndex
+                    && pos.expression() instanceof MappingConstructorExpressionNode) {
+                return args;
+            }
+        }
+
+        // The id is spliced into source, so anything a string literal must escape — a chosen id
+        // may legitimately contain quotes or backslashes — is escaped, or the rewrite would emit
+        // source that no longer parses (or parses to a different id than the graph recorded).
+        ExpressionNode literal = NodeParser.parseExpression(
+                "\"" + WorkflowSourceModifier.escapeBallerinaStringLiteral(stepId) + "\"");
+        NamedArgumentNode named = NodeFactory.createNamedArgumentNode(
                 NodeFactory.createSimpleNameReferenceNode(
                         NodeFactory.createIdentifierToken(WorkflowConstants.ARG_STEP_ID)),
                 NodeFactory.createToken(SyntaxKind.EQUAL_TOKEN,
                         NodeFactory.createMinutiaeList(NodeFactory.createWhitespaceMinutiae(" ")),
                         NodeFactory.createMinutiaeList(NodeFactory.createWhitespaceMinutiae(" "))),
-                // The id is spliced into source, so anything a string literal must escape — a chosen id
-                // may legitimately contain quotes or backslashes — is escaped, or the rewrite would emit
-                // source that no longer parses (or parses to a different id than the graph recorded).
-                NodeParser.parseExpression(
-                        "\"" + WorkflowSourceModifier.escapeBallerinaStringLiteral(stepId) + "\""));
+                literal);
 
         List<Node> nodes = new ArrayList<>();
         boolean replaced = false;
@@ -161,9 +181,11 @@ public class CallSiteInjector extends TreeModifier {
             if (!nodes.isEmpty()) {
                 nodes.add(comma());
             }
-            if (isStepIdArgument(arg)
-                    || (arg instanceof PositionalArgumentNode && positional == positionalIndex)) {
-                nodes.add(argument);
+            if (isStepIdArgument(arg)) {
+                nodes.add(named);
+                replaced = true;
+            } else if (arg instanceof PositionalArgumentNode && positional == positionalIndex) {
+                nodes.add(NodeFactory.createPositionalArgumentNode(literal));
                 replaced = true;
             } else {
                 nodes.add(arg);
@@ -173,7 +195,7 @@ public class CallSiteInjector extends TreeModifier {
             if (!nodes.isEmpty()) {
                 nodes.add(comma());
             }
-            nodes.add(argument);
+            nodes.add(named);
         }
         return NodeFactory.createSeparatedNodeList(nodes);
     }

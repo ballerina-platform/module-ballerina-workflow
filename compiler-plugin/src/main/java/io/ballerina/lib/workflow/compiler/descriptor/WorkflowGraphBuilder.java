@@ -32,6 +32,7 @@ import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
 import io.ballerina.compiler.syntax.tree.FunctionCallExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.IfElseStatementNode;
+import io.ballerina.compiler.syntax.tree.MappingConstructorExpressionNode;
 import io.ballerina.compiler.syntax.tree.MatchClauseNode;
 import io.ballerina.compiler.syntax.tree.MatchStatementNode;
 import io.ballerina.compiler.syntax.tree.MethodCallExpressionNode;
@@ -194,7 +195,11 @@ public final class WorkflowGraphBuilder {
         }
         int position = positionalStepIdIndex(methodName);
         if (position >= 0 && args.size() > position
-                && args.get(position) instanceof PositionalArgumentNode positional) {
+                && args.get(position) instanceof PositionalArgumentNode positional
+                // A mapping constructor is never a step id (a step id is a string?): reading it
+                // as one would draw WORKFLOW_161 noise on top of the compiler's own type error
+                // for the ill-typed call. Treat it as "no step id chosen".
+                && !(positional.expression() instanceof MappingConstructorExpressionNode)) {
             return positional.expression();
         }
         return null;

@@ -395,6 +395,7 @@ final readonly & map<string> PARAM_TYPES = {
     "closeTimeTo": "string",
     "feedback": "string",
     "kind": "string",
+    "kinds": "string",
     "limit": "int",
     "pageToken": "string",
     "parentWorkflowId": "string",

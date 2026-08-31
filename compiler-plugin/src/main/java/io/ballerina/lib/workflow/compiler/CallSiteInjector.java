@@ -27,6 +27,7 @@ import io.ballerina.compiler.syntax.tree.NamedArgumentNode;
 import io.ballerina.compiler.syntax.tree.Node;
 import io.ballerina.compiler.syntax.tree.NodeFactory;
 import io.ballerina.compiler.syntax.tree.NodeParser;
+import io.ballerina.compiler.syntax.tree.PositionalArgumentNode;
 import io.ballerina.compiler.syntax.tree.RemoteMethodCallActionNode;
 import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
@@ -112,7 +113,8 @@ public class CallSiteInjector extends TreeModifier {
         if (stepId == null) {
             return rewritten;
         }
-        return rewritten.modify().withArguments(withStepId(rewritten.arguments(), stepId)).apply();
+        return rewritten.modify().withArguments(withStepId(rewritten.arguments(), stepId,
+                WorkflowGraphBuilder.positionalStepIdIndex(methodCall.methodName().toSourceCode().strip()))).apply();
     }
 
     @Override
@@ -123,12 +125,20 @@ public class CallSiteInjector extends TreeModifier {
         if (stepId == null) {
             return rewritten;
         }
-        return rewritten.modify().withArguments(withStepId(rewritten.arguments(), stepId)).apply();
+        return rewritten.modify().withArguments(withStepId(rewritten.arguments(), stepId,
+                WorkflowGraphBuilder.positionalStepIdIndex(remoteCall.methodName().name().text()))).apply();
     }
 
-    /** The call's arguments carrying {@code stepId}, replacing any step id already there. */
+    /**
+     * The call's arguments carrying {@code stepId}, replacing any step id already there —
+     * whether it was written as the named argument or positionally at the operation's step-id
+     * index. Replacing (not appending) matters for the positional form: appending a named
+     * {@code stepId} beside a positional one passes the same parameter twice, which does not
+     * compile. The step id is the LAST positional-able parameter of every operation, so a
+     * positional-to-named replacement never strands a later positional argument.
+     */
     private static SeparatedNodeList<FunctionArgumentNode> withStepId(
-            SeparatedNodeList<FunctionArgumentNode> args, String stepId) {
+            SeparatedNodeList<FunctionArgumentNode> args, String stepId, int positionalIndex) {
         NamedArgumentNode argument = NodeFactory.createNamedArgumentNode(
                 NodeFactory.createSimpleNameReferenceNode(
                         NodeFactory.createIdentifierToken(WorkflowConstants.ARG_STEP_ID)),
@@ -143,11 +153,16 @@ public class CallSiteInjector extends TreeModifier {
 
         List<Node> nodes = new ArrayList<>();
         boolean replaced = false;
+        int positional = -1;
         for (FunctionArgumentNode arg : args) {
+            if (arg instanceof PositionalArgumentNode) {
+                positional++;
+            }
             if (!nodes.isEmpty()) {
                 nodes.add(comma());
             }
-            if (isStepIdArgument(arg)) {
+            if (isStepIdArgument(arg)
+                    || (arg instanceof PositionalArgumentNode && positional == positionalIndex)) {
                 nodes.add(argument);
                 replaced = true;
             } else {

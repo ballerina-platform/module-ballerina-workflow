@@ -102,11 +102,11 @@ public final class AgentGraphBuilder {
             }
         }
 
-        // Outbound: what the agent may invoke.
-        if (modelLabel != null) {
-            nodes.add(node(MODEL_ID, KIND_MODEL, null, modelLabel, null));
-            edges.add(edge(AGENT_ID, MODEL_ID, WHEN_OUT));
-        }
+        // Outbound: what the agent may invoke. Every durable agent has a model — the node
+        // is unconditional; only its label depends on whether the configured expression
+        // produced one (an inline construction may not).
+        nodes.add(node(MODEL_ID, KIND_MODEL, null, modelLabel, null));
+        edges.add(edge(AGENT_ID, MODEL_ID, WHEN_OUT));
         for (Object tool : tools) {
             String name = nameOf(tool);
             if (name != null) {

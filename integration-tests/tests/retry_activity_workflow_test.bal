@@ -298,7 +298,10 @@ function testManualRetryWithInputRecovery() returns error? {
     // prefixes as a fallback, for instances started before the memo existed.
     test:assertFalse(reviewTask.taskId.startsWith("reviewactivity-"),
         "A review id should no longer classify itself with a prefix");
-    test:assertEquals(reviewTask.taskId.length(), 36,
+    // The canonical UUID structure, not just the length: 36 characters of anything would
+    // also pass a length check.
+    test:assertTrue(re `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`
+            .isFullMatch(reviewTask.taskId),
         "A review id should be a bare UUID: " + reviewTask.taskId);
     // Qualified on purpose, and not the qualifier this branch dropped: an activity is now
     // SCHEDULED under its plain name, while a review still reports which workflow's activity is

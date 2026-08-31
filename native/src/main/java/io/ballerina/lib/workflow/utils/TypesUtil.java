@@ -639,6 +639,7 @@ public final class TypesUtil {
         List<Object> values = new ArrayList<>();
         String uniformType = null;
         boolean uniform = true;
+        boolean firstValue = true;
         for (Object v : valueSpace) {
             Object plain = v instanceof io.ballerina.runtime.api.values.BString bs ? bs.getValue()
                     : v instanceof io.ballerina.runtime.api.values.BDecimal bd ? bd.decimalValue() : v;
@@ -647,9 +648,13 @@ public final class TypesUtil {
                     : plain instanceof Long || plain instanceof Integer ? "integer"
                     : plain instanceof Boolean ? "boolean"
                     : plain instanceof Number ? "number" : null;
-            if (uniformType == null) {
+            // The first observation seeds the uniform type — tracked by its own flag, because a
+            // leading nil (t == null) must poison uniformity for `("a"|())`, not be mistaken for
+            // "no type seen yet" and let a later "a" claim {"type":"string","enum":[null,"a"]}.
+            if (firstValue) {
                 uniformType = t;
-            } else if (t == null || !uniformType.equals(t)) {
+                firstValue = false;
+            } else if (!java.util.Objects.equals(uniformType, t)) {
                 uniform = false;
             }
         }

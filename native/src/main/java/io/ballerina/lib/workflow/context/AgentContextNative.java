@@ -427,9 +427,13 @@ public final class AgentContextNative {
             info.beginPark("a human approval decision for the gated tool '" + activityName + "'", null);
             Map<String, Object> decision;
             try {
+                // The step id names the graph node the model called: the ADVERTISED tool name
+                // (as callActivityTool uses), which differs from the underlying activity when a
+                // registration-time override renames it. The review task name and activity type
+                // keep the real activity, so the reviewer still sees what would run.
                 decision = WorkflowContextNative.startReviewActivity(
                         "PRE_RUN", reviewTaskName, activityType, argsMap, "", reviewRoles,
-                        info.approvalTimeoutMillis, AGENT_TOOL_SITE_PREFIX + activityName);
+                        info.approvalTimeoutMillis, AGENT_TOOL_SITE_PREFIX + name);
             } finally {
                 info.endPark();
             }

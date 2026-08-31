@@ -574,7 +574,7 @@ public final class WorkflowNative {
                 status = "SUSPENDED";
             }
 
-            return buildWorkflowExecutionInfo(wfId, workflowType, status, null, null, client);
+            return buildWorkflowExecutionInfo(wfId, workflowType, status, null, null, client, execInfo);
 
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(ERR_GET_INFO + e.getMessage()));
@@ -628,6 +628,18 @@ public final class WorkflowNative {
     public static BMap<BString, Object> buildWorkflowExecutionInfo(String workflowId, String workflowType,
                                                                    String status, Object result, String errorMessage,
                                                                    WorkflowClient client) {
+        return buildWorkflowExecutionInfo(workflowId, workflowType, status, result, errorMessage, client, null);
+    }
+
+    /**
+     * As above, reusing a describe response the caller already holds: every client-path caller
+     * has just described the execution for its status, so resolving the kind from that same
+     * response saves a second describe round trip per info read.
+     */
+    public static BMap<BString, Object> buildWorkflowExecutionInfo(String workflowId, String workflowType,
+                                                                   String status, Object result, String errorMessage,
+                                                                   WorkflowClient client,
+                                                                   WorkflowExecutionInfo describedInfo) {
 
         BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                       "WorkflowExecutionInfo");
@@ -640,7 +652,9 @@ public final class WorkflowNative {
         // What this instance IS, so a consumer can route to the right view by asking rather than
         // by parsing the id. From the memo its starter stamped; instances that predate the stamp
         // fall back to the id prefix, which is all their era ever offered.
-        record.put(StringUtils.fromString("kind"), StringUtils.fromString(resolveKind(client, workflowId)));
+        record.put(StringUtils.fromString("kind"), StringUtils.fromString(
+                describedInfo != null ? resolveKindFromInfo(client, workflowId, describedInfo)
+                        : resolveKind(client, workflowId)));
 
         // No caller can know the result at describe time — it lives in the run's terminal history
         // event — so a closed run without one gets it fetched here. Reporting result: null for a
@@ -692,19 +706,34 @@ public final class WorkflowNative {
                                 .setExecution(io.temporal.api.common.v1.WorkflowExecution.newBuilder()
                                         .setWorkflowId(workflowId).build())
                                 .build());
-                io.temporal.api.common.v1.Payload kindPayload =
-                        describe.getWorkflowExecutionInfo().getMemo().getFieldsMap().get("workflowKind");
-                if (kindPayload != null && !kindPayload.getData().isEmpty()) {
-                    String kind = client.getOptions().getDataConverter()
-                            .fromPayload(kindPayload, String.class, String.class);
-                    if (kind != null && !kind.isBlank()) {
-                        return kind;
-                    }
-                }
+                return resolveKindFromInfo(client, workflowId, describe.getWorkflowExecutionInfo());
             } catch (Exception e) {
                 // The kind is a routing hint; an info read must not fail over it.
             }
         }
+        return kindFromIdPrefix(workflowId);
+    }
+
+    /** As {@link #resolveKind}, from a describe response the caller already holds. */
+    private static String resolveKindFromInfo(WorkflowClient client, String workflowId,
+                                              WorkflowExecutionInfo describedInfo) {
+        try {
+            io.temporal.api.common.v1.Payload kindPayload =
+                    describedInfo.getMemo().getFieldsMap().get("workflowKind");
+            if (kindPayload != null && !kindPayload.getData().isEmpty()) {
+                String kind = client.getOptions().getDataConverter()
+                        .fromPayload(kindPayload, String.class, String.class);
+                if (kind != null && !kind.isBlank()) {
+                    return kind;
+                }
+            }
+        } catch (Exception e) {
+            // The kind is a routing hint; an info read must not fail over it.
+        }
+        return kindFromIdPrefix(workflowId);
+    }
+
+    private static String kindFromIdPrefix(String workflowId) {
         if (workflowId.startsWith("humantask-")) {
             return "HUMAN_TASK";
         }

@@ -165,7 +165,8 @@ public final class ManagementNative {
                 status = "SUSPENDED";
             }
 
-            return WorkflowNative.buildWorkflowExecutionInfo(wfId, workflowType, status, null, null, client);
+            return WorkflowNative.buildWorkflowExecutionInfo(wfId, workflowType, status, null, null, client,
+                    execInfo);
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString("Failed to get workflow info: " + e.getMessage()));
         }

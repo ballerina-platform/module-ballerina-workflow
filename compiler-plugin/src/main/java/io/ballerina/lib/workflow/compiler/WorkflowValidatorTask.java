@@ -464,7 +464,14 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                     || WorkflowConstants.CALL_HUMAN_TASK_METHOD.equals(methodName)
                     || WorkflowConstants.RUN_CHILD_WORKFLOW_METHOD.equals(methodName)
                     || WorkflowConstants.CALL_WORKFLOW_METHOD.equals(methodName)) {
-                checkStepId(remoteCall);
+                // Only the workflow context's own operations carry step ids: an unrelated
+                // client whose remote method merely shares a name must not draw
+                // WORKFLOW_160/161 for its ordinary string arguments.
+                Optional<TypeSymbol> receiverType = context.semanticModel()
+                        .typeOf(remoteCall.expression());
+                if (receiverType.isPresent() && WorkflowPluginUtils.isContextType(receiverType.get())) {
+                    checkStepId(remoteCall);
+                }
             }
             remoteCall.arguments().forEach(argument -> argument.accept(this));
         }

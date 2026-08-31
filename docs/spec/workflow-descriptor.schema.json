@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ballerina.io/spec/workflow/workflow-descriptor/1.0/workflow-descriptor.schema.json",
   "title": "Workflow Definition Descriptor",
-  "description": "The meta-schema of the Workflow Definition Descriptor (WDD): the versioned, structured definition file the ballerina/workflow compiler plugin generates at build time and packs into the integration's executable JAR as the fixed-name resource 'workflow.def.json'. The descriptor captures only structural facts \u2014 what registers with the workflow runtime, plus JSON Schemas \u2014 never expression-valued instance parameters (roles, titles, retry counts, timeouts, payloads).",
+  "description": "The meta-schema of the Workflow Definition Descriptor (WDD): the versioned, structured definition file the ballerina/workflow compiler plugin generates at build time and packs into the integration's executable JAR as the fixed-name resource 'workflow.def.json'. The descriptor captures only structural facts — what registers with the workflow runtime, plus JSON Schemas — never expression-valued instance parameters (roles, titles, retry counts, timeouts, payloads).",
   "type": "object",
   "required": [
     "descriptorVersion",
@@ -168,7 +168,7 @@
           }
         },
         "reviewActivities": {
-          "description": "Which activities are human-reviewed, and on which trigger. The review's proceed-with-input form is the activity's input slot \u2014 not repeated here.",
+          "description": "Which activities are human-reviewed, and on which trigger. The review's proceed-with-input form is the activity's input slot — not repeated here.",
           "type": "array",
           "items": {
             "type": "object",
@@ -212,7 +212,8 @@
       "required": [
         "name",
         "input",
-        "result"
+        "result",
+        "graph"
       ],
       "additionalProperties": false,
       "properties": {
@@ -308,7 +309,7 @@
       }
     },
     "functionRef": {
-      "description": "The implementation binding: the module-level function the runtime resolves and invokes for this structure. Structural \u2014 it is what registers with the runtime.",
+      "description": "The implementation binding: the module-level function the runtime resolves and invokes for this structure. Structural — it is what registers with the runtime.",
       "type": "object",
       "required": [
         "module",
@@ -322,7 +323,7 @@
           "type": "string"
         },
         "version": {
-          "description": "The module's major version \u2014 the granularity the runtime resolves symbols at.",
+          "description": "The module's major version — the granularity the runtime resolves symbols at.",
           "type": "string"
         },
         "name": {
@@ -339,14 +340,14 @@
       "additionalProperties": false,
       "properties": {
         "type": {
-          "description": "The resolved Ballerina type descriptor \u2014 the source of truth. For parameter-list inputs this is the parenthesized data-parameter list.",
+          "description": "The resolved Ballerina type descriptor — the source of truth. For parameter-list inputs this is the parenthesized data-parameter list.",
           "type": "string"
         },
         "schema": {
           "$ref": "#/$defs/schemaDocument"
         },
         "lossy": {
-          "description": "Present (true) when the schema is a permissive approximation of the type rather than an exact rendering \u2014 form generators should not over-promise validation.",
+          "description": "Present (true) when the schema is a permissive approximation of the type rather than an exact rendering — form generators should not over-promise validation.",
           "const": true
         }
       }
@@ -424,7 +425,7 @@
       ]
     },
     "graph": {
-      "description": "The structure of one workflow or agent as a directed graph, for visualization and for joining an execution back to its source. A workflow's graph is its durable steps in source order, nested under the control flow that guards them; an agent's is a star, because the model \u2014 not the code \u2014 decides what runs when. A running execution reports the step it is at (`ActivityTreeNode.stepId`, `GraphNode.metadata.stepId`), so a viewer can highlight the path actually taken. Nodes without a `stepId` in the execution predate the runtime that stamps it, so consumers must treat the join as optional.",
+      "description": "The structure of one workflow or agent as a directed graph, for visualization and for joining an execution back to its source. A workflow's graph is its durable steps in source order, nested under the control flow that guards them; an agent's is a star, because the model — not the code — decides what runs when. A running execution reports the step it is at (`ActivityTreeNode.stepId`, `GraphNode.metadata.stepId`), so a viewer can highlight the path actually taken. Nodes without a `stepId` in the execution predate the runtime that stamps it, so consumers must treat the join as optional.",
       "type": "object",
       "required": [
         "nodes",
@@ -448,7 +449,7 @@
             "additionalProperties": false,
             "properties": {
               "stepId": {
-                "description": "Stable identity of this node within its workflow or agent. For a workflow: `<target>#<ordinal>` for a step, `<construct>#<ordinal>` for control flow (`if#1`, `while#2`, `match#1`, `do#1`, `wait#1`, `sleep#1`) \u2014 the ordinal counts occurrences in source order, so it survives reformatting and unrelated edits. For an agent: derived from the name (`agent`, `model`, `tool:<name>`, `event:<name>`, `task:<name>`).",
+                "description": "Stable identity of this node within its workflow or agent. For a workflow: `<target>#<ordinal>` for a step, `<construct>#<ordinal>` for control flow (`if#1`, `while#2`, `match#1`, `do#1`, `wait#1`, `sleep#1`) — the ordinal counts occurrences in source order, so it survives reformatting and unrelated edits. For an agent: derived from the name (`agent`, `model`, `tool:<name>`, `event:<name>`, `task:<name>`).",
                 "type": "string"
               },
               "kind": {
@@ -460,7 +461,6 @@
                   "EVENT_WAIT",
                   "SLEEP",
                   "EXIT",
-
                   "CODE",
                   "BRANCH",
                   "LOOP",
@@ -504,7 +504,7 @@
                 ]
               },
               "line": {
-                "description": "One-based source line of the step. Display only \u2014 moving code changes it, which is why the identity is an ordinal instead.",
+                "description": "One-based source line of the step. Display only — moving code changes it, which is why the identity is an ordinal instead.",
                 "type": "integer"
               },
               "column": {

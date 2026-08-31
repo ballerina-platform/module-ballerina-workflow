@@ -164,8 +164,9 @@ public isolated function resumeWorkflowRun(string workflowId, string runId) retu
 
 # Returns the pending human task child workflows started by the given parent workflow,
 # grouped by task type and sorted alphabetically by task name. Scans the parent's
-# event history for child workflow start events whose ID matches the
-# `humantask-<parentWorkflowId>-` prefix.
+# event history for child workflow start events whose workflow TYPE has the
+# `humantask-` prefix (the ID itself is a bare UUID; what a task is travels in its
+# type and memo).
 #
 # ```ballerina
 # management:HumanTaskGroup[] groups = check management:listPendingHumanTasks(parentWorkflowId);
@@ -184,7 +185,7 @@ public isolated function listPendingHumanTasks(string parentWorkflowId) returns 
 } external;
 
 # Lists all human task instances across all parent workflows, with optional filters.
-# Queries Temporal's visibility API and filters executions whose workflow ID starts with
+# Queries Temporal's visibility API for executions whose workflow TYPE starts with
 # `humantask-`. The `taskName` and `parentWorkflowId` fields are extracted from the task's
 # Temporal memo (set when the task was created by `awaitHumanTask`).
 #
@@ -294,7 +295,8 @@ public isolated function failHumanTask(string taskWorkflowId, string reason,
 # check management:completeReviewActivity(taskId, {action: "reject", feedback: "Amount too high"});
 # ```
 #
-# + taskWorkflowId - Temporal workflow ID of the review activity child workflow (`reviewactivity-...`)
+# + taskWorkflowId - Temporal workflow ID of the review activity child workflow (a bare UUID;
+#                    its `reviewactivity-`-prefixed kind travels in the workflow type and memo)
 # + decision - The review decision: proceed, proceed with new input, or reject
 # + callerRoles - Roles held by the caller; validated against the task's configured `userRoles`
 # + userId - Optional user identifier stored in the audit trail (from `x-user-id` header)
@@ -307,7 +309,8 @@ public isolated function completeReviewActivity(string taskWorkflowId, ReviewDec
 
 # Returns pending review activity child workflows started by the given parent workflow,
 # grouped by task name and sorted alphabetically. Scans the parent's event history for
-# child workflow start events whose ID starts with the `reviewactivity-{parentWorkflowId}-` prefix.
+# child workflow start events whose workflow TYPE has the `reviewactivity-` prefix (the
+# ID itself is a bare UUID).
 #
 # ```ballerina
 # management:ReviewActivitySummary[] tasks = check management:listPendingReviewActivities(parentWorkflowId);
@@ -325,7 +328,8 @@ public isolated function listPendingReviewActivities(string parentWorkflowId)
 } external;
 
 # Lists all review activity instances across all parent workflows, with optional filters.
-# Queries Temporal's visibility API for executions whose workflow ID starts with `reviewactivity-`.
+# Queries Temporal's visibility API for executions whose workflow TYPE starts with
+# `reviewactivity-`.
 #
 # ```ballerina
 # management:ReviewActivitySummary[] pending = check management:listAllReviewActivities(status = "PENDING");

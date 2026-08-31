@@ -2727,7 +2727,13 @@ public final class WorkflowWorkerNative {
                     completion.put(COMPLETED_BY_MEMO_KEY, actor);
                     completion.put(COMPLETED_AT_MEMO_KEY, java.time.Instant
                             .ofEpochMilli(Workflow.currentTimeMillis()).toString());
-                    Workflow.upsertMemo(completion);
+                    try {
+                        Workflow.upsertMemo(completion);
+                    } catch (Exception e) {
+                        // Best-effort listing metadata: a rejected upsert must not fail a task a
+                        // human already completed — the completion result is what matters.
+                        LOGGER.warn("Could not record the completer on the task memo: {}", e.getMessage());
+                    }
                 }
                 if (signalData.data() instanceof Map<?, ?> payloadMap
                         && Boolean.TRUE.equals(payloadMap.get("__rejected"))) {

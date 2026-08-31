@@ -25,6 +25,7 @@ import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.syntax.tree.BinaryExpressionNode;
 import io.ballerina.compiler.syntax.tree.DoStatementNode;
 import io.ballerina.compiler.syntax.tree.ElseBlockNode;
+import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FieldAccessExpressionNode;
 import io.ballerina.compiler.syntax.tree.ForEachStatementNode;
 import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
@@ -116,6 +117,8 @@ public final class WorkflowGraphBuilder {
     // awaitHumanTask(taskName, userRoles, payload, title, description, timeout, T, stepId).
     private static final int CALL_ACTIVITY_STEP_ID_POSITION = 4;
     private static final int AWAIT_HUMAN_TASK_STEP_ID_POSITION = 7;
+    // sleep(duration, stepId)
+    private static final int SLEEP_STEP_ID_POSITION = 1;
     // runChildWorkflow(childWorkflow, input, stepId)
     private static final int RUN_CHILD_WORKFLOW_STEP_ID_POSITION = 2;
     // callWorkflow(childWorkflow, input, T, stepId)
@@ -184,18 +187,31 @@ public final class WorkflowGraphBuilder {
                 return named.expression();
             }
         }
-        int position = switch (remoteCall.methodName().name().text()) {
-            case WorkflowConstants.CALL_ACTIVITY_FUNCTION -> CALL_ACTIVITY_STEP_ID_POSITION;
-            case WorkflowConstants.CALL_HUMAN_TASK_METHOD -> AWAIT_HUMAN_TASK_STEP_ID_POSITION;
-            case WorkflowConstants.RUN_CHILD_WORKFLOW_METHOD -> RUN_CHILD_WORKFLOW_STEP_ID_POSITION;
-            case WorkflowConstants.CALL_WORKFLOW_METHOD -> CALL_WORKFLOW_STEP_ID_POSITION;
-            default -> -1;
-        };
+        int position = positionalStepIdIndex(remoteCall.methodName().name().text());
         if (position >= 0 && remoteCall.arguments().size() > position
                 && remoteCall.arguments().get(position) instanceof PositionalArgumentNode positional) {
             return positional.expression();
         }
         return null;
+    }
+
+    /**
+     * Where the step id lands when a caller passes it positionally to the named context
+     * operation, or -1 when the operation has none. Shared with {@code CallSiteInjector},
+     * which must REPLACE a positional step id rather than append a second, named one.
+     *
+     * @param methodName the context operation's method name
+     * @return the zero-based positional index of {@code stepId}, or -1
+     */
+    public static int positionalStepIdIndex(String methodName) {
+        return switch (methodName) {
+            case WorkflowConstants.CALL_ACTIVITY_FUNCTION -> CALL_ACTIVITY_STEP_ID_POSITION;
+            case WorkflowConstants.CALL_HUMAN_TASK_METHOD -> AWAIT_HUMAN_TASK_STEP_ID_POSITION;
+            case WorkflowConstants.RUN_CHILD_WORKFLOW_METHOD -> RUN_CHILD_WORKFLOW_STEP_ID_POSITION;
+            case WorkflowConstants.CALL_WORKFLOW_METHOD -> CALL_WORKFLOW_STEP_ID_POSITION;
+            case WorkflowConstants.SLEEP_METHOD -> SLEEP_STEP_ID_POSITION;
+            default -> -1;
+        };
     }
 
     /**
@@ -837,21 +853,42 @@ public final class WorkflowGraphBuilder {
 
         // ── Argument reading ──────────────────────────────────────────────
 
-        /** The activity function named by the first positional argument of {@code callActivity}. */
+        /**
+         * The activity function of a {@code callActivity} — the first positional argument,
+         * or the {@code activityFunction} named argument (a caller who names it must still
+         * produce a graph node and a {@code CallSite}, or the call vanishes from the
+         * descriptor and never receives its step id).
+         */
         private String activityTargetOf(SeparatedNodeList<FunctionArgumentNode> args) {
-            if (args.isEmpty() || !(args.get(0) instanceof PositionalArgumentNode posArg)) {
+            return callTargetOf(args, "activityFunction");
+        }
+
+        /** The child workflow of a {@code runChildWorkflow}/{@code callWorkflow} — positional or named. */
+        private String functionNameOf(SeparatedNodeList<FunctionArgumentNode> args) {
+            return callTargetOf(args, "childWorkflow");
+        }
+
+        private String callTargetOf(SeparatedNodeList<FunctionArgumentNode> args, String paramName) {
+            ExpressionNode expression = null;
+            if (!args.isEmpty() && args.get(0) instanceof PositionalArgumentNode posArg) {
+                expression = posArg.expression();
+            } else {
+                for (FunctionArgumentNode arg : args) {
+                    if (arg instanceof NamedArgumentNode named
+                            && paramName.equals(named.argumentName().name().text())) {
+                        expression = named.expression();
+                        break;
+                    }
+                }
+            }
+            if (expression == null) {
                 return null;
             }
-            Optional<Symbol> symbol = semanticModel.symbol(posArg.expression());
+            Optional<Symbol> symbol = semanticModel.symbol(expression);
             if (symbol.isEmpty() || symbol.get().kind() != SymbolKind.FUNCTION) {
                 return null;
             }
             return symbol.get().getName().orElse(null);
-        }
-
-        /** The function named by a child-workflow call's first positional argument. */
-        private String functionNameOf(SeparatedNodeList<FunctionArgumentNode> args) {
-            return activityTargetOf(args);
         }
 
         /** The constant task name of an {@code awaitHumanTask} call, named or positional. */

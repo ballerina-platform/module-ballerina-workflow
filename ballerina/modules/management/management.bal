@@ -164,8 +164,9 @@ public isolated function resumeWorkflowRun(string workflowId, string runId) retu
 
 # Returns the pending human task child workflows started by the given parent workflow,
 # grouped by task type and sorted alphabetically by task name. Scans the parent's
-# event history for child workflow start events whose ID matches the
-# `humantask-<parentWorkflowId>-` prefix.
+# event history for child workflow start events whose workflow TYPE has the
+# `humantask-` prefix (the ID itself is a bare UUID; what a task is travels in its
+# type and memo).
 #
 # ```ballerina
 # management:HumanTaskGroup[] groups = check management:listPendingHumanTasks(parentWorkflowId);
@@ -184,7 +185,7 @@ public isolated function listPendingHumanTasks(string parentWorkflowId) returns 
 } external;
 
 # Lists all human task instances across all parent workflows, with optional filters.
-# Queries Temporal's visibility API and filters executions whose workflow ID starts with
+# Queries Temporal's visibility API for executions whose workflow TYPE starts with
 # `humantask-`. The `taskName` and `parentWorkflowId` fields are extracted from the task's
 # Temporal memo (set when the task was created by `awaitHumanTask`).
 #
@@ -218,7 +219,7 @@ public isolated function listAllHumanTasks(string? status = (),
 # management:HumanTaskInfo info = check management:getHumanTaskInfo(taskId);
 # ```
 #
-# + taskId - The child workflow ID of the human task (`humantask-{parentId}-{taskName}-{uuid}`)
+# + taskId - The child workflow ID of the human task (a bare UUID; the kind travels in its memo)
 # + return - Full task info including title, userRoles, payload, and formSchema, or an error
 public isolated function getHumanTaskInfo(string taskId) returns HumanTaskInfo|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
@@ -294,7 +295,8 @@ public isolated function failHumanTask(string taskWorkflowId, string reason,
 # check management:completeReviewActivity(taskId, {action: "reject", feedback: "Amount too high"});
 # ```
 #
-# + taskWorkflowId - Temporal workflow ID of the review activity child workflow (`reviewactivity-...`)
+# + taskWorkflowId - Temporal workflow ID of the review activity child workflow (a bare UUID;
+#                    its `reviewactivity-`-prefixed kind travels in the workflow type and memo)
 # + decision - The review decision: proceed, proceed with new input, or reject
 # + callerRoles - Roles held by the caller; validated against the task's configured `userRoles`
 # + userId - Optional user identifier stored in the audit trail (from `x-user-id` header)
@@ -307,7 +309,8 @@ public isolated function completeReviewActivity(string taskWorkflowId, ReviewDec
 
 # Returns pending review activity child workflows started by the given parent workflow,
 # grouped by task name and sorted alphabetically. Scans the parent's event history for
-# child workflow start events whose ID starts with the `reviewactivity-{parentWorkflowId}-` prefix.
+# child workflow start events whose workflow TYPE has the `reviewactivity-` prefix (the
+# ID itself is a bare UUID).
 #
 # ```ballerina
 # management:ReviewActivitySummary[] tasks = check management:listPendingReviewActivities(parentWorkflowId);
@@ -325,7 +328,8 @@ public isolated function listPendingReviewActivities(string parentWorkflowId)
 } external;
 
 # Lists all review activity instances across all parent workflows, with optional filters.
-# Queries Temporal's visibility API for executions whose workflow ID starts with `reviewactivity-`.
+# Queries Temporal's visibility API for executions whose workflow TYPE starts with
+# `reviewactivity-`.
 #
 # ```ballerina
 # management:ReviewActivitySummary[] pending = check management:listAllReviewActivities(status = "PENDING");
@@ -368,7 +372,7 @@ isolated function getReviewActivityState(string taskId) returns ReviewActivitySt
 # management:ReviewActivityInfo info = check management:getReviewActivityInfo(taskId);
 # ```
 #
-# + taskId - The child workflow ID of the review activity (`reviewactivity-{parentId}-{taskName}-{uuid}`)
+# + taskId - The child workflow ID of the review activity (a bare UUID; the kind travels in its memo)
 # + return - Full review activity info including errorMessage, activityArgs, formSchema, and userRoles,
 #            or an error (including when the ID refers to a human task or any non-review workflow)
 public isolated function getReviewActivityInfo(string taskId) returns ReviewActivityInfo|error = @java:Method {
@@ -438,12 +442,18 @@ public isolated function startWorkflowByType(string workflowType, json? input,
 # + closeTimeFrom - Optional ISO-8601 lower bound on workflow close time (inclusive)
 # + closeTimeTo - Optional ISO-8601 upper bound on workflow close time (inclusive)
 # + taskQueue - Optional task queue filter; without it, every queue in the configured namespace
+# + kind - Optional kind filter: `WORKFLOW`, `HUMAN_TASK`, `REVIEW_ACTIVITY`, `CHILD_WORKFLOW`
+#          or `AGENT`. Without it the listing excludes task and review children, as it did
+#          before kinds existed. Each summary reports its own `kind`, so an unfiltered listing
+#          is still self-describing. Filtering needs the `WorkflowKind` search attribute; where
+#          the server has none — the in-memory dev server, which supports no custom attributes —
+#          the listing comes back unfiltered with a warning rather than failing.
 # + return - Paginated list of workflow instance summaries, or an error
 public isolated function listWorkflowInstances(string? status = (), string? workflowType = (),
     string? workflowId = (), string? startedBy = (), int 'limit = 20, string? pageToken = (),
         string? startTimeFrom = (), string? startTimeTo = (),
         string? closeTimeFrom = (), string? closeTimeTo = (),
-        string? taskQueue = ())
+        string? taskQueue = (), string? kind = ())
         returns WorkflowInstancePage|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;

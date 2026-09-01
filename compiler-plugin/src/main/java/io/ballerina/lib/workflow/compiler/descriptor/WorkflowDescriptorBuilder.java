@@ -51,6 +51,7 @@ import io.ballerina.compiler.syntax.tree.RemoteMethodCallActionNode;
 import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
 import io.ballerina.compiler.syntax.tree.SpecificFieldNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
+import io.ballerina.compiler.syntax.tree.Token;
 import io.ballerina.compiler.syntax.tree.VariableDeclarationNode;
 import io.ballerina.lib.workflow.compiler.WorkflowConstants;
 import io.ballerina.lib.workflow.compiler.WorkflowPluginUtils;
@@ -81,6 +82,7 @@ import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.DIR
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.DIRECTION_IN;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.EVENTS;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.FUNCTION;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.GRAPH;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.HUMAN_TASKS;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.INPUT;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.JSON_NULL;
@@ -137,6 +139,9 @@ public final class WorkflowDescriptorBuilder {
     // callActivity(activityFunction, args, T, retryPolicy): the policy is the fourth
     // positional parameter, reachable when the caller supplies the typedesc explicitly.
     private static final int RETRY_POLICY_POSITION = 3;
+
+    /** Display labels are capped so one long expression cannot dominate the document. */
+    private static final int MAX_LABEL_LENGTH = 120;
 
     private WorkflowDescriptorBuilder() {
     }
@@ -242,6 +247,30 @@ public final class WorkflowDescriptorBuilder {
     // Workflows
     // ------------------------------------------------------------------
 
+    /**
+     * The mapping field's key as written, from token text rather than {@code toSourceCode()}:
+     * the latter carries leading trivia, so a comment line above the field would become part
+     * of the "name" and the field would silently stop matching.
+     *
+     * @param field the mapping field
+     * @return the key name, or {@code null} for a key with no static name
+     */
+    private static String fieldKeyName(SpecificFieldNode field) {
+        Node keyNode = field.fieldName();
+        if (keyNode instanceof BasicLiteralNode literal && literal.kind() == SyntaxKind.STRING_LITERAL) {
+            String text = literal.literalToken().text();
+            return text.length() >= 2 ? text.substring(1, text.length() - 1) : null;
+        }
+        if (keyNode instanceof Token token) {
+            String text = token.text().strip();
+            if (text.startsWith("'")) {
+                text = text.substring(1);
+            }
+            return text.isEmpty() ? null : text;
+        }
+        return null;
+    }
+
     private static Map<String, Object> buildWorkflowEntry(FunctionDefinitionNode fnDef, SemanticModel semanticModel,
                                                    String moduleQName, String major) {
         Optional<Symbol> symbol = semanticModel.symbol(fnDef);
@@ -281,6 +310,9 @@ public final class WorkflowDescriptorBuilder {
         entry.put(ACTIVITIES, new ArrayList<>(collector.activities.values()));
         entry.put(HUMAN_TASKS, buildHumanTasks(collector.humanTaskResults, collector.conflictingHumanTasks));
         entry.put(REVIEW_ACTIVITIES, buildReviewActivities(collector.reviewedActivities));
+        // The activity list says *what* the workflow calls; the graph says where, in what order,
+        // and under which branch — the identity an execution's history is joined back to.
+        entry.put(GRAPH, WorkflowGraphBuilder.build(fnDef, semanticModel).graph());
         return entry;
     }
 
@@ -608,6 +640,7 @@ public final class WorkflowDescriptorBuilder {
 
         Map<String, Object> inputSlot = defaultStringSlot();
         Map<String, Object> resultSlot = defaultNilSlot();
+        String modelLabel = null;
         List<Object> events = new ArrayList<>();
         List<Object> humanTasks = new ArrayList<>();
         Map<String, Map<String, Object>> tools = new TreeMap<>();
@@ -617,7 +650,10 @@ public final class WorkflowDescriptorBuilder {
                 if (!(field instanceof SpecificFieldNode specific) || specific.valueExpr().isEmpty()) {
                     continue;
                 }
-                String fieldName = specific.fieldName().toSourceCode().trim();
+                String fieldName = fieldKeyName(specific);
+                if (fieldName == null) {
+                    continue;
+                }
                 ExpressionNode value = specific.valueExpr().get();
                 switch (fieldName) {
                     case WorkflowConstants.AGENT_CONFIG_INPUT_TYPE ->
@@ -631,8 +667,9 @@ public final class WorkflowDescriptorBuilder {
                             collectAgentActivities(semanticModel, value, tools);
                     case WorkflowConstants.AGENT_CONFIG_TOOLS -> collectAgentTools(semanticModel, value, tools);
                     case WorkflowConstants.AGENT_CONFIG_PEERS -> collectAgentPeers(value, tools);
+                    case WorkflowConstants.AGENT_CONFIG_MODEL -> modelLabel = sourceLabel(value);
                     default -> {
-                        // model, systemPrompt, maxIter: runtime values — not structure.
+                        // systemPrompt, maxIter: runtime values — not structure.
                     }
                 }
             }
@@ -643,7 +680,22 @@ public final class WorkflowDescriptorBuilder {
         agent.put(EVENTS, events);
         agent.put(TOOLS, new ArrayList<>(tools.values()));
         agent.put(HUMAN_TASKS, humanTasks);
+        agent.put(GRAPH, AgentGraphBuilder.build(agentName, modelLabel, events,
+                new ArrayList<>(tools.values()), humanTasks));
         return agent;
+    }
+
+    /**
+     * The source text of a config expression, as a display label: the model an agent reasons
+     * with is a runtime value, but which reference was configured is structure worth drawing.
+     * Capped, because the descriptor ships in every full heartbeat.
+     */
+    private static String sourceLabel(ExpressionNode expression) {
+        String text = expression.toSourceCode().trim().replaceAll("\\s+", " ");
+        if (text.isEmpty()) {
+            return null;
+        }
+        return text.length() <= MAX_LABEL_LENGTH ? text : text.substring(0, MAX_LABEL_LENGTH - 1) + "\u2026";
     }
 
     private static boolean isDurableAgentType(TypeSymbol type) {
@@ -700,8 +752,9 @@ public final class WorkflowDescriptorBuilder {
 
     private static List<Object> buildAgentEvents(SemanticModel semanticModel, ExpressionNode value) {
         Map<String, Map<String, Object>> events = new TreeMap<>();
-        for (MappingConstructorExpressionNode mapping : mappingsOf(value)) {
-            String name = null;
+        for (NamedEntry namedEntry : namedMappingsOf(value)) {
+            MappingConstructorExpressionNode mapping = namedEntry.config();
+            String name = namedEntry.name();
             Map<String, Object> request = null;
             Map<String, Object> response = null;
             String cardinality = CARDINALITY_MULTI;
@@ -709,7 +762,10 @@ public final class WorkflowDescriptorBuilder {
                 if (!(field instanceof SpecificFieldNode specific) || specific.valueExpr().isEmpty()) {
                     continue;
                 }
-                String fieldName = specific.fieldName().toSourceCode().trim();
+                String fieldName = fieldKeyName(specific);
+                if (fieldName == null) {
+                    continue;
+                }
                 ExpressionNode expr = specific.valueExpr().get();
                 switch (fieldName) {
                     case WorkflowConstants.DECL_NAME -> name = constantStringValue(expr);
@@ -739,14 +795,18 @@ public final class WorkflowDescriptorBuilder {
 
     private static List<Object> buildAgentHumanTasks(SemanticModel semanticModel, ExpressionNode value) {
         Map<String, Map<String, Object>> tasks = new TreeMap<>();
-        for (MappingConstructorExpressionNode mapping : mappingsOf(value)) {
-            String name = null;
+        for (NamedEntry namedEntry : namedMappingsOf(value)) {
+            MappingConstructorExpressionNode mapping = namedEntry.config();
+            String name = namedEntry.name();
             Map<String, Object> result = null;
             for (MappingFieldNode field : mapping.fields()) {
                 if (!(field instanceof SpecificFieldNode specific) || specific.valueExpr().isEmpty()) {
                     continue;
                 }
-                String fieldName = specific.fieldName().toSourceCode().trim();
+                String fieldName = fieldKeyName(specific);
+                if (fieldName == null) {
+                    continue;
+                }
                 ExpressionNode expr = specific.valueExpr().get();
                 if (WorkflowConstants.DECL_NAME.equals(fieldName)) {
                     name = constantStringValue(expr);
@@ -779,7 +839,10 @@ public final class WorkflowDescriptorBuilder {
                     if (!(field instanceof SpecificFieldNode specific) || specific.valueExpr().isEmpty()) {
                         continue;
                     }
-                    String fieldName = specific.fieldName().toSourceCode().trim();
+                    String fieldName = fieldKeyName(specific);
+                    if (fieldName == null) {
+                        continue;
+                    }
                     ExpressionNode expr = specific.valueExpr().get();
                     switch (fieldName) {
                         case WorkflowConstants.DECL_ACTIVITY -> fnRef = expr;
@@ -788,8 +851,10 @@ public final class WorkflowDescriptorBuilder {
                             if (expr instanceof MappingConstructorExpressionNode bindings) {
                                 for (MappingFieldNode binding : bindings.fields()) {
                                     if (binding instanceof SpecificFieldNode b) {
-                                        boundNames.add(b.fieldName().toSourceCode().trim()
-                                                .replace("\"", ""));
+                                        String boundName = fieldKeyName(b);
+                                        if (boundName != null) {
+                                            boundNames.add(boundName);
+                                        }
                                     }
                                 }
                             }
@@ -838,7 +903,7 @@ public final class WorkflowDescriptorBuilder {
             if (member instanceof MappingConstructorExpressionNode mapping) {
                 for (MappingFieldNode field : mapping.fields()) {
                     if (field instanceof SpecificFieldNode specific && specific.valueExpr().isPresent()
-                            && WorkflowConstants.DECL_TOOL.equals(specific.fieldName().toSourceCode().trim())) {
+                            && WorkflowConstants.DECL_TOOL.equals(fieldKeyName(specific))) {
                         ref = specific.valueExpr().get();
                     }
                 }
@@ -872,7 +937,7 @@ public final class WorkflowDescriptorBuilder {
             String name = null;
             for (MappingFieldNode field : mapping.fields()) {
                 if (field instanceof SpecificFieldNode specific && specific.valueExpr().isPresent()
-                        && WorkflowConstants.DECL_NAME.equals(specific.fieldName().toSourceCode().trim())) {
+                        && WorkflowConstants.DECL_NAME.equals(fieldKeyName(specific))) {
                     name = constantStringValue(specific.valueExpr().get());
                 }
             }
@@ -885,6 +950,41 @@ public final class WorkflowDescriptorBuilder {
             tools.put(name, tool);
         }
     }
+
+    /**
+     * A named config entry from either declaration form. The mapping form ({@code
+     * events: {chat: {...}}}) is the primary style: the key IS the name and the value is the
+     * config. The deprecated array form carries the name as a {@code name} field inside each
+     * entry, which the caller reads — so array entries come back with a null name.
+     *
+     * @param value the field's value expression
+     * @return the entries, in source order
+     */
+    private static List<NamedEntry> namedMappingsOf(ExpressionNode value) {
+        List<NamedEntry> entries = new ArrayList<>();
+        if (value instanceof MappingConstructorExpressionNode mapping) {
+            for (MappingFieldNode field : mapping.fields()) {
+                if (field instanceof SpecificFieldNode specific && specific.valueExpr().isPresent()
+                        && specific.valueExpr().get() instanceof MappingConstructorExpressionNode config) {
+                    String key = fieldKeyName(specific);
+                    if (key != null) {
+                        entries.add(new NamedEntry(key, config));
+                    }
+                }
+            }
+            return entries;
+        }
+        if (value instanceof ListConstructorExpressionNode list) {
+            for (Node member : list.expressions()) {
+                if (member instanceof MappingConstructorExpressionNode config) {
+                    entries.add(new NamedEntry(null, config));
+                }
+            }
+        }
+        return entries;
+    }
+
+    private record NamedEntry(String name, MappingConstructorExpressionNode config) { }
 
     private static List<MappingConstructorExpressionNode> mappingsOf(ExpressionNode value) {
         List<MappingConstructorExpressionNode> mappings = new ArrayList<>();
@@ -966,7 +1066,7 @@ public final class WorkflowDescriptorBuilder {
     }
 
     /** A compile-time constant string: a plain literal or a template without interpolations. */
-    private static String constantStringValue(Node expression) {
+    static String constantStringValue(Node expression) {
         if (expression instanceof BasicLiteralNode literal
                 && literal.kind() == SyntaxKind.STRING_LITERAL) {
             String raw = literal.literalToken().text();

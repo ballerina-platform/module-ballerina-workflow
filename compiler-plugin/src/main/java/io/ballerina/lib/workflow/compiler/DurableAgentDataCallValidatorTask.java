@@ -178,7 +178,7 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                 if (!(field instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
                     continue;
                 }
-                if ("inputType".equals(sf.fieldName().toSourceCode().strip())) {
+                if ("inputType".equals(mappingFieldKey(sf))) {
                     ExpressionNode inputTypeExpr = sf.valueExpr().get();
                     inputTypeSource = inputTypeExpr.toSourceCode().strip();
                     if ("()".equals(inputTypeSource)) {
@@ -193,7 +193,7 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                     }
                     continue;
                 }
-                if (!"events".equals(sf.fieldName().toSourceCode().strip())) {
+                if (!"events".equals(mappingFieldKey(sf))) {
                     continue;
                 }
                 ExpressionNode eventsValue = sf.valueExpr().get();
@@ -223,7 +223,7 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                     String name = null;
                     for (MappingFieldNode eventField : eventMapping.fields()) {
                         if (eventField instanceof SpecificFieldNode ef && ef.valueExpr().isPresent()
-                                && "name".equals(ef.fieldName().toSourceCode().strip())) {
+                                && "name".equals(mappingFieldKey(ef))) {
                             name = stringLiteralValue(ef.valueExpr().get());
                         }
                     }
@@ -250,7 +250,7 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
             if (!(field instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
                 continue;
             }
-            String key = sf.fieldName().toSourceCode().strip();
+            String key = mappingFieldKey(sf);
             if ("response".equals(key)) {
                 duplex = true;
             } else if ("request".equals(key)) {

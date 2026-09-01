@@ -26,6 +26,7 @@ import ballerina/ai;
 import ballerina/jballerina.java;
 import ballerina/lang.runtime;
 import ballerina/test;
+import ballerina/time;
 import ballerina/workflow.internal as wfInternal;
 import ballerina/workflow.management;
 
@@ -571,4 +572,179 @@ function testWakeSignalInterruptsSleep() returns error? {
     test:assertEquals(result,
         "Awake: Sleep was interrupted by a wake signal before the 300 seconds elapsed.",
         "The wake signal should end the built-in sleep early");
+}
+
+// Calls the two workflow-context builtins in one turn and answers with both results,
+// so the test can assert what the model was actually told.
+isolated client class ContextReadMockModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        if messages is ai:ChatMessage[] {
+            string? workflowId = ();
+            string? currentTime = ();
+            foreach ai:ChatMessage message in messages {
+                if message is ai:ChatFunctionMessage {
+                    if message.name == "getWorkflowId" {
+                        workflowId = message.content;
+                    } else if message.name == "getCurrentTime" {
+                        currentTime = message.content;
+                    }
+                }
+            }
+            if workflowId is string && currentTime is string {
+                return {role: ai:ASSISTANT, content: "id=" + workflowId + ";time=" + currentTime};
+            }
+        }
+        return {
+            role: ai:ASSISTANT,
+            toolCalls: [
+                {name: "getWorkflowId", arguments: {}},
+                {name: "getCurrentTime", arguments: {}}
+            ]
+        };
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final ContextReadMockModelProvider contextReadMockModel = new;
+
+final DurableAgent contextReadAgent = check new ({
+    systemPrompt: {role: "", instructions: "Report your workflow id and the current time."},
+    model: contextReadMockModel
+});
+
+@test:Config {groups: ["unit"], dependsOn: [testWakeSignalInterruptsSleep]}
+function testBuiltinWorkflowContextTools() returns error? {
+    _ = check wfInternal:registerDurableAgentDecl("contextReadAgent", contextReadMockModel,
+        {role: "", instructions: "Report your workflow id and the current time."}, 8);
+    _ = check wfInternal:registerDurableAgentRunner("contextReadAgent");
+    contextReadAgent.bindAgentName("contextReadAgent");
+
+    string|error runResult = contextReadAgent.run("Who are you and what time is it?");
+    if runResult is error {
+        if runResult.message().includes("Workflow client not initialized") {
+            return;
+        }
+        return runResult;
+    }
+    string result = check contextReadAgent.waitForResult(runResult);
+    // getWorkflowId must feed the model this very run's instance id - the reference
+    // identifier an agent hands out - and getCurrentTime an ISO-8601 UTC instant.
+    test:assertEquals(result.substring(0, 3 + runResult.length()), "id=" + runResult,
+        "The built-in getWorkflowId tool should return the run's own instance id");
+    int timeAt = <int>result.indexOf(";time=");
+    string timeText = result.substring(timeAt + 6);
+    time:Utc|error parsed = time:utcFromString(timeText);
+    test:assertTrue(parsed is time:Utc,
+        "The built-in getCurrentTime tool should return an ISO-8601 UTC instant, got: " + timeText);
+}
+
+// Answers side questions while parked (detected by the framework's park note, a
+// mid-list system message), sleeps on the first real turn, and ends the conversation
+// on "bye" — reporting whether the merged aside reached the main history.
+isolated client class SideTurnMockModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        if messages is ai:ChatMessage[] {
+            string lastUser = "";
+            boolean sideCall = false;
+            boolean sawAside = false;
+            boolean slept = false;
+            int index = 0;
+            foreach ai:ChatMessage message in messages {
+                if message is ai:ChatSystemMessage && index > 0 {
+                    // Only side turns carry a second system message: the park note the
+                    // framework injects before the side question.
+                    sideCall = true;
+                }
+                if message is ai:ChatUserMessage {
+                    string|ai:Prompt content = message.content;
+                    if content is string {
+                        lastUser = content;
+                        if content == "status please?" {
+                            sawAside = true;
+                        }
+                    }
+                }
+                if message is ai:ChatFunctionMessage && message.name == "sleep" {
+                    slept = true;
+                }
+                index += 1;
+            }
+            if sideCall {
+                return {role: ai:ASSISTANT, content: "SIDE: still waiting on the main task."};
+            }
+            if lastUser == "bye" {
+                return {role: ai:ASSISTANT, toolCalls: [{name: "endConversation",
+                    arguments: {"farewell": sawAside ? "Done SAW_ASIDE" : "Done"}}]};
+            }
+            if slept {
+                return {role: ai:ASSISTANT, content: "Awake."};
+            }
+        }
+        return {role: ai:ASSISTANT, toolCalls: [{name: "sleep", arguments: {"seconds": 300}}]};
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final SideTurnMockModelProvider sideTurnMockModel = new;
+
+final DurableAgent sideTurnAgent = check new ({
+    systemPrompt: {role: "", instructions: "Chat while you work."},
+    model: sideTurnMockModel,
+    events: {chat: {request: string, response: string, cardinality: MULTI_EVENT}}
+});
+
+@test:Config {groups: ["unit"], dependsOn: [testBuiltinWorkflowContextTools]}
+function testSideTurnAnswersWhileParked() returns error? {
+    _ = check wfInternal:registerDurableAgentDecl("sideTurnAgent", sideTurnMockModel,
+        {role: "", instructions: "Chat while you work."}, 8);
+    _ = check wfInternal:registerDurableAgentEvent("sideTurnAgent", "chat", string, string,
+        "MULTI_EVENT");
+    _ = check wfInternal:registerDurableAgentRunner("sideTurnAgent");
+    sideTurnAgent.bindAgentName("sideTurnAgent");
+
+    string|error runResult = sideTurnAgent.run("Start the long job.");
+    if runResult is error {
+        if runResult.message().includes("Workflow client not initialized") {
+            return;
+        }
+        return runResult;
+    }
+    // Let the loop enter the 300-second durable sleep.
+    runtime:sleep(3);
+    // A chat message during the park is answered by a side turn — promptly, from the
+    // parked run, without waiting out the sleep. Before side turns this message would
+    // have queued mutely until the sleep resolved: the live/deadlock shape, when the
+    // user is waiting on this very answer before sending what the agent waits for.
+    string sideToken = check sideTurnAgent.sendData(runResult, "chat", "status please?");
+    string sideAnswer = check sideTurnAgent.waitForDataResult(runResult, sideToken);
+    test:assertTrue(sideAnswer.startsWith("SIDE:"),
+        "A chat message during a durable park should be answered by a side turn, got: " + sideAnswer);
+
+    // End the park; the main turn resumes and the NEXT turn must see the merged aside.
+    check management:wakeAgent(runResult);
+    runtime:sleep(3);
+    string byeToken = check sideTurnAgent.sendData(runResult, "chat", "bye");
+    string farewell = check sideTurnAgent.waitForDataResult(runResult, byeToken);
+    test:assertEquals(farewell, "Done SAW_ASIDE",
+        "The side-turn Q/A pair should be merged into the main history when the loop resumes");
+    string result = check sideTurnAgent.waitForResult(runResult);
+    test:assertEquals(result, "Done SAW_ASIDE");
 }

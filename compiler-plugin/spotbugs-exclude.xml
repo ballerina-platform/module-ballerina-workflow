@@ -100,6 +100,13 @@
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
     </Match>
 
+    <!-- One walk, two consumers: the descriptor writes the graph and the modifier injects the
+         same site ids, so the result is handed over rather than copied. -->
+    <Match>
+        <Class name="~io\.ballerina\.lib\.workflow\.compiler\.descriptor\.WorkflowGraphBuilder.*"/>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+    </Match>
+
     <!-- build() returns null to mean "this package declares no workflows" — a zero-length
          array would be indistinguishable from an empty descriptor document. -->
     <Match>

@@ -367,11 +367,12 @@ function conversationAgent(handle ctx, AgentOrderInput input) returns error? {
             model = conversationAgentModel, interaction = MULTI_EVENT, eventTimeout = {seconds: 60});
 }
 
-// MULTI_EVENT without the mandatory eventTimeout — must fail at registration.
-function unsafeConversationAgent(handle ctx, AgentOrderInput input) returns error? {
+// MULTI_EVENT with no eventTimeout: every wait is open-ended — a conversation lives as
+// long as it takes, with maxEventWaits as the only (runaway) backstop.
+function unboundedConversationAgent(handle ctx, AgentOrderInput input) returns error? {
     check registerAgentEvent(ctx, "chat", string);
     check buildAndRun(ctx, input.request,
-            systemPrompt = {role: "", instructions: "unsafe"},
+            systemPrompt = {role: "", instructions: "unbounded"},
             model = conversationAgentModel, interaction = MULTI_EVENT);
 }
 
@@ -624,7 +625,7 @@ function setupAgentTests() returns error? {
     _ = check registerAgentWorkflowForTest(approvalAgent, "approvalAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(eventWaitingAgent, "eventWaitingAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(conversationAgent, "conversationAgent", agentActivities);
-    _ = check registerAgentWorkflowForTest(unsafeConversationAgent, "unsafeConversationAgent",
+    _ = check registerAgentWorkflowForTest(unboundedConversationAgent, "unboundedConversationAgent",
             agentActivities);
     _ = check registerAgentWorkflowForTest(cappedConversationAgent, "cappedConversationAgent",
             agentActivities);
@@ -789,16 +790,19 @@ function testAgentMultiTurnConversation() returns error? {
 }
 
 @test:Config {groups: ["unit"]}
-function testMultiEventRequiresTimeout() returns error? {
-    // MULTI_EVENT without an eventTimeout must fail at registration (safety).
-    map<anydata> input = {id: "agent-unsafe-conv-001", request: "hello"};
-    string runResult = check run(unsafeConversationAgent, input);
-    anydata|error result = getWorkflowResult(runResult, 30);
-    test:assertTrue(result is error, "MULTI_EVENT without eventTimeout should fail the agent");
-    if result is error {
-        test:assertTrue(result.message().includes("eventTimeout"),
-                "Error should mention the missing eventTimeout: " + result.message());
-    }
+function testMultiEventWithoutTimeoutWaitsIndefinitely() returns error? {
+    // MULTI_EVENT with no eventTimeout is the default conversational shape: the agent
+    // waits for the next message however long it takes (a bounded default here used to
+    // kill idle chat sessions at 30 minutes), and the conversation still ends cleanly
+    // when the user says so.
+    map<anydata> input = {id: "agent-unbounded-conv-001", request: "hello"};
+    string runResult = check run(unboundedConversationAgent, input);
+    test:assertTrue(waitForAgentResponse(runResult, "Turn 1 answer"),
+            "Turn 1 should answer normally with no timeout configured");
+    check sendData(unboundedConversationAgent, runResult, "chat", "ok bye");
+    _ = check getWorkflowResult(runResult, 30);
+    test:assertEquals(getAgentFinalResponse(runResult), "Conversation ended",
+            "An unbounded conversation still ends when the user says bye");
 }
 
 @test:Config {groups: ["unit"]}

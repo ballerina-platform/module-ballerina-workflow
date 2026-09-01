@@ -96,6 +96,8 @@ public final class DurableAgentNative {
         // default), another data type (structured run input), or null (no-input agent).
         private final BTypedesc inputType;
         private final BTypedesc resultType;
+        // The declared per-wait event timeout (a time:Duration value), or null: wait forever.
+        private final Object eventTimeout;
         private final Map<String, ActivityDecl> activities = new LinkedHashMap<>();
         private final Map<String, ToolDeclEntry> tools = new LinkedHashMap<>();
         private final Map<String, EventDecl> events = new LinkedHashMap<>();
@@ -118,13 +120,18 @@ public final class DurableAgentNative {
         }
 
         AgentDecl(String agentName, BObject model, Object systemPrompt, long maxIter, BTypedesc inputType,
-                  BTypedesc resultType) {
+                  BTypedesc resultType, Object eventTimeout) {
             this.agentName = agentName;
             this.model = model;
             this.systemPrompt = systemPrompt;
             this.maxIter = maxIter;
             this.inputType = inputType;
             this.resultType = resultType;
+            this.eventTimeout = eventTimeout;
+        }
+
+        public Object eventTimeout() {
+            return eventTimeout;
         }
 
         public String agentName() {
@@ -242,12 +249,14 @@ public final class DurableAgentNative {
      * @return true on success, or a BError when the name is already registered
      */
     public static Object registerDurableAgentDecl(BString agentName, BObject model, Object systemPrompt,
-                                                  long maxIter, Object inputType, Object resultType) {
+                                                  long maxIter, Object inputType, Object resultType,
+                                                  Object eventTimeout) {
         String name = agentName.getValue();
         AgentDecl existing = AGENT_DECL_REGISTRY.putIfAbsent(name,
                 new AgentDecl(name, model, systemPrompt, maxIter,
                         inputType instanceof BTypedesc typedesc ? typedesc : null,
-                        resultType instanceof BTypedesc resultTypedesc ? resultTypedesc : null));
+                        resultType instanceof BTypedesc resultTypedesc ? resultTypedesc : null,
+                        eventTimeout));
         if (existing != null) {
             return ErrorCreator.createError(StringUtils.fromString(
                     "A durable agent named '" + name + "' is already registered"));
@@ -539,6 +548,9 @@ public final class DurableAgentNative {
             Map<String, Object> spec = new HashMap<>();
             spec.put("systemPrompt", decl.systemPrompt());
             spec.put("maxIter", decl.maxIter());
+            if (decl.eventTimeout() != null) {
+                spec.put("eventTimeout", decl.eventTimeout());
+            }
             spec.put("model", decl.model());
             if (decl.resultType() != null) {
                 spec.put("resultType", decl.resultType());

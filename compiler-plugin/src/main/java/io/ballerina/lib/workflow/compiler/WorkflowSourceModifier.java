@@ -145,6 +145,12 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             Module module = context.currentPackage().module(documentId.moduleId());
             ModulePartNode rootNode = module.document(documentId).syntaxTree().rootNode();
 
+            // Stamp each durable call site with its identity, so a running execution can be
+            // traced back to the exact call site the descriptor's graph describes. Same walk,
+            // same ids: the graph and the runtime cannot disagree.
+            rootNode = new CallSiteInjector(context.compilation().getSemanticModel(documentId.moduleId()))
+                    .inject(rootNode);
+
             // … and append the combined registration function + invocation
             // only to the LAST document so that all @Workflow functions from
             // every source file are visible to the generated function body.
@@ -323,6 +329,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                 .append(", ").append(decl.maxIterSource() != null ? decl.maxIterSource() : "16")
                 .append(", ").append(decl.inputTypeSource() != null ? decl.inputTypeSource() : "json")
                 .append(", ").append(decl.resultTypeSource() != null ? decl.resultTypeSource() : "()")
+                .append(", ").append(decl.eventTimeoutSource() != null ? decl.eventTimeoutSource() : "()")
                 .append(");").append(System.lineSeparator());
         for (DurableAgentDeclInfo.ActivityDecl activity : decl.activities()) {
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
@@ -587,7 +594,8 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                 importPrefix, semicolonToken);
     }
 
-    private static String escapeBallerinaStringLiteral(String value) {
+    /** Escapes {@code value} for splicing into generated source as a double-quoted string literal. */
+    static String escapeBallerinaStringLiteral(String value) {
         return value
                 .replace("\\", "\\\\")
                 .replace("\"", "\\\"")

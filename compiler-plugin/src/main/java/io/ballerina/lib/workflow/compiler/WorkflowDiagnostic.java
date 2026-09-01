@@ -247,7 +247,20 @@ public enum WorkflowDiagnostic {
             "The array form of '%s' is deprecated: declare each entry as a mapping field keyed by "
                     + "its name — %s: {%s: {...}} — which makes the name a compile-time constant "
                     + "by construction",
-            DiagnosticSeverity.WARNING);
+            DiagnosticSeverity.WARNING),
+    // 160 and 161, not 158 and 159: those codes went to main while this branch was open, and a
+    // diagnostic code is part of the published contract — a user's suppression or a docs link
+    // keyed on 158 must keep meaning what it meant.
+    WORKFLOW_160("WORKFLOW_160",
+            "Step id '%s' is already used by another step in this workflow. A step id identifies one "
+                    + "step of the workflow's graph, so this one is described with a numeric suffix "
+                    + "instead. Give it an id of its own to control what it is called",
+            DiagnosticSeverity.WARNING),
+    WORKFLOW_161("WORKFLOW_161",
+            "A step id must be a constant string: it is recorded in the workflow's graph at build "
+                    + "time, so an expression evaluated per execution cannot be described. Use a "
+                    + "literal, or omit it and let the compiler generate one",
+            DiagnosticSeverity.ERROR);
 
     private final String code;
     private final String message;

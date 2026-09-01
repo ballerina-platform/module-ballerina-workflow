@@ -401,8 +401,6 @@ public final class WorkflowNative {
             // Get registries from WorkflowWorkerNative (the singleton worker)
             Map<String, io.ballerina.lib.workflow.worker.WorkflowFunctionRef> processRegistry =
                     WorkflowWorkerNative.getProcessRegistry();
-            Map<String, io.ballerina.lib.workflow.worker.WorkflowFunctionRef> activityRegistry =
-                    WorkflowWorkerNative.getActivityRegistry();
             Map<String, List<String>> eventRegistry = WorkflowWorkerNative.getEventRegistry();
 
             // Get the ProcessRegistration record type from the workflow module
@@ -427,15 +425,17 @@ public final class WorkflowNative {
                                                                                      "ProcessRegistration");
                 processRecord.put(StringUtils.fromString("name"), StringUtils.fromString(displayName));
 
-                // Find activities for this process (activities are registered as "processName.activityName")
+                // Which activities this workflow declares. The registry is keyed by the plain
+                // activity name, so ownership comes from the ownership map rather than from a
+                // prefix match on the key.
                 List<String> processActivities = new ArrayList<>();
-                for (String activityName : activityRegistry.keySet()) {
-                    if (activityName.startsWith(processName + ".")) {
-                        // Extract just the activity name part
-                        String shortName = activityName.substring(processName.length() + 1);
-                        processActivities.add(shortName);
+                for (Map.Entry<String, java.util.Set<String>> owned
+                        : WorkflowWorkerNative.getActivityOwners().entrySet()) {
+                    if (owned.getValue().contains(processName)) {
+                        processActivities.add(owned.getKey());
                     }
                 }
+                java.util.Collections.sort(processActivities);
 
                 BString[] activityArray = processActivities.stream().map(StringUtils::fromString).toArray(
                         BString[]::new);
@@ -574,7 +574,7 @@ public final class WorkflowNative {
                 status = "SUSPENDED";
             }
 
-            return buildWorkflowExecutionInfo(wfId, workflowType, status, null, null, client);
+            return buildWorkflowExecutionInfo(wfId, workflowType, status, null, null, client, execInfo);
 
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(ERR_GET_INFO + e.getMessage()));
@@ -597,8 +597,11 @@ public final class WorkflowNative {
 
             String workflowType = (String) info.getOrDefault("workflowType", "");
             String status = (String) info.getOrDefault("status", "UNKNOWN");
+            // The builtin activity resolves the kind from the memo off the workflow thread;
+            // without it this path would fall back to the id prefix, which bare ids defeat.
+            String kind = (String) info.get("kind");
 
-            return buildWorkflowExecutionInfo(workflowId, workflowType, status, null, null, null);
+            return buildWorkflowExecutionInfo(workflowId, workflowType, status, null, null, null, null, kind);
         } catch (Exception e) {
             return handleImplicitActivityError(e, ERR_GET_INFO);
         }
@@ -628,6 +631,31 @@ public final class WorkflowNative {
     public static BMap<BString, Object> buildWorkflowExecutionInfo(String workflowId, String workflowType,
                                                                    String status, Object result, String errorMessage,
                                                                    WorkflowClient client) {
+        return buildWorkflowExecutionInfo(workflowId, workflowType, status, result, errorMessage, client, null, null);
+    }
+
+    /**
+     * As above, reusing a describe response the caller already holds: every client-path caller
+     * has just described the execution for its status, so resolving the kind from that same
+     * response saves a second describe round trip per info read. The response also pins the run:
+     * result, error and activity history are read from the run the caller described, not from
+     * whatever run is latest by the time the history fetch lands (they differ after a reset).
+     */
+    public static BMap<BString, Object> buildWorkflowExecutionInfo(String workflowId, String workflowType,
+                                                                   String status, Object result, String errorMessage,
+                                                                   WorkflowClient client,
+                                                                   WorkflowExecutionInfo describedInfo) {
+        return buildWorkflowExecutionInfo(workflowId, workflowType, status, result, errorMessage, client,
+                describedInfo, null);
+    }
+
+    private static BMap<BString, Object> buildWorkflowExecutionInfo(String workflowId, String workflowType,
+                                                                    String status, Object result, String errorMessage,
+                                                                    WorkflowClient client,
+                                                                    WorkflowExecutionInfo describedInfo,
+                                                                    String resolvedKind) {
+        String runId = describedInfo != null && !describedInfo.getExecution().getRunId().isEmpty()
+                ? describedInfo.getExecution().getRunId() : null;
 
         BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                       "WorkflowExecutionInfo");
@@ -637,6 +665,23 @@ public final class WorkflowNative {
                              workflowType.substring(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length()) : workflowType;
         record.put(StringUtils.fromString("workflowType"), StringUtils.fromString(displayType));
         record.put(StringUtils.fromString("status"), StringUtils.fromString(status));
+        // What this instance IS, so a consumer can route to the right view by asking rather than
+        // by parsing the id. From the memo its starter stamped; instances that predate the stamp
+        // fall back to the id prefix, which is all their era ever offered.
+        record.put(StringUtils.fromString("kind"), StringUtils.fromString(
+                resolvedKind != null ? resolvedKind
+                        : describedInfo != null ? resolveKindFromInfo(client, workflowId, describedInfo)
+                        : resolveKind(client, workflowId)));
+
+        // No caller can know the result at describe time — it lives in the run's terminal history
+        // event — so a closed run without one gets it fetched here. Reporting result: null for a
+        // completed run made every consumer re-derive it from raw history, or lie.
+        if (result == null && client != null && "COMPLETED".equals(status)) {
+            result = fetchRunResult(client, workflowId, runId);
+        }
+        if (errorMessage == null && client != null && "FAILED".equals(status)) {
+            errorMessage = fetchRunFailureMessage(client, workflowId, runId);
+        }
 
         if (result != null) {
             record.put(StringUtils.fromString("result"), TypesUtil.convertJavaToBallerinaType(result));
@@ -652,13 +697,133 @@ public final class WorkflowNative {
 
         BArray activityInvocations;
         if (client != null && ("COMPLETED".equals(status) || "FAILED".equals(status))) {
-            activityInvocations = fetchActivityInvocations(client, workflowId);
+            activityInvocations = fetchActivityInvocations(client, workflowId, runId);
         } else {
             activityInvocations = createEmptyActivityInvocationsArray();
         }
         record.put(StringUtils.fromString("activityInvocations"), activityInvocations);
 
         return record;
+    }
+
+    /**
+     * Resolves what an instance is — WORKFLOW, AGENT, HUMAN_TASK, REVIEW_ACTIVITY or
+     * CHILD_WORKFLOW — from the workflowKind memo its starter stamped, falling back to the id
+     * prefix for instances started before the stamp existed.
+     */
+    private static String resolveKind(WorkflowClient client, String workflowId) {
+        if (client != null) {
+            try {
+                DescribeWorkflowExecutionResponse describe = client
+                        .getWorkflowServiceStubs()
+                        .blockingStub()
+                        .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                        .describeWorkflowExecution(DescribeWorkflowExecutionRequest.newBuilder()
+                                .setNamespace(client.getOptions().getNamespace())
+                                .setExecution(io.temporal.api.common.v1.WorkflowExecution.newBuilder()
+                                        .setWorkflowId(workflowId).build())
+                                .build());
+                return resolveKindFromInfo(client, workflowId, describe.getWorkflowExecutionInfo());
+            } catch (Exception e) {
+                // The kind is a routing hint; an info read must not fail over it.
+            }
+        }
+        return kindFromIdPrefix(workflowId);
+    }
+
+    /** As {@link #resolveKind}, from a describe response the caller already holds. */
+    private static String resolveKindFromInfo(WorkflowClient client, String workflowId,
+                                              WorkflowExecutionInfo describedInfo) {
+        try {
+            io.temporal.api.common.v1.Payload kindPayload =
+                    describedInfo.getMemo().getFieldsMap().get("workflowKind");
+            if (kindPayload != null && !kindPayload.getData().isEmpty()) {
+                String kind = client.getOptions().getDataConverter()
+                        .fromPayload(kindPayload, String.class, String.class);
+                if (kind != null && !kind.isBlank()) {
+                    return kind;
+                }
+            }
+        } catch (Exception e) {
+            // The kind is a routing hint; an info read must not fail over it.
+        }
+        return kindFromIdPrefix(workflowId);
+    }
+
+    private static String kindFromIdPrefix(String workflowId) {
+        if (workflowId.startsWith("humantask-")) {
+            return "HUMAN_TASK";
+        }
+        if (workflowId.startsWith("reviewactivity-")) {
+            return "REVIEW_ACTIVITY";
+        }
+        if (workflowId.startsWith("childwf-")) {
+            return "CHILD_WORKFLOW";
+        }
+        return "WORKFLOW";
+    }
+
+    /**
+     * Fetches the close event of a run — one request, filtered server-side to the terminal event.
+     */
+    private static HistoryEvent fetchCloseEvent(WorkflowClient client, String workflowId, String runId) {
+        io.temporal.api.common.v1.WorkflowExecution.Builder execution =
+                io.temporal.api.common.v1.WorkflowExecution.newBuilder().setWorkflowId(workflowId);
+        if (runId != null) {
+            // An empty run id resolves to the latest run — after a reset that is a different
+            // run than the one the caller described, and its close event tells another story.
+            execution.setRunId(runId);
+        }
+        GetWorkflowExecutionHistoryRequest request = GetWorkflowExecutionHistoryRequest
+                .newBuilder()
+                .setNamespace(client.getOptions().getNamespace())
+                .setExecution(execution.build())
+                .setHistoryEventFilterType(
+                        io.temporal.api.enums.v1.HistoryEventFilterType.HISTORY_EVENT_FILTER_TYPE_CLOSE_EVENT)
+                .build();
+        GetWorkflowExecutionHistoryResponse response = client
+                .getWorkflowServiceStubs()
+                .blockingStub()
+                .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                .getWorkflowExecutionHistory(request);
+        java.util.List<HistoryEvent> events = response.getHistory().getEventsList();
+        return events.isEmpty() ? null : events.get(events.size() - 1);
+    }
+
+    /**
+     * The result a completed run returned, decoded to a plain Java value, or null when the run
+     * returned nothing (or the fetch fails — an info read must not fail over a decoration).
+     */
+    private static Object fetchRunResult(WorkflowClient client, String workflowId, String runId) {
+        try {
+            HistoryEvent close = fetchCloseEvent(client, workflowId, runId);
+            if (close == null || !close.hasWorkflowExecutionCompletedEventAttributes()) {
+                return null;
+            }
+            io.temporal.api.common.v1.Payloads payloads =
+                    close.getWorkflowExecutionCompletedEventAttributes().getResult();
+            if (payloads.getPayloadsCount() == 0) {
+                return null;
+            }
+            return client.getOptions().getDataConverter().fromPayload(
+                    payloads.getPayloads(0), Object.class, Object.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** The failure message of a failed run, or null — same contract as {@link #fetchRunResult}. */
+    private static String fetchRunFailureMessage(WorkflowClient client, String workflowId, String runId) {
+        try {
+            HistoryEvent close = fetchCloseEvent(client, workflowId, runId);
+            if (close == null || !close.hasWorkflowExecutionFailedEventAttributes()
+                    || !close.getWorkflowExecutionFailedEventAttributes().hasFailure()) {
+                return null;
+            }
+            return close.getWorkflowExecutionFailedEventAttributes().getFailure().getMessage();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
@@ -686,7 +851,7 @@ public final class WorkflowNative {
      * @param workflowId the workflow execution to query
      * @return a Ballerina array of {@code ActivityInvocation} records
      */
-    private static BArray fetchActivityInvocations(WorkflowClient client, String workflowId) {
+    private static BArray fetchActivityInvocations(WorkflowClient client, String workflowId, String runId) {
         RecordType invocationType = (RecordType) ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                                 "ActivityInvocation").getType();
         BArray invocations = ValueCreator.createArrayValue(TypeCreator.createArrayType(invocationType));
@@ -700,13 +865,15 @@ public final class WorkflowNative {
             com.google.protobuf.ByteString nextPageToken = com.google.protobuf.ByteString.EMPTY;
 
             do {
+                io.temporal.api.common.v1.WorkflowExecution.Builder execution =
+                        io.temporal.api.common.v1.WorkflowExecution.newBuilder().setWorkflowId(workflowId);
+                if (runId != null) {
+                    execution.setRunId(runId);
+                }
                 GetWorkflowExecutionHistoryRequest.Builder reqBuilder = GetWorkflowExecutionHistoryRequest
                         .newBuilder()
                         .setNamespace(client.getOptions().getNamespace())
-                        .setExecution(io.temporal.api.common.v1.WorkflowExecution
-                                              .newBuilder()
-                                              .setWorkflowId(workflowId)
-                                              .build());
+                        .setExecution(execution.build());
                 if (!nextPageToken.isEmpty()) {
                     reqBuilder.setNextPageToken(nextPageToken);
                 }

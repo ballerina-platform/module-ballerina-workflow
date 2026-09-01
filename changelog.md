@@ -8,6 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- **A conversation no longer dies of a default timeout: `eventTimeout` is now opt-in.**
+  Every MULTI_EVENT wait was required to carry an `eventTimeout`, and the object-model runner
+  silently injected 30 minutes — so a durable agent's chat session ended mid-conversation the
+  moment the user stepped away past it, which is the opposite of what "durable" promises.
+  `DurableAgentConfig` now declares `eventTimeout` explicitly; when omitted, every event wait is
+  open-ended and the conversation lives as long as it takes. `maxEventWaits` remains the runaway
+  backstop, and a declared timeout still tells the model when a wait expires so it can wrap up.
+
+- **The descriptor now reads the mapping form of `events` and `humanTasks`.** The agent entry's
+  channel and task lists (and with them the agent map's whole inbound column — `event:` and
+  `task:` nodes) were built only from the deprecated array form; a declaration in the primary
+  mapping style (`events: {chat: {...}}`) produced an agent graph with no inbound side at all.
+
 - **A durable agent's `inputType` is now a JSON payload type, and `run` actually checks it.**
   The field was `typedesc<anydata>?` defaulting to `string`, which made the default declaration
   say "the query text is the input" — a mode with no payload at all, since `run(query, input)`
@@ -78,7 +91,157 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   which is also where `wait: false` with no `callbackChannel` now fails, instead of inside
   the runner workflow.
 
+- **Activities are scheduled under their plain name.** An activity's Temporal type was
+  `<workflowType>.<activity>`, which added nothing — Ballerina function names are already unique
+  within a package — while making one registry entry per (workflow, activity) pair and a longer
+  type in every history. It is now just the activity name, and a review task is listed as
+  `<workflow>.<activity>` without the runtime's internal `workflow-` prefix.
+
+  An activity's type *is* compared during replay, so the change is gated per execution with
+  `Workflow.getVersion`: an execution started before this release keeps scheduling the qualified
+  name — which stays registered — and only new executions use the plain one. No instance needs
+  draining, at the cost of one marker event per execution that calls an activity.
+
+  The runtime metadata document is unchanged: it still reports one activity per workflow, from an
+  ownership map rather than by splitting the registry key.
+
+- **Breaking**: the management HTTP API moved from `ballerina/workflow.management`
+  to the new `ballerina/workflow.management.rest` module. `workflow.management` is
+  now a pure Ballerina API — importing it never starts a listener. To serve the
+  HTTP API, add `import ballerina/workflow.management.rest as _;`.
+
+  Configurables split between the two modules, so a migration moves *most* keys but
+  must leave two behind. `maxPageSize` and `reviewActivityAccessRole` belong to the
+  operations themselves and stay under `[ballerina.workflow.management]`; everything
+  else (listener, auth, CORS, identity) moves to `[ballerina.workflow.management.rest]`
+  with unchanged key names. Moving `reviewActivityAccessRole` by mistake is not
+  inert — it would fall back to its default, which leaves review activities that
+  declare no roles of their own visible to any caller:
+
+  ```toml
+  [ballerina.workflow.management]
+  maxPageSize = 100
+  reviewActivityAccessRole = "OPS"          # keep here, or the restriction is lost
+
+  [ballerina.workflow.management.rest]
+  port = 8234                                # everything else moves here
+  enableJwtAuth = true
+  ```
+
+  Routes, methods, base path, default port, success status codes, and success payload
+  shapes are unchanged. Identity resolution is the one behavioral difference: it now
+  comes from token claims and overrides `x-user-*` headers
+  (`trustForwardedIdentity = true` restores the old precedence).
+
+- **Breaking (generated API specification)**: the specification generated from the
+  management service's source is now less detailed than the API it describes. The
+  resources return `http:Response` rather than typed union returns, so
+  `bal openapi -i` (and anything reading its output) no longer sees:
+
+  - the per-route status codes — every operation is described with a single
+    unconstrained response instead of its `200`/`201`/`400`/`403`/`404`/`409`/`500` set;
+  - the response body schemas — `WorkflowInstancePage`, `HumanTaskInfo`,
+    `ErrorResponse`, and the rest no longer appear as response types (they remain
+    public Ballerina types and the wire payloads are byte-for-byte unchanged);
+  - the `x-user-*` header parameters, which were declared as resource parameters and
+    are now read from the request inside the service.
+
+  The **served** contract is unchanged — no route, method, status code, or payload
+  moved, so a running client keeps working. What breaks is anything *derived* from the
+  generated specification: regenerated client stubs lose their typed responses and
+  header parameters, and a gateway, mock server, or contract test built from that
+  document degrades to an untyped passthrough. Contract tests that assert the generated
+  specification matches a stored copy will fail on regeneration and must be re-baselined.
+
+  Migration, if you depend on the specification: pin the last specification generated
+  before this release and maintain it by hand, or generate it from a running endpoint
+  rather than from the source. The response types are still public, so a hand-maintained
+  document can reference them directly. Typed resource signatures may be restored in a
+  later release once error mapping no longer needs the raw `http:Response`; that would
+  restore the detail without changing the served API again.
+
+  The HTTP-only types `CompletionInfo`, `ReviewDecisionInfo`, `HumanTaskPage`, and
+  `ReviewActivityPage` moved with the service; the unused `ManagementServiceConfig`
+  and `CorsConfig` types were removed.
+
 ### Added
+
+- **A parked agent stays conversational: chat messages during a durable wait are answered
+  by side turns.** A conversational agent's reasoning loop runs one turn at a time, so a chat
+  message sent while the loop was durably parked — a gated tool awaiting approval, a human
+  task, another channel's event, the sleep timer — queued mutely until the park resolved,
+  which could be hours. Worse, it deadlocked the conversation's two sides: an agent waiting
+  on an event (say, a file upload) while the user waits for an answer before sending it.
+
+  Such a message is now answered by a **side turn**: one bounded, tool-less model call over
+  the conversation so far plus a framework-injected note stating exactly what the agent is
+  waiting on and since when. The update completes with the side answer — still exactly one
+  response per request — and the question/answer pair is merged into the main history when
+  the loop resumes, so the conversation stays whole. Side turns cannot run tools or mutate
+  anything (the main turn owns all state), never touch the event queues, the turn pairing,
+  or the event-wait budget, and are answered with a deterministic status line when the model
+  itself is unavailable. A message arriving while the loop waits on the chat channel itself
+  is the next turn, exactly as before.
+
+- **A durable agent can now read its own workflow context: `getWorkflowId` and `getCurrentTime`
+  join `sleep` as always-available built-in tools.** In a plain workflow these are `ctx` methods;
+  the agent's tools had no `ctx`, so an agent could not hand out its own run's reference ID or
+  know the date without hallucinating one. Both are answered deterministically on the workflow
+  thread — a context read, never an activity, so no worker slot and no history entry is spent.
+  `getWorkflowId` returns the run's instance ID (the durable reference identifier to give to a
+  user or an external system); `getCurrentTime` returns the workflow's deterministic clock as an
+  ISO-8601 UTC instant. Their names are reserved alongside the other built-ins: a user capability
+  registered under either name is rejected.
+
+- **A human task listing now says who decided it.** `HumanTaskSummary` gains `completedBy` and
+  `completedAt`, so a work queue can show who completed or rejected each task without opening it.
+  The completer already existed on `HumanTaskDetail`, read back from the `taskCompletion` signal —
+  one history read per task, which is affordable for one task and not for a page of them. The task
+  workflow now records it in its own memo when it is decided, where it rides the visibility row
+  alongside `kind` and `userRoles`, so listings pay nothing extra for it. Rejections record it too,
+  so a failed task also names who rejected it.
+
+  Both fields are `()` for a task that is still pending, and for tasks decided before the memo
+  carried this — the information exists only in those runs' history, and is not backfilled. The
+  value is a user ID: resolving it to a display name belongs to whatever holds the user directory.
+
+- **The descriptor now carries each workflow's graph, and executions say where they are in it.**
+  A workflow that calls the same activity from both arms of an `if` produced two invocations that
+  history could not tell apart, which is what stopped the control plane from drawing the workflow
+  and highlighting the path a run actually took.
+
+  `workflow.def.json` gains a `graph` per workflow (still `descriptorVersion` 1.0 — the
+  descriptor has never shipped, so its first release simply includes the graph): its durable steps —
+  activities, human tasks, child workflows, event waits, sleeps — in source order, nested under
+  the `BRANCH`/`LOOP`/`TRY` constructs that guard them, with edges that follow control flow.
+  Lexical `line`/`column` travel alongside for display but are deliberately not part of a step's
+  identity, so reformatting and unrelated edits do not move it.
+
+  Durable agents get a `graph` too, in the same shape: an agent has no lexical control flow — the
+  model decides what runs — so it is a star, with data events and human tasks inbound and tools
+  and the model outbound.
+
+- **Steps can be named: `stepId`.** Every step in the graph carries an id. Name it with the new
+  `stepId` parameter on `callActivity` and `awaitHumanTask` — `stepId = "charge-card"` — or leave it
+  out and the compiler generates `<target>#<ordinal>` from the occurrences of that target in source
+  order. Naming is worth doing for the steps you care about: a generated ordinal shifts when a call
+  to the same target is added earlier in the workflow, so an in-flight execution then points at the
+  wrong node, while a chosen id does not move at all.
+
+  A chosen id must be a constant string — the graph is written at build time, so an expression
+  evaluated per execution cannot be described, and that is an error. Sharing an id with another step
+  is only a warning: the later step is described with a numeric suffix (`book`, then `book#2`) and
+  that same id is written back to the call, so the graph and the execution still agree. There are no
+  reserved characters — generation steps over any id a call chose, so a step may be called `order#1`
+  if that reads best.
+
+  The id travels in the call config the activity already carries, and `ActivityTreeNode.stepId` and
+  `GraphNode.metadata.stepId` report it back — that join is what lets a viewer highlight the path a
+  run actually took. Where the server records user metadata it is also the activity's summary in the
+  Temporal UI. Activity *inputs* are not compared during replay, so in-flight executions are
+  unaffected; an execution started before this release reports `()`, and a step renamed since a run
+  started reports the old id — so treat the join as optional and draw an unmatched node
+  unhighlighted rather than failing.
 
 - **`management:ErrorCode` and `management:errorCodeOf(Error)`** — the machine-readable,
   protocol-independent reason a management operation failed (`NOT_FOUND`, `ACCESS_DENIED`,
@@ -149,115 +312,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   selection that resolves to more is rejected rather than truncated, so a caller is never told a
   decision was applied to a larger set than it was.
 
-### Fixed
-
-- **`workflow.def.json` now reaches the built executable.** The descriptor was registered as a
-  package resource with `SourceGeneratorContext.addResourceFile`, which puts nothing into the
-  executable, the BALA, or `target` — while a file physically present in a package's `resources`
-  directory is packed into both. It is now written into the emitted executable by a
-  compiler-lifecycle task, as the root-level entry `workflow.def.json`, byte-identical to the
-  document the builder produced. Executables only: a BALA does not carry it, and a consumer that
-  needs the artifact regenerates it from the package. Nothing about registration changes — the
-  runtime registers from the copy the source modifier embeds.
-
-- **A rejected human task now reaches the awaiting workflow.** `awaitHumanTask` declared
-  `T|HumanTaskTimeoutError`, so a timeout was the only failure it could return. Every
-  other outcome — a task rejected through the `fail` management operation, a terminated
-  task, a submitted value that did not match `T` — built an error outside that union and
-  **panicked the workflow with `{ballerina}TypeCastError`** at the Java→Ballerina
-  boundary. The rejection reason travelled correctly as far as the task workflow's
-  failure (recorded in its history) and was then lost, so a workflow could not
-  compensate on it and the instance failed with an opaque cast error instead.
-
-  `awaitHumanTask` now returns `T|HumanTaskError`, a union of three distinct errors:
-
-  - `HumanTaskTimeoutError` — unchanged, including its detail record;
-  - `HumanTaskRejectedError` — new, carrying `reason`, the structured `details`, and
-    `rejectedBy` exactly as submitted to the `fail` operation;
-  - `HumanTaskFailedError` — new; the task produced no result (terminated, or the
-    submitted value did not match `T`).
-
-  **Breaking (source):** the documented `on fail workflow:HumanTaskTimeoutError e`
-  pattern no longer compiles, because the `do` block can now fail with a wider type.
-  Catch the family and narrow inside:
-
-  ```ballerina
-  do {
-      decision = check ctx->awaitHumanTask("approve", "FINANCE", timeout = {hours: 24});
-  } on fail workflow:HumanTaskError e {
-      if e !is workflow:HumanTaskTimeoutError {
-          return e;                       // a rejection is an answer, not an escalation
-      }
-      // ... escalate on timeout, as before
-  }
-  ```
-
-  A rejection recorded by an older runtime carries no structured details; its
-  `HumanTaskRejectedError` reports the reason with `details` as `()`.
-
-### Changed
-
-- **Breaking**: the management HTTP API moved from `ballerina/workflow.management`
-  to the new `ballerina/workflow.management.rest` module. `workflow.management` is
-  now a pure Ballerina API — importing it never starts a listener. To serve the
-  HTTP API, add `import ballerina/workflow.management.rest as _;`.
-
-  Configurables split between the two modules, so a migration moves *most* keys but
-  must leave two behind. `maxPageSize` and `reviewActivityAccessRole` belong to the
-  operations themselves and stay under `[ballerina.workflow.management]`; everything
-  else (listener, auth, CORS, identity) moves to `[ballerina.workflow.management.rest]`
-  with unchanged key names. Moving `reviewActivityAccessRole` by mistake is not
-  inert — it would fall back to its default, which leaves review activities that
-  declare no roles of their own visible to any caller:
-
-  ```toml
-  [ballerina.workflow.management]
-  maxPageSize = 100
-  reviewActivityAccessRole = "OPS"          # keep here, or the restriction is lost
-
-  [ballerina.workflow.management.rest]
-  port = 8234                                # everything else moves here
-  enableJwtAuth = true
-  ```
-
-  Routes, methods, base path, default port, success status codes, and success payload
-  shapes are unchanged. Identity resolution is the one behavioral difference: it now
-  comes from token claims and overrides `x-user-*` headers
-  (`trustForwardedIdentity = true` restores the old precedence).
-
-- **Breaking (generated API specification)**: the specification generated from the
-  management service's source is now less detailed than the API it describes. The
-  resources return `http:Response` rather than typed union returns, so
-  `bal openapi -i` (and anything reading its output) no longer sees:
-
-  - the per-route status codes — every operation is described with a single
-    unconstrained response instead of its `200`/`201`/`400`/`403`/`404`/`409`/`500` set;
-  - the response body schemas — `WorkflowInstancePage`, `HumanTaskInfo`,
-    `ErrorResponse`, and the rest no longer appear as response types (they remain
-    public Ballerina types and the wire payloads are byte-for-byte unchanged);
-  - the `x-user-*` header parameters, which were declared as resource parameters and
-    are now read from the request inside the service.
-
-  The **served** contract is unchanged — no route, method, status code, or payload
-  moved, so a running client keeps working. What breaks is anything *derived* from the
-  generated specification: regenerated client stubs lose their typed responses and
-  header parameters, and a gateway, mock server, or contract test built from that
-  document degrades to an untyped passthrough. Contract tests that assert the generated
-  specification matches a stored copy will fail on regeneration and must be re-baselined.
-
-  Migration, if you depend on the specification: pin the last specification generated
-  before this release and maintain it by hand, or generate it from a running endpoint
-  rather than from the source. The response types are still public, so a hand-maintained
-  document can reference them directly. Typed resource signatures may be restored in a
-  later release once error mapping no longer needs the raw `http:Response`; that would
-  restore the detail without changing the served API again.
-
-  The HTTP-only types `CompletionInfo`, `ReviewDecisionInfo`, `HumanTaskPage`, and
-  `ReviewActivityPage` moved with the service; the unused `ManagementServiceConfig`
-  and `CorsConfig` types were removed.
-
-### Added
-
 - **Descriptor-driven registration (zero metadata codegen)**: the compiler plugin no
   longer generates per-workflow `registerWorkflow`/`registerHumanTask` calls. The
   generated module-init function hands the canonical descriptor document to the
@@ -320,6 +374,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- **`workflow.def.json` now reaches the built executable.** The descriptor was registered as a
+  package resource with `SourceGeneratorContext.addResourceFile`, which puts nothing into the
+  executable, the BALA, or `target` — while a file physically present in a package's `resources`
+  directory is packed into both. It is now written into the emitted executable by a
+  compiler-lifecycle task, as the root-level entry `workflow.def.json`, byte-identical to the
+  document the builder produced. Executables only: a BALA does not carry it, and a consumer that
+  needs the artifact regenerates it from the package. Nothing about registration changes — the
+  runtime registers from the copy the source modifier embeds.
+
+- **A rejected human task now reaches the awaiting workflow.** `awaitHumanTask` declared
+  `T|HumanTaskTimeoutError`, so a timeout was the only failure it could return. Every
+  other outcome — a task rejected through the `fail` management operation, a terminated
+  task, a submitted value that did not match `T` — built an error outside that union and
+  **panicked the workflow with `{ballerina}TypeCastError`** at the Java→Ballerina
+  boundary. The rejection reason travelled correctly as far as the task workflow's
+  failure (recorded in its history) and was then lost, so a workflow could not
+  compensate on it and the instance failed with an opaque cast error instead.
+
+  `awaitHumanTask` now returns `T|HumanTaskError`, a union of three distinct errors:
+
+  - `HumanTaskTimeoutError` — unchanged, including its detail record;
+  - `HumanTaskRejectedError` — new, carrying `reason`, the structured `details`, and
+    `rejectedBy` exactly as submitted to the `fail` operation;
+  - `HumanTaskFailedError` — new; the task produced no result (terminated, or the
+    submitted value did not match `T`).
+
+  **Breaking (source):** the documented `on fail workflow:HumanTaskTimeoutError e`
+  pattern no longer compiles, because the `do` block can now fail with a wider type.
+  Catch the family and narrow inside:
+
+  ```ballerina
+  do {
+      decision = check ctx->awaitHumanTask("approve", "FINANCE", timeout = {hours: 24});
+  } on fail workflow:HumanTaskError e {
+      if e !is workflow:HumanTaskTimeoutError {
+          return e;                       // a rejection is an answer, not an escalation
+      }
+      // ... escalate on timeout, as before
+  }
+  ```
+
+  A rejection recorded by an older runtime carries no structured details; its
+  `HumanTaskRejectedError` reports the reason with `details` as `()`.
+
 - Duplicate capability names in a durable agent now fail at startup. Activities, tools,
   events, human tasks, and peers share one namespace per agent — the name is the tool the
   model calls, and for a human task also the Temporal workflow type — but a second
@@ -327,6 +425,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   already claimed, both at module init (where the declaration registers) and on the agent
   context (where names the compiler plugin cannot see are registered), so the conflict
   surfaces even where the WORKFLOW_150 compile-time check cannot reach.
+
 
 ## [0.8.1] - 2026-08-03
 

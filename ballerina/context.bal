@@ -52,10 +52,17 @@ public client class Context {
     #   - `AutoRetry` — automatic backoff retry with configurable attempts and delays.
     #   - `HumanReview` — on failure a review task is created for a human to decide
     #     whether to retry (optionally with new input) or permanently fail the activity.
+    # + stepId - Identity of this step within the workflow, reported by every execution of it and
+    #            matching a node of the descriptor's graph — so a run can be traced back to the
+    #            exact call that ran, the one in the `if` arm rather than the `else`. Name it
+    #            (`stepId = "charge-card"`) for a step you want to follow: a chosen id survives
+    #            edits that shift the generated `<activity>#<ordinal>`. Must be a constant string;
+    #            an id another step already has is suffixed, with a warning.
     # + return - The activity result as `T`, or an error
     remote isolated function callActivity(function activityFunction,
             map<anydata|object {}> args = {},
-            typedesc<anydata> T = <>, AutoRetry|HumanReview|NoAutomaticRetry retryPolicy = NoAutomaticRetry)
+            typedesc<anydata> T = <>, AutoRetry|HumanReview|NoAutomaticRetry retryPolicy = NoAutomaticRetry,
+            string? stepId = ())
             returns T|error = @java:Method {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
         name: "callActivity"
@@ -68,13 +75,16 @@ public client class Context {
     # ```
     #
     # + duration - The duration to sleep
+    # + stepId - Identity of this step within the workflow, as for `callActivity`: name it to follow
+    #            this sleep across edits, or omit it for a generated `sleep#<ordinal>`. Recorded as
+    #            the timer's summary, so an instance diagram can tell two sleeps apart
     # + return - An error if the sleep fails, otherwise nil
-    public isolated function sleep(Duration duration) returns error? {
+    public isolated function sleep(Duration duration, string? stepId = ()) returns error? {
         decimal totalSeconds = <decimal>duration.hours * 3600 +
                                <decimal>duration.minutes * 60 +
                                duration.seconds;
         int millis = <int>(totalSeconds * 1000);
-        return sleepContextNative(self.nativeContext, millis);
+        return sleepContextNative(self.nativeContext, millis, stepId);
     }
 
     # Returns the deterministic workflow time. Use instead of `time:utcNow()` inside workflows.
@@ -167,6 +177,8 @@ public client class Context {
     # + description - Additional context shown alongside the form. Optional
     # + timeout - Maximum time to wait. Omit (or pass `()`) to wait indefinitely
     # + T - Expected result type; drives form schema generation and runtime validation
+    # + stepId - Identity of this step within the workflow, as for `callActivity`: name it to
+    #            follow this task across edits, or omit it for a generated `<taskName>#<ordinal>`.
     # + return - The typed value submitted by the human, or a `HumanTaskError`: a
     #            `HumanTaskTimeoutError` if the deadline passed, a `HumanTaskRejectedError`
     #            if someone rejected the task (carrying their reason and details), or a
@@ -178,7 +190,8 @@ public client class Context {
             string? title = (),
             string? description = (),
             Duration? timeout = (),
-            typedesc<anydata> T = <>)
+            typedesc<anydata> T = <>,
+            string? stepId = ())
             returns T|HumanTaskError = @java:Method {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
         name: "awaitHumanTask"
@@ -201,8 +214,10 @@ public client class Context {
     # + childWorkflow - The child workflow function (must have `@Workflow`)
     # + input - Optional input for the child workflow. Must match the child workflow
     #           function's declared input parameter type (any `anydata` subtype)
+    # + stepId - Identity of this step within the workflow, as for `callActivity`
     # + return - The child workflow instance ID, or an error if the child could not start
-    remote isolated function runChildWorkflow(function childWorkflow, anydata input = ())
+    remote isolated function runChildWorkflow(function childWorkflow, anydata input = (),
+            string? stepId = ())
             returns string|error = @java:Method {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
         name: "runChildWorkflow"
@@ -255,7 +270,7 @@ public client class Context {
     # + T - Expected result type (inferred from context)
     # + return - The child's result as `T`, or an error if the child failed
     remote isolated function callWorkflow(function childWorkflow, anydata input = (),
-            typedesc<anydata> T = <>) returns T|error = @java:Method {
+            typedesc<anydata> T = <>, string? stepId = ()) returns T|error = @java:Method {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
         name: "callWorkflow"
     } external;
@@ -282,7 +297,7 @@ public client class Context {
 
 // Native function declarations
 
-isolated function sleepContextNative(handle contextHandle, int millis) returns error? = @java:Method {
+isolated function sleepContextNative(handle contextHandle, int millis, string? stepId) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
     name: "sleepMillis"
 } external;

@@ -4,7 +4,13 @@
   "title": "Workflow Definition Descriptor",
   "description": "The meta-schema of the Workflow Definition Descriptor (WDD): the versioned, structured definition file the ballerina/workflow compiler plugin generates at build time and packs into the integration's executable JAR as the fixed-name resource 'workflow.def.json'. The descriptor captures only structural facts — what registers with the workflow runtime, plus JSON Schemas — never expression-valued instance parameters (roles, titles, retry counts, timeouts, payloads).",
   "type": "object",
-  "required": ["descriptorVersion", "package", "checksum", "workflows", "agents"],
+  "required": [
+    "descriptorVersion",
+    "package",
+    "checksum",
+    "workflows",
+    "agents"
+  ],
   "additionalProperties": false,
   "properties": {
     "descriptorVersion": {
@@ -15,12 +21,22 @@
     "package": {
       "description": "The Ballerina package this descriptor describes.",
       "type": "object",
-      "required": ["org", "name", "version"],
+      "required": [
+        "org",
+        "name",
+        "version"
+      ],
       "additionalProperties": false,
       "properties": {
-        "org": {"type": "string"},
-        "name": {"type": "string"},
-        "version": {"type": "string"}
+        "org": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
       }
     },
     "checksum": {
@@ -31,26 +47,42 @@
     "workflows": {
       "description": "Every @workflow:Workflow function in the package, sorted by name.",
       "type": "array",
-      "items": {"$ref": "#/$defs/workflow"}
+      "items": {
+        "$ref": "#/$defs/workflow"
+      }
     },
     "agents": {
       "description": "Every module-level durable-agent declaration's static structure, sorted by name.",
       "type": "array",
-      "items": {"$ref": "#/$defs/agent"}
+      "items": {
+        "$ref": "#/$defs/agent"
+      }
     }
   },
   "$defs": {
     "workflow": {
       "type": "object",
-      "required": ["name", "kind", "function", "input"],
+      "required": [
+        "name",
+        "kind",
+        "function",
+        "input"
+      ],
       "additionalProperties": false,
       "properties": {
         "name": {
           "description": "The registered workflow type (the function name, without the runtime's 'workflow-' prefix).",
           "type": "string"
         },
-        "kind": {"enum": ["WORKFLOW", "AGENT"]},
-        "function": {"$ref": "#/$defs/functionRef"},
+        "kind": {
+          "enum": [
+            "WORKFLOW",
+            "AGENT"
+          ]
+        },
+        "function": {
+          "$ref": "#/$defs/functionRef"
+        },
         "input": {
           "description": "The workflow's start input as a single form: one property per data parameter. The slot's type is the parenthesized data-parameter list.",
           "$ref": "#/$defs/typedSlot"
@@ -59,13 +91,30 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["name", "direction", "cardinality", "payload"],
+            "required": [
+              "name",
+              "direction",
+              "cardinality",
+              "payload"
+            ],
             "additionalProperties": false,
             "properties": {
-              "name": {"type": "string"},
-              "direction": {"enum": ["IN"]},
-              "cardinality": {"enum": ["SINGLE"]},
-              "payload": {"$ref": "#/$defs/typedSlot"}
+              "name": {
+                "type": "string"
+              },
+              "direction": {
+                "enum": [
+                  "IN"
+                ]
+              },
+              "cardinality": {
+                "enum": [
+                  "SINGLE"
+                ]
+              },
+              "payload": {
+                "$ref": "#/$defs/typedSlot"
+              }
             }
           }
         },
@@ -73,11 +122,19 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["name", "input", "output"],
+            "required": [
+              "name",
+              "input",
+              "output"
+            ],
             "additionalProperties": false,
             "properties": {
-              "name": {"type": "string"},
-              "function": {"$ref": "#/$defs/functionRef"},
+              "name": {
+                "type": "string"
+              },
+              "function": {
+                "$ref": "#/$defs/functionRef"
+              },
               "input": {
                 "description": "The activity's data parameters as a single form; also backs review 'proceed-with-input' forms.",
                 "$ref": "#/$defs/typedSlot"
@@ -93,7 +150,10 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["name", "result"],
+            "required": [
+              "name",
+              "result"
+            ],
             "additionalProperties": false,
             "properties": {
               "name": {
@@ -112,42 +172,87 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["activity", "triggers"],
+            "required": [
+              "activity",
+              "triggers"
+            ],
             "additionalProperties": false,
             "properties": {
-              "activity": {"type": "string"},
+              "activity": {
+                "type": "string"
+              },
               "triggers": {
                 "type": "array",
-                "items": {"enum": ["PRE_RUN", "ON_FAILURE"]},
+                "items": {
+                  "enum": [
+                    "PRE_RUN",
+                    "ON_FAILURE"
+                  ]
+                },
                 "minItems": 1
               }
             }
           }
+        },
+        "graph": {
+          "description": "The workflow's execution graph. Null when the body performs no durable step.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/graph"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
     "agent": {
       "type": "object",
-      "required": ["name", "input", "result"],
+      "required": [
+        "name",
+        "input",
+        "result",
+        "graph"
+      ],
       "additionalProperties": false,
       "properties": {
         "name": {
           "description": "The agent's stable identity: its module-level variable name.",
           "type": "string"
         },
-        "input": {"$ref": "#/$defs/typedSlot"},
-        "result": {"$ref": "#/$defs/typedSlot"},
+        "input": {
+          "$ref": "#/$defs/typedSlot"
+        },
+        "result": {
+          "$ref": "#/$defs/typedSlot"
+        },
         "events": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["name", "cardinality", "request"],
+            "required": [
+              "name",
+              "cardinality",
+              "request"
+            ],
             "additionalProperties": false,
             "properties": {
-              "name": {"type": "string"},
-              "cardinality": {"enum": ["SINGLE", "MULTI"]},
-              "request": {"$ref": "#/$defs/typedSlot"},
-              "response": {"$ref": "#/$defs/typedSlot"}
+              "name": {
+                "type": "string"
+              },
+              "cardinality": {
+                "enum": [
+                  "SINGLE",
+                  "MULTI"
+                ]
+              },
+              "request": {
+                "$ref": "#/$defs/typedSlot"
+              },
+              "response": {
+                "$ref": "#/$defs/typedSlot"
+              }
             }
           }
         },
@@ -156,12 +261,25 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["name", "source"],
+            "required": [
+              "name",
+              "source"
+            ],
             "additionalProperties": false,
             "properties": {
-              "name": {"type": "string"},
-              "source": {"enum": ["ACTIVITY", "AI_TOOL", "PEER"]},
-              "input": {"$ref": "#/$defs/typedSlot"}
+              "name": {
+                "type": "string"
+              },
+              "source": {
+                "enum": [
+                  "ACTIVITY",
+                  "AI_TOOL",
+                  "PEER"
+                ]
+              },
+              "input": {
+                "$ref": "#/$defs/typedSlot"
+              }
             }
           }
         },
@@ -169,20 +287,35 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["name", "result"],
+            "required": [
+              "name",
+              "result"
+            ],
             "additionalProperties": false,
             "properties": {
-              "name": {"type": "string"},
-              "result": {"$ref": "#/$defs/typedSlot"}
+              "name": {
+                "type": "string"
+              },
+              "result": {
+                "$ref": "#/$defs/typedSlot"
+              }
             }
           }
+        },
+        "graph": {
+          "description": "The agent's structure as a star graph.",
+          "$ref": "#/$defs/graph"
         }
       }
     },
     "functionRef": {
       "description": "The implementation binding: the module-level function the runtime resolves and invokes for this structure. Structural — it is what registers with the runtime.",
       "type": "object",
-      "required": ["module", "version", "name"],
+      "required": [
+        "module",
+        "version",
+        "name"
+      ],
       "additionalProperties": false,
       "properties": {
         "module": {
@@ -193,20 +326,26 @@
           "description": "The module's major version — the granularity the runtime resolves symbols at.",
           "type": "string"
         },
-        "name": {"type": "string"}
+        "name": {
+          "type": "string"
+        }
       }
     },
     "typedSlot": {
       "description": "A typed schema slot. The resolved Ballerina type descriptor is always recorded; the JSON Schema is a derived rendering emitted per representability tier: exact for closed anydata shapes, permissive + lossy for open anydata (json, anydata), omitted for the unrepresentable (xml, error, behavioral types, and composites mixing them into JSON data).",
       "type": "object",
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false,
       "properties": {
         "type": {
           "description": "The resolved Ballerina type descriptor — the source of truth. For parameter-list inputs this is the parenthesized data-parameter list.",
           "type": "string"
         },
-        "schema": {"$ref": "#/$defs/schemaDocument"},
+        "schema": {
+          "$ref": "#/$defs/schemaDocument"
+        },
         "lossy": {
           "description": "Present (true) when the schema is a permissive approximation of the type rather than an exact rendering — form generators should not over-promise validation.",
           "const": true
@@ -222,33 +361,184 @@
           "properties": {
             "type": {
               "anyOf": [
-                {"enum": ["object", "array", "string", "integer", "number", "boolean", "null"]},
+                {
+                  "enum": [
+                    "object",
+                    "array",
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean",
+                    "null"
+                  ]
+                },
                 {
                   "type": "array",
-                  "items": {"enum": ["object", "array", "string", "integer", "number", "boolean", "null"]}
+                  "items": {
+                    "enum": [
+                      "object",
+                      "array",
+                      "string",
+                      "integer",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  }
                 }
               ]
             },
             "properties": {
               "type": "object",
-              "additionalProperties": {"$ref": "#/$defs/schemaDocument"}
+              "additionalProperties": {
+                "$ref": "#/$defs/schemaDocument"
+              }
             },
             "required": {
               "type": "array",
-              "items": {"type": "string"}
+              "items": {
+                "type": "string"
+              }
             },
-            "items": {"$ref": "#/$defs/schemaDocument"},
+            "items": {
+              "$ref": "#/$defs/schemaDocument"
+            },
             "additionalProperties": {
-              "anyOf": [{"const": true}, {"$ref": "#/$defs/schemaDocument"}]
+              "anyOf": [
+                {
+                  "const": true
+                },
+                {
+                  "$ref": "#/$defs/schemaDocument"
+                }
+              ]
             },
             "anyOf": {
               "type": "array",
-              "items": {"$ref": "#/$defs/schemaDocument"},
+              "items": {
+                "$ref": "#/$defs/schemaDocument"
+              },
               "minItems": 2
             }
           }
         }
       ]
+    },
+    "graph": {
+      "description": "The structure of one workflow or agent as a directed graph, for visualization and for joining an execution back to its source. A workflow's graph is its durable steps in source order, nested under the control flow that guards them; an agent's is a star, because the model — not the code — decides what runs when. A running execution reports the step it is at (`ActivityTreeNode.stepId`, `GraphNode.metadata.stepId`), so a viewer can highlight the path actually taken. Nodes without a `stepId` in the execution predate the runtime that stamps it, so consumers must treat the join as optional.",
+      "type": "object",
+      "required": [
+        "nodes",
+        "edges"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "description": "The source file the workflow's body was read from. Absent for an agent graph, which has no body.",
+          "type": "string"
+        },
+        "nodes": {
+          "description": "The graph's nodes, in source order for a workflow.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "stepId",
+              "kind"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "stepId": {
+                "description": "Stable identity of this node within its workflow or agent. For a workflow: `<target>#<ordinal>` for a step, `<construct>#<ordinal>` for control flow (`if#1`, `while#2`, `match#1`, `do#1`, `wait#1`, `sleep#1`) — the ordinal counts occurrences in source order, so it survives reformatting and unrelated edits. For an agent: derived from the name (`agent`, `model`, `tool:<name>`, `event:<name>`, `task:<name>`).",
+                "type": "string"
+              },
+              "kind": {
+                "description": "What the node is. Workflow graphs use the step and control-flow kinds; agent graphs use AGENT, MODEL, TOOL, HUMAN_TASK and EVENT. An EXIT is an early exit inside an arm — a return, fail or panic, named by `mode` — terminal (no outgoing edge) and never present in an execution, so a consumer may attribute a run to one only when it is the single exit consistent with the observed last step. A CODE node is a maximal run of consecutive non-durable statements, collapsed to one display-only node labelled by its statement count ('4 statements') so the diagram reads like the source; it carries no runtime meaning and never appears in an execution. A construct with nothing at all below it is not described, and its ordinal is not reused — a gap in ordinals is deliberate, so emitted ordinals must not be assumed dense.",
+                "enum": [
+                  "ACTIVITY",
+                  "HUMAN_TASK",
+                  "CHILD_WORKFLOW",
+                  "EVENT_WAIT",
+                  "SLEEP",
+                  "EXIT",
+                  "CODE",
+                  "BRANCH",
+                  "LOOP",
+                  "TRY",
+                  "AGENT",
+                  "MODEL",
+                  "TOOL",
+                  "EVENT"
+                ]
+              },
+              "target": {
+                "description": "What the node names: an activity, task, child workflow, tool, or agent. An EVENT_WAIT that waits on alternatives lists them separated by '|'. Absent for control-flow nodes.",
+                "type": "string"
+              },
+              "label": {
+                "description": "Display text, capped at 120 characters: a branch condition, a looped expression, or an agent's configured model reference. Never part of the identity.",
+                "type": "string"
+              },
+              "parent": {
+                "description": "The `stepId` of the enclosing control-flow node, for a nested step. Absent at the top level.",
+                "type": "string"
+              },
+              "branch": {
+                "description": "Which arm of the parent this node belongs to: 'then', 'else', 'body', 'do', 'onFail', or a match clause's patterns.",
+                "type": "string"
+              },
+              "source": {
+                "description": "For an agent's TOOL node, what backs it.",
+                "enum": [
+                  "ACTIVITY",
+                  "AI_TOOL",
+                  "PEER"
+                ]
+              },
+              "mode": {
+                "description": "For an EXIT node, which statement ends the flow there.",
+                "enum": [
+                  "return",
+                  "fail",
+                  "panic"
+                ]
+              },
+              "line": {
+                "description": "One-based source line of the step. Display only — moving code changes it, which is why the identity is an ordinal instead.",
+                "type": "integer"
+              },
+              "column": {
+                "description": "One-based source column of the step.",
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "edges": {
+          "description": "Directed edges by `stepId`. A workflow's edges follow control flow: sequential between siblings, into each arm of a BRANCH/LOOP/TRY, and from a loop body back to its LOOP node. An agent's edges point inbound from events and tasks to the agent, and outbound from the agent to its model and tools.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "from",
+              "to"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "when": {
+                "description": "What makes this the edge taken: a branch arm ('then', 'else', a match clause's patterns), loop entry ('body') or re-entry ('repeat'), a do/on-fail arm ('do', 'onFail'), or an agent edge's direction ('in', 'out').",
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

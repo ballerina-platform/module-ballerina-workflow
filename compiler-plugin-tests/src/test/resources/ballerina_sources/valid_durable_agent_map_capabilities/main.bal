@@ -35,7 +35,11 @@ type OrderUpdate record {|
 final workflow:DurableAgent mapAgent = check new ({
     systemPrompt: {role: "Order assistant", instructions: "Help the user."},
     model: chatModel,
+    // A comment directly above a config field is leading trivia of the field name's
+    // token: reading names via toSourceCode() folded it into the "name" and the field
+    // silently stopped matching (sendData then reported the channel as undeclared).
     activities: [checkInventory],
+    // The channels — this comment, too, must not hide the events field.
     events: {
         chat: {request: string, response: string, cardinality: workflow:MULTI_EVENT},
         // A quoted key declares a name that is not an identifier.

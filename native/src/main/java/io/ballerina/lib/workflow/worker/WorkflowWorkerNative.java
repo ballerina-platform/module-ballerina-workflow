@@ -126,6 +126,10 @@ public final class WorkflowWorkerNative {
      * status without querying the workflow (visible via DescribeWorkflowExecution and visibility listings).
      */
     public static final String SUSPENDED_MEMO_KEY = "wfSuspended";
+    /** Who completed (or rejected) a human task, so a listing need not read its history. */
+    public static final String COMPLETED_BY_MEMO_KEY = "completedBy";
+    /** When that decision was recorded, on the workflow's own clock. */
+    public static final String COMPLETED_AT_MEMO_KEY = "completedAt";
     /**
      * Prefix applied to all user-defined workflow types registered with Temporal. Allows
      * {@code WorkflowType STARTS_WITH 'workflow-'} queries to exclude internal child workflow types (humantask-*,
@@ -187,15 +191,33 @@ public final class WorkflowWorkerNative {
     private static final java.util.logging.Logger TEMPORAL_JUL_LOGGER =
             java.util.logging.Logger.getLogger("io.temporal");
     // Ensures the JUL config-reload listener is registered exactly once, preventing
-    // the listener list from growing each time suppressTemporalLogs() is called.
+    // the listener list from growing each time applyLoggingStrategy() is called.
     // Must be declared BEFORE the static initializer block so it is non-null when
-    // suppressTemporalLogs() first runs at class-load time.
+    // applyLoggingStrategy() first runs at class-load time.
     private static final AtomicBoolean configListenerRegistered = new AtomicBoolean(false);
+    // Strong references to this module's own JUL loggers (held for the same
+    // LG_LOST_LOGGER_DUE_TO_WEAK_REFERENCE reason as TEMPORAL_JUL_LOGGER above).
+    // MODULE_JUL_LOGGER covers everything the native layer logs through SLF4J;
+    // FORWARD_JUL_LOGGER is the target TemporalLogHandler forwards Temporal warnings to.
+    private static final java.util.logging.Logger MODULE_JUL_LOGGER =
+            java.util.logging.Logger.getLogger("io.ballerina.lib.workflow");
+    private static final java.util.logging.Logger FORWARD_JUL_LOGGER =
+            java.util.logging.Logger.getLogger("ballerina.workflow.temporal");
     // Static registry to store service objects accessible during workflow execution
     private static final Map<String, BObject> SERVICE_REGISTRY = new ConcurrentHashMap<>();
     // Static registry to store activity implementations (activity name to function ref:
-    // a captured pointer or a symbol reference from the packed workflow descriptor)
+    // a captured pointer or a symbol reference from the packed workflow descriptor).
+    //
+    // Keyed by the plain activity name. Ballerina function names are unique within a package,
+    // so the workflow that calls an activity adds nothing to its identity — and the Temporal
+    // activity type is what the registry is looked up by, so a shorter key means a shorter type
+    // in history and one entry per function instead of one per (workflow, activity) pair. The
+    // legacy `<workflowType>.<activity>` key is registered alongside so executions recorded
+    // before the change keep dispatching (see LEGACY_ACTIVITY_NAMING_CHANGE_ID).
     private static final Map<String, WorkflowFunctionRef> ACTIVITY_REGISTRY = new ConcurrentHashMap<>();
+    // Which workflow types declare each activity. The registry no longer carries that in its
+    // key, but the metadata document still reports an activity per workflow.
+    private static final Map<String, Set<String>> ACTIVITY_OWNERS = new ConcurrentHashMap<>();
     // Static registry to store process functions (workflow type to function ref)
     private static final Map<String, WorkflowFunctionRef> PROCESS_REGISTRY = new ConcurrentHashMap<>();
     // Static registry to store event names per process (process name to list of event names)
@@ -320,7 +342,9 @@ public final class WorkflowWorkerNative {
         //   - Drops INFO/FINE startup banners ("Created WorkflowServiceStubs", etc.)
         //   - Suppresses known-harmless WARNINGs (UnhandledCommand, HUMANTASK_TIMEOUT)
         //   - Forwards remaining WARNINGs to Ballerina's SLF4J layer in Ballerina log format
-        suppressTemporalLogs();
+        // It also makes this module's own logging independent of the JUL root logger —
+        // see ensureModuleLogVisibility() for why that is necessary.
+        applyLoggingStrategy();
     }
 
     private WorkflowWorkerNative() {
@@ -353,7 +377,7 @@ public final class WorkflowWorkerNative {
      * <pre>  -Dballerina.workflow.temporal.logs=true</pre>
      *
      * <p>The strategy is re-applied after any {@link java.util.logging.LogManager#readConfiguration()}
-     * call via a configuration listener registered exactly once.
+     * call via a configuration listener registered exactly once (see {@link #applyLoggingStrategy()}).
      */
     private static void suppressTemporalLogs() {
         if (TEMPORAL_LOGS_ENABLED) {
@@ -377,11 +401,59 @@ public final class WorkflowWorkerNative {
             TEMPORAL_JUL_LOGGER.addHandler(new TemporalLogHandler());
         }
         TEMPORAL_JUL_LOGGER.setUseParentHandlers(false);
+    }
+
+    /**
+     * Installs this module's complete logging strategy: Temporal SDK suppression
+     * ({@link #suppressTemporalLogs()}) plus the module's own log visibility
+     * ({@link #ensureModuleLogVisibility()}). Re-applied after any
+     * {@link java.util.logging.LogManager#readConfiguration()} call via a configuration
+     * listener registered exactly once.
+     */
+    private static void applyLoggingStrategy() {
+        suppressTemporalLogs();
+        ensureModuleLogVisibility();
 
         // Re-apply after any JUL configuration reload (registered exactly once).
         if (configListenerRegistered.compareAndSet(false, true)) {
             java.util.logging.LogManager.getLogManager().addConfigurationListener(
-                    WorkflowWorkerNative::suppressTemporalLogs);
+                    WorkflowWorkerNative::applyLoggingStrategy);
+        }
+    }
+
+    /**
+     * Makes this module's logging independent of the JUL root logger.
+     *
+     * <p>The native layer logs through SLF4J, which the Ballerina runtime routes to
+     * {@code java.util.logging} (the runtime bundles the slf4j-jdk14 provider). That path is
+     * fragile: any library in the program may reconfigure the shared JUL root — notably
+     * {@code ballerina/task} turns the root logger OFF to silence Quartz, which silently
+     * swallows every log this module emits in any program that also schedules tasks (the ICP
+     * runtime bridge does). Warnings about degraded capabilities — a search attribute that
+     * could not be registered, a descriptor entry that resolved to nothing — must not vanish
+     * because an unrelated module quieted its own dependency.
+     *
+     * <p>The cure is the same one {@code ballerina/http} applies to its trace and access logs:
+     * give the module's own logger namespaces an explicit level and a dedicated console
+     * handler, and detach them from parent handlers, so the root logger's level and handlers
+     * are irrelevant. Output is formatted in Ballerina log style ({@code time=... level=...
+     * module=ballerina/workflow message="..."}) so it reads consistently beside
+     * {@code ballerina/log} output rather than as raw JUL noise.
+     */
+    private static void ensureModuleLogVisibility() {
+        for (java.util.logging.Logger logger : List.of(MODULE_JUL_LOGGER, FORWARD_JUL_LOGGER)) {
+            logger.setLevel(Level.INFO);
+            boolean alreadyInstalled = false;
+            for (java.util.logging.Handler h : logger.getHandlers()) {
+                if (h instanceof ModuleLogHandler) {
+                    alreadyInstalled = true;
+                    break;
+                }
+            }
+            if (!alreadyInstalled) {
+                logger.addHandler(new ModuleLogHandler());
+            }
+            logger.setUseParentHandlers(false);
         }
     }
 
@@ -533,6 +605,12 @@ public final class WorkflowWorkerNative {
                                                        .build();
 
             singletonWorker = workerFactory.newWorker(taskQueue, workerOptions);
+
+            // Kind filtering needs the WorkflowKind search attribute on the cluster. Registered
+            // here — never on the in-memory test server, which does not support custom search
+            // attributes — and starts stamp it only when this succeeded, so a server that refuses
+            // the registration degrades to memo-only kinds instead of failing every start.
+            initWorkflowKindSearchAttribute(ns);
 
             // Parse and store global default activity retry policy
             defaultActivityRetryOptions = parseRetryPolicy(defaultRetryPolicy);
@@ -689,9 +767,8 @@ public final class WorkflowWorkerNative {
                 BMap<BString, BFunctionPointer> activityMap = (BMap<BString, BFunctionPointer>) activities;
                 for (BString activityName : activityMap.getKeys()) {
                     BFunctionPointer activityFunc = activityMap.get(activityName);
-                    String fullActivityName = workflowType + "." + activityName.getValue();
-                    ACTIVITY_REGISTRY.put(fullActivityName, WorkflowFunctionRef.of(activityFunc));
-                    LOGGER.debug("Registered activity: {}", fullActivityName);
+                    registerActivity(workflowType, activityName.getValue(),
+                            WorkflowFunctionRef.of(activityFunc), true);
                 }
             }
 
@@ -801,7 +878,7 @@ public final class WorkflowWorkerNative {
                             name, activityName);
                     continue;
                 }
-                ACTIVITY_REGISTRY.putIfAbsent(workflowType + "." + activityName, activityRef);
+                registerActivity(workflowType, activityName, activityRef, false);
             }
         }
 
@@ -1055,6 +1132,67 @@ public final class WorkflowWorkerNative {
         return workflowClient;
     }
 
+    /** Set only when the WorkflowKind search attribute is confirmed on the cluster. */
+    private static volatile boolean kindSearchAttributeReady = false;
+
+    /** The search-attribute key every start stamps when the cluster is known to accept it. */
+    public static final io.temporal.common.SearchAttributeKey<String> WORKFLOW_KIND_KEY =
+            io.temporal.common.SearchAttributeKey.forKeyword("WorkflowKind");
+
+    /**
+     * Whether starts may stamp the WorkflowKind search attribute: true only on a real server that
+     * accepted (or already had) the attribute. The memo kind is always written regardless — this
+     * gates the *indexed* copy that visibility queries can filter on.
+     */
+    public static boolean isKindSearchAttributeReady() {
+        return kindSearchAttributeReady;
+    }
+
+    /**
+     * Registers the WorkflowKind Keyword search attribute with the cluster, idempotently.
+     * ALREADY_EXISTS counts as success; any other failure only disables stamping — human-task
+     * grade features assume a real, writable server, and a cluster that refuses the attribute
+     * still gets fully working workflows, just without server-side kind filtering.
+     */
+    private static void initWorkflowKindSearchAttribute(String namespace) {
+        try {
+            io.temporal.serviceclient.OperatorServiceStubsOptions.Builder operatorOptions =
+                    io.temporal.serviceclient.OperatorServiceStubsOptions.newBuilder();
+            operatorOptions.setChannel(serviceStubs.getRawChannel());
+            // newServiceStubs refuses options built with plain build() — the validated variant is
+            // required, and the refusal is an exception this method must not let pass silently.
+            io.temporal.serviceclient.OperatorServiceStubs operator =
+                    io.temporal.serviceclient.OperatorServiceStubs.newServiceStubs(
+                            operatorOptions.validateAndBuildWithDefaults());
+            try {
+                operator.blockingStub()
+                        .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                        .addSearchAttributes(
+                                io.temporal.api.operatorservice.v1.AddSearchAttributesRequest.newBuilder()
+                                        .setNamespace(namespace)
+                                        .putSearchAttributes("WorkflowKind",
+                                                io.temporal.api.enums.v1.IndexedValueType
+                                                        .INDEXED_VALUE_TYPE_KEYWORD)
+                                        .build());
+                kindSearchAttributeReady = true;
+                LOGGER.info("Registered the WorkflowKind search attribute");
+            } catch (io.grpc.StatusRuntimeException e) {
+                if (e.getStatus().getCode() == io.grpc.Status.Code.ALREADY_EXISTS) {
+                    kindSearchAttributeReady = true;
+                    LOGGER.debug("WorkflowKind search attribute already registered");
+                } else {
+                    LOGGER.warn("Could not register the WorkflowKind search attribute; kind "
+                            + "filtering is unavailable on this cluster: {}", e.getMessage());
+                }
+            } finally {
+                operator.shutdown();
+            }
+        } catch (Exception e) {
+            LOGGER.warn("Could not reach the operator service to register WorkflowKind: {}",
+                    e.getMessage());
+        }
+    }
+
     /**
      * Get the task queue name.
      *
@@ -1158,12 +1296,67 @@ public final class WorkflowWorkerNative {
     }
 
     /**
+     * Registers one activity under the name the Temporal activity type uses — its plain name —
+     * and under the legacy {@code <workflowType>.<activity>} name, so an execution recorded
+     * before the rename still resolves. Also records the calling workflow, which the metadata
+     * document reports per workflow.
+     *
+     * @param workflowType the calling workflow's Temporal type
+     * @param activityName the activity's plain name
+     * @param activityRef  the resolved implementation
+     * @param replace      whether an existing registration should be overwritten
+     */
+    private static void registerActivity(String workflowType, String activityName,
+                                         WorkflowFunctionRef activityRef, boolean replace) {
+        WorkflowFunctionRef existing = ACTIVITY_REGISTRY.get(activityName);
+        if (existing != null && !existing.refersToSameFunctionAs(activityRef)) {
+            // Two different functions claiming one plain name — possible when packages that
+            // define the same activity name share a task queue. One of them will serve every
+            // call, so say which: during an incident this warning is what explains why the
+            // wrong code ran, and it must not claim the opposite of what the registry did.
+            // Registering the same activity from a second workflow of the same package is
+            // not a collision.
+            if (replace) {
+                LOGGER.warn("Activity '{}' was registered as {}; the registration from workflow "
+                        + "'{}' ({}) replaces it, and now serves every call scheduled under this "
+                        + "name — including calls from workflows registered earlier. Activity "
+                        + "names must be unique across the packages sharing a task queue.",
+                        activityName, existing, workflowType, activityRef);
+            } else {
+                LOGGER.warn("Activity '{}' is already registered as {}; the registration from "
+                        + "workflow '{}' ({}) does not replace it. Activity names must be unique "
+                        + "across the packages sharing a task queue.",
+                        activityName, existing, workflowType, activityRef);
+            }
+        }
+        String legacyName = workflowType + "." + activityName;
+        if (replace) {
+            ACTIVITY_REGISTRY.put(activityName, activityRef);
+            ACTIVITY_REGISTRY.put(legacyName, activityRef);
+        } else {
+            ACTIVITY_REGISTRY.putIfAbsent(activityName, activityRef);
+            ACTIVITY_REGISTRY.putIfAbsent(legacyName, activityRef);
+        }
+        ACTIVITY_OWNERS.computeIfAbsent(activityName, name -> ConcurrentHashMap.newKeySet()).add(workflowType);
+        LOGGER.debug("Registered activity: {} (also as {})", activityName, legacyName);
+    }
+
+    /**
      * Gets the activity registry for testing purposes.
      *
      * @return the activity registry map
      */
     public static Map<String, WorkflowFunctionRef> getActivityRegistry() {
         return Collections.unmodifiableMap(ACTIVITY_REGISTRY);
+    }
+
+    /**
+     * The workflow types that declare each activity, by plain activity name.
+     *
+     * @return the activity ownership map
+     */
+    public static Map<String, Set<String>> getActivityOwners() {
+        return Collections.unmodifiableMap(ACTIVITY_OWNERS);
     }
 
     /**
@@ -1686,6 +1879,65 @@ public final class WorkflowWorkerNative {
     }
 
     /**
+     * Console handler for this module's own JUL loggers (see
+     * {@link #ensureModuleLogVisibility()}): a plain {@link java.util.logging.ConsoleHandler}
+     * with a Ballerina-log-style formatter, so module output reads consistently beside
+     * {@code ballerina/log} output.
+     */
+    private static final class ModuleLogHandler extends java.util.logging.ConsoleHandler {
+
+        ModuleLogHandler() {
+            setLevel(Level.INFO);
+            setFormatter(new BallerinaLogFormatter());
+        }
+    }
+
+    /**
+     * Formats a JUL record in Ballerina's structured log style:
+     * {@code time=... level=... module=ballerina/workflow message="..." [error="..."]}.
+     */
+    private static final class BallerinaLogFormatter extends java.util.logging.Formatter {
+
+        @Override
+        public String format(java.util.logging.LogRecord record) {
+            StringBuilder line = new StringBuilder("time=")
+                    .append(record.getInstant().truncatedTo(java.time.temporal.ChronoUnit.MILLIS))
+                    .append(" level=").append(ballerinaLevel(record.getLevel()))
+                    .append(" module=ballerina/workflow")
+                    .append(" message=\"").append(escape(formatMessage(record))).append('"');
+            Throwable thrown = record.getThrown();
+            if (thrown != null) {
+                line.append(" error=\"").append(escape(String.valueOf(thrown))).append('"');
+            }
+            return line.append(System.lineSeparator()).toString();
+        }
+
+        private static String ballerinaLevel(Level level) {
+            int value = level.intValue();
+            if (value >= Level.SEVERE.intValue()) {
+                return "ERROR";
+            }
+            if (value >= Level.WARNING.intValue()) {
+                return "WARN";
+            }
+            if (value >= Level.INFO.intValue()) {
+                return "INFO";
+            }
+            return "DEBUG";
+        }
+
+        private static String escape(String text) {
+            // Line breaks too: these values include exception messages, and a message carrying a
+            // newline could otherwise close its line and write further fields of its own —
+            // forging entries in a log an operator is reading as fact.
+            return text.replace("\\", "\\\\")
+                    .replace("\r", "\\r")
+                    .replace("\n", "\\n")
+                    .replace("\"", "\\\"");
+        }
+    }
+
+    /**
      * Dynamic workflow implementation that routes to Ballerina service. This is used as a template for creating
      * workflow implementations.
      */
@@ -1935,6 +2187,26 @@ public final class WorkflowWorkerNative {
                                         "The agent finished without consuming this update: " + failure, "error");
                             }
                             return info.finalResponse();
+                        }
+
+                        // A chat message while the loop is durably parked elsewhere (a gate, a
+                        // human task, another channel's event, a sleep) is answered by a SIDE
+                        // TURN — a bounded, tool-less model call over the conversation plus the
+                        // park state — instead of queueing mutely behind the park. This keeps a
+                        // parked agent conversational and breaks the mutual wait where the agent
+                        // holds for an event the user won't send until they get an answer.
+                        if (info != null && info.sideTurnEligible(eventName)) {
+                            // One side turn at a time; re-check the park after any wait — it may
+                            // have resolved, in which case the message is the next turn.
+                            Workflow.await(() -> !info.sideTurnActive());
+                            if (info.sideTurnEligible(eventName)) {
+                                info.setSideTurnActive(true);
+                                try {
+                                    return AgentContextNative.sideTurnAnswer(info, payload);
+                                } finally {
+                                    info.setSideTurnActive(false);
+                                }
+                            }
                         }
 
                         String updateId = Workflow.getCurrentUpdateInfo()
@@ -2444,6 +2716,25 @@ public final class WorkflowWorkerNative {
                 // rejection. Fail the task workflow instead of completing it so its terminal status is
                 // FAILED — matching the task status model (ballerina-library#8892). The reason is
                 // propagated to the parent's awaitHumanTask through the failure message.
+                // Who acted, recorded where a LISTING can see it. `completedBy` otherwise lives
+                // only in the taskCompletion signal, so reading it back means one history read
+                // per task — fine for a detail view, N reads for a page, which is the same
+                // reason `kind` and `userRoles` ride the memo. Written before the rejection
+                // check so a rejected task also says who rejected it.
+                if (signalData.data() instanceof Map<?, ?> actorMap
+                        && actorMap.get("completedBy") instanceof String actor && !actor.isBlank()) {
+                    Map<String, Object> completion = new HashMap<>();
+                    completion.put(COMPLETED_BY_MEMO_KEY, actor);
+                    completion.put(COMPLETED_AT_MEMO_KEY, java.time.Instant
+                            .ofEpochMilli(Workflow.currentTimeMillis()).toString());
+                    try {
+                        Workflow.upsertMemo(completion);
+                    } catch (Exception e) {
+                        // Best-effort listing metadata: a rejected upsert must not fail a task a
+                        // human already completed — the completion result is what matters.
+                        LOGGER.warn("Could not record the completer on the task memo: {}", e.getMessage());
+                    }
+                }
                 if (signalData.data() instanceof Map<?, ?> payloadMap
                         && Boolean.TRUE.equals(payloadMap.get("__rejected"))) {
                     Object reason = payloadMap.get("reason");
@@ -2889,6 +3180,22 @@ public final class WorkflowWorkerNative {
             info.put("workflowId", workflowId);
             info.put("workflowType", workflowType);
             info.put("status", statusStr);
+            // The kind memo is only readable off the workflow thread, so resolve it here and
+            // let the caller carry it into the record — its id-prefix fallback cannot classify
+            // the bare ids new executions issue.
+            try {
+                io.temporal.api.common.v1.Payload kindPayload =
+                        execInfo.getMemo().getFieldsMap().get("workflowKind");
+                if (kindPayload != null && !kindPayload.getData().isEmpty()) {
+                    String kind = client.getOptions().getDataConverter()
+                            .fromPayload(kindPayload, String.class, String.class);
+                    if (kind != null && !kind.isBlank()) {
+                        info.put("kind", kind);
+                    }
+                }
+            } catch (Exception e) {
+                // The kind is a routing hint; an info read must not fail over it.
+            }
             return info;
         }
     }

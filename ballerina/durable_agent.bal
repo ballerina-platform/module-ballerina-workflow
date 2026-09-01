@@ -199,6 +199,10 @@ public type PeerDecl record {|
 #                when the agent registers, so the program fails at startup
 # + peers - Peer durable agents advertised as delegable tools
 # + maxIter - Hard cap on reasoning iterations per turn
+# + eventTimeout - Maximum wait per event-channel wait (each chat turn, each event).
+#                  Omit to wait indefinitely — a conversation stays open as long as it
+#                  takes, and `maxEventWaits` remains the runaway backstop. On a timeout
+#                  the model is told so it can wrap up gracefully
 # + inputType - The type of the structured JSON payload the agent's `run` (and the
 #               management API start) accepts alongside the query. `json` (the
 #               default) accepts any JSON payload unvalidated; a narrower type —
@@ -220,6 +224,7 @@ public type DurableAgentConfig record {|
     map<HumanTaskConfig>|HumanTaskDecl[] humanTasks = {};
     PeerDecl[] peers = [];
     int maxIter = 16;
+    Duration? eventTimeout = ();
 |};
 
 # Returned by the non-blocking `getResult`/`getDataResult` reads when the agent
@@ -401,6 +406,7 @@ type DurableAgentPeerSpec record {|
 type DurableAgentRunSpec record {|
     json systemPrompt;
     int maxIter;
+    json eventTimeout = ();
     ai:ModelProvider model;
     typedesc<anydata>? resultType = ();
     DurableAgentActivitySpec[] activities = [];

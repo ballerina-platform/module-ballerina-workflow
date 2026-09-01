@@ -51,6 +51,10 @@ public type WorkflowExecutionInfo record {
     string workflowId;
     string workflowType;
     string status;
+    # What this instance is — WORKFLOW, AGENT, HUMAN_TASK, REVIEW_ACTIVITY or CHILD_WORKFLOW —
+    # from the memo its starter stamped. A consumer routes to the right view by asking this,
+    # never by parsing the id; nil only for instances started before the stamp existed.
+    string? kind = ();
     anydata? result;
     string? errorMessage;
     ActivityInvocation[] activityInvocations;
@@ -85,7 +89,7 @@ public type HumanTaskGroup record {|
 
 # Summary of a human task instance for list views.
 #
-# + taskId - Child workflow ID of this task instance (`humantask-{parentId}-{taskName}-{uuid}`)
+# + taskId - Child workflow ID of this task instance (a bare UUID; the kind travels in its memo)
 # + taskName - Task type name (the `taskName` passed to `awaitHumanTask`)
 # + parentWorkflowId - Workflow ID of the parent that created this task
 # + parentWorkflowType - Registered workflow type of the parent, or `()` if not available
@@ -96,11 +100,16 @@ public type HumanTaskGroup record {|
 #            `TERMINATED` (an admin terminated the task workflow)
 # + startTime - ISO-8601 timestamp when the task was created
 # + closeTime - ISO-8601 timestamp when the task ended, or `()` if still pending
+# + completedBy - User ID of whoever completed or rejected it, or `()` while pending. Also
+#                 `()` for tasks decided before the completer was recorded on the row
+# + completedAt - When that decision was recorded, or `()` when unknown
 # + userRoles - Roles permitted to complete this task
 # + canComplete - Whether the requesting caller has a role that permits completion
 public type HumanTaskSummary record {|
     string taskId;
     string taskName;
+    # Display title given at task creation, falling back to the task name when none was set
+    string title = "";
     # The Temporal namespace the task lives in (the project scope)
     string namespace?;
     # The task queue of the integration serving this task; route mutations there
@@ -110,8 +119,57 @@ public type HumanTaskSummary record {|
     string status;
     string startTime;
     string? closeTime;
+    string? completedBy = ();
+    string? completedAt = ();
     string[] userRoles;
     boolean canComplete = false;
+|};
+
+# One item of a person's unified work queue: a human task, or a review activity — which is a
+# human task with a fixed decision contract. The kinds stay distinct (each opens its own UX);
+# what they share is the queue and its filters.
+#
+# + kind - `HUMAN_TASK` or `REVIEW_ACTIVITY`
+# + taskId - The instance id of the item (a bare UUID)
+# + taskName - Qualified name (`workflowDefinition.taskOrActivityName`)
+# + title - Display title, falling back to the task name when none was set
+# + trigger - Reviews only: `PRE_RUN` (approval gate) | `ON_FAILURE` (rerun decision)
+# + parentWorkflowId - The workflow instance waiting on this item
+# + parentWorkflowType - The parent's registered workflow type, when known
+# + status - The item's current state; a rejected review completes — its failure travels
+#            to the workflow, never into the review's own status
+# + startTime - ISO-8601 timestamp when the item was created
+# + closeTime - ISO-8601 timestamp when it ended, or `()` while pending
+# + userRoles - Roles permitted to act on this item
+# + canComplete - Whether the requesting caller may act on it
+public type WorkItemSummary record {|
+    string kind;
+    string taskId;
+    string taskName;
+    string title = "";
+    string? trigger = ();
+    # The Temporal namespace the item lives in (the project scope)
+    string namespace?;
+    # The task queue of the integration serving this item; route mutations there
+    string taskQueue?;
+    string parentWorkflowId;
+    string? parentWorkflowType;
+    string status;
+    string startTime;
+    string? closeTime;
+    string[] userRoles;
+    boolean canComplete = false;
+|};
+
+# One page of the unified work queue.
+#
+# + items - The page of work items
+# + nextPageToken - Cursor for the next page, or `()` on the last one
+# + hasMore - Whether more items exist past this page
+public type WorkItemPage record {|
+    WorkItemSummary[] items;
+    string? nextPageToken;
+    boolean hasMore;
 |};
 
 # Detailed info about a human task, including memo fields set at task creation.
@@ -181,7 +239,7 @@ public type ReviewDecision record {|
 
 # Summary of a review activity instance for list views.
 #
-# + taskId - Temporal workflow ID of this review activity (`reviewactivity-{parentId}-{taskName}-{uuid}`)
+# + taskId - Temporal workflow ID of this review activity (a bare UUID; the kind travels in its memo)
 # + taskName - User-facing task name (qualified with workflow type)
 # + activityName - Fully-qualified name of the reviewed activity (`workflowType.activityName`)
 # + parentWorkflowId - Workflow ID of the parent that triggered this review
@@ -474,6 +532,9 @@ public enum ActivityNodeType {
 # + output - Decoded activity/workflow result, or `()`
 # + failure - Failure detail if the node failed, otherwise `()`
 # + attempt - Temporal attempt number (1-indexed)
+# + stepId - Which step of the workflow ran: the id chosen with `stepId` at the call site, or the
+#            generated `<target>#<ordinal>`, matching a node in the descriptor's `graph`. `()` when
+#            the execution carries none — an instance started before the runtime recorded it
 # + children - Nested child nodes, or `()` for leaf nodes
 public type ActivityTreeNode record {|
     string id;
@@ -486,6 +547,7 @@ public type ActivityTreeNode record {|
     anydata? output;
     FailureInfo? failure;
     int attempt;
+    string? stepId = ();
     ActivityTreeNode[]? children;
 |};
 
@@ -504,7 +566,8 @@ public type ExecutionGraph record {|
 # + label - Display label
 # + 'type - Node classification (same values as `ActivityNodeType`)
 # + status - Current status
-# + metadata - Optional extra key-value pairs for the UI (e.g. taskId for human tasks)
+# + metadata - Optional extra key-value pairs for the UI: `taskId` for human tasks, and
+#              `stepId` — which step ran, for highlighting the descriptor's graph
 public type GraphNode record {|
     string id;
     string label;
@@ -541,6 +604,8 @@ public type GraphEdge record {|
 #            SUSPENDED is a running workflow paused via the suspend management API.
 # + startTime - ISO-8601 timestamp when the workflow started
 # + closeTime - ISO-8601 timestamp when it ended, or `()` if still running
+# + kind - What this instance is — WORKFLOW, AGENT, HUMAN_TASK, REVIEW_ACTIVITY, CHILD_WORKFLOW —
+#          from the memo its starter stamped (ids carry no classification)
 # + input - Workflow input as JSON, or `()` if not available
 public type WorkflowInstanceSummary record {|
     # The Temporal namespace the task lives in (the project scope)
@@ -553,6 +618,7 @@ public type WorkflowInstanceSummary record {|
     string status;
     string startTime;
     string? closeTime;
+    string? kind = ();
     json? input;
 |};
 

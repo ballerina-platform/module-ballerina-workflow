@@ -913,8 +913,8 @@ function testManualRetryWorkflowCreatesReviewActivity() returns error? {
             "Should have at least one pending retry task, got " + pendingTasks.length().toString());
 
     management:ReviewActivitySummary task = pendingTasks[0];
-    test:assertTrue(task.taskId.startsWith("reviewactivity-"),
-            "Task ID should start with 'reviewactivity-', got: " + task.taskId);
+    test:assertTrue(!task.taskId.startsWith("reviewactivity-") && task.taskId.length() == 36,
+            "Task ID should be a bare UUID (the kind travels in the memo), got: " + task.taskId);
     test:assertEquals(task.parentWorkflowId, workflowId, "parentWorkflowId should match");
     test:assertEquals(task.status, "PENDING", "Pending review activity should be in PENDING status");
     test:assertTrue(task.taskName.includes("failingActivityForRetry"),
@@ -1112,10 +1112,10 @@ function testListAllReviewActivitiesReturnsCreatedTask() returns error? {
     test:assertTrue(allTasks.length() >= 1,
             "listAllReviewActivities should return at least the task we created");
 
-    // Every returned task ID must start with the reviewactivity- prefix.
+    // Instance ids are bare UUIDs — what a task is travels in its memo and type, never its id.
     foreach management:ReviewActivitySummary t in allTasks {
-        test:assertTrue(t.taskId.startsWith("reviewactivity-"),
-                "All returned tasks should have reviewactivity- prefix, got: " + t.taskId);
+        test:assertTrue(!t.taskId.startsWith("reviewactivity-") && t.taskId.length() == 36,
+                "All returned task ids should be bare UUIDs, got: " + t.taskId);
     }
 }
 

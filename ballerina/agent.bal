@@ -16,6 +16,7 @@
 
 import ballerina/ai;
 import ballerina/jballerina.java;
+import ballerina/time;
 
 // ============================================================================
 // anydata mirrors of the ballerina/ai chat message types.
@@ -146,20 +147,28 @@ isolated function runAgentLoop(handle ctxHandle, string agentName, AgentRunConfi
     } else {
         // No initial prompt: wait durably for one chat event, if the agent
         // declared one in its signature.
+        publishTranscript(ctxHandle, history);
         string? chatMessage = check awaitAgentChatEvent(ctxHandle);
         if chatMessage is string {
             history.push(<AgentUserMessage>{content: chatMessage});
         }
     }
+    publishTranscript(ctxHandle, history);
 
     int maxIterations = int:max(1, config.maxIter);
     while true {
         // One conversation turn: a bounded ReAct loop over LLM + tool calls.
         boolean turnAnswered = false;
         foreach int _ in 0 ..< maxIterations {
+            // Whatever side turns answered while the loop was parked joins the history
+            // first, so the main conversation sees everything that was said. This point —
+            // after any prior tool results, before the next model call — is the one place
+            // an insertion can never split a tool call from its results.
+            check mergeAsides(ctxHandle, history);
             AgentAssistantMessage assistant = check callAgentActivity("llmChat",
                     {"agentName": agentName, "messages": history.toJson(), "tools": llmToolDefs.toJson()});
             history.push(assistant);
+            publishTranscript(ctxHandle, history);
 
             // Record every content-bearing reply (not only the final one): in a
             // multi-turn conversation the memo/response always holds the latest turn.
@@ -217,7 +226,51 @@ isolated function runAgentLoop(handle ctxHandle, string agentName, AgentRunConfi
             return next;
         }
         history.push(<AgentUserMessage>{content: next is string ? next : next.toJsonString()});
+        publishTranscript(ctxHandle, history);
     }
+}
+
+// Publishes the clean conversation view — system, user, and content-bearing assistant
+// messages — that a side turn reasons over while the loop is parked. Tool calls and
+// their results are deliberately absent: the park note carries the current state, and
+// a transcript cut mid-tool-exchange would hand the side model an unanswered call.
+isolated function publishTranscript(handle ctxHandle, AgentChatMessage[] history) {
+    AgentChatMessage[] transcript = [];
+    foreach AgentChatMessage message in history {
+        if message is AgentSystemMessage|AgentUserMessage {
+            transcript.push(message);
+        } else if message is AgentAssistantMessage {
+            string? content = message.content;
+            if content is string && content != "" {
+                transcript.push(<AgentAssistantMessage>{content: content});
+            }
+        }
+    }
+    publishAgentTranscript(ctxHandle, transcript.toJson());
+}
+
+// Merges the question/answer pairs side turns answered while the loop was parked into
+// the history, verbatim, so the model knows what was already said on its behalf.
+isolated function mergeAsides(handle ctxHandle, AgentChatMessage[] history) returns error? {
+    string asidesJson = drainAgentAsides(ctxHandle);
+    json parsed = check asidesJson.fromJsonString();
+    if parsed !is json[] || parsed.length() == 0 {
+        return;
+    }
+    foreach json aside in parsed {
+        if aside !is map<json> {
+            continue;
+        }
+        json question = aside["question"];
+        json answer = aside["answer"];
+        if question is string {
+            history.push(<AgentUserMessage>{content: question});
+        }
+        if answer is string {
+            history.push(<AgentAssistantMessage>{content: answer});
+        }
+    }
+    publishTranscript(ctxHandle, history);
 }
 
 // Dispatches one tool call by kind and renders the result as text for the model.
@@ -290,6 +343,18 @@ isolated function dispatchAgentTool(handle ctxHandle, string agentName, AgentFun
             return string `Slept for ${seconds} seconds.`;
         }
         return string `Sleep was interrupted by a wake signal before the ${seconds} seconds elapsed.`;
+    }
+
+    // Workflow-context reads: what a plain workflow gets from ctx (getWorkflowId,
+    // currentTime) the agent gets as always-available built-in tools. Both are
+    // deterministic workflow-thread reads - answered in place, never an activity.
+    if kind == "workflowid" {
+        return agentWorkflowId(ctxHandle);
+    }
+    if kind == "currenttime" {
+        int millis = agentCurrentTimeMillis(ctxHandle);
+        time:Utc utc = [millis / 1000, <decimal>(millis % 1000) / 1000d];
+        return time:utcToString(utc);
     }
 
     if kind == "activity" {
@@ -372,6 +437,20 @@ isolated function executeAgentTool(string agentName, string toolName, json argum
 isolated function agentInterruptibleSleep(handle nativeContext, int millis) returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "agentInterruptibleSleep"
+} external;
+
+// The run's workflow instance ID, read deterministically on the workflow thread
+// (backs the built-in getWorkflowId tool).
+isolated function agentWorkflowId(handle nativeContext) returns string|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
+    name: "getWorkflowId"
+} external;
+
+// The deterministic workflow clock in epoch milliseconds (backs the built-in
+// getCurrentTime tool).
+isolated function agentCurrentTimeMillis(handle nativeContext) returns int = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
+    name: "currentTimeMillis"
 } external;
 
 // Whether the registered tool is an MCP tool (its caller takes mcp:CallToolParams).
@@ -508,6 +587,19 @@ isolated function setAgentResponse(handle nativeContext, string response) return
     name: "setResponse"
 } external;
 
+// Publishes the conversation transcript side turns reason over while the loop is parked.
+isolated function publishAgentTranscript(handle nativeContext, json transcript) = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.AgentContextNative",
+    name: "publishTranscript"
+} external;
+
+// Drains the side-turn question/answer pairs recorded while the loop was parked,
+// as a JSON array of {question, answer}.
+isolated function drainAgentAsides(handle nativeContext) returns string = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.AgentContextNative",
+    name: "drainAsides"
+} external;
+
 // Looks up the model provider registered for an agent workflow type.
 isolated function getAgentModel(string agentName) returns ai:ModelProvider|error = @java:Method {
     'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
@@ -542,7 +634,7 @@ type AgentRunConfig record {|
     EventCardinality interaction = SINGLE_EVENT;
 
     # Maximum wait per event. On timeout the model is told the wait timed
-    # out so it can wrap up gracefully. Required for `MULTI_EVENT`
+    # out so it can wrap up gracefully. Omit to wait indefinitely
     Duration? eventTimeout = ();
 
     # Hard cap on the total number of event waits per run; exceeding it fails
@@ -892,14 +984,20 @@ isolated function runDurableAgentObject(handle agentCtx, map<anydata> runInput)
     string effectiveQuery = payload is () ? query
         : query + "\n\nInput:\n" + payload.toJsonString();
 
+    // Only a declared eventTimeout bounds the waits: an unbounded chat session is the
+    // point of a durable agent, and a default here silently killed conversations that
+    // idled past it. maxEventWaits remains the runaway backstop.
+    Duration? eventTimeout = ();
+    json declaredTimeout = spec.eventTimeout;
+    if declaredTimeout != () {
+        eventTimeout = check declaredTimeout.cloneWithType();
+    }
     check buildAndRun(agentCtx, effectiveQuery,
         systemPrompt = systemPrompt,
         model = spec.model,
         maxIter = spec.maxIter,
         interaction = multiEvent ? MULTI_EVENT : SINGLE_EVENT,
-        // Per-channel cardinality (and its timeout policy) lands with typed events;
-        // until then a multi-event agent uses a bounded default wait per turn.
-        eventTimeout = multiEvent ? {minutes: 30} : ()
+        eventTimeout = eventTimeout
     );
     typedesc<anydata>? declaredResultType = spec.resultType;
     if declaredResultType is () {

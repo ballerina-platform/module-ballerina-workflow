@@ -84,6 +84,59 @@ public final class WorkflowFunctionRef {
         return runtime.callFunction(module, functionName, new StrandMetadata(true, null), args);
     }
 
+    /**
+     * Whether this and {@code other} resolve the same Ballerina function. Two symbol references
+     * built from the same descriptor coordinates are separate objects but the same function —
+     * which is what registering one activity from several workflows produces.
+     *
+     * @param other the reference to compare with
+     * @return true when both name the same function
+     */
+    public boolean refersToSameFunctionAs(WorkflowFunctionRef other) {
+        if (other == null) {
+            return false;
+        }
+        if (this == other) {
+            return true;
+        }
+        if (pointer != null && pointer == other.pointer) {
+            return true;
+        }
+        // Two pointers captured for one function are distinct objects, so identity comes from the
+        // declaration: the function's name and the module that declares it. The name alone is not
+        // enough — two packages may each declare a `notify`, and reading those as one function
+        // would suppress the collision warning exactly where it is earned.
+        String thisName = declaredName();
+        if (thisName == null || !thisName.equals(other.declaredName())) {
+            return false;
+        }
+        Module thisModule = declaredModule();
+        Module otherModule = other.declaredModule();
+        if (thisModule != null && otherModule != null) {
+            return thisModule.equals(otherModule);
+        }
+        // A side without a resolvable module (the runtime did not record a package on the captured
+        // type) can only be compared by name; that is the pre-existing behaviour, kept for the
+        // cases the runtime genuinely cannot attribute.
+        return true;
+    }
+
+    /** The function's declared name: the symbolic coordinate, or the captured type's own name. */
+    private String declaredName() {
+        if (functionName != null) {
+            return functionName;
+        }
+        return functionType != null ? functionType.getName() : null;
+    }
+
+    /** The module declaring the function: the symbolic coordinate, or the captured type's package. */
+    private Module declaredModule() {
+        if (module != null) {
+            return module;
+        }
+        return functionType != null ? functionType.getPackage() : null;
+    }
+
     @Override
     public String toString() {
         return pointer != null ? "pointer:" + pointer

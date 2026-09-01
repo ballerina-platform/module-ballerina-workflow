@@ -119,6 +119,31 @@ public class WorkflowCompilerPluginTest {
 
     // ===== Invalid test cases - Validation errors =====
 
+    // A step id names one node of the workflow's graph. A value the build cannot describe is an
+    // error; a duplicate is repaired and reported, because duplicating one is easy and refusing to
+    // build over it would be worse than renaming it.
+
+    @Test(groups = "invalid")
+    public void testInvalidStepIdNotConstant() {
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_step_id_not_constant");
+        Assert.assertEquals(diagnosticResult.errorCount(), 2,
+                "Expected one error per step id computed per execution — the callActivity's and the sleep's");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_161);
+    }
+
+    @Test(groups = "invalid")
+    public void testDuplicateStepIdWarnsRatherThanFailing() {
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("duplicate_step_id");
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "A duplicate step id is repaired, not rejected: " + getDiagnosticMessages(diagnosticResult));
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_160);
+        long duplicateWarnings = diagnosticResult.warnings().stream()
+                .filter(d -> WorkflowDiagnostic.WORKFLOW_160.getCode().equals(d.diagnosticInfo().code()))
+                .count();
+        Assert.assertEquals(duplicateWarnings, 2,
+                "Both later claims of 'book' — the second callActivity's and the sleep's — must warn");
+    }
+
     @Test(groups = "invalid")
     public void testInvalidActivityTypedescDefault() {
         String packagePath = "invalid_activity_typedesc_default";

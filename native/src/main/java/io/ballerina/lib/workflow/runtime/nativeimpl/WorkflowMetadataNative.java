@@ -199,23 +199,30 @@ public final class WorkflowMetadataNative {
         return name instanceof BString bName && bName.getValue().equals(expected);
     }
 
+    /**
+     * One entry per (workflow, activity) pair, as consumers expect. The registry is keyed by the
+     * plain activity name, so which workflows declare an activity comes from the ownership map
+     * rather than from splitting a qualified key.
+     */
     private static BArray buildActivities() {
         BArray activities = ValueCreator.createArrayValue(JSON_ARRAY_TYPE);
         Map<String, io.ballerina.lib.workflow.worker.WorkflowFunctionRef> activityRegistry =
-                new TreeMap<>(WorkflowWorkerNative.getActivityRegistry());
-        for (Map.Entry<String, io.ballerina.lib.workflow.worker.WorkflowFunctionRef> entry
-                : activityRegistry.entrySet()) {
-            String qualified = stripPrefix(entry.getKey(), WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX);
-            int separator = qualified.indexOf('.');
-            String workflowType = separator > 0 ? qualified.substring(0, separator) : "";
-            String activityName = separator > 0 ? qualified.substring(separator + 1) : qualified;
-            BMap<BString, Object> activity = ValueCreator.createMapValue(JSON_MAP_TYPE);
-            activity.put(MetadataFields.WORKFLOW_TYPE, StringUtils.fromString(workflowType));
-            activity.put(MetadataFields.NAME, StringUtils.fromString(activityName));
-            String inputSchema = deriveActivityInputSchema(entry.getValue());
-            activity.put(MetadataFields.INPUT_SCHEMA,
-                    inputSchema != null ? StringUtils.fromString(inputSchema) : null);
-            activities.append(activity);
+                WorkflowWorkerNative.getActivityRegistry();
+        Map<String, java.util.Set<String>> owners =
+                new TreeMap<>(WorkflowWorkerNative.getActivityOwners());
+        for (Map.Entry<String, java.util.Set<String>> entry : owners.entrySet()) {
+            String activityName = entry.getKey();
+            io.ballerina.lib.workflow.worker.WorkflowFunctionRef ref = activityRegistry.get(activityName);
+            String inputSchema = ref != null ? deriveActivityInputSchema(ref) : null;
+            for (String owner : new TreeSet<>(entry.getValue())) {
+                BMap<BString, Object> activity = ValueCreator.createMapValue(JSON_MAP_TYPE);
+                activity.put(MetadataFields.WORKFLOW_TYPE, StringUtils.fromString(
+                        stripPrefix(owner, WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX)));
+                activity.put(MetadataFields.NAME, StringUtils.fromString(activityName));
+                activity.put(MetadataFields.INPUT_SCHEMA,
+                        inputSchema != null ? StringUtils.fromString(inputSchema) : null);
+                activities.append(activity);
+            }
         }
         return activities;
     }

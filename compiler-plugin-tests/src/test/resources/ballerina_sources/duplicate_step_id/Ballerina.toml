@@ -1,0 +1,8 @@
+[package]
+org = "test"
+name = "duplicate_step_id"
+version = "1.0.0"
+distribution = "2201.13.0"
+
+[build-options]
+observabilityIncluded = false

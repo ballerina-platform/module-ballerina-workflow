@@ -175,8 +175,10 @@ public class WorkflowGraphTest {
         // Whitespace-flattened: a retained record keeps its original line break, and the
         // assertions are about argument order, not layout.
         String rewritten = allSourcesOf(project).replaceAll("\\s+", " ");
-        Assert.assertTrue(rewritten.contains("\"postToLedger#1\", {retryPolicy: [\"OPS\"]}"),
-                "Shape 1: the explicit () is replaced POSITIONALLY and the record survives");
+        Assert.assertTrue(rewritten.contains("\"postToLedger#1\", {")
+                        && rewritten.contains("retryPolicy: [\"OPS\"]"),
+                "Shape 1: the explicit () is replaced POSITIONALLY and the record survives"
+                        + " (a comment above the field rides inside the record)");
         Assert.assertTrue(rewritten.contains("\"firstReview#1\", {userRoles: \"MANAGER\""),
                 "Shape 2: same door on awaitHumanTask, ride-along field intact");
         Assert.assertFalse(rewritten.contains("stepId = \"firstReview#1\"")

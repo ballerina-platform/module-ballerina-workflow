@@ -21,7 +21,11 @@ function optionShapes(workflow:Context ctx, string id) returns error? {
     // The nil placeholder must be replaced POSITIONALLY, or the record becomes a positional
     // argument after a named one — and the descriptor must see the policy riding the record.
     string posted = check ctx->callActivity(postToLedger, {"id": id}, string, (),
-        {retryPolicy: ["OPS"]});
+        {
+            // The comment above the field is part of the regression: a trivia-carrying key
+            // reading would stop matching retryPolicy and silently un-gate the activity.
+            retryPolicy: ["OPS"]
+        });
 
     // Shape 2: the same door on awaitHumanTask, with an unknown field riding along.
     ApprovalDecision first = check ctx->awaitHumanTask("firstReview", ApprovalDecision, (),

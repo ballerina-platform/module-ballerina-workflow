@@ -467,7 +467,7 @@ public final class WorkflowDescriptorBuilder {
                             && pos.expression() instanceof MappingConstructorExpressionNode mapping) {
                         for (MappingFieldNode field : mapping.fields()) {
                             if (field instanceof SpecificFieldNode specific
-                                    && WorkflowConstants.ARG_RETRY_POLICY.equals(mappingFieldName(specific))
+                                    && WorkflowConstants.ARG_RETRY_POLICY.equals(fieldKeyName(specific))
                                     && specific.valueExpr().isPresent()) {
                                 return isHumanReviewTyped(specific.valueExpr().get());
                             }
@@ -478,12 +478,6 @@ public final class WorkflowDescriptorBuilder {
             return false;
         }
 
-        /** A specific field's key, unquoted for a literal key, trivia stripped. */
-        private static String mappingFieldName(SpecificFieldNode field) {
-            String name = field.fieldName().toSourceCode().strip();
-            return name.length() > 1 && name.startsWith("\"") && name.endsWith("\"")
-                    ? name.substring(1, name.length() - 1) : name;
-        }
 
         private boolean isHumanReviewTyped(ExpressionNode expression) {
             Optional<TypeSymbol> typeOpt = semanticModel.typeOf(expression);

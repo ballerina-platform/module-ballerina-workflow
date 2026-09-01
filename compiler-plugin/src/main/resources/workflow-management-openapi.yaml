@@ -1,0 +1,810 @@
+
+# The OpenAPI description of the workflow Management REST API — the surface
+# `workflow.management.rest` attaches at `/workflow` when `enableManagementApi = true`.
+#
+# This file is the single source of truth for that surface. It is embedded in the
+# compiler plugin and exported into a consuming package's `target/openapi/` when
+# `bal build --export-openapi` is used (see ManagementApiArtifactExporter); a test in
+# compiler-plugin-tests asserts every resource of the service appears here, so the two
+# cannot drift silently. The service is attached to a dynamically-managed listener, so
+# the stock OpenAPI build extension — which reads `service ... on listener`
+# declarations of the built package — never sees it; this file is how the surface
+# stays describable.
+openapi: 3.0.3
+info:
+  title: Ballerina Workflow Management API
+  description: >
+    Management surface of a workflow integration: definitions, instances (suspend,
+    resume, wake, terminate, cancel, reset), human tasks, and review activities.
+    Served at basePath /workflow on the configured management port (default 8234),
+    only when `enableManagementApi = true`. Authentication is configuration-driven:
+    file-based Basic auth, JWT Bearer, or OAuth2 introspection — combined with
+    optional gateway-forwarded identity headers (x-user-id / x-user-roles).
+  version: 0.9.0
+servers:
+  - url: "{scheme}://{host}:{port}/workflow"
+    variables:
+      scheme: {default: http, enum: [http, https]}
+      host: {default: localhost}
+      port: {default: "8234"}
+security:
+  - basicAuth: []
+  - bearerAuth: []
+tags:
+  - name: runtime
+  - name: definitions
+  - name: workflows
+  - name: human-tasks
+  - name: review-activities
+
+paths:
+  /runtime:
+    get:
+      tags: [runtime]
+      summary: This worker's runtime state — the Temporal task queue it polls
+      operationId: getRuntimeInfo
+      responses:
+        "200":
+          description: Runtime info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  taskQueue: {type: string}
+        default: {$ref: "#/components/responses/Error"}
+
+  /definitions:
+    get:
+      tags: [definitions]
+      summary: The workflow and agent definitions this integration registered
+      operationId: listDefinitions
+      responses:
+        "200":
+          description: Definitions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/WorkflowDefinition"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /workflows:
+    get:
+      tags: [workflows]
+      summary: List workflow instances
+      operationId: listWorkflowInstances
+      parameters:
+        - {name: status, in: query, schema: {type: string}}
+        - {name: workflowType, in: query, schema: {type: string}}
+        - {name: workflowId, in: query, schema: {type: string}}
+        - {name: startedBy, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, default: 20}}
+        - {name: pageToken, in: query, schema: {type: string}}
+        - {name: startTimeFrom, in: query, schema: {type: string, format: date-time}}
+        - {name: startTimeTo, in: query, schema: {type: string, format: date-time}}
+        - {name: closeTimeFrom, in: query, schema: {type: string, format: date-time}}
+        - {name: closeTimeTo, in: query, schema: {type: string, format: date-time}}
+        - {name: taskQueue, in: query, schema: {type: string}}
+      responses:
+        "200":
+          description: One page of instances
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WorkflowInstancePage"}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      tags: [workflows]
+      summary: Start a workflow instance
+      operationId: startWorkflowInstance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workflowType]
+              properties:
+                workflowType: {type: string}
+                input: {description: The workflow's input value}
+                workflowId: {type: string, description: Optional explicit instance id}
+      responses:
+        "200":
+          description: The started instance's handle
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WorkflowHandle"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /workflows/{workflowId}:
+    get:
+      tags: [workflows]
+      summary: Describe the latest run of an instance
+      operationId: getWorkflowInstance
+      parameters: [{$ref: "#/components/parameters/workflowId"}]
+      responses:
+        "200": {$ref: "#/components/responses/ExecutionInfo"}
+        default: {$ref: "#/components/responses/Error"}
+  /workflows/{workflowId}/suspend:
+    post:
+      tags: [workflows]
+      summary: Suspend the latest run
+      operationId: suspendWorkflowInstance
+      parameters: [{$ref: "#/components/parameters/workflowId"}]
+      responses:
+        "200": {$ref: "#/components/responses/Acknowledged"}
+        default: {$ref: "#/components/responses/Error"}
+  /workflows/{workflowId}/wake:
+    post:
+      tags: [workflows]
+      summary: Wake a sleeping durable agent instance
+      operationId: wakeWorkflowInstance
+      parameters: [{$ref: "#/components/parameters/workflowId"}]
+      responses:
+        "200": {$ref: "#/components/responses/Acknowledged"}
+        default: {$ref: "#/components/responses/Error"}
+  /workflows/{workflowId}/resume:
+    post:
+      tags: [workflows]
+      summary: Resume a suspended run
+      operationId: resumeWorkflowInstance
+      parameters: [{$ref: "#/components/parameters/workflowId"}]
+      responses:
+        "200": {$ref: "#/components/responses/Acknowledged"}
+        default: {$ref: "#/components/responses/Error"}
+  /workflows/{workflowId}/terminate:
+    post:
+      tags: [workflows]
+      summary: Terminate the latest run
+      operationId: terminateWorkflowInstance
+      parameters: [{$ref: "#/components/parameters/workflowId"}]
+      requestBody: {$ref: "#/components/requestBodies/TerminateBody"}
+      responses:
+        "200": {$ref: "#/components/responses/Acknowledged"}
+        default: {$ref: "#/components/responses/Error"}
+  /workflows/{workflowId}/cancel:
+    post:
+      tags: [workflows]
+      summary: Cancel the latest run
+      operationId: cancelWorkflowInstance
+      parameters: [{$ref: "#/components/parameters/workflowId"}]
+      responses:
+        "200": {$ref: "#/components/responses/Acknowledged"}
+        default: {$ref: "#/components/responses/Error"}
+  /workflows/{workflowId}/history:
+    get:
+      tags: [workflows]
+      summary: The latest run's event history
+      operationId: getWorkflowInstanceHistory
+      parameters: [{$ref: "#/components/parameters/workflowId"}]
+      responses:
+        "200": {$ref: "#/components/responses/History"}
+        default: {$ref: "#/components/responses/Error"}
+  /workflows/{workflowId}/activity-tree:
+    get:
+      tags: [workflows]
+      summary: The latest run's activity tree
+      operationId: getWorkflowInstanceActivityTree
+      parameters: [{$ref: "#/components/parameters/workflowId"}]
+      responses:
+        "200": {$ref: "#/components/responses/ActivityTree"}
+        default: {$ref: "#/components/responses/Error"}
+  /workflows/{workflowId}/reset-points:
+    get:
+      tags: [workflows]
+      summary: The points the latest run can be reset to
+      operationId: listWorkflowInstanceResetPoints
+      parameters: [{$ref: "#/components/parameters/workflowId"}]
+      responses:
+        "200": {$ref: "#/components/responses/ResetPoints"}
+        default: {$ref: "#/components/responses/Error"}
+  /workflows/{workflowId}/reset:
+    post:
+      tags: [workflows]
+      summary: Reset the latest run to a chosen point
+      operationId: resetWorkflowInstance
+      parameters: [{$ref: "#/components/parameters/workflowId"}]
+      requestBody: {$ref: "#/components/requestBodies/ResetBody"}
+      responses:
+        "200":
+          description: The new run's handle
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WorkflowHandle"}
+        default: {$ref: "#/components/responses/Error"}
+  /workflows/{workflowId}/execution-graph:
+    get:
+      tags: [workflows]
+      summary: The latest run's execution graph
+      operationId: getWorkflowInstanceExecutionGraph
+      parameters: [{$ref: "#/components/parameters/workflowId"}]
+      responses:
+        "200": {$ref: "#/components/responses/Graph"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /workflows/{workflowId}/{runId}:
+    get:
+      tags: [workflows]
+      summary: Describe an exact run
+      operationId: getWorkflowRun
+      parameters: [{$ref: "#/components/parameters/workflowId"}, {$ref: "#/components/parameters/runId"}]
+      responses:
+        "200": {$ref: "#/components/responses/ExecutionInfo"}
+        default: {$ref: "#/components/responses/Error"}
+  /workflows/{workflowId}/{runId}/suspend:
+    post:
+      tags: [workflows]
+      summary: Suspend an exact run
+      operationId: suspendWorkflowRun
+      parameters: [{$ref: "#/components/parameters/workflowId"}, {$ref: "#/components/parameters/runId"}]
+      responses:
+        "200": {$ref: "#/components/responses/Acknowledged"}
+        default: {$ref: "#/components/responses/Error"}
+  /workflows/{workflowId}/{runId}/resume:
+    post:
+      tags: [workflows]
+      summary: Resume an exact run
+      operationId: resumeWorkflowRun
+      parameters: [{$ref: "#/components/parameters/workflowId"}, {$ref: "#/components/parameters/runId"}]
+      responses:
+        "200": {$ref: "#/components/responses/Acknowledged"}
+        default: {$ref: "#/components/responses/Error"}
+  /workflows/{workflowId}/{runId}/terminate:
+    post:
+      tags: [workflows]
+      summary: Terminate an exact run
+      operationId: terminateWorkflowRun
+      parameters: [{$ref: "#/components/parameters/workflowId"}, {$ref: "#/components/parameters/runId"}]
+      requestBody: {$ref: "#/components/requestBodies/TerminateBody"}
+      responses:
+        "200": {$ref: "#/components/responses/Acknowledged"}
+        default: {$ref: "#/components/responses/Error"}
+  /workflows/{workflowId}/{runId}/cancel:
+    post:
+      tags: [workflows]
+      summary: Cancel an exact run
+      operationId: cancelWorkflowRun
+      parameters: [{$ref: "#/components/parameters/workflowId"}, {$ref: "#/components/parameters/runId"}]
+      responses:
+        "200": {$ref: "#/components/responses/Acknowledged"}
+        default: {$ref: "#/components/responses/Error"}
+  /workflows/{workflowId}/{runId}/history:
+    get:
+      tags: [workflows]
+      summary: An exact run's event history
+      operationId: getWorkflowRunHistory
+      parameters: [{$ref: "#/components/parameters/workflowId"}, {$ref: "#/components/parameters/runId"}]
+      responses:
+        "200": {$ref: "#/components/responses/History"}
+        default: {$ref: "#/components/responses/Error"}
+  /workflows/{workflowId}/{runId}/activity-tree:
+    get:
+      tags: [workflows]
+      summary: An exact run's activity tree
+      operationId: getWorkflowRunActivityTree
+      parameters: [{$ref: "#/components/parameters/workflowId"}, {$ref: "#/components/parameters/runId"}]
+      responses:
+        "200": {$ref: "#/components/responses/ActivityTree"}
+        default: {$ref: "#/components/responses/Error"}
+  /workflows/{workflowId}/{runId}/reset-points:
+    get:
+      tags: [workflows]
+      summary: The points an exact run can be reset to
+      operationId: listWorkflowRunResetPoints
+      parameters: [{$ref: "#/components/parameters/workflowId"}, {$ref: "#/components/parameters/runId"}]
+      responses:
+        "200": {$ref: "#/components/responses/ResetPoints"}
+        default: {$ref: "#/components/responses/Error"}
+  /workflows/{workflowId}/{runId}/reset:
+    post:
+      tags: [workflows]
+      summary: Reset an exact run to a chosen point
+      operationId: resetWorkflowRun
+      parameters: [{$ref: "#/components/parameters/workflowId"}, {$ref: "#/components/parameters/runId"}]
+      requestBody: {$ref: "#/components/requestBodies/ResetBody"}
+      responses:
+        "200":
+          description: The new run's handle
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WorkflowHandle"}
+        default: {$ref: "#/components/responses/Error"}
+  /workflows/{workflowId}/{runId}/execution-graph:
+    get:
+      tags: [workflows]
+      summary: An exact run's execution graph
+      operationId: getWorkflowRunExecutionGraph
+      parameters: [{$ref: "#/components/parameters/workflowId"}, {$ref: "#/components/parameters/runId"}]
+      responses:
+        "200": {$ref: "#/components/responses/Graph"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /human-tasks:
+    get:
+      tags: [human-tasks]
+      summary: List human tasks
+      operationId: listHumanTasks
+      parameters:
+        - {name: status, in: query, schema: {type: string, enum: [PENDING, COMPLETED, FAILED, CANCELED, TERMINATED]}}
+        - {name: parentWorkflowId, in: query, schema: {type: string}}
+        - {name: parentWorkflowType, in: query, schema: {type: string}}
+        - {name: taskName, in: query, schema: {type: string}}
+        - {name: userRole, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, default: 20}}
+        - {name: pageToken, in: query, schema: {type: string}}
+        - {name: startTimeFrom, in: query, schema: {type: string, format: date-time}}
+        - {name: startTimeTo, in: query, schema: {type: string, format: date-time}}
+        - {name: closeTimeFrom, in: query, schema: {type: string, format: date-time}}
+        - {name: closeTimeTo, in: query, schema: {type: string, format: date-time}}
+        - {name: taskQueue, in: query, schema: {type: string}}
+      responses:
+        "200":
+          description: One page of tasks
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/HumanTaskPage"}
+        default: {$ref: "#/components/responses/Error"}
+  /human-tasks/pending-count:
+    get:
+      tags: [human-tasks]
+      summary: Count pending human tasks
+      operationId: countPendingHumanTasks
+      parameters:
+        - {name: taskQueue, in: query, schema: {type: string}}
+      responses:
+        "200":
+          description: The count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: {type: integer}
+        default: {$ref: "#/components/responses/Error"}
+  /human-tasks/{taskId}:
+    get:
+      tags: [human-tasks]
+      summary: One human task, payload included
+      operationId: getHumanTask
+      parameters: [{$ref: "#/components/parameters/taskId"}]
+      responses:
+        "200":
+          description: The task
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/HumanTaskInfo"}
+        default: {$ref: "#/components/responses/Error"}
+  /human-tasks/{taskId}/complete:
+    post:
+      tags: [human-tasks]
+      summary: Complete a human task with its typed result
+      operationId: completeHumanTask
+      parameters: [{$ref: "#/components/parameters/taskId"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [result]
+              properties:
+                result: {description: The task's result, matching its declared result type}
+      responses:
+        "200": {$ref: "#/components/responses/Acknowledged"}
+        default: {$ref: "#/components/responses/Error"}
+  /human-tasks/{taskId}/fail:
+    post:
+      tags: [human-tasks]
+      summary: Fail (reject) a human task with a reason
+      operationId: failHumanTask
+      parameters: [{$ref: "#/components/parameters/taskId"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: {type: string}
+                details: {type: object, description: Structured details for the awaiting workflow}
+      responses:
+        "200": {$ref: "#/components/responses/Acknowledged"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /review-activities:
+    get:
+      tags: [review-activities]
+      summary: List review activities (approval gates and failure reviews)
+      operationId: listReviewActivities
+      parameters:
+        - {name: status, in: query, schema: {type: string, enum: [PENDING, COMPLETED, FAILED, CANCELED, TERMINATED]}}
+        - {name: parentWorkflowId, in: query, schema: {type: string}}
+        - {name: taskName, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, default: 20}}
+        - {name: pageToken, in: query, schema: {type: string}}
+        - {name: startTimeFrom, in: query, schema: {type: string, format: date-time}}
+        - {name: startTimeTo, in: query, schema: {type: string, format: date-time}}
+        - {name: closeTimeFrom, in: query, schema: {type: string, format: date-time}}
+        - {name: closeTimeTo, in: query, schema: {type: string, format: date-time}}
+        - {name: taskQueue, in: query, schema: {type: string}}
+      responses:
+        "200":
+          description: One page of reviews
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ReviewActivityPage"}
+        default: {$ref: "#/components/responses/Error"}
+  /review-activities/{taskId}:
+    get:
+      tags: [review-activities]
+      summary: One review activity, proposed arguments included
+      operationId: getReviewActivity
+      parameters: [{$ref: "#/components/parameters/taskId"}]
+      responses:
+        "200":
+          description: The review
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ReviewActivityInfo"}
+        default: {$ref: "#/components/responses/Error"}
+  /review-activities/{taskId}/proceed:
+    post:
+      tags: [review-activities]
+      summary: Approve — run the activity with its proposed arguments
+      operationId: proceedReviewActivity
+      parameters: [{$ref: "#/components/parameters/taskId"}]
+      responses:
+        "200": {$ref: "#/components/responses/Acknowledged"}
+        default: {$ref: "#/components/responses/Error"}
+  /review-activities/{taskId}/proceed-with-input:
+    post:
+      tags: [review-activities]
+      summary: Approve with replacement arguments
+      operationId: proceedReviewActivityWithInput
+      parameters: [{$ref: "#/components/parameters/taskId"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                input: {type: object, description: Replacement named arguments for the activity}
+      responses:
+        "200": {$ref: "#/components/responses/Acknowledged"}
+        default: {$ref: "#/components/responses/Error"}
+  /review-activities/{taskId}/reject:
+    post:
+      tags: [review-activities]
+      summary: Reject — the caller decides what the refusal means
+      operationId: rejectReviewActivity
+      parameters: [{$ref: "#/components/parameters/taskId"}]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                feedback: {type: string, description: Fed back to the requester (an agent re-plans around it)}
+      responses:
+        "200": {$ref: "#/components/responses/Acknowledged"}
+        default: {$ref: "#/components/responses/Error"}
+  /review-activities/bulk-retry:
+    post:
+      tags: [review-activities]
+      summary: Retry or fail many failure reviews in one call
+      operationId: bulkRetryReviewActivities
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: {type: string, enum: [retry, fail]}
+                taskIds: {type: array, items: {type: string}}
+                parentWorkflowId: {type: string}
+                activityName: {type: string}
+                feedback: {type: string}
+      responses:
+        "200":
+          description: Per-task report — returned whenever the batch was accepted
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BulkRetryResult"}
+        default: {$ref: "#/components/responses/Error"}
+
+components:
+  securitySchemes:
+    basicAuth: {type: http, scheme: basic}
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
+  parameters:
+    workflowId:
+      name: workflowId
+      in: path
+      required: true
+      schema: {type: string}
+    runId:
+      name: runId
+      in: path
+      required: true
+      schema: {type: string}
+    taskId:
+      name: taskId
+      in: path
+      required: true
+      schema: {type: string}
+  requestBodies:
+    TerminateBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              reason: {type: string}
+    ResetBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [resetType]
+            properties:
+              resetType: {type: string, enum: [first-workflow-task, last-workflow-task, workflow-task-id]}
+              eventId: {type: integer, description: Required for workflow-task-id}
+              reason: {type: string}
+              reapply: {type: object, description: Which signal/update kinds to re-deliver after the point}
+              idempotencyKey: {type: string}
+  responses:
+    Acknowledged:
+      description: The operation was accepted and executed
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status: {type: string}
+    ExecutionInfo:
+      description: The run's execution info
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/WorkflowExecutionInfo"}
+    History:
+      description: The run's event history
+      content:
+        application/json:
+          schema:
+            type: array
+            items: {$ref: "#/components/schemas/HistoryEvent"}
+    ActivityTree:
+      description: The run's activity tree
+      content:
+        application/json:
+          schema:
+            type: array
+            items: {$ref: "#/components/schemas/ActivityTreeNode"}
+    ResetPoints:
+      description: The run's reset points
+      content:
+        application/json:
+          schema:
+            type: array
+            items: {$ref: "#/components/schemas/ResetPoint"}
+    Graph:
+      description: The run's execution graph
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ExecutionGraph"}
+    Error:
+      description: >
+        The operation failed. The body carries the machine-readable reason
+        (management:ErrorCode) and a message; the HTTP status maps the reason
+        (404 NOT_FOUND, 403 ACCESS_DENIED, 400 INVALID_REQUEST/INVALID_PAYLOAD,
+        409 CONFLICT, 500 EXECUTION_ERROR).
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code:
+                type: string
+                enum: [NOT_FOUND, ACCESS_DENIED, INVALID_REQUEST, CONFLICT, INVALID_PAYLOAD, EXECUTION_ERROR]
+              message: {type: string}
+  schemas:
+    WorkflowDefinition:
+      type: object
+      properties:
+        workflowType: {type: string}
+        kind: {type: string, enum: [WORKFLOW, AGENT]}
+        inputSchema: {type: string, nullable: true, description: JSON schema of the input, as a string}
+        isActive: {type: boolean}
+        workerCount: {type: integer}
+    WorkflowExecutionInfo:
+      type: object
+      properties:
+        workflowId: {type: string}
+        workflowType: {type: string}
+        status: {type: string, enum: [RUNNING, SUSPENDED, COMPLETED, FAILED, CANCELED, TERMINATED, CONTINUED_AS_NEW, TIMED_OUT, UNKNOWN]}
+        kind: {type: string, nullable: true, enum: [WORKFLOW, AGENT, HUMAN_TASK, REVIEW_ACTIVITY, CHILD_WORKFLOW]}
+        result: {nullable: true}
+        errorMessage: {type: string, nullable: true}
+        activityInvocations:
+          type: array
+          items: {$ref: "#/components/schemas/ActivityInvocation"}
+    ActivityInvocation:
+      type: object
+      properties:
+        activityName: {type: string}
+        input: {type: array, items: {}}
+        output: {nullable: true}
+        status: {type: string}
+        errorMessage: {type: string, nullable: true}
+        attempt: {type: integer}
+    WorkflowInstanceSummary:
+      type: object
+      properties:
+        namespace: {type: string}
+        taskQueue: {type: string}
+        workflowId: {type: string}
+        runId: {type: string}
+        workflowType: {type: string}
+        status: {type: string}
+        kind: {type: string, nullable: true}
+        startTime: {type: string, format: date-time}
+        closeTime: {type: string, format: date-time, nullable: true}
+    WorkflowInstancePage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: {$ref: "#/components/schemas/WorkflowInstanceSummary"}
+        nextPageToken: {type: string, nullable: true}
+    WorkflowHandle:
+      type: object
+      properties:
+        workflowId: {type: string}
+        runId: {type: string}
+    HumanTaskSummary:
+      type: object
+      properties:
+        taskId: {type: string}
+        taskName: {type: string}
+        title: {type: string}
+        namespace: {type: string}
+        taskQueue: {type: string}
+        parentWorkflowId: {type: string}
+        parentWorkflowType: {type: string, nullable: true}
+        status: {type: string}
+        startTime: {type: string, format: date-time}
+        closeTime: {type: string, format: date-time, nullable: true}
+        userRoles: {type: array, items: {type: string}}
+    HumanTaskPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: {$ref: "#/components/schemas/HumanTaskSummary"}
+        nextPageToken: {type: string, nullable: true}
+    HumanTaskInfo:
+      type: object
+      description: One task with its payload, description, and completion metadata
+      allOf:
+        - {$ref: "#/components/schemas/HumanTaskSummary"}
+        - type: object
+          properties:
+            description: {type: string}
+            payload: {type: object}
+            resultSchema: {type: string, nullable: true}
+            completedBy: {type: string, nullable: true}
+            completedAt: {type: string, format: date-time, nullable: true}
+    ReviewActivitySummary:
+      type: object
+      properties:
+        taskId: {type: string}
+        taskName: {type: string}
+        namespace: {type: string}
+        taskQueue: {type: string}
+        activityName: {type: string}
+        parentWorkflowId: {type: string}
+        trigger: {type: string, enum: [PRE_RUN, ON_FAILURE]}
+        title: {type: string}
+        status: {type: string}
+        startTime: {type: string, format: date-time}
+        closeTime: {type: string, format: date-time, nullable: true}
+        userRoles: {type: array, items: {type: string}}
+    ReviewActivityPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: {$ref: "#/components/schemas/ReviewActivitySummary"}
+        nextPageToken: {type: string, nullable: true}
+    ReviewActivityInfo:
+      type: object
+      description: One review with the activity's proposed arguments and failure context
+      allOf:
+        - {$ref: "#/components/schemas/ReviewActivitySummary"}
+        - type: object
+          properties:
+            description: {type: string}
+            args: {type: object, description: The activity's proposed named arguments}
+            inputSchema: {type: string, nullable: true}
+            errorMessage: {type: string, nullable: true}
+            decision: {type: object, nullable: true, description: The recorded decision, once made}
+    BulkRetryResult:
+      type: object
+      properties:
+        action: {type: string, enum: [retry, fail]}
+        requested: {type: integer}
+        applied: {type: integer}
+        skipped: {type: integer}
+        failed: {type: integer}
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              taskId: {type: string}
+              outcome: {type: string}
+              reason: {type: string, nullable: true}
+        decidedBy: {type: string}
+        decidedAt: {type: string, format: date-time}
+    ResetPoint:
+      type: object
+      properties:
+        eventId: {type: integer}
+        eventType: {type: string}
+        timestamp: {type: string, format: date-time}
+        nodeIds: {type: array, items: {type: string}}
+        nodeNames: {type: array, items: {type: string}}
+        isFirstFailure: {type: boolean}
+    HistoryEvent:
+      type: object
+      properties:
+        eventId: {type: integer}
+        eventType: {type: string}
+        timestamp: {type: string, format: date-time}
+        details: {type: object, nullable: true}
+    ActivityTreeNode:
+      type: object
+      properties:
+        id: {type: string}
+        name: {type: string}
+        type: {type: string}
+        status: {type: string}
+        startTime: {type: string, format: date-time, nullable: true}
+        endTime: {type: string, format: date-time, nullable: true}
+        input: {nullable: true}
+        output: {nullable: true}
+        failure: {type: object, nullable: true}
+        attempt: {type: integer}
+        stepId: {type: string, nullable: true}
+        children:
+          type: array
+          nullable: true
+          items: {$ref: "#/components/schemas/ActivityTreeNode"}
+    ExecutionGraph:
+      type: object
+      properties:
+        nodes:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {type: string}
+              label: {type: string}
+              type: {type: string}
+              status: {type: string}
+              metadata: {type: object, nullable: true}
+        edges:
+          type: array
+          items:
+            type: object
+            properties:
+              source: {type: string}
+              target: {type: string}
+              label: {type: string, nullable: true}

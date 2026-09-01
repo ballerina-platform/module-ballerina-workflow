@@ -134,6 +134,38 @@ isolated client class UnknownToolMockModelProvider {
 
 final UnknownToolMockModelProvider unknownToolAgentModel = new;
 
+// A model whose first two calls fail the way a transport does. The built-in model
+// activities carry a default retry curve — an agent is a long-lived conversation, and
+// one blip of network weather must not fail the whole run — so the third attempt's
+// answer is the one the run completes with.
+isolated int flakyModelCalls = 0;
+
+isolated client class FlakyMockModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        int calls;
+        lock {
+            flakyModelCalls += 1;
+            calls = flakyModelCalls;
+        }
+        if calls <= 2 {
+            return error ai:Error("Error while connecting to the model (simulated transport blip)");
+        }
+        return {role: ai:ASSISTANT, content: "recovered on attempt " + calls.toString()};
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final FlakyMockModelProvider flakyAgentModel = new;
+
 // Retrieves the recorded final response of a completed agent.
 isolated function getAgentFinalResponse(string workflowId) returns string? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentResponseStore",
@@ -185,6 +217,12 @@ function unknownToolAgent(handle ctx, AgentOrderInput input) returns error? {
     check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "Unknown tool agent."},
             model = unknownToolAgentModel);
+}
+
+function flakyModelAgent(handle ctx, AgentOrderInput input) returns error? {
+    check buildAndRun(ctx, input.request,
+            systemPrompt = {role: "", instructions: "Flaky model agent."},
+            model = flakyAgentModel);
 }
 
 // ── AI tool (registerTools / executeAgentTool wrapper) ──────────────────────
@@ -621,6 +659,7 @@ function setupAgentTests() returns error? {
     _ = check registerAgentWorkflowForTest(chatStockAgent, "chatStockAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(loopingAgent, "loopingAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(unknownToolAgent, "unknownToolAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(flakyModelAgent, "flakyModelAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(priceAgent, "priceAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(approvalAgent, "approvalAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(eventWaitingAgent, "eventWaitingAgent", agentActivities);
@@ -695,6 +734,20 @@ function testAgentMaxIterationsExceeded() returns error? {
     if result is error {
         test:assertTrue(result.message().includes("maximum number of iterations"),
                 "Error should mention the iteration limit: " + result.message());
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testModelActivityRetriesTransientFailures() returns error? {
+    map<anydata> input = {id: "agent-flaky-model-001", request: "Anything at all"};
+    string runResult = check run(flakyModelAgent, input);
+    _ = check getWorkflowResult(runResult, 60);
+    string? response = getAgentFinalResponse(runResult);
+    test:assertTrue(response is string && response.includes("recovered on attempt"),
+            "A transient model failure must be retried, not fail the run; got: " + (response ?: "()"));
+    lock {
+        test:assertTrue(flakyModelCalls >= 3,
+                "The first two failing calls must have been retried, saw " + flakyModelCalls.toString());
     }
 }
 

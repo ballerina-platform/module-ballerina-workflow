@@ -466,11 +466,21 @@ public final class WorkflowDescriptorBuilder {
                     if (positional >= optionsFrom
                             && pos.expression() instanceof MappingConstructorExpressionNode mapping) {
                         for (MappingFieldNode field : mapping.fields()) {
-                            if (field instanceof SpecificFieldNode specific
-                                    && WorkflowConstants.ARG_RETRY_POLICY.equals(fieldKeyName(specific))
-                                    && specific.valueExpr().isPresent()) {
+                            if (!(field instanceof SpecificFieldNode specific)
+                                    || !WorkflowConstants.ARG_RETRY_POLICY.equals(fieldKeyName(specific))) {
+                                continue;
+                            }
+                            if (specific.valueExpr().isPresent()) {
                                 return isHumanReviewTyped(specific.valueExpr().get());
                             }
+                            // The shorthand form `{retryPolicy}` has no value expression —
+                            // the field captures a same-named variable, whose declared type
+                            // is what decides whether the activity is gated.
+                            Optional<Symbol> captured = semanticModel.symbol(specific);
+                            if (captured.isPresent() && captured.get() instanceof VariableSymbol variable) {
+                                return isHumanReviewType(variable.typeDescriptor());
+                            }
+                            return false;
                         }
                     }
                 }
@@ -481,10 +491,10 @@ public final class WorkflowDescriptorBuilder {
 
         private boolean isHumanReviewTyped(ExpressionNode expression) {
             Optional<TypeSymbol> typeOpt = semanticModel.typeOf(expression);
-            if (typeOpt.isEmpty()) {
-                return false;
-            }
-            TypeSymbol raw = typeOpt.get();
+            return typeOpt.isPresent() && isHumanReviewType(typeOpt.get());
+        }
+
+        private boolean isHumanReviewType(TypeSymbol raw) {
             if (raw instanceof io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol ref
                     && ref.getName().map(WorkflowConstants.HUMAN_REVIEW_TYPE::equals).orElse(false)) {
                 return true;

@@ -15,6 +15,11 @@ function postToLedger(string id) returns string|error {
     return id;
 }
 
+@workflow:Activity
+function postToAudit(string id) returns string|error {
+    return id;
+}
+
 @workflow:Workflow
 function optionShapes(workflow:Context ctx, string id) returns error? {
     // Shape 1: the record after an explicit `()` step id, carrying a HumanReview retryPolicy.
@@ -27,6 +32,12 @@ function optionShapes(workflow:Context ctx, string id) returns error? {
             retryPolicy: ["OPS"]
         });
 
+    // Shape 1b: the SHORTHAND field — `{retryPolicy}` captures a same-named variable
+    // and has no value expression; the variable's declared type gates the activity.
+    workflow:HumanReview retryPolicy = ["AUDITORS"];
+    string audited = check ctx->callActivity(postToAudit, {"id": id}, string, (),
+        {retryPolicy});
+
     // Shape 2: the same door on awaitHumanTask, with an unknown field riding along.
     ApprovalDecision first = check ctx->awaitHumanTask("firstReview", ApprovalDecision, (),
         {userRoles: "MANAGER", "futureOption": true});
@@ -35,6 +46,6 @@ function optionShapes(workflow:Context ctx, string id) returns error? {
     ApprovalDecision second = check ctx->awaitHumanTask("secondReview", ApprovalDecision,
         "final-signoff", {userRoles: ["MANAGER", "AUDITOR"]});
 
-    _ = posted.length() + (first.approved ? 1 : 0) + (second.approved ? 1 : 0);
+    _ = posted.length() + audited.length() + (first.approved ? 1 : 0) + (second.approved ? 1 : 0);
     return;
 }

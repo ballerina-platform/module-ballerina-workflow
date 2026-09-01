@@ -195,6 +195,10 @@ public class WorkflowGraphTest {
         Assert.assertTrue(reviews != null && reviews.stream().map(WorkflowGraphTest::asObject)
                         .anyMatch(r -> "postToLedger".equals(r.get("activity"))),
                 "A HumanReview retryPolicy inside the positional options record gates the activity");
+        Assert.assertTrue(reviews.stream().map(WorkflowGraphTest::asObject)
+                        .anyMatch(r -> "postToAudit".equals(r.get("activity"))),
+                "The shorthand field {retryPolicy} gates the activity through the captured "
+                        + "variable's declared type");
     }
 
     @Test

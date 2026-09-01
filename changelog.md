@@ -478,6 +478,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- **A transient model failure no longer kills the agent run.** The built-in model activities
+  (`llmChat`, `generate`, `generateResult`) ran as single-attempt activities, so one connection
+  blip failed the whole conversation — and being framework machinery rather than declared tools,
+  there was no place to attach a retry policy. They now carry a default retry curve (2s initial,
+  2x backoff capped at 30s, five attempts): transient weather recovers invisibly, while a
+  genuinely dead provider (an expired token, say) still fails the step after about a minute —
+  and that failed run remains recoverable with `resetInstance` once the cause is fixed.
+  User-declared tools keep exactly their declared `retryPolicy`.
+
 - **`workflow.def.json` now reaches the built executable.** The descriptor was registered as a
   package resource with `SourceGeneratorContext.addResourceFile`, which puts nothing into the
   executable, the BALA, or `target` — while a file physically present in a package's `resources`

@@ -210,7 +210,13 @@ def stopTestServerIfRunning = {
             testServerProcess.destroy()
             testServerProcess.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)
             if (testServerProcess.isAlive()) {
+                // Forced termination is asynchronous too: wait again, or the next phase can
+                // start while this server still holds the SQLite lock.
                 testServerProcess.destroyForcibly()
+                if (!testServerProcess.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                    logger.warn("Temporal dev server survived destroyForcibly(); relying on " +
+                            "the unique per-start db file to keep the next phase clear")
+                }
             }
             logger.lifecycle("Temporal dev server stopped")
         }

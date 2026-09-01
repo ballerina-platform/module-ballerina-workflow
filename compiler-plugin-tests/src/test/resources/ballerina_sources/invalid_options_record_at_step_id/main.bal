@@ -11,7 +11,7 @@ type ApprovalDecision record {|
 
 @workflow:Workflow
 function shipOrder(workflow:Context ctx, string id) returns error? {
-    ApprovalDecision decision = check ctx->awaitHumanTask("approve", ApprovalDecision,
+    ApprovalDecision decision = check ctx->awaitHumanTask("approve", {}, ApprovalDecision,
         {userRoles: "MANAGER"});
     _ = decision.approved;
     return;

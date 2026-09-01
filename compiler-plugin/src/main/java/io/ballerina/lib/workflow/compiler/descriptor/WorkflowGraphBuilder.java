@@ -126,9 +126,10 @@ public final class WorkflowGraphBuilder {
 
     // Where the step id lands when a caller passes it positionally rather than by name:
     // callActivity(activityFunction, args, T, stepId, *options) and
-    // awaitHumanTask(taskName, T, stepId, *options).
+    // awaitHumanTask(taskName, payload, T, stepId, *definition) — the task's payload is a
+    // required argument, so its step id sits one place further along than an activity's.
     private static final int CALL_ACTIVITY_STEP_ID_POSITION = 3;
-    private static final int AWAIT_HUMAN_TASK_STEP_ID_POSITION = 2;
+    private static final int AWAIT_HUMAN_TASK_STEP_ID_POSITION = 3;
     // sleep(duration, stepId)
     private static final int SLEEP_STEP_ID_POSITION = 1;
     // runChildWorkflow(childWorkflow, input, stepId)
@@ -304,6 +305,35 @@ public final class WorkflowGraphBuilder {
         // A review with no statically-known field is still a review: the node belongs in the
         // picture even when everything about it was computed.
         return declared;
+    }
+
+    /**
+     * The expression a call gives a named field, whether written as a named argument
+     * ({@code payloadType = Foo}) or as a field of a positionally-passed options record.
+     * Returns {@code null} when the call does not state it, and for the shorthand form,
+     * which names a variable rather than an expression of its own.
+     *
+     * @param args  the call's arguments
+     * @param field the field's name
+     * @return the expression, or {@code null}
+     */
+    public static Node declaredFieldExpression(SeparatedNodeList<FunctionArgumentNode> args, String field) {
+        for (FunctionArgumentNode arg : args) {
+            if (arg instanceof NamedArgumentNode named
+                    && field.equals(named.argumentName().name().text())) {
+                return named.expression();
+            }
+            if (arg instanceof PositionalArgumentNode pos
+                    && pos.expression() instanceof MappingConstructorExpressionNode options) {
+                for (MappingFieldNode member : options.fields()) {
+                    if (member instanceof SpecificFieldNode specific
+                            && field.equals(fieldKeyOf(specific)) && specific.valueExpr().isPresent()) {
+                        return specific.valueExpr().get();
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     /** The {@code retryPolicy} field of a positionally-passed options record, shorthand included. */

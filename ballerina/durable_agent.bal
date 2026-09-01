@@ -121,17 +121,12 @@ public type ToolDecl record {|
 # One human task capability of a durable agent, declared in the mapping form of
 # `humanTasks` where the mapping key is the task name — constant by construction.
 #
-# The shared `HumanTaskDefinition` says what the task IS; this adds the one thing only an
-# agent has nowhere else to put. A workflow's task carries its result type in
-# `awaitHumanTask`'s `T` parameter, which is what makes that call dependently typed; an
-# agent's task is a declaration in a mapping, with no parameter list to carry it.
-#
-# + resultType - Expected result type; drives form schema generation and validation
-# + roles - Deprecated spelling of `userRoles`, kept for existing declarations
-public type HumanTaskConfig record {
-    *HumanTaskDefinition;
-    typedesc<anydata> resultType = anydata;
-};
+# Exactly a `HumanTaskDefinition`, because an agent's task is exactly a human task: the
+# agent has no parameter list, so both of the definition's types earn their keep here —
+# `resultType` says what the answer looks like, and `payloadType` is checked against
+# whatever the model supplies when it asks, which is the only thing standing between a
+# malformed model argument and a person's inbox.
+public type HumanTaskConfig HumanTaskDefinition;
 
 # A named human task capability of a durable agent — the array form of
 # `humanTasks`, kept for existing declarations.

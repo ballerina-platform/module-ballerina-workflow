@@ -146,6 +146,18 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "invalid")
+    public void testTaskTypesMustNameAType() {
+        // A payloadType computed per execution can be neither published in the descriptor nor
+        // relied on as the shape a task's payload is checked against. The fixture's second
+        // call names its types and must stay clean, so this also pins that the rule does not
+        // fire on the ordinary form.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_task_type_not_constant");
+        Assert.assertEquals(diagnosticResult.errorCount(), 1,
+                "Only the computed payloadType may error: " + getDiagnosticMessages(diagnosticResult));
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_162);
+    }
+
+    @Test(groups = "invalid")
     public void testDuplicateStepIdWarnsRatherThanFailing() {
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("duplicate_step_id");
         Assert.assertEquals(diagnosticResult.errorCount(), 0,

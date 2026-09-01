@@ -160,8 +160,8 @@ public client class Context {
     #
     # ```ballerina
     # ApprovalDecision d = check ctx->awaitHumanTask("approveExpense",
+    #     {"amount": 1200, "currency": "USD"},
     #     userRoles = "FINANCE_APPROVER",
-    #     payload = {"amount": 1200, "currency": "USD"},
     #     title = "Approve order",
     #     timeout = {hours: 24}
     # ) on fail workflow:HumanTaskError e {
@@ -173,24 +173,30 @@ public client class Context {
     # ```
     #
     # + taskName - Identifies the task type; used as the Temporal workflow type and child workflow ID
+    # + payload - What the decider is shown, as a read-only object rendered beside the form.
+    #             Required on purpose: a task with nothing to show says so with `{}`, rather
+    #             than by omission, and the runtime checks this value against the
+    #             `payloadType` the definition declares before the task reaches anyone
     # + T - Expected result type; drives form schema generation and runtime validation
     # + stepId - Identity of this step within the workflow, as for `callActivity`: name it
     #            to follow this task across edits, or omit it for a generated
     #            `<taskName>#<ordinal>`
-    # + options - What the task IS — `HumanTaskOptions`: the shared `HumanTaskDefinition`
-    #             (who may decide it via `userRoles`, required; title; description;
-    #             timeout) plus the `payload` only a workflow can state. Included, so each
-    #             field travels as a named argument and a future option is a new record
-    #             field rather than a new parameter
+    # + definition - What the task IS — `HumanTaskDefinition`: who may decide it
+    #                (`userRoles`, required), title, description, timeout, and the
+    #                `payloadType` this call's payload is checked against. Included, so each
+    #                field travels as a named argument and a future option is a new record
+    #                field rather than a new parameter. The result type comes from `T` on
+    #                this path; `resultType` is how an agent says the same thing
     # + return - The typed value submitted by the human, or a `HumanTaskError`: a
     #            `HumanTaskTimeoutError` if the deadline passed, a `HumanTaskRejectedError`
     #            if someone rejected the task (carrying their reason and details), or a
     #            `HumanTaskFailedError` if the task could not produce a result
     remote isolated function awaitHumanTask(
             string taskName,
+            map<json> payload,
             typedesc<anydata> T = <>,
             string? stepId = (),
-            *HumanTaskOptions options)
+            *HumanTaskDefinition definition)
             returns T|HumanTaskError = @java:Method {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
         name: "awaitHumanTask"

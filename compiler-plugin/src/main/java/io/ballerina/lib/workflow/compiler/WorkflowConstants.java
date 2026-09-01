@@ -95,6 +95,10 @@ public final class WorkflowConstants {
     public static final String ARG_USER_ROLES = "userRoles";
     /** {@code callActivity(retryPolicy = ...)}. */
     public static final String ARG_RETRY_POLICY = "retryPolicy";
+    /** {@code awaitHumanTask(payloadType = ...)} — the shape the task's payload is checked against. */
+    public static final String ARG_PAYLOAD_TYPE = "payloadType";
+    /** {@code awaitHumanTask(resultType = ...)} — the shape of a task's answer. */
+    public static final String ARG_RESULT_TYPE = "resultType";
     /** {@code callActivity(stepId = ...)} — the compiler-injected call-site identity. */
     public static final String ARG_STEP_ID = "stepId";
 

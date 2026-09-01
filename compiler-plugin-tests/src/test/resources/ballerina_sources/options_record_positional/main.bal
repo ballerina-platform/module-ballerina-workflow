@@ -39,11 +39,11 @@ function optionShapes(workflow:Context ctx, string id) returns error? {
         {retryPolicy});
 
     // Shape 2: the same door on awaitHumanTask, with an unknown field riding along.
-    ApprovalDecision first = check ctx->awaitHumanTask("firstReview", ApprovalDecision, (),
+    ApprovalDecision first = check ctx->awaitHumanTask("firstReview", {}, ApprovalDecision, (),
         {userRoles: "MANAGER", "futureOption": true});
 
     // Shape 3: the record alongside a chosen step id, which must be preserved verbatim.
-    ApprovalDecision second = check ctx->awaitHumanTask("secondReview", ApprovalDecision,
+    ApprovalDecision second = check ctx->awaitHumanTask("secondReview", {}, ApprovalDecision,
         "final-signoff", {userRoles: ["MANAGER", "AUDITOR"]});
 
     _ = posted.length() + audited.length() + (first.approved ? 1 : 0) + (second.approved ? 1 : 0);

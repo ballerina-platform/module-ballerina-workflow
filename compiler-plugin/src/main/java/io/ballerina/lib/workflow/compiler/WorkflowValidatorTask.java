@@ -471,6 +471,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                         .typeOf(remoteCall.expression());
                 if (receiverType.isPresent() && WorkflowPluginUtils.isContextType(receiverType.get())) {
                     checkStepId(WorkflowGraphBuilder.stepIdArgument(remoteCall));
+                    checkDeclaredTypes(remoteCall.arguments());
                 }
             }
             remoteCall.arguments().forEach(argument -> argument.accept(this));
@@ -490,6 +491,35 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                 }
             }
             methodCall.arguments().forEach(argument -> argument.accept(this));
+        }
+
+        /**
+         * A task's {@code payloadType} and {@code resultType} must be written as type
+         * references. They are published in the descriptor at build time, so a type computed
+         * per execution cannot be described — and they are what the task's payload and answer
+         * are checked against, which only means something if every execution of the task
+         * agrees on them.
+         */
+        private void checkDeclaredTypes(SeparatedNodeList<FunctionArgumentNode> args) {
+            for (String field : List.of(WorkflowConstants.ARG_PAYLOAD_TYPE, WorkflowConstants.ARG_RESULT_TYPE)) {
+                Node declared = WorkflowGraphBuilder.declaredFieldExpression(args, field);
+                if (declared != null && !isTypeReference(declared)) {
+                    report(declared.location(), WorkflowDiagnostic.WORKFLOW_162, field);
+                }
+            }
+        }
+
+        /** Whether an expression names a type rather than computing one. */
+        private boolean isTypeReference(Node expression) {
+            Optional<Symbol> symbol = context.semanticModel().symbol(expression);
+            if (symbol.isEmpty()) {
+                // An inline type descriptor (`record {| ... |}`) resolves to no symbol and is
+                // still a perfectly good compile-time type — only a computed value is not.
+                return expression instanceof TypeDescriptorNode;
+            }
+            SymbolKind kind = symbol.get().kind();
+            return kind == SymbolKind.TYPE_DEFINITION || kind == SymbolKind.TYPE
+                    || kind == SymbolKind.CLASS || kind == SymbolKind.ENUM;
         }
 
         private void checkStepId(Node argument) {

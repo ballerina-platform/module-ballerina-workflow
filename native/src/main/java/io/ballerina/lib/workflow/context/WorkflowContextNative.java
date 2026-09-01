@@ -794,24 +794,59 @@ public final class WorkflowContextNative {
      * @param typedesc     the expected result type descriptor (for dependent-typing and coercion)
      * @param stepId       the compiler-injected call-site identity, or nil — workflow
      *                     mechanics, so a parameter rather than an options field
-     * @param options      the {@code HumanTaskOptions} record — the shared
-     *                     {@code HumanTaskDefinition} (userRoles required, title, description,
-     *                     timeout) plus the {@code payload} only a workflow can state. Open, so
-     *                     unknown future fields simply ride along until a version understands them
-     * @return the coerced result value, or a {@code HumanTaskTimeoutError} BError
+     * @param payload      what the decider is shown — a required argument, checked here
+     *                     against the {@code payloadType} the definition declares
+     * @param definition   the {@code HumanTaskDefinition} record: userRoles (required), title,
+     *                     description, timeout, payloadType, resultType. Open, so unknown
+     *                     future fields simply ride along until a version understands them
+     * @return the coerced result value, a payload-shape error, or a
+     *         {@code HumanTaskTimeoutError} BError
      */
-    @SuppressWarnings("unchecked")
-    public static Object awaitHumanTask(BObject self, BString taskNameBStr,
-                                        BTypedesc typedesc, Object stepId, BMap<BString, Object> options) {
+    public static Object awaitHumanTask(BObject self, BString taskNameBStr, BMap<BString, Object> payload,
+                                        BTypedesc typedesc, Object stepId, BMap<BString, Object> definition) {
+        // The payload is checked before the task exists. A task whose form would be built
+        // from the wrong shape must never reach a person's inbox: they cannot tell a
+        // mis-shaped form from a badly designed one, and the workflow would be waiting on a
+        // decision about the wrong thing.
+        BError payloadError = validatePayloadShape(payload, definition, taskNameBStr.getValue());
+        if (payloadError != null) {
+            return payloadError;
+        }
         return awaitHumanTaskExploded(self, taskNameBStr,
-                options.get(StringUtils.fromString("userRoles")),
-                options.get(StringUtils.fromString("payload")) instanceof BMap<?, ?> payload
-                        ? (BMap<BString, Object>) payload : null,
-                options.get(StringUtils.fromString("title")),
-                options.get(StringUtils.fromString("description")),
-                options.get(StringUtils.fromString("timeout")),
+                definition.get(StringUtils.fromString("userRoles")),
+                payload,
+                definition.get(StringUtils.fromString("title")),
+                definition.get(StringUtils.fromString("description")),
+                definition.get(StringUtils.fromString("timeout")),
                 typedesc,
                 stepId);
+    }
+
+    /**
+     * Checks a payload against the {@code payloadType} its definition declares, returning the
+     * error to hand back or {@code null} when the shape holds. Shared by the workflow path
+     * (where the payload is an argument) and the agent path (where a model supplies it) —
+     * on the agent path this check is the only thing between a malformed model argument and
+     * a person's inbox, which is why it lives at task creation rather than at form render.
+     *
+     * @param payload    the payload supplied
+     * @param definition the {@code HumanTaskDefinition} declaring {@code payloadType}
+     * @param taskName   the task's name, for the message
+     * @return a {@code HumanTaskError} describing the mismatch, or null
+     */
+    static BError validatePayloadShape(BMap<BString, Object> payload, BMap<BString, Object> definition,
+                                       String taskName) {
+        Object declared = definition == null ? null : definition.get(StringUtils.fromString("payloadType"));
+        if (!(declared instanceof BTypedesc payloadType) || payload == null) {
+            return null;
+        }
+        Object converted = TypesUtil.validateAndConvert(payload, payloadType.getDescribingType());
+        if (converted instanceof BError mismatch) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "The payload for human task '" + taskName + "' does not match its declared payloadType ("
+                            + payloadType.getDescribingType() + "): " + mismatch.getMessage()));
+        }
+        return null;
     }
 
     /**

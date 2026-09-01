@@ -78,8 +78,7 @@ function cmdScalarInputWorkflow(Context ctx, string reference) returns string|er
 // Parks on a human task, so the task commands have something to act on.
 @Workflow
 function cmdHumanTaskWorkflow(Context ctx, CmdOrder request) returns CmdDecision|error {
-    CmdDecision decision = check ctx->awaitHumanTask("cmdApprove", userRoles = "APPROVER",
-            payload = {"reference": request.reference});
+    CmdDecision decision = check ctx->awaitHumanTask("cmdApprove", {"reference": request.reference}, userRoles = "APPROVER");
     return decision;
 }
 
@@ -88,8 +87,7 @@ function cmdHumanTaskWorkflow(Context ctx, CmdOrder request) returns CmdDecision
 // acknowledgement. Returning the detail as data keeps the assertions in the test.
 @Workflow
 function cmdRejectableWorkflow(Context ctx, CmdOrder request) returns map<json>|error {
-    CmdDecision|HumanTaskError decision = ctx->awaitHumanTask("cmdReject", userRoles = "APPROVER",
-            payload = {"reference": request.reference});
+    CmdDecision|HumanTaskError decision = ctx->awaitHumanTask("cmdReject", {"reference": request.reference}, userRoles = "APPROVER");
     if decision is HumanTaskRejectedError {
         HumanTaskRejectedDetail rejection = decision.detail();
         return {

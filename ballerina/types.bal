@@ -184,66 +184,91 @@ public type PendingAgentEvent record {|
 # the child completes.
 public type WorkflowBusyError distinct error;
 
-# What a human decision IS, wherever one appears: a workflow's human task, a durable
-# agent's human-task capability, and the review a gated activity raises. One record,
-# because they are one idea — someone with the right role is asked something and the
-# process waits for the answer.
+# What every human decision says, whoever is asked: who may answer it, and how it reads.
+# Shared because a workflow's human task, a durable agent's task capability and the review
+# a gated activity raises are one idea — someone with the right role is asked something and
+# the process waits for the answer.
 #
-# What is deliberately NOT here, and why: nothing that only one of those three can
-# supply.
+# This is the whole of a REVIEW's definition, which is why it carries the review's name: a
+# review's answer is the fixed three-way decision (proceed, proceed with edited input,
+# reject) and its payload is the reviewed activity's proposed input, so neither is declared.
+# A human task adds both — see `HumanTaskDefinition`.
 #
-# * The task's NAME. In a workflow it is `awaitHumanTask`'s first argument; in an agent
-#   it is the key of the `humanTasks` mapping; for a review it is derived from the
-#   activity being reviewed. In all three it is a compile-time constant *by
-#   construction*, which is worth more than a field that has to be validated to be one.
-# * The PAYLOAD shown to the decider, and the RESULT type — each supplied by exactly one
-#   of the three, so each lives on the record that context includes: `HumanTaskOptions`
-#   adds `payload` for a workflow, `HumanTaskConfig` adds `resultType` for an agent, and a
-#   review adds nothing (its payload is the activity's proposed input, its outcome is the
-#   fixed three-way decision). A field two of the three must leave empty teaches the wrong
-#   thing; an included record says the same thing without lying about what applies.
+# What is deliberately absent is the task's NAME: it is `awaitHumanTask`'s first argument,
+# the key of an agent's `humanTasks` mapping, or derived from the reviewed activity — a
+# compile-time constant BY CONSTRUCTION in all three, which is worth more than a field that
+# has to be validated to be one.
 #
 # Deliberately an OPEN record: forward compatibility is the point. A new option is a new
-# field here — never a new parameter and never a new type — so today's code keeps
-# compiling against tomorrow's module, and an option written for a newer module still
-# compiles against this one (it lands in the rest and is ignored until a version
-# understands it). People-assignment is expected to grow this way: `userRoles` names the
-# potential owners today, and richer WS-HumanTask-style assignments (actual owner,
-# business administrators, four-eye constraints) arrive as new fields. Tooling that
-# renders decision forms should derive its fields from this record rather than a fixed
-# list, so new options appear without a tooling release.
+# field here — never a new parameter and never a new type — so today's code keeps compiling
+# against tomorrow's module, and an option written for a newer module still compiles against
+# this one. People-assignment is expected to grow this way: `userRoles` names the potential
+# owners today, and richer WS-HumanTask-style assignments (actual owner, business
+# administrators, four-eye constraints) arrive as new fields. Tooling that renders decision
+# forms should derive its fields from this record rather than a fixed list.
 #
-# + userRoles - One or more roles permitted to answer this decision (its potential
-#               owners). Required: a decision must say who may make it
-# + title - Short summary shown in the inbox. Defaults to the task name, or for a review
-#           to a phrase naming the activity being reviewed
+# + userRoles - One or more roles permitted to answer this decision (its potential owners).
+#               Required: a decision must say who may make it
+# + title - Short summary shown in the inbox. Defaults to the task name, or for a review to
+#           a phrase naming the activity being reviewed
 # + description - Additional context shown alongside the form or decision. Optional
 # + timeout - Maximum time to wait. Omit (or pass `()`) to wait indefinitely
-public type HumanTaskDefinition record {
+# Any JSON object — the shape a human task's payload has when its definition names no
+# narrower one. A named type because a typedesc value must be written as a type
+# reference: `payloadType = map<json>` is not an expression Ballerina accepts.
+public type JsonObject map<json>;
+
+public type ReviewTaskDefinition record {
     string|string[] userRoles;
     string? title = ();
     string? description = ();
     Duration? timeout = ();
 };
 
-# A workflow's human task: the shared definition, plus the one thing only a workflow can
-# state. An agent's task payload comes from the agent's own arguments at the moment it
-# asks, and a review's is the activity's proposed input — neither can be written down in
-# advance, which is why `payload` lives here rather than in `HumanTaskDefinition`.
+# What a human TASK is: every decision's fields, plus the two types that make the task
+# checkable at its edges — what it shows the decider, and what it accepts back.
 #
-# + payload - Read-only JSON object rendered as key-value pairs next to the form, so the
-#             decider can see what they are deciding about
-public type HumanTaskOptions record {
-    *HumanTaskDefinition;
-    map<json> payload = {};
+# A review needs neither (see `ReviewTaskDefinition`): its payload is the reviewed
+# activity's proposed input and its answer is the fixed three-way decision. A task needs
+# both, because a task shows a form and takes a typed result.
+#
+# The two types are used differently by the two callers, and both uses are checked:
+#
+# * A workflow passes the payload VALUE as `awaitHumanTask`'s second argument, and the
+#   runtime checks it against `payloadType` before the task is created — a task that
+#   would show the wrong form never reaches a person. The RESULT type comes from the
+#   call's `T` typedesc, which is what makes the call dependently typed; `resultType`
+#   is the agent's way of saying the same thing and is not read on this path.
+# * An agent declares both, because it has no parameter list: the model supplies the
+#   payload when it asks, so `payloadType` is the only thing standing between a
+#   malformed model argument and a person's inbox, and creation fails when they disagree.
+#
+# + payloadType - The shape of the payload shown to the decider. Checked against the
+#                 payload actually supplied, whoever supplies it
+# + resultType - The shape of the answer. Drives form schema generation and validation for
+#                an agent's task; a workflow states it as the call's `T` instead
+public type HumanTaskDefinition record {
+    *ReviewTaskDefinition;
+    typedesc<map<json>> payloadType = JsonObject;
+    typedesc<anydata> resultType = anydata;
 };
 
-# Deprecated name of `HumanTaskDefinition` in a `retryPolicy`.
+# Deprecated name of `HumanTaskDefinition`.
 #
 # # Deprecated
-# Use `HumanTaskDefinition`: a review is declared exactly as a human task is.
+# Use `HumanTaskDefinition`. The payload VALUE is now `awaitHumanTask`'s second argument —
+# required, so a task with nothing to show says so with `{}` rather than by omission — and
+# its shape is declared here as `payloadType`.
 @deprecated
-public type HumanReview HumanTaskDefinition;
+public type HumanTaskOptions HumanTaskDefinition;
+
+# Deprecated name of `ReviewTaskDefinition`.
+#
+# # Deprecated
+# Use `ReviewTaskDefinition`: a review is declared with every field a human task is
+# declared with, minus the two a review cannot have.
+@deprecated
+public type HumanReview ReviewTaskDefinition;
 
 # How a `Context.callActivity` invocation behaves, passed as an included record
 # parameter. Like `HumanTaskOptions`, deliberately an OPEN record so a future behaviour
@@ -253,12 +278,12 @@ public type HumanReview HumanTaskDefinition;
 # behaviour, and stays a function parameter on every context operation.
 #
 # + retryPolicy - Failure behaviour: `NoAutomaticRetry` (fail the workflow),
-#                 `AutoRetry` (durable backoff retries), or a `HumanTaskDefinition`
+#                 `AutoRetry` (durable backoff retries), or a `ReviewTaskDefinition`
 #                 (raise a review on failure so a person decides to rerun, rerun with
 #                 edited input, or fail). The two record forms are told apart by
 #                 `userRoles`, which only a decision has
 public type CallActivityOptions record {
-    AutoRetry|HumanTaskDefinition|NoAutomaticRetry retryPolicy = NoAutomaticRetry;
+    AutoRetry|ReviewTaskDefinition|NoAutomaticRetry retryPolicy = NoAutomaticRetry;
 };
 
 # A time duration, structurally identical to `time:Duration`. Declared in this module so

@@ -34,7 +34,7 @@ final workflow:DurableAgent computedAgent = check new ({
         replies: {request: string, response: string}
     },
     humanTasks: {
-        [taskName]: {roles: "manager"}
+        [taskName]: {userRoles: "manager"}
     },
     peers: [
         {agent: helperAgent, name: "askHelper", 'wait: false, callbackChannel: "answers"}

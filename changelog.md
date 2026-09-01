@@ -8,7 +8,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
-- **One record now says what a human decision IS, wherever one appears: `HumanTaskDefinition`.**
+- **Two records now say what a human decision is, and they are the same record plus what
+  only a task needs.** `ReviewTaskDefinition` — `{userRoles, title, description, timeout}` —
+  is what every decision says: who may answer it and how it reads. It is the whole of a
+  review's declaration, because a review's answer is the fixed three-way decision and its
+  payload is the reviewed activity's input, so neither is declared.
+  `HumanTaskDefinition` includes it and adds the two types that make a task checkable at its
+  edges: `payloadType` (what it shows) and `resultType` (what it accepts back). An agent's
+  `HumanTaskConfig` is now exactly `HumanTaskDefinition` — nothing left to add.
+
+- **A human task's payload is an argument now, and a required one.**
+  `awaitHumanTask(taskName, payload, T = <>, stepId = (), *HumanTaskDefinition)`. A task with
+  nothing to show says so with `{}` rather than by omission, and the runtime checks the
+  payload against the declared `payloadType` *before the task is created* — a task whose
+  form would be built from the wrong shape never reaches a person, who could not tell a
+  mis-shaped form from a badly designed one. The same check runs for an agent's task, where
+  the model supplies the payload and it is the only thing between a malformed argument and
+  someone's inbox. **`payloadType` and `resultType` must name a type** (`WORKFLOW_162`):
+  they are published in the descriptor at build time, and they only mean something as a
+  check if every execution of the task agrees on them.
+
+  Note for callers passing the step id positionally: a task's step id is now the FOURTH
+  argument, since the payload precedes it.
+
+- **What the earlier unification said, still true:**
   A workflow's human task, a durable agent's task capability and the review a gated activity
   raises were three different shapes for one idea — and the review's was not even a record,
   just bare role names (`retryPolicy = "OPS"`), so the only thing you could say about it was

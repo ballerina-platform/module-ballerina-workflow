@@ -125,8 +125,7 @@ function processOrder(workflow:Context ctx, OrderInput input) returns OrderResul
         // awaitHumanTask creates a child workflow and durably pauses here
         // until a manager submits a decision via the task inbox or HTTP API.
         io:println(string `[Workflow] Creating approval task for order ${input.orderId}`);
-        ApprovalDecision decision = check ctx->awaitHumanTask("approveOrder", userRoles = "MANAGER",
-                payload = {orderId: input.orderId, item: input.item, amount: input.amount.toString()},
+        ApprovalDecision decision = check ctx->awaitHumanTask("approveOrder", {orderId: input.orderId, item: input.item, amount: input.amount.toString()}, userRoles = "MANAGER",
                 title = string `Approve ${input.item} for $${input.amount}`);
         io:println(string `[Workflow] Decision received: approved=${decision.approved}`);
 

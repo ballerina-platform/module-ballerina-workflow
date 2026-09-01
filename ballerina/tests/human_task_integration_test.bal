@@ -43,8 +43,7 @@ type HtDecision record {|
 // Workflow that waits for a human decision typed as a (non-nilable) record.
 @Workflow
 function htRecordWorkflow(Context ctx, string orderId) returns HtDecision|error {
-    HtDecision decision = check ctx->awaitHumanTask("htApproveOrder", userRoles = "APPROVER",
-            payload = {"orderId": orderId});
+    HtDecision decision = check ctx->awaitHumanTask("htApproveOrder", {"orderId": orderId}, userRoles = "APPROVER");
     return decision;
 }
 
@@ -55,17 +54,15 @@ function htRecordWorkflow(Context ctx, string orderId) returns HtDecision|error 
 // nothing until a version understands it.
 @Workflow
 function htFutureOptionWorkflow(Context ctx, string orderId) returns HtDecision|error {
-    HtDecision decision = check ctx->awaitHumanTask("htApproveFuture", HtDecision, (),
-            {userRoles: "APPROVER", payload: {"orderId": orderId},
-                "futureOption": "understood-by-a-later-version"});
+    HtDecision decision = check ctx->awaitHumanTask("htApproveFuture", {"orderId": orderId}, HtDecision, (),
+            {userRoles: "APPROVER", "futureOption": "understood-by-a-later-version"});
     return decision;
 }
 
 // Workflow whose human decision is nilable, so an empty completion is valid.
 @Workflow
 function htNilableWorkflow(Context ctx, string orderId) returns HtDecision?|error {
-    HtDecision? decision = check ctx->awaitHumanTask("htApproveOptional", userRoles = "APPROVER",
-            payload = {"orderId": orderId});
+    HtDecision? decision = check ctx->awaitHumanTask("htApproveOptional", {"orderId": orderId}, userRoles = "APPROVER");
     return decision;
 }
 

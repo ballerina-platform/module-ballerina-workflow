@@ -39,5 +39,5 @@ final workflow:DurableAgent expenseAgent = check new ({
     // The mapping form on purpose: the descriptor must read the primary declaration
     // style, or the agent map loses its whole inbound column.
     events: {billSubmitted: {request: string}},
-    humanTasks: {approveExpense: {roles: "MANAGER", resultType: ApprovalDecision}}
+    humanTasks: {approveExpense: {userRoles: "MANAGER", resultType: ApprovalDecision}}
 });

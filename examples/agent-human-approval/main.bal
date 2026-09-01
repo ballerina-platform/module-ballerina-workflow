@@ -61,7 +61,7 @@ final workflow:DurableAgent orderAgent = check new ({
     },
     humanTasks: {
         approveExpedite: {
-            roles: "MANAGER",
+            userRoles: "MANAGER",
             resultType: ExpediteApproval,
             title: "Approve expedited shipping",
             description: "Requests a manager's approval to expedite the order's shipping. "

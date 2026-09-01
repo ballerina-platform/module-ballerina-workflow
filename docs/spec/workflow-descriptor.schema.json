@@ -513,13 +513,12 @@
                 "type": "integer"
               },
               "metadata": {
-                "description": "Extra facts about the node, by kind. For a REVIEW: `reviewedStepId` (the step this review belongs to), `trigger` (ON_FAILURE or PRE_RUN), and whichever of `userRoles`, `taskName`, `title` and `description` the declaration stated literally — a value computed at run time cannot be drawn, and its absence is not a claim that none applies.",
+                "description": "Extra facts about the node, by kind. For a REVIEW: `reviewedStepId` (the step this review belongs to), `trigger` (ON_FAILURE or PRE_RUN), and whichever of `userRoles`, `title` and `description` the declaration stated literally — a value computed at run time cannot be drawn, and its absence is not a claim that none applies.",
                 "type": "object",
                 "properties": {
                   "reviewedStepId": {"type": "string"},
                   "trigger": {"enum": ["ON_FAILURE", "PRE_RUN"]},
                   "userRoles": {"type": "array", "items": {"type": "string"}},
-                  "taskName": {"type": "string"},
                   "title": {"type": "string"},
                   "description": {"type": "string"}
                 }

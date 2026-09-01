@@ -121,25 +121,24 @@ public type ToolDecl record {|
 # One human task capability of a durable agent, declared in the mapping form of
 # `humanTasks` where the mapping key is the task name — constant by construction.
 #
-# + roles - Role(s) permitted to complete the task
+# The shared `HumanTaskDefinition` says what the task IS; this adds the one thing only an
+# agent has nowhere else to put. A workflow's task carries its result type in
+# `awaitHumanTask`'s `T` parameter, which is what makes that call dependently typed; an
+# agent's task is a declaration in a mapping, with no parameter list to carry it.
+#
 # + resultType - Expected result type; drives form schema generation and validation
-# + title - Short summary shown in the inbox; defaults to the task name
-# + description - Additional context shown alongside the form
-# + timeout - Maximum time to wait for completion; omit to wait indefinitely
-public type HumanTaskConfig record {|
-    string|string[] roles;
+# + roles - Deprecated spelling of `userRoles`, kept for existing declarations
+public type HumanTaskConfig record {
+    *HumanTaskDefinition;
     typedesc<anydata> resultType = anydata;
-    string title?;
-    string description?;
-    Duration timeout?;
-|};
+};
 
 # A named human task capability of a durable agent — the array form of
 # `humanTasks`, kept for existing declarations.
 #
 # # Deprecated
 # Declare tasks in the mapping form instead, keyed by name:
-# `humanTasks: {signoff: {roles: "manager"}}`. The mapping key is a compile-time
+# `humanTasks: {signoff: {userRoles: "manager"}}`. The mapping key is a compile-time
 # constant by construction, which the `name` field has to be validated to be.
 #
 # + name - The task name (unique across all of the agent's capabilities)
@@ -192,7 +191,7 @@ public type PeerDecl record {|
 #           `ToolDecl` when gating is needed
 # + events - Event channels keyed by channel name (`{chat: {request: string,
 #            response: string}}`); the array form (`EventDecl[]`) is deprecated
-# + humanTasks - Human task capabilities keyed by task name (`{signoff: {roles:
+# + humanTasks - Human task capabilities keyed by task name (`{signoff: {userRoles:
 #                "manager"}}`); the array form (`HumanTaskDecl[]`) is deprecated.
 #                Capability names share one namespace across activities, tools,
 #                events, human tasks, and peers: a name claimed twice is rejected

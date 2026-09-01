@@ -1334,9 +1334,7 @@ public final class AgentContextNative {
                 // honoured here as it is on a workflow's own callActivity — its roles used to
                 // be dropped on this path, so an agent tool's review was answerable by anyone.
                 Map<String, Object> decision = WorkflowContextNative.startReviewActivity(
-                        "ON_FAILURE",
-                        reviewPolicy.taskName() != null ? reviewPolicy.taskName()
-                                : ActivityNaming.reviewTaskNameFor(workflowType, activityName),
+                        "ON_FAILURE", ActivityNaming.reviewTaskNameFor(workflowType, activityName),
                         fullActivityName, currentArgs, errorMsg, reviewPolicy.userRoles(),
                         reviewPolicy.timeoutMillis(), stepId,
                         reviewPolicy.title(), reviewPolicy.description());

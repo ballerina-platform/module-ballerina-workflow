@@ -177,9 +177,10 @@ public client class Context {
     # + stepId - Identity of this step within the workflow, as for `callActivity`: name it
     #            to follow this task across edits, or omit it for a generated
     #            `<taskName>#<ordinal>`
-    # + options - Everything the task IS — who may decide it (`userRoles`, required),
-    #             payload, title, description, timeout — as an included record: each
-    #             travels as a named argument, and a future option is a new record
+    # + options - What the task IS — `HumanTaskOptions`: the shared `HumanTaskDefinition`
+    #             (who may decide it via `userRoles`, required; title; description;
+    #             timeout) plus the `payload` only a workflow can state. Included, so each
+    #             field travels as a named argument and a future option is a new record
     #             field rather than a new parameter
     # + return - The typed value submitted by the human, or a `HumanTaskError`: a
     #            `HumanTaskTimeoutError` if the deadline passed, a `HumanTaskRejectedError`

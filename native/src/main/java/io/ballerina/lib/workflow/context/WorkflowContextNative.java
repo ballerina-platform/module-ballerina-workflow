@@ -211,13 +211,11 @@ public final class WorkflowContextNative {
      * the short form ({@code {userRoles: "OPS"}}) worth writing.
      *
      * @param userRoles     roles permitted to answer the review (empty means any role)
-     * @param taskName      the name the review is listed under, or null to derive it
      * @param title         inbox summary, or null to derive it
      * @param description   context shown with the decision, or null to derive it
      * @param timeoutMillis how long to wait for a decision, or null to wait indefinitely
      */
-    record ReviewDeclaration(String[] userRoles, String taskName, String title, String description,
-                             Long timeoutMillis) {
+    record ReviewDeclaration(String[] userRoles, String title, String description, Long timeoutMillis) {
     }
 
     /**
@@ -239,7 +237,6 @@ public final class WorkflowContextNative {
         Object timeout = policy.get(StringUtils.fromString("timeout"));
         return new ReviewDeclaration(
                 rolesOf(roles),
-                stringFieldOf(policy, "taskName"),
                 stringFieldOf(policy, "title"),
                 stringFieldOf(policy, "description"),
                 timeout instanceof BMap<?, ?> duration
@@ -509,12 +506,14 @@ public final class WorkflowContextNative {
                                                                  Map<String, Object> activityArgs,
                                                                  String errorMessage, ReviewDeclaration review,
                                                                  String stepId) {
-        // Everything the declaration left out is derived from the activity being reviewed:
-        // the qualified review name, and (inside startReviewActivity) the title and the
-        // description of what failed and what can be decided about it.
-        String taskName = review.taskName() != null ? review.taskName()
-                : ActivityNaming.reviewTaskNameFor(workflowType, simpleActivityName);
-        return startReviewActivity("ON_FAILURE", taskName, activityType, activityArgs, errorMessage,
+        // The review's NAME is derived from the activity being reviewed, always — like a
+        // workflow task's name is its call's first argument and an agent task's is its
+        // mapping key, it is a compile-time constant by construction rather than a field
+        // that has to be validated to be one. The title and description below are derived
+        // too when the declaration stated none.
+        return startReviewActivity("ON_FAILURE",
+                ActivityNaming.reviewTaskNameFor(workflowType, simpleActivityName),
+                activityType, activityArgs, errorMessage,
                 review.userRoles(), review.timeoutMillis(), stepId, review.title(), review.description());
     }
 
@@ -795,9 +794,10 @@ public final class WorkflowContextNative {
      * @param typedesc     the expected result type descriptor (for dependent-typing and coercion)
      * @param stepId       the compiler-injected call-site identity, or nil — workflow
      *                     mechanics, so a parameter rather than an options field
-     * @param options      the {@code HumanTaskOptions} record: userRoles (required), payload,
-     *                     title, description, timeout — an open record, so unknown future
-     *                     fields simply ride along until a version understands them
+     * @param options      the {@code HumanTaskOptions} record — the shared
+     *                     {@code HumanTaskDefinition} (userRoles required, title, description,
+     *                     timeout) plus the {@code payload} only a workflow can state. Open, so
+     *                     unknown future fields simply ride along until a version understands them
      * @return the coerced result value, or a {@code HumanTaskTimeoutError} BError
      */
     @SuppressWarnings("unchecked")

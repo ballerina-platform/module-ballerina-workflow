@@ -1150,7 +1150,9 @@ isolated function registerDeclaredHumanTask(handle agentCtx, DurableAgentHumanTa
     Duration? timeout = ();
     json meta = taskSpec.meta;
     if meta is map<json> {
-        json rolesJson = meta["roles"];
+        // `userRoles` is the one spelling across a workflow's task, an agent's task and a
+        // review; `roles` is the pre-unification name of the same thing.
+        json rolesJson = meta["userRoles"] is () ? meta["roles"] : meta["userRoles"];
         if rolesJson is string {
             roles = rolesJson;
         } else if rolesJson is json[] {

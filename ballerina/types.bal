@@ -71,46 +71,6 @@ public type AutoRetry record {|
     decimal maxRetryDelay?;
 |};
 
-# Human-review retry policy: what the review a failing activity raises IS.
-#
-# Passing this as an activity's `retryPolicy` creates a review task when the activity
-# fails, so a matching human can decide to rerun it, rerun it with edited input, or fail
-# it permanently. A review is NOT a human task — a task is completed with a result,
-# while a review answers one of three fixed outcomes — but everything about *who decides
-# it and how it reads* is declared exactly as a human task's is, with the same field
-# names and the same open-record shape (see `HumanTaskOptions`). One way to describe
-# people-work across the system, and one form for tooling to render.
-#
-# Deliberately an OPEN record, for the same reason `HumanTaskOptions` is: a new option is
-# a new field here, never a new type, so today's code keeps compiling against tomorrow's
-# module and an option written for a newer module still compiles against this one.
-#
-# Every field but `userRoles` is optional and defaults to a value derived from the
-# activity being reviewed, which is what makes the short form worth keeping:
-#
-# ```ballerina
-# check ctx->callActivity(postToLedger, args, PostingResult, (),
-#         {retryPolicy: {userRoles: "OPS"}});
-# ```
-#
-# + userRoles - One or more roles permitted to decide this review. Required: a review
-#               must say who may answer it
-# + taskName - The name the review is listed under. Defaults to the reviewed activity's
-#              qualified name (`<workflow>.<activity>`)
-# + title - Short summary shown in the inbox. Defaults to a phrase naming the reviewed
-#           activity and why it is being reviewed
-# + description - Additional context shown alongside the decision. Defaults to a
-#                 description of the failure (or of the pending call) and the outcomes
-#                 available
-# + timeout - Maximum time to wait for a decision. Omit (or pass `()`) to wait
-#             indefinitely
-public type HumanReview record {
-    string|string[] userRoles;
-    string? taskName = ();
-    string? title = ();
-    string? description = ();
-    Duration? timeout = ();
-};
 
 # Options for activity execution via `callActivity`.
 #
@@ -224,35 +184,66 @@ public type PendingAgentEvent record {|
 # the child completes.
 public type WorkflowBusyError distinct error;
 
-# Everything a human task is, beyond its name and result type. Passed to
-# `Context.awaitHumanTask` as an included record parameter, so each field travels as a
-# plain named argument (`userRoles = "MANAGER"`, `title = "..."`).
+# What a human decision IS, wherever one appears: a workflow's human task, a durable
+# agent's human-task capability, and the review a gated activity raises. One record,
+# because they are one idea — someone with the right role is asked something and the
+# process waits for the answer.
+#
+# What is deliberately NOT here, and why: nothing that only one of those three can
+# supply.
+#
+# * The task's NAME. In a workflow it is `awaitHumanTask`'s first argument; in an agent
+#   it is the key of the `humanTasks` mapping; for a review it is derived from the
+#   activity being reviewed. In all three it is a compile-time constant *by
+#   construction*, which is worth more than a field that has to be validated to be one.
+# * The PAYLOAD shown to the decider, and the RESULT type — each supplied by exactly one
+#   of the three, so each lives on the record that context includes: `HumanTaskOptions`
+#   adds `payload` for a workflow, `HumanTaskConfig` adds `resultType` for an agent, and a
+#   review adds nothing (its payload is the activity's proposed input, its outcome is the
+#   fixed three-way decision). A field two of the three must leave empty teaches the wrong
+#   thing; an included record says the same thing without lying about what applies.
 #
 # Deliberately an OPEN record: forward compatibility is the point. A new option is a new
-# field here — never a new parameter — so today's code keeps compiling against tomorrow's
-# module, and an option written for a newer module still compiles against this one, as a
-# member of the options record literal (it lands in the rest and is ignored until a
-# version understands it). People-assignment is expected to grow this way: `userRoles`
-# names the task's potential owners today, and richer WS-HumanTask-style assignments
-# (actual owner, business administrators, four-eye constraints) arrive as new fields.
-# The step identity (`stepId`) is deliberately NOT a field: it is workflow mechanics,
-# not part of what the task is, and stays a function parameter as on `callActivity`.
-# Tooling that renders task forms should derive its fields from this record rather than
-# a fixed list, so new options appear without a tooling release.
+# field here — never a new parameter and never a new type — so today's code keeps
+# compiling against tomorrow's module, and an option written for a newer module still
+# compiles against this one (it lands in the rest and is ignored until a version
+# understands it). People-assignment is expected to grow this way: `userRoles` names the
+# potential owners today, and richer WS-HumanTask-style assignments (actual owner,
+# business administrators, four-eye constraints) arrive as new fields. Tooling that
+# renders decision forms should derive its fields from this record rather than a fixed
+# list, so new options appear without a tooling release.
 #
-# + userRoles - One or more roles permitted to complete this task (its potential owners).
-#               Required: a task must say who may decide it
-# + payload - Read-only JSON object rendered as key-value pairs next to the form
-# + title - Short summary shown in the inbox. Defaults to the task name when omitted
-# + description - Additional context shown alongside the form. Optional
+# + userRoles - One or more roles permitted to answer this decision (its potential
+#               owners). Required: a decision must say who may make it
+# + title - Short summary shown in the inbox. Defaults to the task name, or for a review
+#           to a phrase naming the activity being reviewed
+# + description - Additional context shown alongside the form or decision. Optional
 # + timeout - Maximum time to wait. Omit (or pass `()`) to wait indefinitely
-public type HumanTaskOptions record {
+public type HumanTaskDefinition record {
     string|string[] userRoles;
-    map<json> payload = {};
     string? title = ();
     string? description = ();
     Duration? timeout = ();
 };
+
+# A workflow's human task: the shared definition, plus the one thing only a workflow can
+# state. An agent's task payload comes from the agent's own arguments at the moment it
+# asks, and a review's is the activity's proposed input — neither can be written down in
+# advance, which is why `payload` lives here rather than in `HumanTaskDefinition`.
+#
+# + payload - Read-only JSON object rendered as key-value pairs next to the form, so the
+#             decider can see what they are deciding about
+public type HumanTaskOptions record {
+    *HumanTaskDefinition;
+    map<json> payload = {};
+};
+
+# Deprecated name of `HumanTaskDefinition` in a `retryPolicy`.
+#
+# # Deprecated
+# Use `HumanTaskDefinition`: a review is declared exactly as a human task is.
+@deprecated
+public type HumanReview HumanTaskDefinition;
 
 # How a `Context.callActivity` invocation behaves, passed as an included record
 # parameter. Like `HumanTaskOptions`, deliberately an OPEN record so a future behaviour
@@ -262,12 +253,12 @@ public type HumanTaskOptions record {
 # behaviour, and stays a function parameter on every context operation.
 #
 # + retryPolicy - Failure behaviour: `NoAutomaticRetry` (fail the workflow),
-#                 `AutoRetry` (durable backoff retries), or `HumanReview` (create a
-#                 review activity on failure so a person decides to rerun or fail).
-#                 The two record forms are told apart by `userRoles`, which only a
-#                 `HumanReview` has
+#                 `AutoRetry` (durable backoff retries), or a `HumanTaskDefinition`
+#                 (raise a review on failure so a person decides to rerun, rerun with
+#                 edited input, or fail). The two record forms are told apart by
+#                 `userRoles`, which only a decision has
 public type CallActivityOptions record {
-    AutoRetry|HumanReview|NoAutomaticRetry retryPolicy = NoAutomaticRetry;
+    AutoRetry|HumanTaskDefinition|NoAutomaticRetry retryPolicy = NoAutomaticRetry;
 };
 
 # A time duration, structurally identical to `time:Duration`. Declared in this module so

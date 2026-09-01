@@ -288,7 +288,10 @@ public final class WorkflowGraphBuilder {
                         declared.put(WorkflowConstants.ARG_USER_ROLES, roles);
                     }
                 }
-                case "taskName", "title", "description" -> {
+                // No taskName: a review's name is derived from the activity it reviews, the
+                // way a workflow task's is its call's first argument and an agent task's is
+                // its mapping key — constant by construction in all three.
+                case "title", "description" -> {
                     String text = WorkflowDescriptorBuilder.constantStringValue(value);
                     if (text != null) {
                         declared.put(key, text);

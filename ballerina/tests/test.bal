@@ -824,44 +824,43 @@ function testActivityInvocationsOnSingleFailNoRetry() returns error? {
 function testHumanReviewDeclaresTheReviewLikeAHumanTask() {
     // A review is declared the way a human task is: one record, `userRoles` required,
     // everything else optional and derived from the reviewed activity when omitted.
-    HumanReview single = {userRoles: "manager"};
+    HumanTaskDefinition single = {userRoles: "manager"};
     test:assertEquals(single.userRoles, "manager");
-    test:assertTrue(single.taskName is (), "taskName defaults to the derived name");
     test:assertTrue(single.title is (), "title defaults to the derived phrase");
     test:assertTrue(single.description is (), "description defaults to the derived text");
     test:assertTrue(single.timeout is (), "no timeout means wait indefinitely");
 
-    HumanReview many = {userRoles: ["finance", "manager"]};
+    HumanTaskDefinition many = {userRoles: ["finance", "manager"]};
     test:assertEquals(many.userRoles, <string[]>["finance", "manager"]);
 
-    HumanReview full = {
+    HumanTaskDefinition full = {
         userRoles: "manager",
-        taskName: "ledgerReview",
         title: "Ledger posting needs a look",
         description: "The ledger rejected the posting.",
         timeout: {hours: 4}
     };
-    test:assertEquals(full.taskName, "ledgerReview");
     test:assertEquals(full.title, "Ledger posting needs a look");
+    test:assertEquals(full.description, "The ledger rejected the posting.");
 }
 
 @test:Config {groups: ["unit"]}
 function testHumanReviewIsOpenForFutureOptions() {
     // Open, for the same reason HumanTaskOptions is: an option written for a newer
     // module rides along in the rest rather than failing to compile.
-    HumanReview review = {userRoles: "manager", "escalateAfter": "P1D"};
+    HumanTaskDefinition review = {userRoles: "manager", "escalateAfter": "P1D"};
     test:assertEquals(review["escalateAfter"], "P1D");
 }
 
 @test:Config {groups: ["unit"]}
 function testRetryPolicyMembersAreDistinguishable() {
     // Both records; `userRoles` is what tells them apart, at compile time and at run time.
-    AutoRetry|HumanReview|NoAutomaticRetry policy = <HumanReview>{userRoles: "manager"};
-    test:assertTrue(policy is HumanReview, "a policy naming roles is a review");
+    AutoRetry|HumanTaskDefinition|NoAutomaticRetry policy = <HumanTaskDefinition>{userRoles: "manager"};
+    test:assertTrue(policy is HumanTaskDefinition, "a policy naming roles is a review");
     test:assertFalse(policy is AutoRetry, "and is not an automatic retry");
     policy = <AutoRetry>{maxRetries: 2};
     test:assertTrue(policy is AutoRetry);
-    test:assertFalse(policy is HumanReview, "an AutoRetry has no userRoles, so it is no review");
+    test:assertFalse(policy is HumanTaskDefinition,
+            "an AutoRetry has no userRoles, so it is no decision");
 }
 
 @test:Config {groups: ["unit"]}
@@ -887,7 +886,7 @@ function testAutoRetryCustomValues() {
 function testNoRetryIsUnit() {
     // NoRetry is the () constant — passing it as the retryPolicy union member
     // should be indistinguishable from omitting the parameter.
-    AutoRetry|HumanReview|NoRetry policy = NoRetry;
+    AutoRetry|HumanTaskDefinition|NoRetry policy = NoRetry;
     test:assertTrue(policy is (), "NoRetry should be unit type ()");
 }
 
@@ -927,7 +926,6 @@ function workflowWithDescribedReview(Context ctx, string orderId) returns string
     string result = check ctx->callActivity(failingActivityForRetry, {"orderId": orderId},
             retryPolicy = {
                 userRoles: ["finance", "manager"],
-                taskName: "ledgerPostingReview",
                 title: "Ledger posting needs a decision",
                 description: "The ledger rejected this posting. Rerun it, edit the input, or fail it."
             });
@@ -991,8 +989,8 @@ function testDeclaredReviewWordingReachesTheTask() returns error? {
         return;
     }
     management:ReviewActivitySummary task = pendingTasks[0];
-    test:assertTrue(task.taskName.includes("ledgerPostingReview"),
-            "The declared task name is what the review is listed under, got: " + task.taskName);
+    test:assertTrue(task.taskName.includes("failingActivityForRetry"),
+            "A review's name is always derived from the activity, got: " + task.taskName);
     test:assertEquals(task.title, "Ledger posting needs a decision",
             "The declared title is what the inbox shows");
     test:assertEquals(task.userRoles, <string[]>["finance", "manager"],

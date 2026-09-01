@@ -453,7 +453,7 @@
                 "type": "string"
               },
               "kind": {
-                "description": "What the node is. Workflow graphs use the step and control-flow kinds; agent graphs use AGENT, MODEL, TOOL, HUMAN_TASK and EVENT. An EXIT is an early exit inside an arm — a return, fail or panic, named by `mode` — terminal (no outgoing edge) and never present in an execution, so a consumer may attribute a run to one only when it is the single exit consistent with the observed last step. A CODE node is a maximal run of consecutive non-durable statements, collapsed to one display-only node labelled by its statement count ('4 statements') so the diagram reads like the source; it carries no runtime meaning and never appears in an execution. A construct with nothing at all below it is not described, and its ordinal is not reused — a gap in ordinals is deliberate, so emitted ordinals must not be assumed dense.",
+                "description": "What the node is. Workflow graphs use the step and control-flow kinds; agent graphs use AGENT, MODEL, TOOL, HUMAN_TASK and EVENT. An EXIT is an early exit inside an arm — a return, fail or panic, named by `mode` — terminal (no outgoing edge) and never present in an execution, so a consumer may attribute a run to one only when it is the single exit consistent with the observed last step. A CODE node is a maximal run of consecutive non-durable statements, collapsed to one display-only node labelled by its statement count ('4 statements') so the diagram reads like the source; it carries no runtime meaning and never appears in an execution. A REVIEW is the human decision a gated step raises rather than a step control flows through: it hangs off the step by an edge labelled 'on failure' or 'before run', is never any step's predecessor, and on the happy path never happens — its `stepId` is the reviewed step's plus '#review', and its `metadata` says what it reviews and who may answer it. A construct with nothing at all below it is not described, and its ordinal is not reused — a gap in ordinals is deliberate, so emitted ordinals must not be assumed dense.",
                 "enum": [
                   "ACTIVITY",
                   "HUMAN_TASK",
@@ -468,7 +468,8 @@
                   "AGENT",
                   "MODEL",
                   "TOOL",
-                  "EVENT"
+                  "EVENT",
+                  "REVIEW"
                 ]
               },
               "target": {
@@ -510,6 +511,18 @@
               "column": {
                 "description": "One-based source column of the step.",
                 "type": "integer"
+              },
+              "metadata": {
+                "description": "Extra facts about the node, by kind. For a REVIEW: `reviewedStepId` (the step this review belongs to), `trigger` (ON_FAILURE or PRE_RUN), and whichever of `userRoles`, `taskName`, `title` and `description` the declaration stated literally — a value computed at run time cannot be drawn, and its absence is not a claim that none applies.",
+                "type": "object",
+                "properties": {
+                  "reviewedStepId": {"type": "string"},
+                  "trigger": {"enum": ["ON_FAILURE", "PRE_RUN"]},
+                  "userRoles": {"type": "array", "items": {"type": "string"}},
+                  "taskName": {"type": "string"},
+                  "title": {"type": "string"},
+                  "description": {"type": "string"}
+                }
               }
             }
           }

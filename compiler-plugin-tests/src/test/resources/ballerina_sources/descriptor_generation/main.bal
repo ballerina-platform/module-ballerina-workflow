@@ -25,7 +25,7 @@ function expenseApproval(workflow:Context ctx, ExpenseRequest expense) returns e
     ApprovalDecision decision = check ctx->awaitHumanTask("managerApproval", userRoles = "MANAGER");
     if decision.approved {
         PostingResult|error posting = ctx->callActivity(postToLedger,
-            {"expense": expense}, retryPolicy = "FINANCE");
+            {"expense": expense}, retryPolicy = {userRoles: "FINANCE"});
         _ = check posting;
         xml report = check ctx->callActivity(fetchAudit, {});
         _ = report;
@@ -40,7 +40,7 @@ function orderFlow(workflow:Context ctx, OrderEvents events) returns error? {
     // A review activity: the retry policy is a CallActivityOptions field, so it travels
     // as a named argument (the positional form no longer exists in the signature).
     PostingResult _ = check ctx->callActivity(postToLedger, {"expense": {id: "x", amount: 1, note: ()}},
-        PostingResult, retryPolicy = "OPS");
+        PostingResult, retryPolicy = {userRoles: "OPS"});
     // The descriptor captures the events record from the signature; waits are
     // exercised by other test packages.
     return;

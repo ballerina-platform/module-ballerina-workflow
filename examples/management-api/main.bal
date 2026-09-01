@@ -213,7 +213,7 @@ function processProcurementRequest(workflow:Context ctx, ProcurementRequest inpu
         "toEmail": input.notifyEmail,
         "item": input.item,
         "amount": input.amount
-    }, retryPolicy = "OPS");
+    }, retryPolicy = {userRoles: "OPS"});
 
     io:println(string `[Workflow] Procurement completed for ${input.requestId}`);
     return {

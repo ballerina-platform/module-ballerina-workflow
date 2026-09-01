@@ -176,7 +176,7 @@ public class WorkflowGraphTest {
         // assertions are about argument order, not layout.
         String rewritten = allSourcesOf(project).replaceAll("\\s+", " ");
         Assert.assertTrue(rewritten.contains("\"postToLedger#1\", {")
-                        && rewritten.contains("retryPolicy: [\"OPS\"]"),
+                        && rewritten.contains("retryPolicy: {userRoles: [\"OPS\"]}"),
                 "Shape 1: the explicit () is replaced POSITIONALLY and the record survives"
                         + " (a comment above the field rides inside the record)");
         Assert.assertTrue(rewritten.contains("\"firstReview#1\", {userRoles: \"MANAGER\""),
@@ -199,6 +199,41 @@ public class WorkflowGraphTest {
                         .anyMatch(r -> "postToAudit".equals(r.get("activity"))),
                 "The shorthand field {retryPolicy} gates the activity through the captured "
                         + "variable's declared type");
+    }
+
+    @Test
+    public void testAGatedActivityDrawsItsReviewAsANode() {
+        // A review used to exist at runtime — with a step id in its memo — and nowhere in
+        // the picture. It is now a node of its own, hanging off the step it belongs to.
+        Map<String, Object> graph = asObject(((Map<?, ?>) ((List<?>) descriptorOf("options_record_positional")
+                .get("workflows")).get(0)).get("graph"));
+        List<Map<String, Object>> reviews = new ArrayList<>();
+        for (Object node : (List<?>) graph.get("nodes")) {
+            if ("REVIEW".equals(asObject(node).get("kind"))) {
+                reviews.add(asObject(node));
+            }
+        }
+        Assert.assertEquals(reviews.size(), 2,
+                "Both gated activities raise a review: the explicit policy and the shorthand one");
+
+        Map<String, Object> review = reviews.stream()
+                .filter(r -> "postToLedger".equals(r.get("target"))).findFirst().orElseThrow();
+        String reviewedStepId = "postToLedger#1";
+        Assert.assertEquals(review.get("stepId"), reviewedStepId + "#review",
+                "A review's id is the reviewed step's plus #review — what the runtime reports");
+        Map<String, Object> metadata = asObject(review.get("metadata"));
+        Assert.assertEquals(metadata.get("reviewedStepId"), reviewedStepId);
+        Assert.assertEquals(metadata.get("trigger"), "ON_FAILURE");
+        Assert.assertEquals(metadata.get("userRoles"), List.of("OPS"),
+                "The declared roles are drawn with the review");
+
+        Assert.assertTrue(hasEdge(graph, reviewedStepId, reviewedStepId + "#review", "on failure"),
+                "The review hangs off its step by a labelled edge");
+        // And never sits IN the flow: nothing may follow a review.
+        for (Object edge : (List<?>) graph.get("edges")) {
+            Assert.assertNotEquals(asObject(edge).get("from"), reviewedStepId + "#review",
+                    "A review is no step's predecessor — on the happy path it never happens");
+        }
     }
 
     @Test

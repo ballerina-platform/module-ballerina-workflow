@@ -494,42 +494,24 @@ public final class WorkflowDescriptorBuilder {
             return typeOpt.isPresent() && isHumanReviewType(typeOpt.get());
         }
 
+        /**
+         * Whether a {@code retryPolicy} value is a {@code HumanReview} — the record that says
+         * a failing activity raises a review. Named references settle it outright; anything
+         * else is decided structurally by {@code userRoles}, exactly as the runtime decides it
+         * ({@code WorkflowContextNative.readHumanReview}): a review must name who may answer
+         * it, and {@code AutoRetry} is a closed record with no such field. Since 0.9.0 the
+         * policy is a record only — the string / string-array form is gone.
+         */
         private boolean isHumanReviewType(TypeSymbol raw) {
             if (raw instanceof io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol ref
                     && ref.getName().map(WorkflowConstants.HUMAN_REVIEW_TYPE::equals).orElse(false)) {
                 return true;
             }
-            return isStringOrStringArray(DescriptorSchemaGen.dereference(raw, 0), 0);
+            TypeSymbol type = DescriptorSchemaGen.dereference(raw, 0);
+            return type instanceof RecordTypeSymbol record
+                    && record.fieldDescriptors().containsKey(WorkflowConstants.ARG_USER_ROLES);
         }
 
-        private boolean isStringOrStringArray(TypeSymbol type, int depth) {
-            if (type == null || depth > 6) {
-                return false;
-            }
-            switch (type.typeKind()) {
-                case STRING, STRING_CHAR, SINGLETON -> {
-                    return true;
-                }
-                case ARRAY -> {
-                    return isStringOrStringArray(DescriptorSchemaGen.dereference(
-                            ((io.ballerina.compiler.api.symbols.ArrayTypeSymbol) type)
-                                    .memberTypeDescriptor(), 0), depth + 1);
-                }
-                case UNION -> {
-                    for (TypeSymbol member
-                            : ((io.ballerina.compiler.api.symbols.UnionTypeSymbol) type)
-                                    .memberTypeDescriptors()) {
-                        if (!isStringOrStringArray(DescriptorSchemaGen.dereference(member, 0), depth + 1)) {
-                            return false;
-                        }
-                    }
-                    return true;
-                }
-                default -> {
-                    return false;
-                }
-            }
-        }
 
         private void collectAwaitHumanTask(RemoteMethodCallActionNode remoteCall) {
             String taskName = extractConstantTaskName(remoteCall.arguments());

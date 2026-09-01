@@ -1085,12 +1085,11 @@ isolated function registerDeclaredActivity(handle agentCtx, DurableAgentActivity
             requiresApproval = approvalJson;
         }
         json retryJson = meta["retryPolicy"];
-        if retryJson is string {
-            retryPolicy = retryJson;
-        } else if retryJson is json[] {
-            retryPolicy = check retryJson.cloneWithType(HumanReview);
-        } else if retryJson is map<json> {
-            retryPolicy = check retryJson.cloneWithType(AutoRetry);
+        if retryJson is map<json> {
+            // Both policies are records; `userRoles` is what only a review has.
+            retryPolicy = retryJson["userRoles"] !is ()
+                    ? check retryJson.cloneWithType(HumanReview)
+                    : check retryJson.cloneWithType(AutoRetry);
         }
         json rolesJson = meta["userRoles"];
         if rolesJson is string {

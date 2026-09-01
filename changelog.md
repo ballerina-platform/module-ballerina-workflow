@@ -8,6 +8,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- **`HumanReview` is a record now, declared exactly as a human task is** — the retry
+  policy that raises a review used to be bare role names (`retryPolicy = "OPS"`), which
+  meant the one thing you could say about a review was who answers it, and meant people-work
+  was configured two different ways depending on where it appeared. It is now the same
+  shape as `HumanTaskOptions`, with the same field names and the same open record:
+
+  ```ballerina
+  check ctx->callActivity(postToLedger, args, PostingResult, (),
+          {retryPolicy: {userRoles: "OPS"}});                       // the short form
+
+  check ctx->callActivity(postToLedger, args, PostingResult, (),
+          {retryPolicy: {
+              userRoles: ["finance", "manager"],
+              taskName: "ledgerPostingReview",
+              title: "Ledger posting needs a decision",
+              description: "Rerun it, edit the input, or fail it."
+          }});
+  ```
+
+  Everything but `userRoles` is optional and falls back to what the reviewed activity
+  implies, so the short form stays short. Being open, a future option is a new field here
+  rather than a new type — the same forward-compatibility door `HumanTaskOptions` opened.
+  A review is still a review, not a human task: it answers proceed, proceed-with-input or
+  reject, where a task is completed with a result. Only *how it is declared* is unified.
+
+  **Breaking**, deliberately, and not compensated for: the string and string-array forms
+  are gone, and so is the `ManualRetry` alias. `retryPolicy = "OPS"` becomes
+  `retryPolicy = {userRoles: "OPS"}`. The two record policies are told apart by
+  `userRoles`, which only a review has.
+
+- **A review is drawn in the graph now.** It has a node of its own — kind `REVIEW`, id
+  `<reviewedStep>#review` — hanging off the step it belongs to by an edge labelled
+  `on failure`, never sitting in the sequence, because on the happy path it never happens.
+  Its `metadata` carries `reviewedStepId`, `trigger`, and whatever the declaration stated
+  literally (`userRoles`, `taskName`, `title`, `description`). A running review reports
+  that node in its memo and in `ActivityTreeNode.reviewStepId`, alongside the existing
+  `stepId` of the step it reviews — so a diagram can draw the review itself rather than
+  only highlight what it gates.
+
 - **`awaitHumanTask` takes its definition as a record now: `HumanTaskOptions`, passed as an
   included record parameter — and `userRoles` lives in it.** Everything a task IS beyond its
   name and result type — who may decide it, payload, title, description, timeout —

@@ -71,18 +71,46 @@ public type AutoRetry record {|
     decimal maxRetryDelay?;
 |};
 
-# Human-review retry policy: the role(s) permitted to decide the retry review.
-# Passing a role name (or list of role names) as the `retryPolicy` creates a
-# review task on activity failure so a matching human can decide to retry,
-# retry with different input, or permanently fail. The task name is derived
-# automatically from the activity being called.
-public type HumanReview string|string[];
-
-# Deprecated alias of `HumanReview`.
-# # Deprecated
-# Use `HumanReview` instead.
-@deprecated
-public type ManualRetry HumanReview;
+# Human-review retry policy: what the review a failing activity raises IS.
+#
+# Passing this as an activity's `retryPolicy` creates a review task when the activity
+# fails, so a matching human can decide to rerun it, rerun it with edited input, or fail
+# it permanently. A review is NOT a human task — a task is completed with a result,
+# while a review answers one of three fixed outcomes — but everything about *who decides
+# it and how it reads* is declared exactly as a human task's is, with the same field
+# names and the same open-record shape (see `HumanTaskOptions`). One way to describe
+# people-work across the system, and one form for tooling to render.
+#
+# Deliberately an OPEN record, for the same reason `HumanTaskOptions` is: a new option is
+# a new field here, never a new type, so today's code keeps compiling against tomorrow's
+# module and an option written for a newer module still compiles against this one.
+#
+# Every field but `userRoles` is optional and defaults to a value derived from the
+# activity being reviewed, which is what makes the short form worth keeping:
+#
+# ```ballerina
+# check ctx->callActivity(postToLedger, args, PostingResult, (),
+#         {retryPolicy: {userRoles: "OPS"}});
+# ```
+#
+# + userRoles - One or more roles permitted to decide this review. Required: a review
+#               must say who may answer it
+# + taskName - The name the review is listed under. Defaults to the reviewed activity's
+#              qualified name (`<workflow>.<activity>`)
+# + title - Short summary shown in the inbox. Defaults to a phrase naming the reviewed
+#           activity and why it is being reviewed
+# + description - Additional context shown alongside the decision. Defaults to a
+#                 description of the failure (or of the pending call) and the outcomes
+#                 available
+# + timeout - Maximum time to wait for a decision. Omit (or pass `()`) to wait
+#             indefinitely
+public type HumanReview record {
+    string|string[] userRoles;
+    string? taskName = ();
+    string? title = ();
+    string? description = ();
+    Duration? timeout = ();
+};
 
 # Options for activity execution via `callActivity`.
 #
@@ -235,7 +263,9 @@ public type HumanTaskOptions record {
 #
 # + retryPolicy - Failure behaviour: `NoAutomaticRetry` (fail the workflow),
 #                 `AutoRetry` (durable backoff retries), or `HumanReview` (create a
-#                 review activity on failure so a person decides to rerun or fail)
+#                 review activity on failure so a person decides to rerun or fail).
+#                 The two record forms are told apart by `userRoles`, which only a
+#                 `HumanReview` has
 public type CallActivityOptions record {
     AutoRetry|HumanReview|NoAutomaticRetry retryPolicy = NoAutomaticRetry;
 };

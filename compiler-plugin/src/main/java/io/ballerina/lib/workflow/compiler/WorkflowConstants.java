@@ -91,6 +91,8 @@ public final class WorkflowConstants {
     public static final String ARG_TASK_NAME = "taskName";
     /** {@code callActivity(args = ...)} — the activity's named-argument map. */
     public static final String ARG_ARGS = "args";
+    /** The field that tells a {@code HumanReview} from an {@code AutoRetry}, and names a task's deciders. */
+    public static final String ARG_USER_ROLES = "userRoles";
     /** {@code callActivity(retryPolicy = ...)}. */
     public static final String ARG_RETRY_POLICY = "retryPolicy";
     /** {@code callActivity(stepId = ...)} — the compiler-injected call-site identity. */

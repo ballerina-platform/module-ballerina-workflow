@@ -548,6 +548,10 @@ public type ActivityTreeNode record {|
     FailureInfo? failure;
     int attempt;
     string? stepId = ();
+    # For a review node: its own node in the descriptor graph (`<reviewedStep>#review`),
+    # so a diagram can draw the review itself. Nil for every other node kind, and for
+    # reviews raised before this field existed
+    string? reviewStepId = ();
     ActivityTreeNode[]? children;
 |};
 

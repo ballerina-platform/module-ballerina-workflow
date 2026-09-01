@@ -276,7 +276,7 @@ public final class AgentContextNative {
      *                     to {@code "connection:<name>"} markers; {@code null} when absent or for other kinds
      * @param requiresApproval when {@code true}, a PRE_RUN review activity gates the tool before it runs
      * @param retryPolicy  the activity tool's failure policy: {@code null} (NoRetry), an AutoRetry {@code BMap}, or
-     *                     the {@code "MANUAL_RETRY"} {@code BString}; {@code null} for non-activity tools
+     *                     a {@code HumanReview} record; {@code null} for non-activity tools
      * @param reviewRoles  role(s) permitted to decide this tool's approval reviews; empty when the tool declares
      *                     none, in which case the agent-level approval roles apply
      */
@@ -484,8 +484,9 @@ public final class AgentContextNative {
             }
             Set<String> boundNames = bindings == null ? Set.of() : bindings.keySet();
             Map<String, Object> schema = parameterSchemaOf(fn, boundNames, activityName);
-            // NoRetry arrives as nil; AutoRetry as a BMap; ManualRetry as the "MANUAL_RETRY" BString.
-            Object policy = retryPolicy instanceof BMap || retryPolicy instanceof BString ? retryPolicy : null;
+            // NoAutomaticRetry arrives as nil; AutoRetry and HumanReview are both records,
+            // told apart downstream by `userRoles` (WorkflowContextNative.readHumanReview).
+            Object policy = retryPolicy instanceof BMap ? retryPolicy : null;
             if (RESERVED_TOOL_NAMES.contains(toolName)) {
                 return reservedToolNameError(toolName);
             }
@@ -1277,17 +1278,21 @@ public final class AgentContextNative {
 
     /**
      * Runs a registered agent activity durably, applying its retry policy: {@code null} → single attempt (failure
-     * reported to the model), an AutoRetry {@code BMap} → Temporal backoff retries, or the {@code "MANUAL_RETRY"}
-     * sentinel → a rerun loop that creates a review activity on each failure (a human decides to rerun, rerun with
-     * edited input, or fail — the AI cannot decide a manual retry itself).
+     * reported to the model), an {@code AutoRetry} record → Temporal backoff retries, or a {@code HumanReview}
+     * record → a rerun loop that creates a review activity on each failure, listed and worded as that record
+     * declares (a human decides to rerun, rerun with edited input, or fail — the AI cannot decide this itself).
      */
     @SuppressWarnings("unchecked")
     private static Object executeActivity(String activityName, Map<String, Object> namedArgs, BTypedesc td,
                                           Object retryPolicy, String site) {
         String workflowType = Workflow.getInfo().getWorkflowType();
         String fullActivityName = ActivityNaming.activityTypeFor(workflowType, activityName);
-        boolean manualRetry = retryPolicy instanceof BString s && "MANUAL_RETRY".equals(s.getValue());
-        boolean autoRetry = retryPolicy instanceof BMap;
+        // Both retry-policy records are mappings, so a HumanReview is told from an AutoRetry
+        // by its `userRoles` — see WorkflowContextNative.readHumanReview.
+        WorkflowContextNative.ReviewDeclaration reviewPolicy =
+                WorkflowContextNative.readHumanReview(retryPolicy);
+        boolean manualRetry = reviewPolicy != null;
+        boolean autoRetry = reviewPolicy == null && retryPolicy instanceof BMap;
 
         Map<String, Object> callConfig = new HashMap<>();
         callConfig.put(CALL_CONFIG_MARKER, true);
@@ -1325,10 +1330,16 @@ public final class AgentContextNative {
                 if (!manualRetry) {
                     return ErrorCreator.createError(StringUtils.fromString(errorMsg));
                 }
-                // Manual retry: a human reviews the failure and decides.
+                // Manual retry: a human reviews the failure and decides. The declaration is
+                // honoured here as it is on a workflow's own callActivity — its roles used to
+                // be dropped on this path, so an agent tool's review was answerable by anyone.
                 Map<String, Object> decision = WorkflowContextNative.startReviewActivity(
-                        "ON_FAILURE", ActivityNaming.reviewTaskNameFor(workflowType, activityName),
-                        fullActivityName, currentArgs, errorMsg, new String[0], null, stepId);
+                        "ON_FAILURE",
+                        reviewPolicy.taskName() != null ? reviewPolicy.taskName()
+                                : ActivityNaming.reviewTaskNameFor(workflowType, activityName),
+                        fullActivityName, currentArgs, errorMsg, reviewPolicy.userRoles(),
+                        reviewPolicy.timeoutMillis(), stepId,
+                        reviewPolicy.title(), reviewPolicy.description());
                 String action = decision.containsKey("action") ? String.valueOf(decision.get("action")) : "reject";
                 if ("proceed".equals(action)) {
                     continue;

@@ -29,12 +29,12 @@ function optionShapes(workflow:Context ctx, string id) returns error? {
         {
             // The comment above the field is part of the regression: a trivia-carrying key
             // reading would stop matching retryPolicy and silently un-gate the activity.
-            retryPolicy: ["OPS"]
+            retryPolicy: {userRoles: ["OPS"]}
         });
 
     // Shape 1b: the SHORTHAND field — `{retryPolicy}` captures a same-named variable
     // and has no value expression; the variable's declared type gates the activity.
-    workflow:HumanReview retryPolicy = ["AUDITORS"];
+    workflow:HumanReview retryPolicy = {userRoles: ["AUDITORS"]};
     string audited = check ctx->callActivity(postToAudit, {"id": id}, string, (),
         {retryPolicy});
 

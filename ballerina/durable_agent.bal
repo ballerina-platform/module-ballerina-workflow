@@ -119,13 +119,10 @@ public type ToolDecl record {|
 |};
 
 # One human task capability of a durable agent, declared in the mapping form of
-# `humanTasks` where the mapping key is the task name — constant by construction.
+# `humanTasks` where the mapping key is the task name.
 #
-# Exactly a `HumanTaskDefinition`, because an agent's task is exactly a human task: the
-# agent has no parameter list, so both of the definition's types earn their keep here —
-# `resultType` says what the answer looks like, and `payloadType` is checked against
-# whatever the model supplies when it asks, which is the only thing standing between a
-# malformed model argument and a person's inbox.
+# A `HumanTaskDefinition`: the agent declares both `resultType` and `payloadType`, and the
+# payload it supplies when it asks is checked against the latter.
 public type HumanTaskConfig HumanTaskDefinition;
 
 # A named human task capability of a durable agent — the array form of

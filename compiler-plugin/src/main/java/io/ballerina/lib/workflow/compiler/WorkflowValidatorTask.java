@@ -494,11 +494,8 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         }
 
         /**
-         * A task's {@code payloadType} and {@code resultType} must be written as type
-         * references. They are published in the descriptor at build time, so a type computed
-         * per execution cannot be described — and they are what the task's payload and answer
-         * are checked against, which only means something if every execution of the task
-         * agrees on them.
+         * A task's {@code payloadType} and {@code resultType} must name a type: they are
+         * published in the descriptor at build time and checked against at run time.
          */
         private void checkDeclaredTypes(SeparatedNodeList<FunctionArgumentNode> args) {
             for (String field : List.of(WorkflowConstants.ARG_PAYLOAD_TYPE, WorkflowConstants.ARG_RESULT_TYPE)) {

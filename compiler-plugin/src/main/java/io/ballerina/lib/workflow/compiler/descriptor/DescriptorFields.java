@@ -157,10 +157,8 @@ public final class DescriptorFields {
     /** A step that awaits another workflow's result (`workflow:getWorkflowResult`). */
     public static final String KIND_AWAIT_RESULT = "AWAIT_RESULT";
     /**
-     * A review a step raises rather than a step control flows through: the human decision an
-     * activity is gated on (before it runs) or falls back to (when it fails). Drawn hanging
-     * off the step it belongs to, never in the sequence, because on the happy path it never
-     * happens.
+     * The human decision a gated step raises — before it runs, or when it fails. Drawn
+     * hanging off that step rather than in the sequence.
      */
     public static final String KIND_REVIEW = "REVIEW";
     /** The agent itself, at the centre of an agent's graph. */

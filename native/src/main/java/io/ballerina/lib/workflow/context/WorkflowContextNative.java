@@ -206,9 +206,8 @@ public final class WorkflowContextNative {
     }
 
     /**
-     * What a {@code HumanReview} policy declares. Every field but the roles is optional:
-     * {@code null} means "derive it from the activity being reviewed", which is what keeps
-     * the short form ({@code {userRoles: "OPS"}}) worth writing.
+     * What a review policy declares. A null field means "derive it from the activity being
+     * reviewed".
      *
      * @param userRoles     roles permitted to answer the review (empty means any role)
      * @param title         inbox summary, or null to derive it
@@ -219,10 +218,9 @@ public final class WorkflowContextNative {
     }
 
     /**
-     * Reads a {@code HumanReview} retry policy, or returns {@code null} when the value is
-     * not one. Both retry-policy records are mappings, so the discriminator is the presence
-     * of {@code userRoles}: a review must name who may answer it, and {@code AutoRetry} is a
-     * closed record without that field.
+     * Reads a review retry policy, or returns {@code null} when the value is not one. Both
+     * retry-policy records are mappings, so {@code userRoles} — which only a review has —
+     * tells them apart.
      */
     @SuppressWarnings("unchecked")
     static ReviewDeclaration readHumanReview(Object retryPolicy) {
@@ -433,11 +431,8 @@ public final class WorkflowContextNative {
         memo.put("trigger", trigger);
         memo.put("activityName", fullActivityName);
         if (stepId != null) {
-            // Two ids, because a review joins the picture in two ways. `stepId` is the REVIEWED
-            // step's — what this review is about, and what highlights that step in a run.
-            // `reviewStepId` is the review's own node in the descriptor graph (`<step>#review`),
-            // which is what lets a diagram draw the review itself rather than only the step it
-            // hangs off. Older instances carry the first alone.
+            // `stepId` is the step being reviewed; `reviewStepId` is the review's own node in
+            // the descriptor graph. Older instances carry the first alone.
             memo.put(STEP_ID_KEY, stepId);
             memo.put(REVIEW_STEP_ID_KEY, stepId + REVIEW_STEP_ID_SUFFIX);
         }
@@ -506,11 +501,8 @@ public final class WorkflowContextNative {
                                                                  Map<String, Object> activityArgs,
                                                                  String errorMessage, ReviewDeclaration review,
                                                                  String stepId) {
-        // The review's NAME is derived from the activity being reviewed, always — like a
-        // workflow task's name is its call's first argument and an agent task's is its
-        // mapping key, it is a compile-time constant by construction rather than a field
-        // that has to be validated to be one. The title and description below are derived
-        // too when the declaration stated none.
+        // A review's name is always derived from the activity it reviews; so are its title
+        // and description when the declaration stated none.
         return startReviewActivity("ON_FAILURE",
                 ActivityNaming.reviewTaskNameFor(workflowType, simpleActivityName),
                 activityType, activityArgs, errorMessage,
@@ -794,20 +786,14 @@ public final class WorkflowContextNative {
      * @param typedesc     the expected result type descriptor (for dependent-typing and coercion)
      * @param stepId       the compiler-injected call-site identity, or nil — workflow
      *                     mechanics, so a parameter rather than an options field
-     * @param payload      what the decider is shown — a required argument, checked here
-     *                     against the {@code payloadType} the definition declares
-     * @param definition   the {@code HumanTaskDefinition} record: userRoles (required), title,
-     *                     description, timeout, payloadType, resultType. Open, so unknown
-     *                     future fields simply ride along until a version understands them
+     * @param payload      what the decider is shown, checked against the declared payloadType
+     * @param definition   the {@code HumanTaskDefinition} record
      * @return the coerced result value, a payload-shape error, or a
      *         {@code HumanTaskTimeoutError} BError
      */
     public static Object awaitHumanTask(BObject self, BString taskNameBStr, BMap<BString, Object> payload,
                                         BTypedesc typedesc, Object stepId, BMap<BString, Object> definition) {
-        // The payload is checked before the task exists. A task whose form would be built
-        // from the wrong shape must never reach a person's inbox: they cannot tell a
-        // mis-shaped form from a badly designed one, and the workflow would be waiting on a
-        // decision about the wrong thing.
+        // Checked before the task exists, so a mis-shaped form never reaches anyone.
         BError payloadError = validatePayloadShape(payload, definition, taskNameBStr.getValue());
         if (payloadError != null) {
             return payloadError;
@@ -823,16 +809,14 @@ public final class WorkflowContextNative {
     }
 
     /**
-     * Checks a payload against the {@code payloadType} its definition declares, returning the
-     * error to hand back or {@code null} when the shape holds. Shared by the workflow path
-     * (where the payload is an argument) and the agent path (where a model supplies it) —
-     * on the agent path this check is the only thing between a malformed model argument and
-     * a person's inbox, which is why it lives at task creation rather than at form render.
+     * Checks a payload against the {@code payloadType} its definition declares. Shared by the
+     * workflow path, where the payload is an argument, and the agent path, where a model
+     * supplies it.
      *
      * @param payload    the payload supplied
      * @param definition the {@code HumanTaskDefinition} declaring {@code payloadType}
      * @param taskName   the task's name, for the message
-     * @return a {@code HumanTaskError} describing the mismatch, or null
+     * @return an error describing the mismatch, or null when the shape holds
      */
     static BError validatePayloadShape(BMap<BString, Object> payload, BMap<BString, Object> definition,
                                        String taskName) {

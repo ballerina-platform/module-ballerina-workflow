@@ -173,20 +173,14 @@ public client class Context {
     # ```
     #
     # + taskName - Identifies the task type; used as the Temporal workflow type and child workflow ID
-    # + payload - What the decider is shown, as a read-only object rendered beside the form.
-    #             Required on purpose: a task with nothing to show says so with `{}`, rather
-    #             than by omission, and the runtime checks this value against the
-    #             `payloadType` the definition declares before the task reaches anyone
+    # + payload - Read-only object shown beside the form. Pass `{}` when there is nothing to
+    #             show; it is checked against the definition's `payloadType`
     # + T - Expected result type; drives form schema generation and runtime validation
     # + stepId - Identity of this step within the workflow, as for `callActivity`: name it
     #            to follow this task across edits, or omit it for a generated
     #            `<taskName>#<ordinal>`
-    # + definition - What the task IS — `HumanTaskDefinition`: who may decide it
-    #                (`userRoles`, required), title, description, timeout, and the
-    #                `payloadType` this call's payload is checked against. Included, so each
-    #                field travels as a named argument and a future option is a new record
-    #                field rather than a new parameter. The result type comes from `T` on
-    #                this path; `resultType` is how an agent says the same thing
+    # + definition - The task's `HumanTaskDefinition`, as an included record: each field
+    #                travels as a named argument (`userRoles = "MANAGER"`)
     # + return - The typed value submitted by the human, or a `HumanTaskError`: a
     #            `HumanTaskTimeoutError` if the deadline passed, a `HumanTaskRejectedError`
     #            if someone rejected the task (carrying their reason and details), or a

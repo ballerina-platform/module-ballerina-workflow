@@ -126,8 +126,7 @@ public final class WorkflowGraphBuilder {
 
     // Where the step id lands when a caller passes it positionally rather than by name:
     // callActivity(activityFunction, args, T, stepId, *options) and
-    // awaitHumanTask(taskName, payload, T, stepId, *definition) — the task's payload is a
-    // required argument, so its step id sits one place further along than an activity's.
+    // awaitHumanTask(taskName, payload, T, stepId, *definition).
     private static final int CALL_ACTIVITY_STEP_ID_POSITION = 3;
     private static final int AWAIT_HUMAN_TASK_STEP_ID_POSITION = 3;
     // sleep(duration, stepId)
@@ -243,17 +242,13 @@ public final class WorkflowGraphBuilder {
     public static final String REVIEW_STEP_ID_SUFFIX = "#review";
 
     /**
-     * The {@code HumanReview} a call declares, as the facts a diagram can show — or {@code null}
-     * when the call declares no review. Read here, and only here, so the graph, the descriptor's
-     * review-activity list and the runtime all agree on what counts as a gated call.
-     *
-     * <p>Only statically-known values are reported: a role list built at run time cannot be
-     * drawn, and its absence from the metadata is not a claim that no role applies.
+     * The review a call declares, as the facts a diagram can show, or {@code null} when the
+     * call declares none. Only statically-known values are reported — a role list built at
+     * run time cannot be drawn.
      *
      * @param args          the call's arguments
      * @param semanticModel the module's semantic model
-     * @return the declared facts ({@code userRoles}, and any of {@code taskName} / {@code title}
-     *         / {@code description} written literally), or {@code null}
+     * @return the declared facts, or {@code null}
      */
     public static Map<String, Object> humanReviewDeclarationOf(SeparatedNodeList<FunctionArgumentNode> args,
                                                                SemanticModel semanticModel) {
@@ -302,8 +297,7 @@ public final class WorkflowGraphBuilder {
                 }
             }
         }
-        // A review with no statically-known field is still a review: the node belongs in the
-        // picture even when everything about it was computed.
+        // A review with no statically-known field is still a review.
         return declared;
     }
 
@@ -368,11 +362,7 @@ public final class WorkflowGraphBuilder {
         return null;
     }
 
-    /**
-     * Whether a symbol's or type's shape is a {@code HumanReview}: a record naming
-     * {@code userRoles}. The same rule the descriptor and the runtime apply — an
-     * {@code AutoRetry} is a closed record without that field.
-     */
+    /** Whether a type is a review: a record naming {@code userRoles}, as elsewhere. */
     private static boolean isHumanReviewTyped(Object symbolOrType) {
         TypeSymbol type = switch (symbolOrType) {
             case VariableSymbol variable -> variable.typeDescriptor();
@@ -1005,13 +995,8 @@ public final class WorkflowGraphBuilder {
 
         /**
          * Draws the review a gated activity raises: a node of its own, hanging off the step it
-         * belongs to rather than sitting in the sequence — on the happy path it never happens,
-         * so putting it between two steps would describe a flow that does not exist.
-         *
-         * <p>It gets its own step id ({@code <step>#review}) because a diagram needs something
-         * to render and a running review needs something to be joined to; its metadata says
-         * which step it reviews, why, and who may answer it. Without this the review existed at
-         * runtime — with a step id in its memo — and nowhere in the picture.
+         * belongs to rather than sitting in the sequence, since on the happy path it never
+         * happens. Its id is {@code <step>#review}, which is what a running review reports.
          */
         private void addReviewNode(String reviewedStepId, String target, RemoteMethodCallActionNode source) {
             Map<String, Object> declaration = humanReviewDeclarationOf(source.arguments(), semanticModel);

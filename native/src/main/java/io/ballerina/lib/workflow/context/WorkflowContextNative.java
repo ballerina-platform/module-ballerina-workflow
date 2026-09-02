@@ -786,21 +786,21 @@ public final class WorkflowContextNative {
      * @param typedesc     the expected result type descriptor (for dependent-typing and coercion)
      * @param stepId       the compiler-injected call-site identity, or nil — workflow
      *                     mechanics, so a parameter rather than an options field
-     * @param payload      what the decider is shown, checked against the declared payloadType
+     * @param taskInput    what the decider is shown, checked against the declared taskInputType
      * @param definition   the {@code HumanTaskDefinition} record
      * @return the coerced result value, a payload-shape error, or a
      *         {@code HumanTaskTimeoutError} BError
      */
-    public static Object awaitHumanTask(BObject self, BString taskNameBStr, BMap<BString, Object> payload,
+    public static Object awaitHumanTask(BObject self, BString taskNameBStr, BMap<BString, Object> taskInput,
                                         BTypedesc typedesc, Object stepId, BMap<BString, Object> definition) {
         // Checked before the task exists, so a mis-shaped form never reaches anyone.
-        BError payloadError = validatePayloadShape(payload, definition, taskNameBStr.getValue());
-        if (payloadError != null) {
-            return payloadError;
+        BError inputError = validateTaskInputShape(taskInput, definition, taskNameBStr.getValue());
+        if (inputError != null) {
+            return inputError;
         }
         return awaitHumanTaskExploded(self, taskNameBStr,
                 definition.get(StringUtils.fromString("userRoles")),
-                payload,
+                taskInput,
                 definition.get(StringUtils.fromString("title")),
                 definition.get(StringUtils.fromString("description")),
                 definition.get(StringUtils.fromString("timeout")),
@@ -809,26 +809,26 @@ public final class WorkflowContextNative {
     }
 
     /**
-     * Checks a payload against the {@code payloadType} its definition declares. Shared by the
-     * workflow path, where the payload is an argument, and the agent path, where a model
+     * Checks a task input against the {@code taskInputType} its definition declares. Shared by
+     * the workflow path, where the input is an argument, and the agent path, where a model
      * supplies it.
      *
-     * @param payload    the payload supplied
-     * @param definition the {@code HumanTaskDefinition} declaring {@code payloadType}
+     * @param taskInput  the input supplied
+     * @param definition the {@code HumanTaskDefinition} declaring {@code taskInputType}
      * @param taskName   the task's name, for the message
      * @return an error describing the mismatch, or null when the shape holds
      */
-    static BError validatePayloadShape(BMap<BString, Object> payload, BMap<BString, Object> definition,
-                                       String taskName) {
-        Object declared = definition == null ? null : definition.get(StringUtils.fromString("payloadType"));
-        if (!(declared instanceof BTypedesc payloadType) || payload == null) {
+    static BError validateTaskInputShape(BMap<BString, Object> taskInput, BMap<BString, Object> definition,
+                                         String taskName) {
+        Object declared = definition == null ? null : definition.get(StringUtils.fromString("taskInputType"));
+        if (!(declared instanceof BTypedesc inputType) || taskInput == null) {
             return null;
         }
-        Object converted = TypesUtil.validateAndConvert(payload, payloadType.getDescribingType());
+        Object converted = TypesUtil.validateAndConvert(taskInput, inputType.getDescribingType());
         if (converted instanceof BError mismatch) {
             return ErrorCreator.createError(StringUtils.fromString(
-                    "The payload for human task '" + taskName + "' does not match its declared payloadType ("
-                            + payloadType.getDescribingType() + "): " + mismatch.getMessage()));
+                    "The input for human task '" + taskName + "' does not match its declared taskInputType ("
+                            + inputType.getDescribingType() + "): " + mismatch.getMessage()));
         }
         return null;
     }
@@ -840,7 +840,7 @@ public final class WorkflowContextNative {
      */
     @SuppressWarnings("unchecked")
     public static Object awaitHumanTaskExploded(BObject self, BString taskNameBStr, Object userRolesObj,
-                                        BMap<BString, Object> payloadObj, Object titleObj, Object descriptionObj,
+                                        BMap<BString, Object> taskInputObj, Object titleObj, Object descriptionObj,
                                         Object timeoutObj, BTypedesc typedesc, Object stepId) {
         // Named outside the try so a failure can report which task it belongs to.
         String taskName = taskNameBStr.getValue();
@@ -874,8 +874,8 @@ public final class WorkflowContextNative {
             // description
             String description = (descriptionObj instanceof BString bs) ? bs.getValue() : "";
 
-            // payload (always a BMap since Ballerina default = {} guarantees non-null)
-            Object payload = payloadObj;
+            // task input (always a BMap: the Ballerina surface makes the argument required)
+            Object taskInput = taskInputObj;
 
             // timeout: nil (BNull/null) means wait indefinitely
             Long timeoutMillis = null;
@@ -920,7 +920,7 @@ public final class WorkflowContextNative {
             memo.put("title", title);
             memo.put("description", description);
             memo.put("userRoles", userRoles);
-            memo.put("payload", TypesUtil.convertBallerinaToJavaType(payload));
+            memo.put("taskInput", TypesUtil.convertBallerinaToJavaType(taskInput));
             memo.put("createdAt", Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString());
             memo.put("formSchema", TypesUtil.toJsonSchema(typedesc.getDescribingType()));
             if (stepId instanceof BString site) {
@@ -940,7 +940,7 @@ public final class WorkflowContextNative {
             inputs.put("title", title);
             inputs.put("description", description);
             inputs.put("userRoles", userRoles);
-            inputs.put("payload", TypesUtil.convertBallerinaToJavaType(payload));
+            inputs.put("taskInput", TypesUtil.convertBallerinaToJavaType(taskInput));
             // null means no timeout (wait indefinitely)
             inputs.put("timeoutMillis", timeoutMillis);
             inputs.put("parentWorkflowId", parentWorkflowId);

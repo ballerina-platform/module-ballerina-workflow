@@ -494,11 +494,11 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         }
 
         /**
-         * A task's {@code payloadType} and {@code resultType} must name a type: they are
+         * A task's {@code taskInputType} and {@code resultType} must name a type: they are
          * published in the descriptor at build time and checked against at run time.
          */
         private void checkDeclaredTypes(SeparatedNodeList<FunctionArgumentNode> args) {
-            for (String field : List.of(WorkflowConstants.ARG_PAYLOAD_TYPE, WorkflowConstants.ARG_RESULT_TYPE)) {
+            for (String field : List.of(WorkflowConstants.ARG_TASK_INPUT_TYPE, WorkflowConstants.ARG_RESULT_TYPE)) {
                 Node declared = WorkflowGraphBuilder.declaredFieldExpression(args, field);
                 if (declared != null && !isTypeReference(declared)) {
                     report(declared.location(), WorkflowDiagnostic.WORKFLOW_162, field);

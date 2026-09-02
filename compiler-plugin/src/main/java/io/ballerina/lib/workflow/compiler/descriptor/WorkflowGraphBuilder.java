@@ -303,7 +303,7 @@ public final class WorkflowGraphBuilder {
 
     /**
      * The expression a call gives a named field, whether written as a named argument
-     * ({@code payloadType = Foo}) or as a field of a positionally-passed options record.
+     * ({@code taskInputType = Foo}) or as a field of a positionally-passed options record.
      * Returns {@code null} when the call does not state it, and for the shorthand form,
      * which names a variable rather than an expression of its own.
      *

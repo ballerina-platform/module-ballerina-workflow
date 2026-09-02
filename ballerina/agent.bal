@@ -688,7 +688,7 @@ type AgentToolDef record {|
 #              a review activity is created and the agent suspends durably until
 #              a human proceeds (optionally editing the arguments) or rejects
 # + retryPolicy - Failure behaviour: `NoAutomaticRetry` (report the failure to the model),
-#              `AutoRetry` (durable backoff retries), or `HumanReview` (create a
+#              `AutoRetry` (durable backoff retries), or a `ReviewTaskDefinition` (create a
 #              review activity on failure so a human decides to rerun or fail)
 # + userRoles - Role(s) permitted to decide this tool's approval reviews. When
 #              absent, the agent-level `ApprovalConfig` roles apply
@@ -696,7 +696,7 @@ type AgentToolDef record {|
 isolated function registerActivity(handle agentCtx, function activity, string? name = (),
         string? description = (), map<anydata|object {}>? bindings = (),
         boolean requiresApproval = false,
-        AutoRetry|HumanReview|NoAutomaticRetry retryPolicy = NoAutomaticRetry,
+        AutoRetry|ReviewTaskDefinition|NoAutomaticRetry retryPolicy = NoAutomaticRetry,
         string|string[]? userRoles = ()) returns error? {
     return recordActivityTool(agentCtx, activity, name, description, bindings,
             requiresApproval, retryPolicy, userRoles);
@@ -846,7 +846,7 @@ isolated function buildAndRun(handle agentCtx, string query = "", *AgentRunConfi
 
 isolated function recordActivityTool(handle nativeContext, function tool, string? name,
         string? description, map<anydata|object {}>? bindings, boolean requiresApproval,
-        AutoRetry|HumanReview|NoAutomaticRetry retryPolicy, string|string[]? userRoles) returns error? = @java:Method {
+        AutoRetry|ReviewTaskDefinition|NoAutomaticRetry retryPolicy, string|string[]? userRoles) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "recordActivityTool"
 } external;
@@ -1072,7 +1072,7 @@ isolated function registerDeclaredActivity(handle agentCtx, DurableAgentActivity
         returns error? {
     string? description = ();
     boolean requiresApproval = false;
-    AutoRetry|HumanReview|NoAutomaticRetry retryPolicy = NoAutomaticRetry;
+    AutoRetry|ReviewTaskDefinition|NoAutomaticRetry retryPolicy = NoAutomaticRetry;
     string|string[]? userRoles = ();
     json meta = activitySpec.meta;
     if meta is map<json> {
@@ -1088,7 +1088,7 @@ isolated function registerDeclaredActivity(handle agentCtx, DurableAgentActivity
         if retryJson is map<json> {
             // Both policies are records; `userRoles` is what only a review has.
             retryPolicy = retryJson["userRoles"] !is ()
-                    ? check retryJson.cloneWithType(HumanReview)
+                    ? check retryJson.cloneWithType(ReviewTaskDefinition)
                     : check retryJson.cloneWithType(AutoRetry);
         }
         json rolesJson = meta["userRoles"];

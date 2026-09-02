@@ -22,7 +22,7 @@ function postToAudit(string id) returns string|error {
 
 @workflow:Workflow
 function optionShapes(workflow:Context ctx, string id) returns error? {
-    // Shape 1: the record after an explicit `()` step id, carrying a HumanReview retryPolicy.
+    // Shape 1: the record after an explicit `()` step id, carrying a review-task retryPolicy.
     // The nil placeholder must be replaced POSITIONALLY, or the record becomes a positional
     // argument after a named one — and the descriptor must see the policy riding the record.
     string posted = check ctx->callActivity(postToLedger, {"id": id}, string, (),
@@ -34,7 +34,7 @@ function optionShapes(workflow:Context ctx, string id) returns error? {
 
     // Shape 1b: the SHORTHAND field — `{retryPolicy}` captures a same-named variable
     // and has no value expression; the variable's declared type gates the activity.
-    workflow:HumanReview retryPolicy = {userRoles: ["AUDITORS"]};
+    workflow:ReviewTaskDefinition retryPolicy = {userRoles: ["AUDITORS"]};
     string audited = check ctx->callActivity(postToAudit, {"id": id}, string, (),
         {retryPolicy});
 

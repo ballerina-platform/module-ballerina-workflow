@@ -22,16 +22,16 @@ final ai:Wso2ModelProvider chatModel = check new ("http://localhost:9099", "test
 final string taskId = "approval";
 
 // ERROR: the agent human task name is interpolated — not a compile-time constant.
-// A non-interpolated template on the event channel is fine (collapses to a constant).
+// The event channel beside it is the good case: a plain key is already constant.
 final workflow:DurableAgent orderAgent = check new ({
     systemPrompt: {role: "Order assistant", instructions: "Help the user."},
     model: chatModel,
-    humanTasks: [
-        {name: string `approve-${taskId}`, roles: "manager"}
-    ],
-    events: [
-        {name: string `customerReply`, request: string}
-    ]
+    humanTasks: {
+        [string `approve-${taskId}`]: {userRoles: "manager"}
+    },
+    events: {
+        customerReply: {request: string}
+    }
 });
 
 // ERROR: the workflow human task name is a variable — not a compile-time constant.

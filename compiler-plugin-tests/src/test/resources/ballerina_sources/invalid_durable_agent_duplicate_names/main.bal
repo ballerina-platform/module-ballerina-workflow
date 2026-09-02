@@ -30,10 +30,10 @@ final workflow:DurableAgent orderAgent = check new ({
     systemPrompt: {role: "Order assistant", instructions: "Help the user."},
     model: chatModel,
     activities: [approval],
-    events: [
-        {name: "approval", request: string}
-    ],
-    humanTasks: [
-        {name: "approval", roles: "manager"}
-    ]
+    events: {
+        approval: {request: string}
+    },
+    humanTasks: {
+        approval: {userRoles: "manager"}
+    }
 });

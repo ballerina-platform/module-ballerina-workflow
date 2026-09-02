@@ -27,7 +27,7 @@
 //     stays pending and can still be completed with a valid payload
 //     (ballerina-library#8866).
 //
-// They follow the graceful-skip pattern used by the ManualRetry tests: if no
+// They follow the graceful-skip pattern used by the review tests: if no
 // workflow server is reachable the test returns early instead of failing.
 // ============================================================================
 
@@ -47,7 +47,7 @@ function htRecordWorkflow(Context ctx, string orderId) returns HtDecision|error 
     return decision;
 }
 
-// The forward-compatibility contract of HumanTaskOptions: the record is open, so an
+// The forward-compatibility contract of HumanTaskDefinition: the record is open, so an
 // option this module version does not know yet ("futureOption") can be written today —
 // as a member of the options record literal (an unknown NAMED ARGUMENT is still a
 // compile error; the record's open rest is the door). It rides along and changes

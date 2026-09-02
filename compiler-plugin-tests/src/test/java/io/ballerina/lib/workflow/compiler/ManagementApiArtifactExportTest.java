@@ -56,22 +56,10 @@ public class ManagementApiArtifactExportTest {
 
     @Test
     public void testExportOpenApiWritesTheManagementSpec() throws IOException {
-        BuildOptions options = BuildOptions.builder().setExportOpenAPI(true).build();
-        BuildProject project = BuildProject.load(getEnvironmentBuilder(),
-                RESOURCE_DIRECTORY.resolve("descriptor_generation"), options);
-        project.currentPackage().runCodeGenAndModifyPlugins();
-        PackageCompilation compilation = project.currentPackage().getCompilation();
-        Assert.assertEquals(compilation.diagnosticResult().errorCount(), 0,
-                "Compilation errors: " + compilation.diagnosticResult().diagnostics());
-
-        Path specPath = project.targetDir().resolve("openapi")
-                .resolve(ManagementApiArtifactExporter.SPEC_FILE_NAME);
-        Files.deleteIfExists(specPath);
-
-        // The lifecycle's code-generation-completed tasks run when the backend emits.
-        Path execJar = Files.createTempDirectory("wf-openapi-export").resolve("app.jar");
-        JBallerinaBackend.from(compilation, JvmTarget.JAVA_21)
-                .emit(JBallerinaBackend.OutputType.EXEC, execJar);
+        // The fixture imports workflow.management.rest — the module that owns the service —
+        // so this package genuinely can serve the API the exported spec describes.
+        Path specPath = emitWithOptions("management_rest_consumer",
+                BuildOptions.builder().setExportOpenAPI(true).build(), "wf-openapi-export");
 
         Assert.assertTrue(Files.exists(specPath),
                 "--export-openapi must write the management spec beside the package's own: " + specPath);
@@ -82,21 +70,44 @@ public class ManagementApiArtifactExportTest {
 
     @Test
     public void testWithoutTheFlagNothingIsExported() throws IOException {
-        BuildProject project = BuildProject.load(getEnvironmentBuilder(),
-                RESOURCE_DIRECTORY.resolve("descriptor_generation"));
+        Path specPath = emitWithOptions("management_rest_consumer", null, "wf-openapi-noflag");
+        Assert.assertFalse(Files.exists(specPath),
+                "The spec is an explicit opt-in; a plain build must not write it");
+    }
+
+    @Test
+    public void testWithoutTheImportNothingIsExported() throws IOException {
+        // descriptor_generation imports only ballerina/workflow. Without
+        // workflow.management.rest there is no service object and no listener, so the package
+        // cannot serve /workflow under any configuration — exporting a description of it
+        // would hand a gateway a route that can never answer.
+        Path specPath = emitWithOptions("descriptor_generation",
+                BuildOptions.builder().setExportOpenAPI(true).build(), "wf-openapi-noimport");
+        Assert.assertFalse(Files.exists(specPath),
+                "A package that does not import workflow.management.rest cannot serve the API; "
+                        + "the spec must not be exported for it");
+    }
+
+    /** Builds the fixture, emits the executable (which runs the lifecycle task), and returns the spec path. */
+    private static Path emitWithOptions(String fixture, BuildOptions options, String tempPrefix)
+            throws IOException {
+        BuildProject project = options == null
+                ? BuildProject.load(getEnvironmentBuilder(), RESOURCE_DIRECTORY.resolve(fixture))
+                : BuildProject.load(getEnvironmentBuilder(), RESOURCE_DIRECTORY.resolve(fixture), options);
         project.currentPackage().runCodeGenAndModifyPlugins();
         PackageCompilation compilation = project.currentPackage().getCompilation();
+        Assert.assertEquals(compilation.diagnosticResult().errorCount(), 0,
+                "Compilation errors: " + compilation.diagnosticResult().diagnostics());
 
         Path specPath = project.targetDir().resolve("openapi")
                 .resolve(ManagementApiArtifactExporter.SPEC_FILE_NAME);
         Files.deleteIfExists(specPath);
 
-        Path execJar = Files.createTempDirectory("wf-openapi-noflag").resolve("app.jar");
+        // The lifecycle's code-generation-completed tasks run when the backend emits.
+        Path execJar = Files.createTempDirectory(tempPrefix).resolve("app.jar");
         JBallerinaBackend.from(compilation, JvmTarget.JAVA_21)
                 .emit(JBallerinaBackend.OutputType.EXEC, execJar);
-
-        Assert.assertFalse(Files.exists(specPath),
-                "The spec is an explicit opt-in; a plain build must not write it");
+        return specPath;
     }
 
     // The spec is curated, so this is the drift guard: every resource of the management REST
@@ -111,9 +122,12 @@ public class ManagementApiArtifactExportTest {
         String service = Files.readString(MANAGEMENT_SERVICE_SOURCE, StandardCharsets.UTF_8);
         String yaml = embeddedSpec();
 
-        // The path can contain spaces inside `[string workflowId]`, so capture up to the
-        // parameter list's opening paren (paths themselves never contain one).
-        Pattern resource = Pattern.compile("resource isolated function (get|post)\\s+(.+?)\\(");
+        // Any verb, `isolated` optional: a hardcoded verb list is exactly the drift this
+        // guard exists to catch — a `delete` resource added tomorrow must fail as
+        // "verb absent", not slip past a pattern that never matched it. The path can contain
+        // spaces inside `[string workflowId]`, so capture up to the parameter list's opening
+        // paren (paths themselves never contain one).
+        Pattern resource = Pattern.compile("resource\\s+(?:isolated\\s+)?function\\s+(\\w+)\\s+(.+?)\\(");
         Matcher m = resource.matcher(service);
         List<String> missing = new ArrayList<>();
         int checked = 0;

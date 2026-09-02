@@ -24,12 +24,17 @@ info:
 servers:
   - url: "{scheme}://{host}:{port}/workflow"
     variables:
-      scheme: {default: http, enum: [http, https]}
+      # https first: every scheme below carries a credential, which belongs on TLS. Plain
+      # http is for trusted deployments — local development, or a mesh terminating TLS.
+      scheme: {default: https, enum: [https, http]}
       host: {default: localhost}
+      # The `port` configurable's default; a deployment's Config.toml may put it anywhere.
       port: {default: "8234"}
+# Three independent alternatives; a deployment enables any subset of them.
 security:
   - basicAuth: []
   - bearerAuth: []
+  - apiKeyAuth: []
 tags:
   - name: runtime
   - name: definitions
@@ -521,6 +526,8 @@ components:
   securitySchemes:
     basicAuth: {type: http, scheme: basic}
     bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
+    # The header name is the `apiKeyHeader` configurable's default.
+    apiKeyAuth: {type: apiKey, in: header, name: x-api-key}
   parameters:
     workflowId:
       name: workflowId
@@ -663,6 +670,7 @@ components:
           type: array
           items: {$ref: "#/components/schemas/WorkflowInstanceSummary"}
         nextPageToken: {type: string, nullable: true}
+        hasMore: {type: boolean}
     WorkflowHandle:
       type: object
       properties:
@@ -681,7 +689,10 @@ components:
         status: {type: string}
         startTime: {type: string, format: date-time}
         closeTime: {type: string, format: date-time, nullable: true}
+        completedBy: {type: string, nullable: true}
+        completedAt: {type: string, format: date-time, nullable: true}
         userRoles: {type: array, items: {type: string}}
+        canComplete: {type: boolean}
     HumanTaskPage:
       type: object
       properties:
@@ -689,6 +700,7 @@ components:
           type: array
           items: {$ref: "#/components/schemas/HumanTaskSummary"}
         nextPageToken: {type: string, nullable: true}
+        hasMore: {type: boolean}
     HumanTaskInfo:
       type: object
       description: One task with its payload, description, and completion metadata
@@ -699,8 +711,6 @@ components:
             description: {type: string}
             payload: {type: object}
             resultSchema: {type: string, nullable: true}
-            completedBy: {type: string, nullable: true}
-            completedAt: {type: string, format: date-time, nullable: true}
     ReviewActivitySummary:
       type: object
       properties:
@@ -723,6 +733,7 @@ components:
           type: array
           items: {$ref: "#/components/schemas/ReviewActivitySummary"}
         nextPageToken: {type: string, nullable: true}
+        hasMore: {type: boolean}
     ReviewActivityInfo:
       type: object
       description: One review with the activity's proposed arguments and failure context

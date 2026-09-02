@@ -739,6 +739,11 @@ function testAgentMaxIterationsExceeded() returns error? {
 
 @test:Config {groups: ["unit"]}
 function testModelActivityRetriesTransientFailures() returns error? {
+    // The counter is module state; reset it so the two scripted failures belong to this
+    // run and the assertion below cannot pass on calls left over from an earlier one.
+    lock {
+        flakyModelCalls = 0;
+    }
     map<anydata> input = {id: "agent-flaky-model-001", request: "Anything at all"};
     string runResult = check run(flakyModelAgent, input);
     _ = check getWorkflowResult(runResult, 60);

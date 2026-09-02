@@ -2178,6 +2178,13 @@ public final class ManagementNative {
                         node.put("input", decodeFirstPayload(attrs.getInput(), dc));
                         node.put("stepId", decodeMemoString(dc, attrs.getMemo().getFieldsMap(),
                                 io.ballerina.lib.workflow.context.WorkflowContextNative.STEP_ID_KEY, null));
+                        // A review also names its OWN node in the descriptor graph, so a diagram
+                        // can draw the review rather than only highlight the step it hangs off.
+                        if (isReviewActivityType(childType)) {
+                            node.put("reviewStepId", decodeMemoString(dc, attrs.getMemo().getFieldsMap(),
+                                    io.ballerina.lib.workflow.context.WorkflowContextNative
+                                            .REVIEW_STEP_ID_KEY, null));
+                        }
                         nodeByEventId.put(eid, node);
                         nodeOrder.add(eid);
                     }

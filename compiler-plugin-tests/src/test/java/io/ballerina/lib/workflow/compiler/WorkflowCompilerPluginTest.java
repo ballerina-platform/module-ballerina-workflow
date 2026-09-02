@@ -132,6 +132,32 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "invalid")
+    public void testNamedArgsMapValidatesLikeThePositionalForm() {
+        // ballerina-library#9092: `callActivity(payClaim, args = {a: 3})` drew WORKFLOW_109 for
+        // every required parameter because only the second argument SLOT was read as the map.
+        // The fixture's first two calls use the named form validly; the third misnames a key,
+        // proving the named map's contents are validated rather than skipped.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("call_activity_named_args");
+        Assert.assertEquals(diagnosticResult.errorCount(), 2,
+                "Only the misnamed key's call may error — a missing 'a' and an extra 'b': "
+                        + getDiagnosticMessages(diagnosticResult));
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_109);
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_110);
+    }
+
+    @Test(groups = "invalid")
+    public void testTaskTypesMustNameAType() {
+        // A payloadType computed per execution can be neither published in the descriptor nor
+        // relied on as the shape a task's payload is checked against. The fixture's second
+        // call names its types and must stay clean, so this also pins that the rule does not
+        // fire on the ordinary form.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_task_type_not_constant");
+        Assert.assertEquals(diagnosticResult.errorCount(), 1,
+                "Only the computed payloadType may error: " + getDiagnosticMessages(diagnosticResult));
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_162);
+    }
+
+    @Test(groups = "invalid")
     public void testDuplicateStepIdWarnsRatherThanFailing() {
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("duplicate_step_id");
         Assert.assertEquals(diagnosticResult.errorCount(), 0,

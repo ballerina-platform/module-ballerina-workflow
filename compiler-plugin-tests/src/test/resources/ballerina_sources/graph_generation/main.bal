@@ -38,7 +38,7 @@ function shipOrder(workflow:Context ctx, ShipmentRequest request) returns error?
     } else if stock.available > 0 {
         PostingResult _ = check ctx->callActivity(postToLedger, {"id": request.id});
     } else {
-        ApprovalDecision decision = check ctx->awaitHumanTask("restockApproval", "OPS");
+        ApprovalDecision decision = check ctx->awaitHumanTask("restockApproval", {}, userRoles = "OPS");
         if decision.approved {
             check ctx.sleep({seconds: 30});
         }

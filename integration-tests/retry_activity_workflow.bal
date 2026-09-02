@@ -563,7 +563,7 @@ function recoverableByInputActivity(string mode) returns string|error {
 function manualRetryWithInputWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
     string result = check ctx->callActivity(recoverableByInputActivity,
             {"mode": "fail"},
-            retryPolicy = "MANUAL_RETRY");
+            retryPolicy = {userRoles: "approver"});
     return result;
 }
 
@@ -577,7 +577,7 @@ function manualRetryWithInputWorkflow(workflow:Context ctx, RetryActivityInput i
 function manualRetryFailDecisionWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
     string result = check ctx->callActivity(alwaysFailActivity,
             {"message": "manual retry fail decision"},
-            retryPolicy = "MANUAL_RETRY");
+            retryPolicy = {userRoles: "approver"});
     return result;
 }
 
@@ -590,6 +590,6 @@ function manualRetryFailDecisionWorkflow(workflow:Context ctx, RetryActivityInpu
 function manualRetrySameInputWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
     string result = check ctx->callActivity(alwaysFailActivity,
             {"message": "manual same-input retry"},
-            retryPolicy = "MANUAL_RETRY");
+            retryPolicy = {userRoles: "approver"});
     return result;
 }

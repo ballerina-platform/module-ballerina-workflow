@@ -45,7 +45,7 @@ final DurableAgent declTestAgent = check new ({
         chat: {request: string, response: string, cardinality: MULTI_EVENT}
     },
     humanTasks: {
-        signoff: {roles: "manager"}
+        signoff: {userRoles: "manager"}
     }
 });
 
@@ -59,7 +59,7 @@ function testDurableAgentDeclRegistration() returns error? {
     _ = check wfInternal:registerDurableAgentEvent("declTestAgent", "chat", string, string,
         "MULTI_EVENT");
     _ = check wfInternal:registerDurableAgentHumanTask("declTestAgent", "signoff",
-        {roles: "manager", timeout: {minutes: 5}});
+        {userRoles: "manager", timeout: {minutes: 5}});
 
     // Registering the same agent name twice is an error.
     boolean|error duplicate = wfInternal:registerDurableAgentDecl("declTestAgent", declTestModel,
@@ -102,10 +102,10 @@ function testDurableAgentDuplicateCapabilityNames() returns error? {
     _ = check wfInternal:registerDurableAgentDecl("duplicateNameAgent", declTestModel,
         {role: "Test assistant", instructions: "Assist with tests."}, 8);
     _ = check wfInternal:registerDurableAgentHumanTask("duplicateNameAgent", "approve",
-        {roles: "manager"});
+        {userRoles: "manager"});
 
     boolean|error duplicateTask = wfInternal:registerDurableAgentHumanTask("duplicateNameAgent",
-        "approve", {roles: "finance"});
+        "approve", {userRoles: "finance"});
     test:assertTrue(duplicateTask is error, "A second human task named 'approve' should be rejected");
     if duplicateTask is error {
         test:assertTrue(duplicateTask.message().includes("Duplicate capability name 'approve'"),
@@ -120,7 +120,7 @@ function testDurableAgentDuplicateCapabilityNames() returns error? {
 
     // A different name on the same agent still registers.
     _ = check wfInternal:registerDurableAgentHumanTask("duplicateNameAgent", "reject",
-        {roles: "manager"});
+        {userRoles: "manager"});
 }
 
 final DurableAgent runnerCoverageAgent = check new ({
@@ -131,7 +131,7 @@ final DurableAgent runnerCoverageAgent = check new ({
         status: {request: string, response: string, cardinality: SINGLE_EVENT}
     },
     humanTasks: {
-        signoffCoverage: {roles: "manager", timeout: {minutes: 5}}
+        signoffCoverage: {userRoles: "manager", timeout: {minutes: 5}}
     }
 });
 
@@ -148,7 +148,7 @@ function testObjectModelRunnerEndToEnd() returns error? {
     _ = check wfInternal:registerDurableAgentEvent("runnerCoverageAgent", "status", string, string,
         "SINGLE_EVENT");
     _ = check wfInternal:registerDurableAgentHumanTask("runnerCoverageAgent", "signoffCoverage",
-        {roles: "manager", title: "Sign off", description: "Sign off the order",
+        {userRoles: "manager", title: "Sign off", description: "Sign off the order",
             timeout: {minutes: 5}});
     _ = check wfInternal:registerDurableAgentPeer("runnerCoverageAgent", "askDriver",
         "agentTurnDriver", {description: "Delegates to the turn driver", "wait": true});

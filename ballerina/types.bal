@@ -71,18 +71,6 @@ public type AutoRetry record {|
     decimal maxRetryDelay?;
 |};
 
-# Human-review retry policy: the role(s) permitted to decide the retry review.
-# Passing a role name (or list of role names) as the `retryPolicy` creates a
-# review task on activity failure so a matching human can decide to retry,
-# retry with different input, or permanently fail. The task name is derived
-# automatically from the activity being called.
-public type HumanReview string|string[];
-
-# Deprecated alias of `HumanReview`.
-# # Deprecated
-# Use `HumanReview` instead.
-@deprecated
-public type ManualRetry HumanReview;
 
 # Options for activity execution via `callActivity`.
 #
@@ -157,7 +145,7 @@ public type HumanTaskRejectedDetail record {|
 # workflow can compensate on what the rejecting user said:
 #
 # ```ballerina
-# Approval|workflow:HumanTaskError approval = ctx->awaitHumanTask("approve", "FINANCE");
+# Approval|workflow:HumanTaskError approval = ctx->awaitHumanTask("approve", userRoles = "FINANCE");
 # if approval is workflow:HumanTaskRejectedError {
 #     _ = check ctx->callActivity(notifyRejected, args = {"reason": approval.detail().reason});
 # }
@@ -195,6 +183,69 @@ public type PendingAgentEvent record {|
 # use the blocking `ctx->waitForChildWorkflow` form, which durably suspends until
 # the child completes.
 public type WorkflowBusyError distinct error;
+
+# Any JSON object.
+public type JsonObject map<json>;
+
+# Who may answer a human decision, and how it reads. Shared by a workflow's human task, a
+# durable agent's task capability, and the review a gated activity raises.
+#
+# This is a review's whole definition. A human task adds the shapes it is checked against —
+# see `HumanTaskDefinition`.
+#
+# + userRoles - Role(s) permitted to answer this decision
+# + title - Short summary shown in the inbox. Defaults to the task name
+# + description - Additional context shown with the form or decision
+# + timeout - Maximum time to wait. Omit to wait indefinitely
+public type ReviewTaskDefinition record {
+    string|string[] userRoles;
+    string? title = ();
+    string? description = ();
+    Duration? timeout = ();
+};
+
+# A human task: who may answer it and how it reads, plus the shapes it shows and accepts.
+#
+# The payload supplied to the task is checked against `payloadType` before the task is
+# created, whether a workflow passes it to `awaitHumanTask` or an agent supplies it.
+#
+# + payloadType - Shape of the payload shown to the decider
+# + resultType - Shape of the answer. A workflow states this as `awaitHumanTask`'s `T`
+#                instead; an agent declares it here
+public type HumanTaskDefinition record {
+    *ReviewTaskDefinition;
+    typedesc<map<json>> payloadType = JsonObject;
+    typedesc<anydata> resultType = anydata;
+};
+
+# Deprecated name of `HumanTaskDefinition`.
+#
+# # Deprecated
+# Use `HumanTaskDefinition`. The payload is now an argument of `awaitHumanTask`.
+@deprecated
+public type HumanTaskOptions HumanTaskDefinition;
+
+# Deprecated name of `ReviewTaskDefinition`.
+#
+# # Deprecated
+# Use `ReviewTaskDefinition`.
+@deprecated
+public type HumanReview ReviewTaskDefinition;
+
+# How a `Context.callActivity` invocation behaves, passed as an included record
+# parameter. Like `HumanTaskOptions`, deliberately an OPEN record so a future behaviour
+# option — an approval gate, a heartbeat policy, a per-call timeout — is a new field
+# here rather than a new parameter, and tooling derives its forms from this record.
+# The step identity (`stepId`) is NOT here: it is workflow mechanics, not invocation
+# behaviour, and stays a function parameter on every context operation.
+#
+# + retryPolicy - Failure behaviour: `NoAutomaticRetry` (fail the workflow),
+#                 `AutoRetry` (durable backoff retries), or a `ReviewTaskDefinition`
+#                 (raise a review on failure so a person decides to rerun, rerun with
+#                 edited input, or fail)
+public type CallActivityOptions record {
+    AutoRetry|ReviewTaskDefinition|NoAutomaticRetry retryPolicy = NoAutomaticRetry;
+};
 
 # A time duration, structurally identical to `time:Duration`. Declared in this module so
 # timeout fields render as first-class workflow forms without a cross-module type reference;

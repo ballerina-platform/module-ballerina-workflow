@@ -471,6 +471,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                         .typeOf(remoteCall.expression());
                 if (receiverType.isPresent() && WorkflowPluginUtils.isContextType(receiverType.get())) {
                     checkStepId(WorkflowGraphBuilder.stepIdArgument(remoteCall));
+                    checkDeclaredTypes(remoteCall.arguments());
                 }
             }
             remoteCall.arguments().forEach(argument -> argument.accept(this));
@@ -490,6 +491,32 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                 }
             }
             methodCall.arguments().forEach(argument -> argument.accept(this));
+        }
+
+        /**
+         * A task's {@code payloadType} and {@code resultType} must name a type: they are
+         * published in the descriptor at build time and checked against at run time.
+         */
+        private void checkDeclaredTypes(SeparatedNodeList<FunctionArgumentNode> args) {
+            for (String field : List.of(WorkflowConstants.ARG_PAYLOAD_TYPE, WorkflowConstants.ARG_RESULT_TYPE)) {
+                Node declared = WorkflowGraphBuilder.declaredFieldExpression(args, field);
+                if (declared != null && !isTypeReference(declared)) {
+                    report(declared.location(), WorkflowDiagnostic.WORKFLOW_162, field);
+                }
+            }
+        }
+
+        /** Whether an expression names a type rather than computing one. */
+        private boolean isTypeReference(Node expression) {
+            Optional<Symbol> symbol = context.semanticModel().symbol(expression);
+            if (symbol.isEmpty()) {
+                // An inline type descriptor (`record {| ... |}`) resolves to no symbol and is
+                // still a perfectly good compile-time type — only a computed value is not.
+                return expression instanceof TypeDescriptorNode;
+            }
+            SymbolKind kind = symbol.get().kind();
+            return kind == SymbolKind.TYPE_DEFINITION || kind == SymbolKind.TYPE
+                    || kind == SymbolKind.CLASS || kind == SymbolKind.ENUM;
         }
 
         private void checkStepId(Node argument) {
@@ -555,12 +582,14 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                         if (!hasActivityAnnotation(expression)) {
                             reportCallActivityDiagnostic(remoteCallNode);
                         } else {
-                            // Validate parameters match
-                            // If second argument is provided, validate it matches activity params
-                            // If no second argument, validate activity has no required params
-                            if (arguments.size() >= 2) {
-                                FunctionArgumentNode secondArg = arguments.get(1);
-                                validateParametersMatch(remoteCallNode, expression, secondArg);
+                            // Validate parameters match. The args map is found by NAME first,
+                            // then by its positional slot: `callActivity(payClaim, args = {...})`
+                            // is as legal as the positional form, and reading only arguments[1]
+                            // reported every required parameter missing for the named form
+                            // (ballerina-library#9092) — or mistook a named stepId for the map.
+                            FunctionArgumentNode argsArg = argsArgument(arguments);
+                            if (argsArg != null) {
+                                validateParametersMatch(remoteCallNode, expression, argsArg);
                             } else {
                                 // No args provided - validate activity has no required parameters
                                 validateNoArgsActivity(remoteCallNode, expression);
@@ -761,11 +790,8 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
             if (clientParamNames.isEmpty()) {
                 return;
             }
-            if (!(paramsArg instanceof PositionalArgumentNode posArg)) {
-                return;
-            }
-            ExpressionNode expr = posArg.expression();
-            if (expr.kind() != SyntaxKind.MAPPING_CONSTRUCTOR) {
+            ExpressionNode expr = argumentExpression(paramsArg);
+            if (expr == null || expr.kind() != SyntaxKind.MAPPING_CONSTRUCTOR) {
                 return;
             }
             MappingConstructorExpressionNode mapping = (MappingConstructorExpressionNode) expr;
@@ -821,14 +847,40 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         /**
          * Extracts parameter names from the args map (second argument).
          */
+        /**
+         * The {@code args} argument of a {@code callActivity} call — written as the named
+         * argument anywhere in the list, or positionally in the second slot — or {@code null}
+         * when the call passes none.
+         */
+        private static FunctionArgumentNode argsArgument(SeparatedNodeList<FunctionArgumentNode> arguments) {
+            int positional = -1;
+            for (FunctionArgumentNode arg : arguments) {
+                if (arg instanceof NamedArgumentNode named
+                        && WorkflowConstants.ARG_ARGS.equals(named.argumentName().name().text())) {
+                    return arg;
+                }
+                if (arg instanceof PositionalArgumentNode && ++positional == 1) {
+                    return arg;
+                }
+            }
+            return null;
+        }
+
+        /** The expression an argument carries, whichever form it was written in. */
+        private static ExpressionNode argumentExpression(FunctionArgumentNode arg) {
+            if (arg instanceof PositionalArgumentNode positional) {
+                return positional.expression();
+            }
+            return arg instanceof NamedArgumentNode named ? named.expression() : null;
+        }
+
         private Set<String> extractProvidedParamNames(FunctionArgumentNode paramsArg) {
             Set<String> paramNames = new HashSet<>();
-            
-            if (!(paramsArg instanceof PositionalArgumentNode posArg)) {
+
+            ExpressionNode expr = argumentExpression(paramsArg);
+            if (expr == null) {
                 return paramNames;
             }
-
-            ExpressionNode expr = posArg.expression();
             
             // Check if it's a mapping constructor expression like {"param1": value1, "param2": value2}
             if (expr.kind() == SyntaxKind.MAPPING_CONSTRUCTOR) {

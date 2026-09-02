@@ -48,8 +48,8 @@ final workflow:DurableAgent mapAgent = check new ({
         audit: {request: OrderUpdate}
     },
     humanTasks: {
-        signoff: {roles: "manager", title: "Sign off", timeout: {minutes: 5}},
-        review: {roles: ["finance", "ops"], resultType: OrderUpdate}
+        signoff: {userRoles: "manager", title: "Sign off", timeout: {minutes: 5}},
+        review: {userRoles: ["finance", "ops"], resultType: OrderUpdate}
     },
     peers: [
         {agent: helperAgent, name: "askHelper", description: "Delegates to the helper.",

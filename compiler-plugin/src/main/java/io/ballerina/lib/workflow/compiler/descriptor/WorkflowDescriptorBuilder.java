@@ -136,10 +136,6 @@ public final class WorkflowDescriptorBuilder {
     // The agent object type and the human-review retry policy are named in
     // WorkflowConstants, with the rest of the API vocabulary this builder matches.
 
-    // callActivity(activityFunction, args, T, retryPolicy): the policy is the fourth
-    // positional parameter, reachable when the caller supplies the typedesc explicitly.
-    private static final int RETRY_POLICY_POSITION = 3;
-
     /** Display labels are capped so one long expression cannot dominate the document. */
     private static final int MAX_LABEL_LENGTH = 120;
 
@@ -450,67 +446,72 @@ public final class WorkflowDescriptorBuilder {
          * {@code AutoRetry}/{@code NoAutomaticRetry} record, or a type too dynamic to
          * classify, does not create a review activity in the descriptor.
          *
-         * <p>Both call forms are recognized. {@code retryPolicy} is usually named, because
-         * the typedesc parameter before it is normally inferred; but a caller that supplies
-         * that typedesc explicitly can pass the policy positionally as the fourth argument —
-         * {@code ctx->callActivity(fn, {}, string, "OPS")} — and that review activity must
-         * appear in the descriptor too.
+         * <p>{@code retryPolicy} is a {@code CallActivityOptions} field, so it travels either
+         * as a named argument or as a field of a positionally-passed options record — the
+         * open-record door the API advertises. The runtime honours both, so the descriptor
+         * must see both, or a gated activity would review at run time with no review activity
+         * drawn in the graph. A mapping before the step-id index is the activity's own
+         * {@code args} map, never an options record.
          */
         private boolean hasHumanReviewRetryPolicy(SeparatedNodeList<FunctionArgumentNode> args) {
+            int optionsFrom = WorkflowGraphBuilder.positionalStepIdIndex(WorkflowConstants.CALL_ACTIVITY_FUNCTION);
+            int positional = -1;
             for (FunctionArgumentNode arg : args) {
                 if (arg instanceof NamedArgumentNode named
                         && WorkflowConstants.ARG_RETRY_POLICY.equals(named.argumentName().name().text())) {
                     return isHumanReviewTyped(named.expression());
                 }
-            }
-            if (args.size() > RETRY_POLICY_POSITION
-                    && args.get(RETRY_POLICY_POSITION) instanceof PositionalArgumentNode positional) {
-                return isHumanReviewTyped(positional.expression());
+                if (arg instanceof PositionalArgumentNode pos) {
+                    positional++;
+                    if (positional >= optionsFrom
+                            && pos.expression() instanceof MappingConstructorExpressionNode mapping) {
+                        for (MappingFieldNode field : mapping.fields()) {
+                            if (!(field instanceof SpecificFieldNode specific)
+                                    || !WorkflowConstants.ARG_RETRY_POLICY.equals(fieldKeyName(specific))) {
+                                continue;
+                            }
+                            if (specific.valueExpr().isPresent()) {
+                                return isHumanReviewTyped(specific.valueExpr().get());
+                            }
+                            // The shorthand form `{retryPolicy}` has no value expression —
+                            // the field captures a same-named variable, whose declared type
+                            // is what decides whether the activity is gated.
+                            Optional<Symbol> captured = semanticModel.symbol(specific);
+                            if (captured.isPresent() && captured.get() instanceof VariableSymbol variable) {
+                                return isHumanReviewType(variable.typeDescriptor());
+                            }
+                            return false;
+                        }
+                    }
+                }
             }
             return false;
         }
 
+
         private boolean isHumanReviewTyped(ExpressionNode expression) {
             Optional<TypeSymbol> typeOpt = semanticModel.typeOf(expression);
-            if (typeOpt.isEmpty()) {
-                return false;
-            }
-            TypeSymbol raw = typeOpt.get();
+            return typeOpt.isPresent() && isHumanReviewType(typeOpt.get());
+        }
+
+        /**
+         * Whether a {@code retryPolicy} value is a {@code HumanReview} — the record that says
+         * a failing activity raises a review. Named references settle it outright; anything
+         * else is decided structurally by {@code userRoles}, exactly as the runtime decides it
+         * ({@code WorkflowContextNative.readHumanReview}): a review must name who may answer
+         * it, and {@code AutoRetry} is a closed record with no such field. Since 0.9.0 the
+         * policy is a record only — the string / string-array form is gone.
+         */
+        private boolean isHumanReviewType(TypeSymbol raw) {
             if (raw instanceof io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol ref
                     && ref.getName().map(WorkflowConstants.HUMAN_REVIEW_TYPE::equals).orElse(false)) {
                 return true;
             }
-            return isStringOrStringArray(DescriptorSchemaGen.dereference(raw, 0), 0);
+            TypeSymbol type = DescriptorSchemaGen.dereference(raw, 0);
+            return type instanceof RecordTypeSymbol record
+                    && record.fieldDescriptors().containsKey(WorkflowConstants.ARG_USER_ROLES);
         }
 
-        private boolean isStringOrStringArray(TypeSymbol type, int depth) {
-            if (type == null || depth > 6) {
-                return false;
-            }
-            switch (type.typeKind()) {
-                case STRING, STRING_CHAR, SINGLETON -> {
-                    return true;
-                }
-                case ARRAY -> {
-                    return isStringOrStringArray(DescriptorSchemaGen.dereference(
-                            ((io.ballerina.compiler.api.symbols.ArrayTypeSymbol) type)
-                                    .memberTypeDescriptor(), 0), depth + 1);
-                }
-                case UNION -> {
-                    for (TypeSymbol member
-                            : ((io.ballerina.compiler.api.symbols.UnionTypeSymbol) type)
-                                    .memberTypeDescriptors()) {
-                        if (!isStringOrStringArray(DescriptorSchemaGen.dereference(member, 0), depth + 1)) {
-                            return false;
-                        }
-                    }
-                    return true;
-                }
-                default -> {
-                    return false;
-                }
-            }
-        }
 
         private void collectAwaitHumanTask(RemoteMethodCallActionNode remoteCall) {
             String taskName = extractConstantTaskName(remoteCall.arguments());

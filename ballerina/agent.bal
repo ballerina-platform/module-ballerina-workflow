@@ -1085,12 +1085,11 @@ isolated function registerDeclaredActivity(handle agentCtx, DurableAgentActivity
             requiresApproval = approvalJson;
         }
         json retryJson = meta["retryPolicy"];
-        if retryJson is string {
-            retryPolicy = retryJson;
-        } else if retryJson is json[] {
-            retryPolicy = check retryJson.cloneWithType(HumanReview);
-        } else if retryJson is map<json> {
-            retryPolicy = check retryJson.cloneWithType(AutoRetry);
+        if retryJson is map<json> {
+            // Both policies are records; `userRoles` is what only a review has.
+            retryPolicy = retryJson["userRoles"] !is ()
+                    ? check retryJson.cloneWithType(HumanReview)
+                    : check retryJson.cloneWithType(AutoRetry);
         }
         json rolesJson = meta["userRoles"];
         if rolesJson is string {
@@ -1151,7 +1150,9 @@ isolated function registerDeclaredHumanTask(handle agentCtx, DurableAgentHumanTa
     Duration? timeout = ();
     json meta = taskSpec.meta;
     if meta is map<json> {
-        json rolesJson = meta["roles"];
+        // `userRoles` is the one spelling across a workflow's task, an agent's task and a
+        // review; `roles` is the pre-unification name of the same thing.
+        json rolesJson = meta["userRoles"] is () ? meta["roles"] : meta["userRoles"];
         if rolesJson is string {
             roles = rolesJson;
         } else if rolesJson is json[] {

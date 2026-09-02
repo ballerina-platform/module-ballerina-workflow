@@ -260,6 +260,12 @@ public enum WorkflowDiagnostic {
             "A step id must be a constant string: it is recorded in the workflow's graph at build "
                     + "time, so an expression evaluated per execution cannot be described. Use a "
                     + "literal, or omit it and let the compiler generate one",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_162("WORKFLOW_162",
+            "'%s' must be a type reference: it is published in the workflow descriptor at build "
+                    + "time, so a type computed per execution cannot be described — and it is what "
+                    + "the payload and the result of this task are checked against, which only "
+                    + "means something if every execution of the task agrees on it. Name a type",
             DiagnosticSeverity.ERROR);
 
     private final String code;

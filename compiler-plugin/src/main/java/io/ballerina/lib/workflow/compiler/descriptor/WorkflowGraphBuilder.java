@@ -20,8 +20,14 @@ package io.ballerina.lib.workflow.compiler.descriptor;
 
 import io.ballerina.compiler.api.SemanticModel;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
+import io.ballerina.compiler.api.symbols.RecordFieldSymbol;
+import io.ballerina.compiler.api.symbols.RecordTypeSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
+import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
+import io.ballerina.compiler.api.symbols.TypeSymbol;
+import io.ballerina.compiler.api.symbols.VariableSymbol;
+import io.ballerina.compiler.syntax.tree.BasicLiteralNode;
 import io.ballerina.compiler.syntax.tree.BinaryExpressionNode;
 import io.ballerina.compiler.syntax.tree.DoStatementNode;
 import io.ballerina.compiler.syntax.tree.ElseBlockNode;
@@ -32,7 +38,9 @@ import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
 import io.ballerina.compiler.syntax.tree.FunctionCallExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.IfElseStatementNode;
+import io.ballerina.compiler.syntax.tree.ListConstructorExpressionNode;
 import io.ballerina.compiler.syntax.tree.MappingConstructorExpressionNode;
+import io.ballerina.compiler.syntax.tree.MappingFieldNode;
 import io.ballerina.compiler.syntax.tree.MatchClauseNode;
 import io.ballerina.compiler.syntax.tree.MatchStatementNode;
 import io.ballerina.compiler.syntax.tree.MethodCallExpressionNode;
@@ -43,7 +51,9 @@ import io.ballerina.compiler.syntax.tree.PositionalArgumentNode;
 import io.ballerina.compiler.syntax.tree.RemoteMethodCallActionNode;
 import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
 import io.ballerina.compiler.syntax.tree.SimpleNameReferenceNode;
+import io.ballerina.compiler.syntax.tree.SpecificFieldNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
+import io.ballerina.compiler.syntax.tree.Token;
 import io.ballerina.compiler.syntax.tree.WaitActionNode;
 import io.ballerina.compiler.syntax.tree.WhileStatementNode;
 import io.ballerina.lib.workflow.compiler.WorkflowConstants;
@@ -115,10 +125,10 @@ public final class WorkflowGraphBuilder {
     private static final int MAX_LABEL_LENGTH = 120;
 
     // Where the step id lands when a caller passes it positionally rather than by name:
-    // callActivity(activityFunction, args, T, retryPolicy, stepId) and
-    // awaitHumanTask(taskName, userRoles, payload, title, description, timeout, T, stepId).
-    private static final int CALL_ACTIVITY_STEP_ID_POSITION = 4;
-    private static final int AWAIT_HUMAN_TASK_STEP_ID_POSITION = 7;
+    // callActivity(activityFunction, args, T, stepId, *options) and
+    // awaitHumanTask(taskName, payload, T, stepId, *definition).
+    private static final int CALL_ACTIVITY_STEP_ID_POSITION = 3;
+    private static final int AWAIT_HUMAN_TASK_STEP_ID_POSITION = 3;
     // sleep(duration, stepId)
     private static final int SLEEP_STEP_ID_POSITION = 1;
     // runChildWorkflow(childWorkflow, input, stepId)
@@ -228,6 +238,183 @@ public final class WorkflowGraphBuilder {
         };
     }
 
+    /** What a review node's id adds to the id of the step it reviews. */
+    public static final String REVIEW_STEP_ID_SUFFIX = "#review";
+
+    /**
+     * The review a call declares, as the facts a diagram can show, or {@code null} when the
+     * call declares none. Only statically-known values are reported — a role list built at
+     * run time cannot be drawn.
+     *
+     * @param args          the call's arguments
+     * @param semanticModel the module's semantic model
+     * @return the declared facts, or {@code null}
+     */
+    public static Map<String, Object> humanReviewDeclarationOf(SeparatedNodeList<FunctionArgumentNode> args,
+                                                               SemanticModel semanticModel) {
+        SpecificFieldNode policyField = retryPolicyFieldOf(args);
+        ExpressionNode policyExpression = policyField != null && policyField.valueExpr().isPresent()
+                ? policyField.valueExpr().get() : namedRetryPolicyOf(args);
+        if (policyExpression == null) {
+            // A shorthand field (`{retryPolicy}`) has no value expression — it captures a
+            // same-named variable, whose declared type is what says a review exists. The node
+            // belongs in the picture; its roles were not written here, so they are not drawn.
+            return policyField != null && isHumanReviewTyped(semanticModel.symbol(policyField).orElse(null))
+                    ? new LinkedHashMap<>() : null;
+        }
+        if (!(policyExpression instanceof MappingConstructorExpressionNode policy)) {
+            // A variable or call: a review only if its type says so, and nothing to draw.
+            return isHumanReviewTyped(semanticModel.typeOf(policyExpression).orElse(null))
+                    ? new LinkedHashMap<>() : null;
+        }
+        Map<String, Object> declared = new LinkedHashMap<>();
+        for (MappingFieldNode field : policy.fields()) {
+            if (!(field instanceof SpecificFieldNode specific) || specific.valueExpr().isEmpty()) {
+                continue;
+            }
+            String key = fieldKeyOf(specific);
+            if (key == null) {
+                continue;
+            }
+            ExpressionNode value = specific.valueExpr().get();
+            switch (key) {
+                case WorkflowConstants.ARG_USER_ROLES -> {
+                    List<String> roles = constantStringsOf(value);
+                    if (!roles.isEmpty()) {
+                        declared.put(WorkflowConstants.ARG_USER_ROLES, roles);
+                    }
+                }
+                // No taskName: a review's name is derived from the activity it reviews, the
+                // way a workflow task's is its call's first argument and an agent task's is
+                // its mapping key — constant by construction in all three.
+                case "title", "description" -> {
+                    String text = WorkflowDescriptorBuilder.constantStringValue(value);
+                    if (text != null) {
+                        declared.put(key, text);
+                    }
+                }
+                default -> {
+                }
+            }
+        }
+        // A review with no statically-known field is still a review.
+        return declared;
+    }
+
+    /**
+     * The expression a call gives a named field, whether written as a named argument
+     * ({@code payloadType = Foo}) or as a field of a positionally-passed options record.
+     * Returns {@code null} when the call does not state it, and for the shorthand form,
+     * which names a variable rather than an expression of its own.
+     *
+     * @param args  the call's arguments
+     * @param field the field's name
+     * @return the expression, or {@code null}
+     */
+    public static Node declaredFieldExpression(SeparatedNodeList<FunctionArgumentNode> args, String field) {
+        for (FunctionArgumentNode arg : args) {
+            if (arg instanceof NamedArgumentNode named
+                    && field.equals(named.argumentName().name().text())) {
+                return named.expression();
+            }
+            if (arg instanceof PositionalArgumentNode pos
+                    && pos.expression() instanceof MappingConstructorExpressionNode options) {
+                for (MappingFieldNode member : options.fields()) {
+                    if (member instanceof SpecificFieldNode specific
+                            && field.equals(fieldKeyOf(specific)) && specific.valueExpr().isPresent()) {
+                        return specific.valueExpr().get();
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /** The {@code retryPolicy} field of a positionally-passed options record, shorthand included. */
+    private static SpecificFieldNode retryPolicyFieldOf(SeparatedNodeList<FunctionArgumentNode> args) {
+        int optionsFrom = positionalStepIdIndex(WorkflowConstants.CALL_ACTIVITY_FUNCTION);
+        int positional = -1;
+        for (FunctionArgumentNode arg : args) {
+            if (arg instanceof PositionalArgumentNode pos) {
+                positional++;
+                if (positional >= optionsFrom
+                        && pos.expression() instanceof MappingConstructorExpressionNode options) {
+                    for (MappingFieldNode field : options.fields()) {
+                        if (field instanceof SpecificFieldNode specific
+                                && WorkflowConstants.ARG_RETRY_POLICY.equals(fieldKeyOf(specific))) {
+                            return specific;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /** The expression a {@code retryPolicy = ...} named argument passes, or null. */
+    private static ExpressionNode namedRetryPolicyOf(SeparatedNodeList<FunctionArgumentNode> args) {
+        for (FunctionArgumentNode arg : args) {
+            if (arg instanceof NamedArgumentNode named
+                    && WorkflowConstants.ARG_RETRY_POLICY.equals(named.argumentName().name().text())) {
+                return named.expression();
+            }
+        }
+        return null;
+    }
+
+    /** Whether a type is a review: a record naming {@code userRoles}, as elsewhere. */
+    private static boolean isHumanReviewTyped(Object symbolOrType) {
+        TypeSymbol type = switch (symbolOrType) {
+            case VariableSymbol variable -> variable.typeDescriptor();
+            case RecordFieldSymbol recordField -> recordField.typeDescriptor();
+            case TypeSymbol declared -> declared;
+            case null, default -> null;
+        };
+        if (type == null) {
+            return false;
+        }
+        if (type instanceof TypeReferenceTypeSymbol ref
+                && ref.getName().map(WorkflowConstants.HUMAN_REVIEW_TYPE::equals).orElse(false)) {
+            return true;
+        }
+        return DescriptorSchemaGen.dereference(type, 0) instanceof RecordTypeSymbol record
+                && record.fieldDescriptors().containsKey(WorkflowConstants.ARG_USER_ROLES);
+    }
+
+    /** A field's key from token text — {@code toSourceCode()} would carry a preceding comment. */
+    private static String fieldKeyOf(SpecificFieldNode field) {
+        Node key = field.fieldName();
+        if (key instanceof BasicLiteralNode literal && literal.kind() == SyntaxKind.STRING_LITERAL) {
+            String text = literal.literalToken().text();
+            return text.length() >= 2 ? text.substring(1, text.length() - 1) : null;
+        }
+        if (key instanceof Token token) {
+            String text = token.text().strip();
+            return text.startsWith("'") ? text.substring(1) : text;
+        }
+        return null;
+    }
+
+    /** One constant string or a list literal of them; empty when the value is computed. */
+    private static List<String> constantStringsOf(ExpressionNode value) {
+        List<String> values = new ArrayList<>();
+        if (value instanceof ListConstructorExpressionNode list) {
+            for (Node member : list.expressions()) {
+                String text = member instanceof ExpressionNode expression
+                        ? WorkflowDescriptorBuilder.constantStringValue(expression) : null;
+                if (text != null) {
+                    values.add(text);
+                }
+            }
+            return values;
+        }
+        String single = WorkflowDescriptorBuilder.constantStringValue(value);
+        if (single != null) {
+            values.add(single);
+        }
+        return values;
+    }
+
     /**
      * A step id written as a compile-time constant string, or {@code null} for anything else. The
      * graph is written at build time, so an expression evaluated per execution cannot be described.
@@ -297,6 +484,9 @@ public final class WorkflowGraphBuilder {
 
         List<Map<String, Object>> edges = new ArrayList<>();
         link(body, List.of(), edges);
+        // A review hangs off its step rather than sitting between two steps, so its edge is
+        // added after the sequential pass and never becomes anything's predecessor.
+        edges.addAll(collector.reviewEdges);
 
         Map<String, Object> graph = new LinkedHashMap<>();
         graph.put(FILE, fnDef.location().lineRange().fileName());
@@ -483,6 +673,8 @@ public final class WorkflowGraphBuilder {
         /** The same nodes by step id, for the emitters that update a node after creating it. */
         final Map<String, Map<String, Object>> nodesById = new LinkedHashMap<>();
         final List<CallSite> sites = new ArrayList<>();
+        /** Edges from a gated step to its review — out of the sequence, so linked separately. */
+        final List<Map<String, Object>> reviewEdges = new ArrayList<>();
         final Block root = new Block(null, false);
 
         private final Map<String, Integer> ordinals = new LinkedHashMap<>();
@@ -675,7 +867,8 @@ public final class WorkflowGraphBuilder {
                 case WorkflowConstants.CALL_ACTIVITY_FUNCTION -> {
                     String target = activityTargetOf(remoteCall.arguments());
                     if (target != null) {
-                        addCallSite(KIND_ACTIVITY, target, remoteCall);
+                        Item activity = addCallSite(KIND_ACTIVITY, target, remoteCall);
+                        addReviewNode(activity.stepId, target, remoteCall);
                     }
                 }
                 case WorkflowConstants.CALL_HUMAN_TASK_METHOD -> {
@@ -794,9 +987,45 @@ public final class WorkflowGraphBuilder {
          * becomes the node's identity; the ordinal is consumed either way, so naming one call of
          * an activity does not renumber the others.
          */
-        private void addCallSite(String kind, String target, RemoteMethodCallActionNode source) {
+        private Item addCallSite(String kind, String target, RemoteMethodCallActionNode source) {
             Item item = addNode(kind, target, target, null, source, chosenStepId(source));
             sites.add(new CallSite(item.stepId, kind, target, source.location().lineRange()));
+            return item;
+        }
+
+        /**
+         * Draws the review a gated activity raises: a node of its own, hanging off the step it
+         * belongs to rather than sitting in the sequence, since on the happy path it never
+         * happens. Its id is {@code <step>#review}, which is what a running review reports.
+         */
+        private void addReviewNode(String reviewedStepId, String target, RemoteMethodCallActionNode source) {
+            Map<String, Object> declaration = humanReviewDeclarationOf(source.arguments(), semanticModel);
+            if (declaration == null) {
+                return;
+            }
+            String stepId = reviewedStepId + REVIEW_STEP_ID_SUFFIX;
+            LineRange range = source.location().lineRange();
+
+            Map<String, Object> node = new LinkedHashMap<>();
+            node.put(STEP_ID, stepId);
+            node.put(KIND, DescriptorFields.KIND_REVIEW);
+            node.put(TARGET, target);
+            if (currentParent != null) {
+                node.put(PARENT, currentParent);
+                node.put(BRANCH, currentBranch);
+            }
+            node.put(LINE, range.startLine().line() + 1);
+            node.put(COLUMN, range.startLine().offset() + 1);
+
+            Map<String, Object> metadata = new LinkedHashMap<>(declaration);
+            metadata.put(DescriptorFields.REVIEWED_STEP_ID, reviewedStepId);
+            metadata.put(DescriptorFields.TRIGGER, DescriptorFields.TRIGGER_ON_FAILURE);
+            node.put(DescriptorFields.METADATA, metadata);
+
+            nodesById.put(stepId, node);
+            taken.add(stepId);
+            nodes.add(node);
+            reviewEdges.add(edge(reviewedStepId, stepId, DescriptorFields.WHEN_ON_FAILURE));
         }
 
         /**

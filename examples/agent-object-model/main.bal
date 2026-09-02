@@ -146,7 +146,7 @@ final workflow:DurableAgent orderAgent = check new ({
         escalate: {request: EscalationReq}
     },
     humanTasks: {
-        approval: {roles: "manager", title: "Approve the order"}
+        approval: {userRoles: "manager", title: "Approve the order"}
     },
     maxIter: 8
 });

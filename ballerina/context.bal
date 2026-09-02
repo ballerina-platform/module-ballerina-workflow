@@ -47,22 +47,23 @@ public client class Context {
     #          `"connection:<name>"` marker for transport across the workflow
     #          execution boundary.
     # + T - Expected return type (inferred from context)
-    # + retryPolicy - Retry behaviour on failure:
-    #   - `()` / `NoAutomaticRetry` (default) — error is returned as-is, no retry.
-    #   - `AutoRetry` — automatic backoff retry with configurable attempts and delays.
-    #   - `HumanReview` — on failure a review task is created for a human to decide
-    #     whether to retry (optionally with new input) or permanently fail the activity.
     # + stepId - Identity of this step within the workflow, reported by every execution of it and
     #            matching a node of the descriptor's graph — so a run can be traced back to the
     #            exact call that ran, the one in the `if` arm rather than the `else`. Name it
     #            (`stepId = "charge-card"`) for a step you want to follow: a chosen id survives
     #            edits that shift the generated `<activity>#<ordinal>`. Must be a constant string;
     #            an id another step already has is suffixed, with a warning.
+    # + options - How the invocation behaves — today `retryPolicy` (`NoAutomaticRetry`
+    #             default, `AutoRetry` backoff, or `HumanReview`: on failure a review
+    #             task lets a person rerun or fail it) — as an included record, so each
+    #             travels as a named argument and a future behaviour option is a new
+    #             record field rather than a new parameter
     # + return - The activity result as `T`, or an error
     remote isolated function callActivity(function activityFunction,
             map<anydata|object {}> args = {},
-            typedesc<anydata> T = <>, AutoRetry|HumanReview|NoAutomaticRetry retryPolicy = NoAutomaticRetry,
-            string? stepId = ())
+            typedesc<anydata> T = <>,
+            string? stepId = (),
+            *CallActivityOptions options)
             returns T|error = @java:Method {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
         name: "callActivity"
@@ -158,8 +159,9 @@ public client class Context {
     # from the workflow descriptor the compiler plugin generates at build time.
     #
     # ```ballerina
-    # ApprovalDecision d = check ctx->awaitHumanTask("approveExpense", "FINANCE_APPROVER",
-    #     payload = {"amount": 1200, "currency": "USD"},
+    # ApprovalDecision d = check ctx->awaitHumanTask("approveExpense",
+    #     {"amount": 1200, "currency": "USD"},
+    #     userRoles = "FINANCE_APPROVER",
     #     title = "Approve order",
     #     timeout = {hours: 24}
     # ) on fail workflow:HumanTaskError e {
@@ -171,27 +173,24 @@ public client class Context {
     # ```
     #
     # + taskName - Identifies the task type; used as the Temporal workflow type and child workflow ID
-    # + userRoles - One or more roles permitted to complete this task
-    # + payload - Read-only JSON object rendered as key-value pairs next to the form
-    # + title - Short summary shown in the inbox. Defaults to `taskName` when omitted
-    # + description - Additional context shown alongside the form. Optional
-    # + timeout - Maximum time to wait. Omit (or pass `()`) to wait indefinitely
+    # + payload - Read-only object shown beside the form. Pass `{}` when there is nothing to
+    #             show; it is checked against the definition's `payloadType`
     # + T - Expected result type; drives form schema generation and runtime validation
-    # + stepId - Identity of this step within the workflow, as for `callActivity`: name it to
-    #            follow this task across edits, or omit it for a generated `<taskName>#<ordinal>`.
+    # + stepId - Identity of this step within the workflow, as for `callActivity`: name it
+    #            to follow this task across edits, or omit it for a generated
+    #            `<taskName>#<ordinal>`
+    # + definition - The task's `HumanTaskDefinition`, as an included record: each field
+    #                travels as a named argument (`userRoles = "MANAGER"`)
     # + return - The typed value submitted by the human, or a `HumanTaskError`: a
     #            `HumanTaskTimeoutError` if the deadline passed, a `HumanTaskRejectedError`
     #            if someone rejected the task (carrying their reason and details), or a
     #            `HumanTaskFailedError` if the task could not produce a result
     remote isolated function awaitHumanTask(
             string taskName,
-            string|string[] userRoles,
-            map<json> payload = {},
-            string? title = (),
-            string? description = (),
-            Duration? timeout = (),
+            map<json> payload,
             typedesc<anydata> T = <>,
-            string? stepId = ())
+            string? stepId = (),
+            *HumanTaskDefinition definition)
             returns T|HumanTaskError = @java:Method {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
         name: "awaitHumanTask"

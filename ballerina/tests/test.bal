@@ -817,18 +817,50 @@ function testActivityInvocationsOnSingleFailNoRetry() returns error? {
 }
 
 // ============================================================================
-// ManualRetry Type / Configuration Tests
+// HumanReview Type / Configuration Tests
 // ============================================================================
 
 @test:Config {groups: ["unit"]}
-function testManualRetryIsRolesAlias() {
-    // ManualRetry is the reviewer role(s): a role name or a list of role names.
-    ManualRetry single = "manager";
-    ManualRetry many = ["finance", "manager"];
-    AutoRetry|ManualRetry|NoRetry policy = single;
-    test:assertEquals(policy, "manager");
-    policy = many;
-    test:assertEquals(policy, <string[]>["finance", "manager"]);
+function testHumanReviewDeclaresTheReviewLikeAHumanTask() {
+    // A review is declared the way a human task is: one record, `userRoles` required,
+    // everything else optional and derived from the reviewed activity when omitted.
+    HumanTaskDefinition single = {userRoles: "manager"};
+    test:assertEquals(single.userRoles, "manager");
+    test:assertTrue(single.title is (), "title defaults to the derived phrase");
+    test:assertTrue(single.description is (), "description defaults to the derived text");
+    test:assertTrue(single.timeout is (), "no timeout means wait indefinitely");
+
+    HumanTaskDefinition many = {userRoles: ["finance", "manager"]};
+    test:assertEquals(many.userRoles, <string[]>["finance", "manager"]);
+
+    HumanTaskDefinition full = {
+        userRoles: "manager",
+        title: "Ledger posting needs a look",
+        description: "The ledger rejected the posting.",
+        timeout: {hours: 4}
+    };
+    test:assertEquals(full.title, "Ledger posting needs a look");
+    test:assertEquals(full.description, "The ledger rejected the posting.");
+}
+
+@test:Config {groups: ["unit"]}
+function testHumanReviewIsOpenForFutureOptions() {
+    // Open, for the same reason HumanTaskOptions is: an option written for a newer
+    // module rides along in the rest rather than failing to compile.
+    HumanTaskDefinition review = {userRoles: "manager", "escalateAfter": "P1D"};
+    test:assertEquals(review["escalateAfter"], "P1D");
+}
+
+@test:Config {groups: ["unit"]}
+function testRetryPolicyMembersAreDistinguishable() {
+    // Both records; `userRoles` is what tells them apart, at compile time and at run time.
+    AutoRetry|HumanTaskDefinition|NoAutomaticRetry policy = <HumanTaskDefinition>{userRoles: "manager"};
+    test:assertTrue(policy is HumanTaskDefinition, "a policy naming roles is a review");
+    test:assertFalse(policy is AutoRetry, "and is not an automatic retry");
+    policy = <AutoRetry>{maxRetries: 2};
+    test:assertTrue(policy is AutoRetry);
+    test:assertFalse(policy is HumanTaskDefinition,
+            "an AutoRetry has no userRoles, so it is no decision");
 }
 
 @test:Config {groups: ["unit"]}
@@ -854,7 +886,7 @@ function testAutoRetryCustomValues() {
 function testNoRetryIsUnit() {
     // NoRetry is the () constant — passing it as the retryPolicy union member
     // should be indistinguishable from omitting the parameter.
-    AutoRetry|ManualRetry|NoRetry policy = NoRetry;
+    AutoRetry|HumanTaskDefinition|NoRetry policy = NoRetry;
     test:assertTrue(policy is (), "NoRetry should be unit type ()");
 }
 
@@ -870,19 +902,33 @@ function failingActivityForRetry(string orderId) returns string|error {
     return error("Transient failure processing order: " + orderId);
 }
 
-// Workflow that uses ManualRetry for a critical step.
+// Workflow whose critical step raises a review when it fails — the short declaration,
+// where everything but the deciding role is derived from the activity.
 @Workflow
 function workflowWithManualRetry(Context ctx, string orderId) returns string|error {
     string result = check ctx->callActivity(failingActivityForRetry, {"orderId": orderId},
-            retryPolicy = "manager");
+            retryPolicy = {userRoles: "manager"});
     return result;
 }
 
-// Workflow that uses ManualRetry — the human will choose "fail" so the workflow errors.
+// The same, with the human choosing "fail" so the workflow errors.
 @Workflow
 function workflowWithManualRetryFail(Context ctx, string orderId) returns string|error {
     string result = check ctx->callActivity(failingActivityForRetry, {"orderId": orderId},
-            retryPolicy = "manager");
+            retryPolicy = {userRoles: "manager"});
+    return result;
+}
+
+// The full declaration: the review says what it is called and how it reads, instead of
+// taking the phrasing derived from the activity.
+@Workflow
+function workflowWithDescribedReview(Context ctx, string orderId) returns string|error {
+    string result = check ctx->callActivity(failingActivityForRetry, {"orderId": orderId},
+            retryPolicy = {
+                userRoles: ["finance", "manager"],
+                title: "Ledger posting needs a decision",
+                description: "The ledger rejected this posting. Rerun it, edit the input, or fail it."
+            });
     return result;
 }
 
@@ -913,12 +959,75 @@ function testManualRetryWorkflowCreatesReviewActivity() returns error? {
             "Should have at least one pending retry task, got " + pendingTasks.length().toString());
 
     management:ReviewActivitySummary task = pendingTasks[0];
-    test:assertTrue(!task.taskId.startsWith("reviewactivity-") && task.taskId.length() == 36,
+    test:assertTrue(re `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`
+            .isFullMatch(task.taskId),
             "Task ID should be a bare UUID (the kind travels in the memo), got: " + task.taskId);
     test:assertEquals(task.parentWorkflowId, workflowId, "parentWorkflowId should match");
     test:assertEquals(task.status, "PENDING", "Pending review activity should be in PENDING status");
     test:assertTrue(task.taskName.includes("failingActivityForRetry"),
             "Task name should include the activity function name");
+}
+
+@test:Config {groups: ["unit"]}
+function testDeclaredReviewWordingReachesTheTask() returns error? {
+    // What the declaration says beats what the activity would imply: the review is listed
+    // under the chosen task name and reads with the chosen title and description.
+    map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
+    _ = check registerWorkflowForTest(workflowWithDescribedReview,
+            "workflow-described-review-test", activities);
+
+    map<string> input = {id: "test-described-review-001", orderId: "ORD-MR-DESC"};
+    string|error runResult = run(workflowWithDescribedReview, input);
+    if runResult is error {
+        return; // No server available – skip.
+    }
+    string workflowId = runResult;
+    runtime:sleep(2);
+
+    management:ReviewActivitySummary[]|error pendingTasks = management:listPendingReviewActivities(workflowId);
+    if pendingTasks is error || pendingTasks.length() == 0 {
+        return;
+    }
+    management:ReviewActivitySummary task = pendingTasks[0];
+    test:assertTrue(task.taskName.includes("failingActivityForRetry"),
+            "A review's name is always derived from the activity, got: " + task.taskName);
+    test:assertEquals(task.title, "Ledger posting needs a decision",
+            "The declared title is what the inbox shows");
+    test:assertEquals(task.userRoles, <string[]>["finance", "manager"],
+            "Both declared roles may answer the review");
+
+    management:ReviewActivityInfo|error infoResult = management:getReviewActivityInfo(task.taskId);
+    if infoResult is management:ReviewActivityInfo {
+        test:assertTrue(infoResult.description.includes("Rerun it, edit the input, or fail it"),
+                "The declared description is what the decision reads with");
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testUndeclaredReviewWordingIsDerived() returns error? {
+    // And the short form still gets sensible wording for free — that is what makes
+    // `{userRoles: "manager"}` worth writing.
+    map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
+    _ = check registerWorkflowForTest(workflowWithManualRetry,
+            "workflow-derived-review-test", activities);
+
+    map<string> input = {id: "test-derived-review-001", orderId: "ORD-MR-DERIVED"};
+    string|error runResult = run(workflowWithManualRetry, input);
+    if runResult is error {
+        return;
+    }
+    runtime:sleep(2);
+    management:ReviewActivitySummary[]|error pendingTasks =
+            management:listPendingReviewActivities(runResult);
+    if pendingTasks is error || pendingTasks.length() == 0 {
+        return;
+    }
+    management:ReviewActivitySummary task = pendingTasks[0];
+    test:assertTrue(task.taskName.includes("failingActivityForRetry"),
+            "An undeclared name is derived from the activity, got: " + task.taskName);
+    test:assertTrue(task.title.includes("failingActivityForRetry"),
+            "An undeclared title names the activity being reviewed, got: " + task.title);
+    test:assertEquals(task.userRoles, <string[]>["manager"], "The declared role still applies");
 }
 
 @test:Config {groups: ["unit"]}
@@ -1114,7 +1223,8 @@ function testListAllReviewActivitiesReturnsCreatedTask() returns error? {
 
     // Instance ids are bare UUIDs — what a task is travels in its memo and type, never its id.
     foreach management:ReviewActivitySummary t in allTasks {
-        test:assertTrue(!t.taskId.startsWith("reviewactivity-") && t.taskId.length() == 36,
+        test:assertTrue(re `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`
+                .isFullMatch(t.taskId),
                 "All returned task ids should be bare UUIDs, got: " + t.taskId);
     }
 }

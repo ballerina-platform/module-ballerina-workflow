@@ -548,6 +548,9 @@ public type ActivityTreeNode record {|
     FailureInfo? failure;
     int attempt;
     string? stepId = ();
+    # For a review: its own node in the descriptor graph (`<reviewedStep>#review`). Nil for
+    # other node kinds
+    string? reviewStepId = ();
     ActivityTreeNode[]? children;
 |};
 

@@ -125,6 +125,12 @@ public final class DescriptorFields {
     public static final String TO = "to";
     /** What makes an edge the one taken: a branch arm, a loop entry, or a repeat. */
     public static final String WHEN = "when";
+    /** A review node's extra facts: what it reviews, why, and who may answer it. */
+    public static final String METADATA = "metadata";
+    /** On a review node: the step id of the step being reviewed. */
+    public static final String REVIEWED_STEP_ID = "reviewedStepId";
+    /** On a review node: {@code ON_FAILURE} or {@code PRE_RUN}. */
+    public static final String TRIGGER = "trigger";
 
     // ── Graph node kinds ──────────────────────────────────────────────────────
     /** A step that calls an activity. */
@@ -150,6 +156,11 @@ public final class DescriptorFields {
     public static final String KIND_TRY = "TRY";
     /** A step that awaits another workflow's result (`workflow:getWorkflowResult`). */
     public static final String KIND_AWAIT_RESULT = "AWAIT_RESULT";
+    /**
+     * The human decision a gated step raises — before it runs, or when it fails. Drawn
+     * hanging off that step rather than in the sequence.
+     */
+    public static final String KIND_REVIEW = "REVIEW";
     /** The agent itself, at the centre of an agent's graph. */
     public static final String KIND_AGENT_NODE = "AGENT";
     /** The model an agent reasons with. */
@@ -168,6 +179,10 @@ public final class DescriptorFields {
     public static final String WHEN_BODY = "body";
     /** The loop body's return to the loop. */
     public static final String WHEN_REPEAT = "repeat";
+    /** Edge label from a gated step to the review raised when it fails. */
+    public static final String WHEN_ON_FAILURE = "on failure";
+    /** Edge label from a gated step to the review that must pass before it runs. */
+    public static final String WHEN_BEFORE_RUN = "before run";
     /** The guarded block of a `do`/`on fail`. */
     public static final String WHEN_DO = "do";
     /** Its failure handler. */

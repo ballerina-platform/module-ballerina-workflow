@@ -8,6 +8,110 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- **Two records now say what a human decision is, and they are the same record plus what
+  only a task needs.** `ReviewTaskDefinition` — `{userRoles, title, description, timeout}` —
+  is what every decision says: who may answer it and how it reads. It is the whole of a
+  review's declaration, because a review's answer is the fixed three-way decision and its
+  payload is the reviewed activity's input, so neither is declared.
+  `HumanTaskDefinition` includes it and adds the two types that make a task checkable at its
+  edges: `payloadType` (what it shows) and `resultType` (what it accepts back). An agent's
+  `HumanTaskConfig` is now exactly `HumanTaskDefinition` — nothing left to add.
+
+- **A human task's payload is an argument now, and a required one.**
+  `awaitHumanTask(taskName, payload, T = <>, stepId = (), *HumanTaskDefinition)`. A task with
+  nothing to show says so with `{}` rather than by omission, and the runtime checks the
+  payload against the declared `payloadType` *before the task is created* — a task whose
+  form would be built from the wrong shape never reaches a person, who could not tell a
+  mis-shaped form from a badly designed one. The same check runs for an agent's task, where
+  the model supplies the payload and it is the only thing between a malformed argument and
+  someone's inbox. **`payloadType` and `resultType` must name a type** (`WORKFLOW_162`):
+  they are published in the descriptor at build time, and they only mean something as a
+  check if every execution of the task agrees on them.
+
+  Note for callers passing the step id positionally: a task's step id is now the FOURTH
+  argument, since the payload precedes it.
+
+- **What the earlier unification said, still true:**
+  A workflow's human task, a durable agent's task capability and the review a gated activity
+  raises were three different shapes for one idea — and the review's was not even a record,
+  just bare role names (`retryPolicy = "OPS"`), so the only thing you could say about it was
+  who answers it. All three now share `{userRoles, title, description, timeout}`, and each
+  context includes that record and adds only what it alone can supply: `HumanTaskOptions`
+  adds `payload` (an agent's comes from its own arguments, a review's is the activity's
+  input), `HumanTaskConfig` adds `resultType` (a workflow carries it in `awaitHumanTask`'s
+  `T`). A review adds nothing.
+
+  What is deliberately absent everywhere is the task's NAME: it is `awaitHumanTask`'s first
+  argument, or the `humanTasks` mapping key, or derived from the reviewed activity —
+  a compile-time constant by construction in all three, which beats a field that has to be
+  validated to be one.
+
+  The retry policy therefore reads:
+
+  ```ballerina
+  check ctx->callActivity(postToLedger, args, PostingResult, (),
+          {retryPolicy: {userRoles: "OPS"}});                       // the short form
+
+  check ctx->callActivity(postToLedger, args, PostingResult, (),
+          {retryPolicy: {
+              userRoles: ["finance", "manager"],
+              title: "Ledger posting needs a decision",
+              description: "Rerun it, edit the input, or fail it."
+          }});
+  ```
+
+  Everything but `userRoles` is optional and falls back to what the reviewed activity
+  implies, so the short form stays short. Being open, a future option is a new field on the
+  shared record — reaching all three uses at once — rather than a new type. A review is
+  still not a human task: it answers proceed, proceed-with-input or reject, where a task is
+  completed with a result. Only *how it is declared* is unified.
+
+  **Breaking**, deliberately, and not compensated for: the string and string-array retry
+  policies are gone (`retryPolicy = "OPS"` becomes `retryPolicy = {userRoles: "OPS"}`), the
+  `ManualRetry` alias is gone, and an agent's `humanTasks` entries name their deciders with
+  `userRoles` rather than `roles` — one spelling, everywhere. `HumanTaskOptions` and
+  `HumanReview` still resolve: the first is now the shared record plus `payload`, the second
+  a deprecated alias of the shared record. The two record retry policies are told apart by
+  `userRoles`, which only a decision has.
+
+- **A review is drawn in the graph now.** It has a node of its own — kind `REVIEW`, id
+  `<reviewedStep>#review` — hanging off the step it belongs to by an edge labelled
+  `on failure`, never sitting in the sequence, because on the happy path it never happens.
+  Its `metadata` carries `reviewedStepId`, `trigger`, and whatever the declaration stated
+  literally (`userRoles`, `title`, `description`). A running review reports
+  that node in its memo and in `ActivityTreeNode.reviewStepId`, alongside the existing
+  `stepId` of the step it reviews — so a diagram can draw the review itself rather than
+  only highlight what it gates.
+
+- **`awaitHumanTask` takes its definition as a record now: `HumanTaskOptions`, passed as an
+  included record parameter — and `userRoles` lives in it.** Everything a task IS beyond its
+  name and result type — who may decide it, payload, title, description, timeout —
+  was an individual parameter, so every new option was a signature change; the durable agent
+  had meanwhile settled on records for the same declaration. Only the task name, the
+  result typedesc, and the step identity remain parameters — `stepId` is workflow
+  mechanics, not part of what the task is, so it stays a parameter exactly as on
+  `callActivity`; the rest is one OPEN record whose fields travel as plain named
+  arguments. `userRoles` (required — a task must say who may decide it) names
+  the task's potential owners; richer WS-HumanTask-style people assignments (actual owner,
+  business administrators, four-eye constraints) will arrive as new fields rather than new
+  parameters. BREAKING for callers that passed roles positionally: write
+  `userRoles = "MANAGER"`; every other option already travelled by name and compiles
+  unchanged. The record's openness is the forward door in the other direction: an option a
+  given module version does not know yet can be written today as a member of the options
+  record literal (`ctx->awaitHumanTask("t", T, (), {userRoles: "MANAGER", "futureOption": ...})`)
+  — it rides the rest and is ignored until a version understands it. (An unknown NAMED
+  argument remains a compile error — typo safety is kept.) Tooling that renders task forms
+  should derive its fields from this record rather than a fixed list, so new options appear
+  without a tooling release.
+
+- **`callActivity`'s behaviour options move to a record the same way: `CallActivityOptions`.**
+  The invocation's behaviour — today `retryPolicy`, tomorrow an approval gate, a heartbeat
+  policy, a per-call timeout — is an open included record, mirroring `HumanTaskOptions` and
+  the durable agent's `ActivityDecl`, so the three activity surfaces grow along the same
+  axis. `retryPolicy = ...` call sites compile unchanged (named arguments bind to record
+  fields); a positional retry policy — which required spelling out the inferred typedesc to
+  reach — no longer exists. `stepId` stays a function parameter on both operations.
+
 - **A conversation no longer dies of a default timeout: `eventTimeout` is now opt-in.**
   Every MULTI_EVENT wait was required to carry an `eventTimeout`, and the object-model runner
   silently injected 30 minutes — so a durable agent's chat session ended mid-conversation the
@@ -406,7 +510,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
   ```ballerina
   do {
-      decision = check ctx->awaitHumanTask("approve", "FINANCE", timeout = {hours: 24});
+      decision = check ctx->awaitHumanTask("approve", userRoles = "FINANCE", timeout = {hours: 24});
   } on fail workflow:HumanTaskError e {
       if e !is workflow:HumanTaskTimeoutError {
           return e;                       // a rejection is an answer, not an escalation

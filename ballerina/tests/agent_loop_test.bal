@@ -874,24 +874,41 @@ function testAgentHumanTaskInputTypeChecked() returns error? {
     // and the corrected second call must create the one task the person then sees.
     map<anydata> input = {id: "agent-typedtask-001", request: "Escalate order ORD-7"};
     string workflowId = check run(typedTaskAgent, input);
-    runtime:sleep(2);
 
+    // Poll rather than skip: this test IS the assertion that the corrected call created a
+    // task, so an invisible task is a failure here, not an environment shrug.
     string? taskId = ();
-    management:HumanTaskGroup[]|error groups = management:listPendingHumanTasks(workflowId);
-    if groups is management:HumanTaskGroup[] {
-        int pending = 0;
-        foreach management:HumanTaskGroup g in groups {
-            pending += g.taskIds.length();
-            if g.taskIds.length() > 0 {
-                taskId = g.taskIds[0];
+    int pending = 0;
+    foreach int attempt in 0 ..< 10 {
+        runtime:sleep(1);
+        management:HumanTaskGroup[]|error groups = management:listPendingHumanTasks(workflowId);
+        if groups is management:HumanTaskGroup[] {
+            pending = 0;
+            taskId = ();
+            foreach management:HumanTaskGroup g in groups {
+                pending += g.taskIds.length();
+                if g.taskIds.length() > 0 {
+                    taskId = g.taskIds[0];
+                }
+            }
+            if taskId is string {
+                break;
             }
         }
-        test:assertEquals(pending, 1,
-                "The mistyped call must not create a task; only the corrected one may");
     }
     if taskId is () {
-        return; // Task not visible — skip, like the sibling human-task test.
+        test:assertFail("The corrected call must create a visible human task");
     }
+    test:assertEquals(pending, 1,
+            "The mistyped call must not create a task; only the corrected one may");
+
+    // The task's input proves which call created it: the corrected call's amount is the
+    // int 42, the mistyped call's a string. This is also the mismatch round trip's
+    // evidence — the model only corrects after the tool error reaches it.
+    management:HumanTaskInfo detail = check management:getHumanTaskInfo(taskId);
+    map<json>? taskInput = detail.taskInput;
+    test:assertTrue(taskInput is map<json> && taskInput["amount"] == 42,
+            "The created task must carry the corrected input, got: " + taskInput.toString());
 
     ApprovalResult decision = {approved: true, comment: "Escalation accepted"};
     check management:completeHumanTask(taskId, decision, ["APPROVER"]);

@@ -445,6 +445,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             }
             for (DurableAgentDeclInfo.HumanTaskDecl humanTask : decl.humanTasks()) {
                 addPrefixIfQualified(prefixes, humanTask.resultTypeSource());
+                addPrefixIfQualified(prefixes, humanTask.taskInputTypeSource());
             }
         }
         return prefixes;

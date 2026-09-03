@@ -38,7 +38,7 @@ function processOrder(workflow:Context ctx, OrderRequest request) returns OrderR
     if !inStock {
         return {orderId: request.orderId, status: "OUT_OF_STOCK"};
     }
-    check ctx->callActivity(reserveStock, {"orderId": request.orderId, "item": request.item});
+    () _ = check ctx->callActivity(reserveStock, {"orderId": request.orderId, "item": request.item});
     return {orderId: request.orderId, status: "COMPLETED"};
 }
 ```
@@ -121,7 +121,7 @@ function orderWithApproval(
     OrderRequest request,
     record {| future<ApprovalDecision> approval; |} events
 ) returns string|error {
-    check ctx->callActivity(notifyApprover, {"orderId": request.orderId});
+    () _ = check ctx->callActivity(notifyApprover, {"orderId": request.orderId});
 
     ApprovalDecision decision = check wait events.approval;
 
@@ -174,11 +174,11 @@ import ballerina/time;
 
 @workflow:Workflow
 function reminderWorkflow(workflow:Context ctx, ReminderInput input) returns error? {
-    check ctx->callActivity(sendNotification, {"message": input.message});
+    () _ = check ctx->callActivity(sendNotification, {"message": input.message});
 
     check ctx.sleep({hours: 24});
 
-    check ctx->callActivity(sendNotification, {"message": "Reminder: " + input.message});
+    () _ = check ctx->callActivity(sendNotification, {"message": "Reminder: " + input.message});
 }
 ```
 

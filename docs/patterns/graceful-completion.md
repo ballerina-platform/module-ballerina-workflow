@@ -25,12 +25,12 @@ function processOrder(workflow:Context ctx, OrderInput input) returns string|err
     // NON-CRITICAL — tolerate failure. Retry once; skip if still failing.
     string|error emailResult = ctx->callActivity(sendConfirmationEmail,
             {"email": input.customerEmail, "orderId": input.orderId},
-            retryOnError = true, maxRetries = 1, retryDelay = 1.0);
+            retryPolicy = {maxRetries: 1, retryDelay: 1.0});
 
     // NON-CRITICAL — tolerate failure. Retry once; skip if still failing.
     string|error auditResult = ctx->callActivity(writeAuditLog,
             {"orderId": input.orderId, "reservationId": reservationId},
-            retryOnError = true, maxRetries = 1, retryDelay = 1.0);
+            retryPolicy = {maxRetries: 1, retryDelay: 1.0});
 
     // Build result, noting any skipped steps
     string[] skipped = [];

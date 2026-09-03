@@ -18,7 +18,7 @@ function sendNotification(workflow:Context ctx, NotificationInput input) returns
     // Try the primary with retries for transient failures
     string|error emailResult = ctx->callActivity(sendEmail,
             {"to": input.email, "message": input.message},
-            retryOnError = true, maxRetries = 2, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 2, retryDelay: 1.0, retryBackoff: 2.0});
 
     if emailResult is error {
         // All retries exhausted — fall back to SMS
@@ -40,14 +40,16 @@ The key distinction:
 Apply the same pattern for each additional tier:
 
 ```ballerina
-string|error emailResult = ctx->callActivity(sendEmail, {...},
-        retryOnError = true, maxRetries = 2, retryDelay = 1.0);
+string|error emailResult = ctx->callActivity(sendEmail,
+        {"to": input.email, "message": input.message},
+        retryPolicy = {maxRetries: 2, retryDelay: 1.0});
 if emailResult is error {
-    string|error smsResult = ctx->callActivity(sendSms, {...},
-            retryOnError = true, maxRetries = 1, retryDelay = 1.0);
+    string|error smsResult = ctx->callActivity(sendSms,
+            {"phone": input.phone, "message": input.message},
+            retryPolicy = {maxRetries: 1, retryDelay: 1.0});
     if smsResult is error {
         // Final fallback — if this fails the workflow fails
-        return check ctx->callActivity(createSupportTicket, {...});
+        return check ctx->callActivity(createSupportTicket, {"message": input.message});
     }
     return smsResult;
 }

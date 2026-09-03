@@ -45,6 +45,23 @@ function <name>(<params...>) returns <ReturnType>|error { }
 - The return type must be a subtype of `anydata` or `error`
 - Activities can return `error?` for operations that don't produce a value
 
+### Calling an activity that returns `error?`
+
+`callActivity` infers its result type from the variable you assign it to, so its result
+always has to be bound — even when the activity returns nothing. Bind it to `() _`:
+
+```ballerina
+// ✅ Correct
+() _ = check ctx->callActivity(reserveStock, {"orderId": input.orderId});
+
+// ❌ Does not compile — nothing to infer the result type from
+check ctx->callActivity(reserveStock, {"orderId": input.orderId});
+_ = check ctx->callActivity(reserveStock, {"orderId": input.orderId});
+```
+
+A plain `_` is not enough: it supplies no expected type either. If you want to inspect the
+error instead of propagating it, bind it directly — `error? e = ctx->callActivity(...)`.
+
 ## Call Activities from Workflows
 
 Activities must be called using `ctx->callActivity()` within a workflow. Pass arguments as a `map<anydata>` where keys match the parameter names:
@@ -59,7 +76,7 @@ function orderProcess(workflow:Context ctx, OrderInput input) returns OrderResul
     });
 
     if status.inStock {
-        check ctx->callActivity(reserveStock, {
+        () _ = check ctx->callActivity(reserveStock, {
             "orderId": input.orderId,
             "item": input.item,
             "quantity": input.quantity
@@ -72,6 +89,7 @@ function orderProcess(workflow:Context ctx, OrderInput input) returns OrderResul
 @workflow:Activity
 function checkInventory(string item, int quantity) returns InventoryStatus|error {
     // Query inventory system
+    return {inStock: true};
 }
 
 @workflow:Activity
@@ -88,7 +106,7 @@ The compiler enforces proper usage of workflows and activities:
 
 | Error Code | Rule |
 |------------|------|
-| **WORKFLOW_100** | Context parameter must be typed as `workflow:Context` |
+| **WORKFLOW_100** | A `workflow:Context` parameter must be declared first |
 | **WORKFLOW_101** | Input parameter must be a subtype of `anydata` |
 | **WORKFLOW_102** | Events parameter must be a record with only `future<T>` fields |
 | **WORKFLOW_105** | Return type must be a subtype of `anydata` or `error` |
@@ -117,7 +135,7 @@ The compiler enforces proper usage of workflows and activities:
 @workflow:Workflow
 function myWorkflow(workflow:Context ctx, Input input) returns Output|error {
     // WORKFLOW_107 — target is not annotated with @Activity
-    check ctx->callActivity(someRegularFunction, {});
+    () _ = check ctx->callActivity(someRegularFunction, {});
 
     // WORKFLOW_108 — direct call not allowed
     check sendEmail(input.email, "Hello");
@@ -145,11 +163,13 @@ Because of this, activity implementations should aim to be **idempotent**: produ
 
 ## Activity Options
 
-`callActivity` accepts named options after the args map. All fields from `ActivityOptions` can be passed directly as named arguments.
+`callActivity` takes two named options after the args map: `stepId`, which names the step,
+and `retryPolicy`, which decides what happens when the activity fails.
 
 ### Default behaviour — errors as values
 
-By default (`retryOnError = false`), any error returned by the activity is handed back to the workflow as a normal return value. No automatic retries occur.
+With no `retryPolicy` (`NoAutomaticRetry`), any error the activity returns is handed back to
+the workflow as a value. The engine does not retry.
 
 ```ballerina
 // Default: error returned as a value — workflow handles it
@@ -159,27 +179,53 @@ if result is error {
 }
 ```
 
-### Opt-in retries
+### Automatic retries
 
-Pass `retryOnError = true` to enable automatic retries. When all retries are exhausted the error propagates and the workflow fails unless caught.
+Pass an `AutoRetry` record as `retryPolicy` to retry with durable backoff. When the attempts
+are exhausted the error propagates and the workflow fails unless it is caught.
 
 ```ballerina
 // 3 retries, 2-second initial delay, 1.5x backoff
 string result = check ctx->callActivity(sendEmail,
-    {"to": email, "subject": subject},
-    retryOnError = true, maxRetries = 3, retryDelay = 2.0, retryBackoff = 1.5);
+        {"to": email, "subject": subject},
+        retryPolicy = {maxRetries: 3, retryDelay: 2.0, retryBackoff: 1.5});
 ```
 
-### `ActivityOptions` reference
+#### `AutoRetry` reference
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `retryOnError` | `boolean` | `false` | Enable automatic retries on failure |
-| `maxRetries` | `int` | `0` | Number of retry attempts (`0` = no retries; only used when `retryOnError = true`) |
+| `maxRetries` | `int` | `3` | Maximum retry attempts |
 | `retryDelay` | `decimal` | `1.0` | Initial delay in seconds before the first retry |
 | `retryBackoff` | `decimal` | `2.0` | Multiplier applied to `retryDelay` after each attempt (`1.0` = fixed interval) |
 | `maxRetryDelay` | `decimal?` | — | Cap on the delay between retries in seconds (optional) |
 
+### Escalate to a human
+
+Pass a `ReviewTaskDefinition` as `retryPolicy` to raise a review task when the activity
+fails, so a person decides whether to rerun it, rerun it with edited input, or fail it.
+
+```ballerina
+string result = check ctx->callActivity(sendEmail,
+        {"to": email, "subject": subject},
+        retryPolicy = {userRoles: "OPS", title: "Resend the confirmation email"});
+```
+
+See [Human in the Loop](patterns/human-in-the-loop.md) for how review tasks are answered.
+
+### Naming a step
+
+By default a step is identified as `<activityName>#<ordinal>`, which shifts when calls are
+added or reordered. Pass `stepId` to give the step a stable name instead:
+
+```ballerina
+string result = check ctx->callActivity(sendEmail,
+        {"to": email, "subject": subject},
+        stepId = "sendConfirmation");
+```
+
+`stepId` must be a constant string (`WORKFLOW_161`). If two steps ask for the same id, the
+second is given a numeric suffix and the compiler warns (`WORKFLOW_160`).
 
 ## What's Next
 

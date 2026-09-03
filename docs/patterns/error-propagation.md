@@ -42,9 +42,21 @@ When the workflow fails via `check`:
 The caller sees the failure when it calls `workflow:getWorkflowResult()`:
 
 ```ballerina
-workflow:WorkflowExecutionInfo info = check workflow:getWorkflowResult(workflowId);
+anydata|error result = workflow:getWorkflowResult(workflowId);
+if result is error {
+    io:println("Workflow failed: " + result.message());
+}
+```
+
+`getWorkflowResult()` returns the workflow's own failure as an error, so do not `check` it here.
+To read the recorded failure instead — status, error message, and the activity invocations that
+led to it — ask the management module:
+
+```ballerina
+import ballerina/workflow.management;
+
+management:WorkflowExecutionInfo info = check management:getWorkflowInfo(workflowId);
 if info.status == "FAILED" {
-    // info.errorMessage contains the activity error message
     io:println("Workflow failed: " + (info.errorMessage ?: "unknown error"));
 }
 ```
@@ -56,7 +68,7 @@ If the activity is transient (network call, external API), combine retries with 
 ```ballerina
 // The workflow engine retries up to 3 times; if all fail, check propagates the final error
 boolean _ = check ctx->callActivity(checkInventory, {"item": input.item},
-        retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+        retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 ```
 
 ## What's Next

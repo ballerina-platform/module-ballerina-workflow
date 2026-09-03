@@ -40,7 +40,7 @@ Current model note: the events record is statically typed, so channels are decla
 
 ```ballerina
 // Notify both teams
-check ctx->callActivity(notifyApprovalTeams, {
+string _ = check ctx->callActivity(notifyApprovalTeams, {
     "transferId": input.transferId,
     "amount": input.amount
 });
@@ -61,7 +61,7 @@ if !compDecision.approved {
 }
 
 // Both approved — execute transfer
-string txnRef = check ctx->callActivity(executeTransfer, {...});
+string txnRef = check ctx->callActivity(executeTransfer, {"transferId": input.transferId});
 return {transferId: input.transferId, status: "COMPLETED", message: txnRef};
 ```
 

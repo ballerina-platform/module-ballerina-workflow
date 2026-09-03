@@ -9,9 +9,20 @@ Annotate a function with `@workflow:Workflow` to mark it as a workflow:
 ```ballerina
 import ballerina/workflow;
 
+type OrderRequest record {|
+    string orderId;
+    string item;
+|};
+
+type OrderResult record {|
+    string orderId;
+    string status;
+|};
+
 @workflow:Workflow
 function processOrder(workflow:Context ctx, OrderRequest input) returns OrderResult|error {
     // Orchestration logic here
+    return {orderId: input.orderId, status: "COMPLETED"};
 }
 ```
 
@@ -22,25 +33,25 @@ A workflow function follows this signature pattern:
 ```ballerina
 @workflow:Workflow
 function <name>(
-    workflow:Context ctx,        // Optional — runtime-provided handle for activities, sleep, currentTime, etc.
+    workflow:Context ctx,        // Required — runtime-provided handle for activities, sleep, currentTime, etc.
     <InputType> input,           // Optional — workflow input (anydata subtype)
     record {| future<T>... |} events  // Optional — for receiving external events
 ) returns <ReturnType>|error { }
 ```
 
-All three parameters are optional. When present, they must appear in this order: Context, Input, Events. A workflow can have at most 3 parameters.
+`workflow:Context` is required and must come first. The input and events parameters are optional, and when present must follow in this order: Context, Input, Events. A workflow can have at most 3 parameters.
 
 ### Parameters
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `workflow:Context ctx` | No | Runtime-provided handle that exposes `callActivity`, `sleep`, `currentTime`, `isReplaying`, `getWorkflowId`, and `getWorkflowType` for the current workflow instance |
+| `workflow:Context ctx` | Yes | Runtime-provided handle that exposes `callActivity`, `sleep`, `currentTime`, `isReplaying`, `getWorkflowId`, and `getWorkflowType` for the current workflow instance |
 | Input | No | Workflow input data. Must be a subtype of `anydata` |
 | Events record | No | Record with `future<T>` fields for receiving external data. See [Handle Data](handle-data.md) |
 
-If a workflow does not need any runtime APIs, you can omit `workflow:Context ctx`. This is uncommon, but valid for simple workflows that only transform input or wait for external data. Activities and callers do not create or manipulate this value; the runtime provides it when the workflow starts.
+Every workflow must declare `workflow:Context ctx` first, even one that only transforms its input — omitting it is a compile error (`WORKFLOW_100`). Activities and callers do not create or manipulate this value; the runtime provides it when the workflow starts.
 
-The context contains APIs for the current workflow instance. Workflow-management operations such as `workflow:getWorkflowInfo()` are module-level functions, not context methods.
+The context carries APIs for the current workflow instance. Workflow-management operations such as `getWorkflowInfo()` live in the separate `ballerina/workflow.management` module, not on the context.
 
 ### Return Type
 
@@ -107,7 +118,7 @@ function processPayment(workflow:Context ctx, PaymentRequest req) returns Paymen
     http:Client paymentGateway = check new ("https://payments.example.com");
     json response = check paymentGateway->post("/charge", req.toJson());
     // If the workflow recovers after this point, the charge is made AGAIN
-    check ctx->callActivity(sendReceipt, {"email": req.email});
+    () _ = check ctx->callActivity(sendReceipt, {"email": req.email});
     return {status: "COMPLETED"};
 }
 ```
@@ -123,7 +134,7 @@ function chargePayment(string orderId, decimal amount) returns json|error {
 @workflow:Workflow
 function processPayment(workflow:Context ctx, PaymentRequest req) returns PaymentResult|error {
     json response = check ctx->callActivity(chargePayment, {"orderId": req.orderId, "amount": req.amount});
-    check ctx->callActivity(sendReceipt, {"email": req.email});
+    () _ = check ctx->callActivity(sendReceipt, {"email": req.email});
     return {status: "COMPLETED"};
 }
 ```
@@ -140,13 +151,13 @@ import ballerina/time;
 @workflow:Workflow
 function reminderWorkflow(workflow:Context ctx, ReminderInput input) returns error? {
     // Send initial notification
-    check ctx->callActivity(sendNotification, {"message": input.message});
+    () _ = check ctx->callActivity(sendNotification, {"message": input.message});
 
     // Wait 24 hours (durable — survives restarts)
     check ctx.sleep({hours: 24});
 
     // Send follow-up
-    check ctx->callActivity(sendNotification, {"message": "Reminder: " + input.message});
+    () _ = check ctx->callActivity(sendNotification, {"message": "Reminder: " + input.message});
 }
 ```
 
@@ -180,7 +191,9 @@ These methods return `string|error` because they communicate with the engine; us
 function myWorkflow(workflow:Context ctx, Input input) returns Output|error {
     string workflowId = check ctx.getWorkflowId();
     string workflowType = check ctx.getWorkflowType();
+    log:printInfo(string `${workflowType} instance ${workflowId} starting`);
     // ...
+    return {};
 }
 ```
 
@@ -205,21 +218,29 @@ The returned `workflowId` uniquely identifies the running workflow instance. In 
 Use `workflow:getWorkflowResult()` to wait for a workflow to complete and retrieve its result:
 
 ```ballerina
-workflow:WorkflowExecutionInfo result = check workflow:getWorkflowResult(workflowId);
-io:println(result.status);  // "COMPLETED", "FAILED", "RUNNING", etc.
-io:println(result.result);  // The workflow return value (if completed)
+anydata result = check workflow:getWorkflowResult(workflowId);
+io:println(result.toString());  // The workflow return value
 ```
 
-`WorkflowExecutionInfo` includes the workflow ID, workflow type, status, result, error message, and recorded activity invocations. Use `getWorkflowResult()` when you want to wait for completion, and `getWorkflowInfo()` when you only need the current status.
-
-Use `workflow:getWorkflowInfo()` to inspect a workflow's current state without waiting for completion:
+`getWorkflowResult()` blocks until the workflow finishes and returns its return value as `anydata`; if the workflow failed, it returns that error. Convert the value to the workflow's declared return type with `cloneWithType` when you need a typed result:
 
 ```ballerina
-workflow:WorkflowExecutionInfo info = check workflow:getWorkflowInfo(workflowId);
+anydata raw = check workflow:getWorkflowResult(workflowId);
+OrderResult result = check raw.cloneWithType(OrderResult);
+```
+
+To inspect a workflow's current state *without* waiting for completion, use `getWorkflowInfo()` from the `ballerina/workflow.management` module:
+
+```ballerina
+import ballerina/workflow.management;
+
+management:WorkflowExecutionInfo info = check management:getWorkflowInfo(workflowId);
 if info.status == "RUNNING" {
     io:println("Workflow is still running");
 }
 ```
+
+`WorkflowExecutionInfo` includes the workflow ID, workflow type, status, result, error message, and recorded activity invocations.
 
 ## Unsupported Language Features
 

@@ -22,6 +22,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
     configured metrics reporter. Durable agent LLM turns and tool dispatches are covered
     as activity executions; agent runner, human-task, and review-activity child workflows
     as workflow completions, each distinguishable by type tags.
+  The integration tests now run with observability enabled (Prometheus reporter + mock
+  tracer) and assert the emitted metrics and spans.
   See `docs/proposals/observability-integration.md` for the design.
 
 - Data-event waits are now visible: a workflow blocked on `wait dataEvents.<name>`

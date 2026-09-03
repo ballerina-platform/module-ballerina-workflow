@@ -5,7 +5,7 @@
 
 [ballerina]
 dependencies-toml-version = "2"
-distribution-version = "2201.13.2"
+distribution-version = "2201.13.4"
 
 [[package]]
 org = "ballerina"
@@ -86,7 +86,7 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "data.jsondata"
-version = "1.1.3"
+version = "1.1.4"
 dependencies = [
 	{org = "ballerina", name = "jballerina.java"},
 	{org = "ballerina", name = "lang.object"}
@@ -129,7 +129,7 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "http"
-version = "2.16.4"
+version = "2.16.6"
 dependencies = [
 	{org = "ballerina", name = "auth"},
 	{org = "ballerina", name = "cache"},
@@ -339,6 +339,10 @@ version = "1.7.1"
 dependencies = [
 	{org = "ballerina", name = "jballerina.java"}
 ]
+modules = [
+	{org = "ballerina", packageName = "observe", moduleName = "observe"},
+	{org = "ballerina", packageName = "observe", moduleName = "observe.mockextension"}
+]
 
 [[package]]
 org = "ballerina"
@@ -444,6 +448,7 @@ dependencies = [
 	{org = "ballerina", name = "lang.runtime"},
 	{org = "ballerina", name = "log"},
 	{org = "ballerina", name = "mime"},
+	{org = "ballerina", name = "observe"},
 	{org = "ballerina", name = "soap"},
 	{org = "ballerina", name = "test"},
 	{org = "ballerina", name = "time"}
@@ -452,7 +457,8 @@ modules = [
 	{org = "ballerina", packageName = "workflow", moduleName = "workflow"},
 	{org = "ballerina", packageName = "workflow", moduleName = "workflow.activity"},
 	{org = "ballerina", packageName = "workflow", moduleName = "workflow.internal"},
-	{org = "ballerina", packageName = "workflow", moduleName = "workflow.management"}
+	{org = "ballerina", packageName = "workflow", moduleName = "workflow.management"},
+	{org = "ballerina", packageName = "workflow", moduleName = "workflow.observe"}
 ]
 
 [[package]]
@@ -467,11 +473,13 @@ dependencies = [
 	{org = "ballerina", name = "jballerina.java"},
 	{org = "ballerina", name = "lang.regexp"},
 	{org = "ballerina", name = "lang.runtime"},
+	{org = "ballerina", name = "observe"},
 	{org = "ballerina", name = "soap"},
 	{org = "ballerina", name = "test"},
 	{org = "ballerina", name = "time"},
 	{org = "ballerina", name = "workflow"},
-	{org = "ballerinai", name = "observe"}
+	{org = "ballerinai", name = "observe"},
+	{org = "ballerinax", name = "prometheus"}
 ]
 modules = [
 	{org = "ballerina", packageName = "workflow_tests", moduleName = "workflow_tests"}
@@ -499,5 +507,20 @@ dependencies = [
 ]
 modules = [
 	{org = "ballerinai", packageName = "observe", moduleName = "observe"}
+]
+
+[[package]]
+org = "ballerinax"
+name = "prometheus"
+version = "1.0.0"
+scope = "testOnly"
+dependencies = [
+	{org = "ballerina", name = "http"},
+	{org = "ballerina", name = "io"},
+	{org = "ballerina", name = "lang.string"},
+	{org = "ballerina", name = "observe"}
+]
+modules = [
+	{org = "ballerinax", packageName = "prometheus", moduleName = "prometheus"}
 ]
 

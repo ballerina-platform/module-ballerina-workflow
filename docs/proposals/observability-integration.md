@@ -163,11 +163,18 @@ observation hooks and is left for a future iteration.
 
 ## Testing
 
-- Module unit tests pass unchanged (behavior-preserving wrappers).
+- **Unit tests** (`ballerina/tests/observe_test.bal`): the module test build runs without
+  `observabilityIncluded`, so these assert the default path every existing user takes —
+  all span operations are safe no-ops when tracing is disabled — plus
+  `workflowTypeNameOf` name derivation.
+- **Integration tests** (`integration-tests/tests/observability_test.bal`): the
+  integration package builds with `observabilityIncluded = true` and runs with metrics
+  enabled (Prometheus reporter) and the distribution's mock tracer against a real engine
+  dev server. They assert the six `workflow_*` metrics with expected tags for completed
+  and failed runs (`testWorkflowMetricsEmission`, `testWorkflowFailureMetricsEmission`)
+  and the `start_workflow`/`send_data`/`get_workflow_result` spans tagged with the
+  instance ID (`testWorkflowSpanEmission`). The full pre-existing integration suite also
+  runs with observability enabled, so it doubles as a regression check that
+  instrumentation never disturbs execution.
 - With observability off (the default for all existing users), every new code path
   reduces to a flag check.
-- Verified end-to-end with a smoke application (`observabilityIncluded = true`,
-  Prometheus metrics + mock tracer, IN_MEMORY mode): all six metrics emit with the
-  expected tags for completed and failed workflows, and `start_workflow`, `send_data`,
-  and `get_workflow_result` spans nest under the caller's trace, carrying
-  `error.message` on failures.

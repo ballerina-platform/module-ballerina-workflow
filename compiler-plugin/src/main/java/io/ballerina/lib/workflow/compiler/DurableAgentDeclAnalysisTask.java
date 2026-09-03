@@ -627,6 +627,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                                         Set<String> seenNames, String agentName,
                                         SyntaxNodeAnalysisContext context) {
         String resultTypeSource = null;
+        String taskInputTypeSource = null;
         StringBuilder meta = new StringBuilder();
         for (MappingFieldNode taskField : config.fields()) {
             if (!(taskField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
@@ -641,14 +642,16 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 case "name" -> {
                     // Array form only: already read by the caller.
                 }
-                // The result typedesc travels separately (it is not json).
+                // The typedescs travel separately (they are not json): folded into the meta
+                // mapping they would make the injected registration ill-typed.
                 case "resultType" -> resultTypeSource = fieldValue.toSourceCode().strip();
+                case "taskInputType" -> taskInputTypeSource = fieldValue.toSourceCode().strip();
                 default -> appendMetaField(meta, key, fieldValue.toSourceCode().strip());
             }
         }
         checkUnique(name, seenNames, agentName, nameLocation, context);
         humanTasks.add(new DurableAgentDeclInfo.HumanTaskDecl(name,
-                meta.isEmpty() ? null : "{" + meta + "}", resultTypeSource));
+                meta.isEmpty() ? null : "{" + meta + "}", resultTypeSource, taskInputTypeSource));
     }
 
     private void extractPeers(ExpressionNode value, List<DurableAgentDeclInfo.PeerDecl> peers,

@@ -471,7 +471,10 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                         .typeOf(remoteCall.expression());
                 if (receiverType.isPresent() && WorkflowPluginUtils.isContextType(receiverType.get())) {
                     checkStepId(WorkflowGraphBuilder.stepIdArgument(remoteCall));
-                    checkDeclaredTypes(remoteCall.arguments());
+                    // Only the human task declares these types, and only by name — see below.
+                    if (WorkflowConstants.CALL_HUMAN_TASK_METHOD.equals(methodName)) {
+                        checkDeclaredTypes(remoteCall.arguments());
+                    }
                 }
             }
             remoteCall.arguments().forEach(argument -> argument.accept(this));
@@ -494,14 +497,24 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         }
 
         /**
-         * A task's {@code payloadType} and {@code resultType} must name a type: they are
+         * A task's {@code taskInputType} and {@code resultType} must name a type: they are
          * published in the descriptor at build time and checked against at run time.
+         *
+         * <p>Named arguments only. The definition is an included record parameter, so these
+         * fields can only be stated by name — a positional mapping in an {@code awaitHumanTask}
+         * call is the task input itself, user data whose keys may legitimately collide with
+         * these names and must not draw a diagnostic.
          */
         private void checkDeclaredTypes(SeparatedNodeList<FunctionArgumentNode> args) {
-            for (String field : List.of(WorkflowConstants.ARG_PAYLOAD_TYPE, WorkflowConstants.ARG_RESULT_TYPE)) {
-                Node declared = WorkflowGraphBuilder.declaredFieldExpression(args, field);
-                if (declared != null && !isTypeReference(declared)) {
-                    report(declared.location(), WorkflowDiagnostic.WORKFLOW_162, field);
+            for (FunctionArgumentNode arg : args) {
+                if (!(arg instanceof NamedArgumentNode named)) {
+                    continue;
+                }
+                String name = named.argumentName().name().text();
+                if ((WorkflowConstants.ARG_TASK_INPUT_TYPE.equals(name)
+                        || WorkflowConstants.ARG_RESULT_TYPE.equals(name))
+                        && !isTypeReference(named.expression())) {
+                    report(named.expression().location(), WorkflowDiagnostic.WORKFLOW_162, name);
                 }
             }
         }

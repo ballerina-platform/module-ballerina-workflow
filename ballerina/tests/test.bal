@@ -817,23 +817,23 @@ function testActivityInvocationsOnSingleFailNoRetry() returns error? {
 }
 
 // ============================================================================
-// HumanReview Type / Configuration Tests
+// Human decision type / configuration tests
 // ============================================================================
 
 @test:Config {groups: ["unit"]}
 function testHumanReviewDeclaresTheReviewLikeAHumanTask() {
     // A review is declared the way a human task is: one record, `userRoles` required,
     // everything else optional and derived from the reviewed activity when omitted.
-    HumanTaskDefinition single = {userRoles: "manager"};
+    ReviewTaskDefinition single = {userRoles: "manager"};
     test:assertEquals(single.userRoles, "manager");
     test:assertTrue(single.title is (), "title defaults to the derived phrase");
     test:assertTrue(single.description is (), "description defaults to the derived text");
     test:assertTrue(single.timeout is (), "no timeout means wait indefinitely");
 
-    HumanTaskDefinition many = {userRoles: ["finance", "manager"]};
+    ReviewTaskDefinition many = {userRoles: ["finance", "manager"]};
     test:assertEquals(many.userRoles, <string[]>["finance", "manager"]);
 
-    HumanTaskDefinition full = {
+    ReviewTaskDefinition full = {
         userRoles: "manager",
         title: "Ledger posting needs a look",
         description: "The ledger rejected the posting.",
@@ -847,19 +847,19 @@ function testHumanReviewDeclaresTheReviewLikeAHumanTask() {
 function testHumanReviewIsOpenForFutureOptions() {
     // Open, for the same reason HumanTaskOptions is: an option written for a newer
     // module rides along in the rest rather than failing to compile.
-    HumanTaskDefinition review = {userRoles: "manager", "escalateAfter": "P1D"};
+    ReviewTaskDefinition review = {userRoles: "manager", "escalateAfter": "P1D"};
     test:assertEquals(review["escalateAfter"], "P1D");
 }
 
 @test:Config {groups: ["unit"]}
 function testRetryPolicyMembersAreDistinguishable() {
     // Both records; `userRoles` is what tells them apart, at compile time and at run time.
-    AutoRetry|HumanTaskDefinition|NoAutomaticRetry policy = <HumanTaskDefinition>{userRoles: "manager"};
-    test:assertTrue(policy is HumanTaskDefinition, "a policy naming roles is a review");
+    AutoRetry|ReviewTaskDefinition|NoAutomaticRetry policy = <ReviewTaskDefinition>{userRoles: "manager"};
+    test:assertTrue(policy is ReviewTaskDefinition, "a policy naming roles is a review");
     test:assertFalse(policy is AutoRetry, "and is not an automatic retry");
     policy = <AutoRetry>{maxRetries: 2};
     test:assertTrue(policy is AutoRetry);
-    test:assertFalse(policy is HumanTaskDefinition,
+    test:assertFalse(policy is ReviewTaskDefinition,
             "an AutoRetry has no userRoles, so it is no decision");
 }
 
@@ -883,11 +883,11 @@ function testAutoRetryCustomValues() {
 }
 
 @test:Config {groups: ["unit"]}
-function testNoRetryIsUnit() {
-    // NoRetry is the () constant — passing it as the retryPolicy union member
+function testNoAutomaticRetryIsUnit() {
+    // NoAutomaticRetry is the () constant — passing it as the retryPolicy union member
     // should be indistinguishable from omitting the parameter.
-    AutoRetry|HumanTaskDefinition|NoRetry policy = NoRetry;
-    test:assertTrue(policy is (), "NoRetry should be unit type ()");
+    AutoRetry|ReviewTaskDefinition|NoAutomaticRetry policy = NoAutomaticRetry;
+    test:assertTrue(policy is (), "NoAutomaticRetry should be unit type ()");
 }
 
 // ============================================================================

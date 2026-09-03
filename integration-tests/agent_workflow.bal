@@ -163,17 +163,15 @@ final workflow:DurableAgent stockCheckAgent = check new ({
 });
 
 # Chat-driven durable agent: waits durably for the first chat event before reasoning.
-# Deliberately declared with the deprecated array form of `events` (a WORKFLOW_159
-# warning), so the array path keeps end-to-end coverage alongside the mapping form.
 final workflow:DurableAgent chatDrivenStockAgent = check new ({
     systemPrompt: {role: "", instructions: "You are an inventory assistant. Use agentCheckStock for availability."},
     model: agentMockModel,
     activities: [agentCheckStock],
-    events: [
+    events: {
         // Explicit SINGLE_EVENT: this agent takes exactly one chat message per run and
         // completes after answering it (channels default to MULTI_EVENT).
-        {name: "chat", request: string, response: string, cardinality: workflow:SINGLE_EVENT}
-    ]
+        chat: {request: string, response: string, cardinality: workflow:SINGLE_EVENT}
+    }
 });
 
 // Scripted conversation driven by the loop's framework-owned continuity: turn 1

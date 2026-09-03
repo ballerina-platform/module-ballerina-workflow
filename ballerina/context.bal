@@ -32,7 +32,7 @@ public client class Context {
     # Executes an activity function. A completed activity is never re-executed on
     # workflow replay — its recorded result is reused, even across process crashes
     # and restarts. A *failed* attempt may run again, however: `AutoRetry` re-executes
-    # the activity automatically and `HumanReview` lets a human rerun it, so make the
+    # the activity automatically and a `ReviewTaskDefinition` lets a human rerun it, so make the
     # activity's side effects idempotent (or deduplicate them) when retries are enabled.
     #
     # ```ballerina
@@ -54,7 +54,7 @@ public client class Context {
     #            edits that shift the generated `<activity>#<ordinal>`. Must be a constant string;
     #            an id another step already has is suffixed, with a warning.
     # + options - How the invocation behaves — today `retryPolicy` (`NoAutomaticRetry`
-    #             default, `AutoRetry` backoff, or `HumanReview`: on failure a review
+    #             default, `AutoRetry` backoff, or a `ReviewTaskDefinition`: on failure a review
     #             task lets a person rerun or fail it) — as an included record, so each
     #             travels as a named argument and a future behaviour option is a new
     #             record field rather than a new parameter
@@ -173,8 +173,8 @@ public client class Context {
     # ```
     #
     # + taskName - Identifies the task type; used as the Temporal workflow type and child workflow ID
-    # + payload - Read-only object shown beside the form. Pass `{}` when there is nothing to
-    #             show; it is checked against the definition's `payloadType`
+    # + taskInput - Read-only object shown beside the form. Pass `{}` when there is nothing
+    #               to show; it is checked against the definition's `taskInputType`
     # + T - Expected result type; drives form schema generation and runtime validation
     # + stepId - Identity of this step within the workflow, as for `callActivity`: name it
     #            to follow this task across edits, or omit it for a generated
@@ -187,7 +187,7 @@ public client class Context {
     #            `HumanTaskFailedError` if the task could not produce a result
     remote isolated function awaitHumanTask(
             string taskName,
-            map<json> payload,
+            map<json> taskInput,
             typedesc<anydata> T = <>,
             string? stepId = (),
             *HumanTaskDefinition definition)

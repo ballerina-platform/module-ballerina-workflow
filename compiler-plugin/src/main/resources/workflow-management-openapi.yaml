@@ -369,7 +369,7 @@ paths:
   /human-tasks/{taskId}:
     get:
       tags: [human-tasks]
-      summary: One human task, payload included
+      summary: One human task, input included
       operationId: getHumanTask
       parameters: [{$ref: "#/components/parameters/taskId"}]
       responses:
@@ -703,13 +703,15 @@ components:
         hasMore: {type: boolean}
     HumanTaskInfo:
       type: object
-      description: One task with its payload, description, and completion metadata
+      description: One task with its input, description, and completion metadata
       allOf:
         - {$ref: "#/components/schemas/HumanTaskSummary"}
         - type: object
           properties:
             description: {type: string}
-            payload: {type: object}
+            # A task created by a pre-rename runtime reports this as null: its record
+            # carries the old key and this runtime reads taskInput.
+            taskInput: {type: object, nullable: true}
             resultSchema: {type: string, nullable: true}
     ReviewActivitySummary:
       type: object

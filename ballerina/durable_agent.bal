@@ -58,28 +58,6 @@ public type EventConfig record {|
     EventCardinality cardinality = MULTI_EVENT;
 |};
 
-# A named event channel of a durable agent — the array form of `events`, kept for
-# existing declarations.
-#
-# # Deprecated
-# Declare channels in the mapping form instead, keyed by name:
-# `events: {chat: {request: string, response: string}}`. The mapping key is a
-# compile-time constant by construction, which the `name` field has to be
-# validated to be.
-#
-# + name - The channel name (unique across all of the agent's capabilities)
-# + request - Type of the payload sent to the agent on this channel; `sendData`
-#             validates each payload against it
-# + response - Type of the agent's reply for this channel; `()` for one-way channels
-# + cardinality - Business cardinality of the channel: re-armed per turn
-#                 (`MULTI_EVENT`, the default) or consumed once (`SINGLE_EVENT`)
-@deprecated
-public type EventDecl record {|
-    string name;
-    typedesc<anydata> request;
-    typedesc<anydata>? response = ();
-    EventCardinality cardinality = MULTI_EVENT;
-|};
 
 # An activity capability of a durable agent, with optional gating and retry config.
 # For the no-config case pass the bare `@workflow:Activity` function instead.
@@ -102,7 +80,7 @@ public type ActivityDecl record {|
     map<anydata|object {}> bindings?;
     boolean requiresApproval = false;
     string|string[] userRoles?;
-    AutoRetry|HumanReview|NoAutomaticRetry retryPolicy = NoAutomaticRetry;
+    AutoRetry|ReviewTaskDefinition|NoAutomaticRetry retryPolicy = NoAutomaticRetry;
 |};
 
 # An AI tool capability of a durable agent, with optional gating config. For the
@@ -116,37 +94,6 @@ public type ToolDecl record {|
     ai:BaseToolKit|ai:ToolConfig|ai:FunctionTool tool;
     boolean requiresApproval = false;
     string|string[] userRoles?;
-|};
-
-# One human task capability of a durable agent, declared in the mapping form of
-# `humanTasks` where the mapping key is the task name.
-#
-# A `HumanTaskDefinition`: the agent declares both `resultType` and `payloadType`, and the
-# payload it supplies when it asks is checked against the latter.
-public type HumanTaskConfig HumanTaskDefinition;
-
-# A named human task capability of a durable agent — the array form of
-# `humanTasks`, kept for existing declarations.
-#
-# # Deprecated
-# Declare tasks in the mapping form instead, keyed by name:
-# `humanTasks: {signoff: {userRoles: "manager"}}`. The mapping key is a compile-time
-# constant by construction, which the `name` field has to be validated to be.
-#
-# + name - The task name (unique across all of the agent's capabilities)
-# + roles - Role(s) permitted to complete the task
-# + resultType - Expected result type; drives form schema generation and validation
-# + title - Short summary shown in the inbox; defaults to `name`
-# + description - Additional context shown alongside the form
-# + timeout - Maximum time to wait for completion; omit to wait indefinitely
-@deprecated
-public type HumanTaskDecl record {|
-    string name;
-    string|string[] roles;
-    typedesc<anydata> resultType = anydata;
-    string title?;
-    string description?;
-    Duration timeout?;
 |};
 
 # A peer durable agent advertised to this agent's model as a delegable tool.
@@ -182,9 +129,9 @@ public type PeerDecl record {|
 # + tools - AI tools: `@ai:AgentTool` functions, `ai:ToolConfig`s, toolkits, or
 #           `ToolDecl` when gating is needed
 # + events - Event channels keyed by channel name (`{chat: {request: string,
-#            response: string}}`); the array form (`EventDecl[]`) is deprecated
+#            response: string}}`)
 # + humanTasks - Human task capabilities keyed by task name (`{signoff: {userRoles:
-#                "manager"}}`); the array form (`HumanTaskDecl[]`) is deprecated.
+#                "manager"}}`)
 #                Capability names share one namespace across activities, tools,
 #                events, human tasks, and peers: a name claimed twice is rejected
 #                when the agent registers, so the program fails at startup
@@ -211,8 +158,8 @@ public type DurableAgentConfig record {|
     typedesc<anydata>? resultType = ();
     (ActivityDecl|function)[] activities = [];
     (ToolDecl|ai:ToolConfig|ai:BaseToolKit|function)[] tools = [];
-    map<EventConfig>|EventDecl[] events = {};
-    map<HumanTaskConfig>|HumanTaskDecl[] humanTasks = {};
+    map<EventConfig> events = {};
+    map<HumanTaskDefinition> humanTasks = {};
     PeerDecl[] peers = [];
     int maxIter = 16;
     Duration? eventTimeout = ();
@@ -386,6 +333,7 @@ type DurableAgentHumanTaskSpec record {|
     string name;
     json meta = ();
     typedesc<anydata> resultType = anydata;
+    typedesc<map<json>>? taskInputType = ();
 |};
 
 type DurableAgentPeerSpec record {|

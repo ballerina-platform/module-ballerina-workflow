@@ -220,7 +220,7 @@ public isolated function listAllHumanTasks(string? status = (),
 # ```
 #
 # + taskId - The child workflow ID of the human task (a bare UUID; the kind travels in its memo)
-# + return - Full task info including title, userRoles, payload, and formSchema, or an error
+# + return - Full task info including title, userRoles, taskInput, and formSchema, or an error
 public isolated function getHumanTaskInfo(string taskId) returns HumanTaskInfo|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;

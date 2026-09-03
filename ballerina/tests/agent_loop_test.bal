@@ -301,6 +301,63 @@ isolated client class HumanTaskMockModelProvider {
 
 final HumanTaskMockModelProvider humanTaskAgentModel = new;
 
+// ── Human task input checked against the declared taskInputType ─────────────
+
+type EscalationInput record {|
+    string orderId;
+    int amount;
+|};
+
+// A model whose first tool call supplies input violating the task's declared
+// taskInputType (amount as a string). The mismatch must come back as a tool error —
+// the task must not be created — and the corrected second call goes through.
+isolated client class TypedInputMockModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        if messages is ai:ChatMessage[] {
+            // The latest escalate outcome decides the turn, so scan from the end.
+            int i = messages.length();
+            while i > 0 {
+                i -= 1;
+                ai:ChatMessage message = messages[i];
+                if message is ai:ChatFunctionMessage && message.name == "escalate" {
+                    string content = message.content ?: "";
+                    if content.includes("does not match its declared taskInputType") {
+                        return {
+                            role: ai:ASSISTANT,
+                            toolCalls: [{name: "escalate", arguments: {"orderId": "ORD-7", "amount": 42}}]
+                        };
+                    }
+                    return {role: ai:ASSISTANT, content: "Escalation outcome: " + content};
+                }
+            }
+        }
+        return {
+            role: ai:ASSISTANT,
+            toolCalls: [{name: "escalate", arguments: {"orderId": "ORD-7", "amount": "a lot"}}]
+        };
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final TypedInputMockModelProvider typedInputAgentModel = new;
+
+function typedTaskAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerHumanTask(ctx, "escalate", "APPROVER", ApprovalResult,
+            title = "Escalate order", taskInputType = EscalationInput);
+    check buildAndRun(ctx, input.request,
+            systemPrompt = {role: "", instructions: "You escalate orders to a person."},
+            model = typedInputAgentModel);
+}
+
 function approvalAgent(handle ctx, AgentOrderInput input) returns error? {
     check registerActivity(ctx, checkStock);
     check registerHumanTask(ctx, "approveOrder", "APPROVER", ApprovalResult,
@@ -662,6 +719,7 @@ function setupAgentTests() returns error? {
     _ = check registerAgentWorkflowForTest(flakyModelAgent, "flakyModelAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(priceAgent, "priceAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(approvalAgent, "approvalAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(typedTaskAgent, "typedTaskAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(eventWaitingAgent, "eventWaitingAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(conversationAgent, "conversationAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(unboundedConversationAgent, "unboundedConversationAgent",
@@ -807,6 +865,59 @@ function testAgentHumanTaskTool() returns error? {
     string? response = getAgentFinalResponse(workflowId);
     test:assertTrue(response is string && response.includes("\"approved\":true"),
             "Human task completion should flow back to the agent, got: " + (response ?: "()"));
+}
+
+@test:Config {groups: ["unit"]}
+function testAgentHumanTaskInputTypeChecked() returns error? {
+    // The model's first call violates the declared taskInputType (amount is a string).
+    // That call must fail as a tool error fed back to the model — creating no task —
+    // and the corrected second call must create the one task the person then sees.
+    map<anydata> input = {id: "agent-typedtask-001", request: "Escalate order ORD-7"};
+    string workflowId = check run(typedTaskAgent, input);
+
+    // Poll rather than skip: this test IS the assertion that the corrected call created a
+    // task, so an invisible task is a failure here, not an environment shrug.
+    string? taskId = ();
+    int pending = 0;
+    foreach int attempt in 0 ..< 10 {
+        runtime:sleep(1);
+        management:HumanTaskGroup[]|error groups = management:listPendingHumanTasks(workflowId);
+        if groups is management:HumanTaskGroup[] {
+            pending = 0;
+            taskId = ();
+            foreach management:HumanTaskGroup g in groups {
+                pending += g.taskIds.length();
+                if g.taskIds.length() > 0 {
+                    taskId = g.taskIds[0];
+                }
+            }
+            if taskId is string {
+                break;
+            }
+        }
+    }
+    if taskId is () {
+        test:assertFail("The corrected call must create a visible human task");
+    }
+    test:assertEquals(pending, 1,
+            "The mistyped call must not create a task; only the corrected one may");
+
+    // The task's input proves which call created it: the corrected call's amount is the
+    // int 42, the mistyped call's a string. This is also the mismatch round trip's
+    // evidence — the model only corrects after the tool error reaches it.
+    management:HumanTaskInfo detail = check management:getHumanTaskInfo(taskId);
+    map<json>? taskInput = detail.taskInput;
+    test:assertTrue(taskInput is map<json> && taskInput["amount"] == 42,
+            "The created task must carry the corrected input, got: " + taskInput.toString());
+
+    ApprovalResult decision = {approved: true, comment: "Escalation accepted"};
+    check management:completeHumanTask(taskId, decision, ["APPROVER"]);
+
+    _ = check getWorkflowResult(workflowId, 30);
+    string? response = getAgentFinalResponse(workflowId);
+    test:assertTrue(response is string && response.includes("\"approved\":true"),
+            "The corrected task's completion should flow back to the agent, got: "
+                    + (response ?: "()"));
 }
 
 @test:Config {groups: ["unit"]}

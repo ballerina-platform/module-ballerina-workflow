@@ -264,7 +264,7 @@ public enum WorkflowDiagnostic {
     WORKFLOW_162("WORKFLOW_162",
             "'%s' must be a type reference: it is published in the workflow descriptor at build "
                     + "time, so a type computed per execution cannot be described — and it is what "
-                    + "the payload and the result of this task are checked against, which only "
+                    + "the input and the result of this task are checked against, which only "
                     + "means something if every execution of the task agrees on it. Name a type",
             DiagnosticSeverity.ERROR);
 

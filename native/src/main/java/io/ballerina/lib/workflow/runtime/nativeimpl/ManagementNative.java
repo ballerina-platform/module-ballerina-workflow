@@ -577,14 +577,14 @@ public final class ManagementNative {
                 LOGGER.debug("Could not decode userRoles memo field: {}", e.getMessage());
             }
 
-            Object payloadRaw = null;
+            Object taskInputRaw = null;
             try {
-                Payload payloadPl = memoFields.get("payload");
-                if (payloadPl != null) {
-                    payloadRaw = dc.fromPayload(payloadPl, Object.class, Object.class);
+                Payload taskInputPl = memoFields.get("taskInput");
+                if (taskInputPl != null) {
+                    taskInputRaw = dc.fromPayload(taskInputPl, Object.class, Object.class);
                 }
             } catch (Exception e) {
-                LOGGER.debug("Could not decode payload memo field: {}", e.getMessage());
+                LOGGER.debug("Could not decode taskInput memo field: {}", e.getMessage());
             }
 
             // Status and timestamps from visibility info
@@ -619,8 +619,8 @@ public final class ManagementNative {
             }
             record.put(StringUtils.fromString("userRoles"), roles);
 
-            Object bPayload = payloadRaw != null ? TypesUtil.convertJavaToBallerinaType(payloadRaw) : null;
-            record.put(StringUtils.fromString("payload"), bPayload);
+            Object bTaskInput = taskInputRaw != null ? TypesUtil.convertJavaToBallerinaType(taskInputRaw) : null;
+            record.put(StringUtils.fromString("taskInput"), bTaskInput);
             record.put(StringUtils.fromString("createdAt"), StringUtils.fromString(createdAt));
             record.put(StringUtils.fromString("formSchema"),
                        formSchema != null ? StringUtils.fromString(formSchema) : null);

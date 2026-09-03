@@ -301,35 +301,6 @@ public final class WorkflowGraphBuilder {
         return declared;
     }
 
-    /**
-     * The expression a call gives a named field, whether written as a named argument
-     * ({@code payloadType = Foo}) or as a field of a positionally-passed options record.
-     * Returns {@code null} when the call does not state it, and for the shorthand form,
-     * which names a variable rather than an expression of its own.
-     *
-     * @param args  the call's arguments
-     * @param field the field's name
-     * @return the expression, or {@code null}
-     */
-    public static Node declaredFieldExpression(SeparatedNodeList<FunctionArgumentNode> args, String field) {
-        for (FunctionArgumentNode arg : args) {
-            if (arg instanceof NamedArgumentNode named
-                    && field.equals(named.argumentName().name().text())) {
-                return named.expression();
-            }
-            if (arg instanceof PositionalArgumentNode pos
-                    && pos.expression() instanceof MappingConstructorExpressionNode options) {
-                for (MappingFieldNode member : options.fields()) {
-                    if (member instanceof SpecificFieldNode specific
-                            && field.equals(fieldKeyOf(specific)) && specific.valueExpr().isPresent()) {
-                        return specific.valueExpr().get();
-                    }
-                }
-            }
-        }
-        return null;
-    }
-
     /** The {@code retryPolicy} field of a positionally-passed options record, shorthand included. */
     private static SpecificFieldNode retryPolicyFieldOf(SeparatedNodeList<FunctionArgumentNode> args) {
         int optionsFrom = positionalStepIdIndex(WorkflowConstants.CALL_ACTIVITY_FUNCTION);

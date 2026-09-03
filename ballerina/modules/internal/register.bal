@@ -145,9 +145,12 @@ public isolated function registerDurableAgentEvent(string agentName, string even
 # + taskName - The task name
 # + meta - Declaration metadata (roles, title, description)
 # + resultType - Expected result type; drives form schema generation
+# + taskInputType - Declared input shape; the agent-supplied input is checked against it.
+#                   Nil keeps the open default
 # + return - `true` on success, or an error for an unknown agent
 public isolated function registerDurableAgentHumanTask(string agentName, string taskName,
-        json meta = (), typedesc<anydata> resultType = anydata) returns boolean|error = @java:Method {
+        json meta = (), typedesc<anydata> resultType = anydata,
+        typedesc<map<json>>? taskInputType = ()) returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
     name: "registerDurableAgentHumanTask"
 } external;

@@ -187,7 +187,7 @@ public type WorkItemPage record {|
 # + title - Display title shown in the task inbox
 # + description - Supporting context for the reviewer
 # + userRoles - Roles permitted to complete this task
-# + payload - Read-only context map rendered alongside the form
+# + taskInput - Read-only context map rendered alongside the form
 # + createdAt - ISO-8601 timestamp stored in memo at task start
 # + formSchema - JSON Schema for the completion form (populated by compiler plugin; `()` until then)
 # + completedBy - User ID of the person who completed the task, or `()` if not yet completed
@@ -207,7 +207,7 @@ public type HumanTaskInfo record {|
     string title;
     string description;
     [string, string...] userRoles;
-    map<json>? payload;
+    map<json>? taskInput;
     string createdAt;
     string? formSchema;
     string? completedBy;

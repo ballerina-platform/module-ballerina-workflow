@@ -367,6 +367,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                     .append(", \"").append(escapeBallerinaStringLiteral(task.name()))
                     .append("\", ").append(task.metaSource() != null ? task.metaSource() : "()")
                     .append(", ").append(task.resultTypeSource() != null ? task.resultTypeSource() : "anydata")
+                    .append(", ").append(task.taskInputTypeSource() != null ? task.taskInputTypeSource() : "()")
                     .append(");").append(System.lineSeparator());
         }
         for (DurableAgentDeclInfo.PeerDecl peer : decl.peers()) {
@@ -444,6 +445,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             }
             for (DurableAgentDeclInfo.HumanTaskDecl humanTask : decl.humanTasks()) {
                 addPrefixIfQualified(prefixes, humanTask.resultTypeSource());
+                addPrefixIfQualified(prefixes, humanTask.taskInputTypeSource());
             }
         }
         return prefixes;

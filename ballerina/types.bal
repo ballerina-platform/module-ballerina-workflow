@@ -50,13 +50,6 @@ type ActivityRetryPolicy record {|
 # retries.
 public const NoAutomaticRetry = ();
 
-# Deprecated alias of `NoAutomaticRetry`.
-# # Deprecated
-# Use `NoAutomaticRetry` instead: it makes explicit that only engine-driven
-# retries are disabled (an AI agent may still re-invoke the activity).
-@deprecated
-public const NoRetry = ();
-
 # Automatic retry configuration. When the activity fails, it is automatically
 # retried according to the configured backoff policy.
 #
@@ -204,36 +197,22 @@ public type ReviewTaskDefinition record {
     Duration? timeout = ();
 };
 
-# A human task: who may answer it and how it reads, plus the shapes it shows and accepts.
+# A human task: who may answer it and how it reads, plus the shapes it takes and returns.
 #
-# The payload supplied to the task is checked against `payloadType` before the task is
+# The input supplied to the task is checked against `taskInputType` before the task is
 # created, whether a workflow passes it to `awaitHumanTask` or an agent supplies it.
 #
-# + payloadType - Shape of the payload shown to the decider
+# + taskInputType - Shape of the input shown to the decider
 # + resultType - Shape of the answer. A workflow states this as `awaitHumanTask`'s `T`
 #                instead; an agent declares it here
 public type HumanTaskDefinition record {
     *ReviewTaskDefinition;
-    typedesc<map<json>> payloadType = JsonObject;
+    typedesc<map<json>> taskInputType = JsonObject;
     typedesc<anydata> resultType = anydata;
 };
 
-# Deprecated name of `HumanTaskDefinition`.
-#
-# # Deprecated
-# Use `HumanTaskDefinition`. The payload is now an argument of `awaitHumanTask`.
-@deprecated
-public type HumanTaskOptions HumanTaskDefinition;
-
-# Deprecated name of `ReviewTaskDefinition`.
-#
-# # Deprecated
-# Use `ReviewTaskDefinition`.
-@deprecated
-public type HumanReview ReviewTaskDefinition;
-
 # How a `Context.callActivity` invocation behaves, passed as an included record
-# parameter. Like `HumanTaskOptions`, deliberately an OPEN record so a future behaviour
+# parameter. Deliberately an OPEN record so a future behaviour
 # option — an approval gate, a heartbeat policy, a per-call timeout — is a new field
 # here rather than a new parameter, and tooling derives its forms from this record.
 # The step identity (`stepId`) is NOT here: it is workflow mechanics, not invocation

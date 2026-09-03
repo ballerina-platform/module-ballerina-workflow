@@ -1135,28 +1135,7 @@ public class WorkflowCompilerPluginTest {
                         + getDiagnosticMessages(diagnosticResult));
     }
 
-    @Test(groups = "valid")
-    public void testDeprecatedDurableAgentCapabilityArrays() {
-        // The array forms still work — declarations register, and the channel they declare
-        // still validates the sendData call site — but each array is flagged once as
-        // deprecated, as a warning rather than an error.
-        DiagnosticResult diagnosticResult =
-                getDiagnosticResult("deprecated_durable_agent_capability_arrays");
-        Assert.assertEquals(diagnosticResult.errorCount(), 0,
-                "The deprecated forms must stay usable. Errors: "
-                        + getDiagnosticMessages(diagnosticResult));
-        List<Diagnostic> deprecations = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_159");
-        Assert.assertEquals(deprecations.size(), 2,
-                "The events array and the humanTasks array should each be flagged once. "
-                        + "Diagnostics: " + getDiagnosticMessages(diagnosticResult));
-        for (Diagnostic deprecation : deprecations) {
-            Assert.assertEquals(deprecation.diagnosticInfo().severity(),
-                    io.ballerina.tools.diagnostics.DiagnosticSeverity.WARNING,
-                    "Deprecation must be a warning, not an error");
-        }
-    }
-
-    @Test(groups = "valid")
+@Test(groups = "valid")
     public void testValidDurableAgentRunInput() {
         // Query-only runs, matching typed payloads (positional, named, and shorthand),
         // complete inline constructors including nested records, list/map/fixed-array/readonly
@@ -1213,7 +1192,8 @@ public class WorkflowCompilerPluginTest {
                 "invalid_human_task_name_not_constant");
         List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_156");
         Assert.assertEquals(diags.size(), 2,
-                "Expected 2 WORKFLOW_156 errors for the non-constant names. Errors: "
+                "Expected 2 WORKFLOW_156 errors for the non-constant names — the agent's computed "
+                        + "mapping key and the workflow task's variable name. Errors: "
                         + diagnosticResult.errors());
         Assert.assertEquals(diagnosticResult.errorCount(), 2,
                 "Expected the name errors to be the only compiler errors. Errors: "
@@ -1285,22 +1265,7 @@ public class WorkflowCompilerPluginTest {
                         + getDiagnosticMessages(diagnosticResult));
     }
 
-    @Test(groups = "invalid")
-    public void testInvalidDurableAgentDuplicateHumanTaskNames() {
-        // Two human tasks of one agent named "approve": the name is the task's identity, so the
-        // second declaration is rejected instead of silently shadowing the first.
-        DiagnosticResult diagnosticResult = getDiagnosticResult(
-                "invalid_durable_agent_duplicate_human_tasks");
-        List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_150");
-        Assert.assertEquals(diags.size(), 1,
-                "Expected 1 WORKFLOW_150 error for the duplicate human task name. Errors: "
-                        + getDiagnosticMessages(diagnosticResult));
-        Assert.assertEquals(diagnosticResult.errorCount(), 1,
-                "Expected the duplicate name to be the only compiler error. Errors: "
-                        + getDiagnosticMessages(diagnosticResult));
-    }
-
-    // ===== sendData validation test cases =====
+// ===== sendData validation test cases =====
 
     @Test(groups = "valid")
     public void testValidSendEventWithExplicitSignalName() {

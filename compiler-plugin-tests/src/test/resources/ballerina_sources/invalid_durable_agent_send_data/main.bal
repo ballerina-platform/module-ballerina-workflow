@@ -28,10 +28,10 @@ final workflow:DurableAgent orderAgent = check new ({
     systemPrompt: {role: "Order assistant", instructions: "Help the user."},
     model: chatModel,
     activities: [checkInventory],
-    events: [
-        {name: "chat", request: string, response: string},
-        {name: "notify", request: string}
-    ]
+    events: {
+        chat: {request: string, response: string},
+        notify: {request: string}
+    }
 });
 
 public function main() returns error? {
@@ -69,7 +69,7 @@ final AliasAgent aliasAgent = check new ({
     systemPrompt: {role: "Alias assistant", instructions: "Help."},
     model: chatModel,
     activities: [checkInventory],
-    events: [
-        {name: "ping", request: string}
-    ]
+    events: {
+        ping: {request: string}
+    }
 });

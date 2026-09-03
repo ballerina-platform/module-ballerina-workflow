@@ -18,6 +18,8 @@ import ballerina/ai;
 import ballerina/jballerina.java;
 import ballerina/time;
 
+import workflow.observe;
+
 // ---------------------------------------------------------------------------
 // Durable agent (object model) — declaration surface
 // ---------------------------------------------------------------------------
@@ -210,10 +212,28 @@ public isolated class DurableAgent {
     # + query - The user turn appended to the agent's system prompt
     # + input - Optional structured input for the run
     # + return - The new agent instance ID, or an error
-    public isolated function run(string query, anydata input = ()) returns string|error = @java:Method {
+    public isolated function run(string query, anydata input = ()) returns string|error {
+        observe:StartAgentSpan span = observe:createStartAgentSpan(self.getAgentName());
+        string|error result = self.runAgentNative(query, input);
+        if result is string {
+            span.addInstanceId(result);
+            span.close();
+        } else {
+            span.close(result);
+        }
+        return result;
+    }
+
+    private isolated function runAgentNative(string query, anydata input) returns string|error = @java:Method {
         'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
         name: "runAgent"
     } external;
+
+    private isolated function getAgentName() returns string {
+        lock {
+            return self.agentName;
+        }
+    }
 
     # Sends an event to a running instance on a declared channel and returns a
     # correlation token for reading that turn's response.
@@ -224,6 +244,15 @@ public isolated class DurableAgent {
     # + return - A correlation token for `getEventResult`/`waitForEventResult`,
     #            or an error
     public isolated function sendEvent(string instanceId, string eventName, anydata data)
+            returns string|error {
+        observe:SendAgentEventSpan span =
+                observe:createSendAgentEventSpan(self.getAgentName(), instanceId, eventName);
+        string|error result = self.sendEventNative(instanceId, eventName, data);
+        span.close(result is error ? result : ());
+        return result;
+    }
+
+    private isolated function sendEventNative(string instanceId, string eventName, anydata data)
             returns string|error = @java:Method {
         'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
         name: "sendEvent"

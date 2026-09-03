@@ -8,6 +8,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Observability integration at the durable-engine wrapper layer, plugged into the
+  standard Ballerina observability pipeline (`observabilityIncluded = true`):
+  - Tracing: a new exported `workflow.observe` submodule records client-side spans for
+    `run`, `sendData`, `getWorkflowResult`, `completeHumanTask`, `DurableAgent.run`, and
+    `DurableAgent.sendEvent`, nesting into the caller's existing request trace. Spans are
+    suppressed inside workflow bodies (replay safety) and record only structural
+    identifiers — never business payloads.
+  - Metrics: `workflow_starts_total`, `workflow_completions_total`,
+    `workflow_duration_seconds`, `workflow_activity_executions_total`,
+    `workflow_activity_duration_seconds`, and `workflow_data_events_sent_total`,
+    recorded replay-safely in the workflow/activity adapters and published through the
+    configured metrics reporter. Durable agent LLM turns and tool dispatches are covered
+    as activity executions; agent runner, human-task, and review-activity child workflows
+    as workflow completions, each distinguishable by type tags.
+  See `docs/proposals/observability-integration.md` for the design.
+
 - Data-event waits are now visible: a workflow blocked on `wait dataEvents.<name>`
   publishes the awaited event names to the execution memo (`wfWaitingEvents`),
   which lands in the event history and is readable from a describe call. The

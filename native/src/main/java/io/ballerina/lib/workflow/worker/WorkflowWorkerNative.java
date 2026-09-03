@@ -22,6 +22,7 @@ import io.ballerina.lib.workflow.ModuleUtils;
 import io.ballerina.lib.workflow.context.AgentContextNative;
 import io.ballerina.lib.workflow.context.SignalAwaitWrapper;
 import io.ballerina.lib.workflow.context.WorkflowContextNative;
+import io.ballerina.lib.workflow.observability.WorkflowMetrics;
 import io.ballerina.lib.workflow.registry.EventInfo;
 import io.ballerina.lib.workflow.runtime.WorkflowRuntime;
 import io.ballerina.lib.workflow.utils.BallerinaFailureConverter;
@@ -1749,6 +1750,30 @@ public final class WorkflowWorkerNative {
 
         @Override
         public Object execute(EncodedValues args) {
+            io.temporal.workflow.WorkflowInfo workflowInfo = Workflow.getInfo();
+            String executingType = workflowInfo.getWorkflowType();
+            try {
+                Object result = executeInternal(args);
+                // Record the completion only when this is fresh progress: during a replay
+                // (crash recovery, queries against closed runs) the body re-executes but
+                // no new completion happened, so recording would double-count.
+                if (!Workflow.isReplaying()) {
+                    WorkflowMetrics.recordWorkflowCompletion(executingType,
+                            Workflow.currentTimeMillis() - workflowInfo.getRunStartedTimestampMillis(), false);
+                }
+                return result;
+            } catch (io.temporal.worker.NonDeterministicException e) {
+                throw e;
+            } catch (Exception e) {
+                if (!Workflow.isReplaying() && !isDestroyWorkflowThreadError(e)) {
+                    WorkflowMetrics.recordWorkflowCompletion(executingType,
+                            Workflow.currentTimeMillis() - workflowInfo.getRunStartedTimestampMillis(), true);
+                }
+                throw e;
+            }
+        }
+
+        private Object executeInternal(EncodedValues args) {
             try {
                 // Get workflow type from Temporal's Workflow.getInfo()
                 io.temporal.workflow.WorkflowInfo info = Workflow.getInfo();
@@ -2268,8 +2293,24 @@ public final class WorkflowWorkerNative {
         private static final String RETRY_ON_ERROR_KEY = "retryOnError";
 
         @Override
-        @SuppressWarnings("unchecked")
         public Object execute(EncodedValues args) {
+            String executingActivityType =
+                    io.temporal.activity.Activity.getExecutionContext().getInfo().getActivityType();
+            long startNanos = System.nanoTime();
+            try {
+                Object result = executeInternal(args);
+                WorkflowMetrics.recordActivityExecution(executingActivityType,
+                        (System.nanoTime() - startNanos) / 1_000_000, false);
+                return result;
+            } catch (Exception e) {
+                WorkflowMetrics.recordActivityExecution(executingActivityType,
+                        (System.nanoTime() - startNanos) / 1_000_000, true);
+                throw e;
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        private Object executeInternal(EncodedValues args) {
             // Get activity name from Temporal's Activity.getExecutionContext()
             io.temporal.activity.ActivityExecutionContext activityContext =
                     io.temporal.activity.Activity.getExecutionContext();

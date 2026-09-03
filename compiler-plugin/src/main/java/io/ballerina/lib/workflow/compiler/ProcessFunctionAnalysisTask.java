@@ -75,10 +75,12 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
         // Collect activity calls and human task names within this workflow function
         Map<String, String> activityMap = new LinkedHashMap<>();
         Set<String> humanTaskNames = new LinkedHashSet<>();
-        ActivityCallCollector collector = new ActivityCallCollector(context, activityMap, humanTaskNames);
+        ActivityCallCollector collector =
+                new ActivityCallCollector(context, activityMap, humanTaskNames);
         functionNode.functionBody().accept(collector);
 
-        ProcessFunctionInfo processInfo = new ProcessFunctionInfo(functionName, activityMap, humanTaskNames);
+        ProcessFunctionInfo processInfo =
+                new ProcessFunctionInfo(functionName, activityMap, humanTaskNames);
         addToModifierContext(context.documentId(), processInfo);
     }
 
@@ -175,6 +177,14 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
                 }
             } else if (WorkflowConstants.CALL_HUMAN_TASK_METHOD.equals(methodName)) {
                 String taskName = extractHumanTaskName(remoteCallNode.arguments());
+                if (taskName == null && hasTaskNameArgument(remoteCallNode.arguments())) {
+                    DiagnosticInfo nameInfo = new DiagnosticInfo(
+                            WorkflowDiagnostic.WORKFLOW_156.getCode(),
+                            WorkflowDiagnostic.WORKFLOW_156.getMessage("human task"),
+                            WorkflowDiagnostic.WORKFLOW_156.getSeverity());
+                    context.reportDiagnostic(DiagnosticFactory.createDiagnostic(
+                            nameInfo, remoteCallNode.location()));
+                }
                 if (taskName != null) {
                     if (taskName.contains(".") || taskName.contains("|")) {
                         DiagnosticInfo info = new DiagnosticInfo(
@@ -192,6 +202,7 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
             remoteCallNode.arguments().forEach(arg -> arg.accept(this));
         }
 
+
         /**
          * Extracts the literal {@code taskName} value from the arguments of a
          * {@code awaitHumanTask} remote call. With individual params, taskName is
@@ -201,27 +212,55 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
          * @return the task name string (without surrounding quotes), or {@code null} if it
          *         cannot be statically determined (e.g. passed as a variable)
          */
+        // True when the call passes a taskName argument at all — used to flag non-constant
+        // names (a missing argument is the type checker's concern).
+        private boolean hasTaskNameArgument(SeparatedNodeList<FunctionArgumentNode> args) {
+            for (FunctionArgumentNode arg : args) {
+                if (arg instanceof NamedArgumentNode namedArg
+                        && "taskName".equals(namedArg.argumentName().name().text())) {
+                    return true;
+                }
+            }
+            return !args.isEmpty() && args.get(0) instanceof PositionalArgumentNode;
+        }
+
         private String extractHumanTaskName(SeparatedNodeList<FunctionArgumentNode> args) {
             // With individual params (awaitHumanTask), taskName is the first positional argument.
             // Check for named arg form first: awaitHumanTask(taskName = "...", ...)
             for (FunctionArgumentNode arg : args) {
                 if (arg instanceof NamedArgumentNode namedArg
-                        && "taskName".equals(namedArg.argumentName().name().text())
-                        && namedArg.expression() instanceof BasicLiteralNode literal
-                        && literal.kind() == SyntaxKind.STRING_LITERAL) {
-                    String raw = literal.literalToken().text();
-                    if (raw.length() >= 2 && raw.startsWith("\"") && raw.endsWith("\"")) {
-                        return raw.substring(1, raw.length() - 1);
-                    }
+                        && "taskName".equals(namedArg.argumentName().name().text())) {
+                    return constantStringValue(namedArg.expression());
                 }
             }
             // Positional form: taskName is at index 0
-            if (!args.isEmpty() && args.get(0) instanceof PositionalArgumentNode posArg
-                    && posArg.expression() instanceof BasicLiteralNode literal
+            if (!args.isEmpty() && args.get(0) instanceof PositionalArgumentNode posArg) {
+                return constantStringValue(posArg.expression());
+            }
+            return null;
+        }
+
+        // A compile-time constant string: a plain literal, or a string template without
+        // interpolations. Anything else (interpolated templates, variables, expressions)
+        // returns null and is rejected — the name drives the designer and the registration.
+        private String constantStringValue(Node expression) {
+            if (expression instanceof BasicLiteralNode literal
                     && literal.kind() == SyntaxKind.STRING_LITERAL) {
                 String raw = literal.literalToken().text();
                 if (raw.length() >= 2 && raw.startsWith("\"") && raw.endsWith("\"")) {
                     return raw.substring(1, raw.length() - 1);
+                }
+                return raw;
+            }
+            if (expression.kind() == SyntaxKind.STRING_TEMPLATE_EXPRESSION) {
+                String text = expression.toSourceCode().strip();
+                int open = text.indexOf('`');
+                int close = text.lastIndexOf('`');
+                if (open >= 0 && close > open) {
+                    String content = text.substring(open + 1, close);
+                    if (!content.contains("${")) {
+                        return content;
+                    }
                 }
             }
             return null;

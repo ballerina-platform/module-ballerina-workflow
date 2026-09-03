@@ -89,8 +89,7 @@ isolated function htNotifyEscalation(string orderId, string taskName, string tim
 function expenseApprovalWorkflow(workflow:Context ctx, ExpenseRequest input) returns ExpenseResult|error {
     string _ = check ctx->callActivity(htValidateExpense, {"orderId": input.orderId});
 
-    ApprovalDecision decision = check ctx->awaitHumanTask("approveExpense", ["FINANCE_APPROVER"],
-            payload = {orderId: input.orderId, amount: input.amount.toString()},
+    ApprovalDecision decision = check ctx->awaitHumanTask("approveExpense", {orderId: input.orderId, amount: input.amount.toString()}, userRoles = ["FINANCE_APPROVER"],
             title = "Approve $" + input.amount.toString() + " for " + input.requester);
 
     if decision.approved {
@@ -111,11 +110,15 @@ function expenseApprovalWithTimeoutWorkflow(workflow:Context ctx, ExpenseRequest
 
     ApprovalDecision decision;
     do {
-        decision = check ctx->awaitHumanTask("approveExpenseWithTimeout", ["FINANCE_APPROVER"],
-                payload = {orderId: input.orderId},
+        decision = check ctx->awaitHumanTask("approveExpenseWithTimeout", {orderId: input.orderId}, userRoles = ["FINANCE_APPROVER"],
                 title = "Approve $" + input.amount.toString() + " for " + input.requester,
                 timeout = {seconds: 5});
-    } on fail workflow:HumanTaskTimeoutError e {
+    } on fail workflow:HumanTaskError e {
+        // Only a timeout escalates. A rejection or a task failure is the requester's answer,
+        // not something to escalate, so it is returned as it arrived.
+        if e !is workflow:HumanTaskTimeoutError {
+            return e;
+        }
         string _ = check ctx->callActivity(htNotifyEscalation, {
             "orderId":       input.orderId,
             "taskName":      e.detail().taskName,
@@ -142,7 +145,7 @@ function expenseApprovalWithTimeoutWorkflow(workflow:Context ctx, ExpenseRequest
 # + return - Approval result, or an error if a step fails
 @workflow:Workflow
 function expenseApprovalMinimalWorkflow(workflow:Context ctx, ExpenseRequest input) returns ExpenseResult|error {
-    ApprovalDecision decision = check ctx->awaitHumanTask("approveExpenseMinimal", "admin");
+    ApprovalDecision decision = check ctx->awaitHumanTask("approveExpenseMinimal", {}, userRoles = "admin");
 
     if decision.approved {
         string msg = check ctx->callActivity(htProcessReimbursement, {"orderId": input.orderId});
@@ -158,9 +161,8 @@ function expenseApprovalMinimalWorkflow(workflow:Context ctx, ExpenseRequest inp
 # + return - Approval result, or an error if a step fails
 @workflow:Workflow
 function expenseApprovalMultiRoleWorkflow(workflow:Context ctx, ExpenseRequest input) returns ExpenseResult|error {
-    ApprovalDecision decision = check ctx->awaitHumanTask("approveExpenseMultiRole",
-            ["FINANCE_APPROVER", "MANAGER"],
-            payload = {orderId: input.orderId, amount: input.amount.toString(), requester: input.requester},
+    ApprovalDecision decision = check ctx->awaitHumanTask("approveExpenseMultiRole", {orderId: input.orderId, amount: input.amount.toString(), requester: input.requester},
+            userRoles = ["FINANCE_APPROVER", "MANAGER"],
             title = "High-value approval for $" + input.amount.toString());
 
     if decision.approved {

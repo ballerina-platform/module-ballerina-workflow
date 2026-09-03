@@ -387,6 +387,58 @@ function testStartWorkflowByType() returns error? {
     _ = check workflow:getWorkflowResult(wfHandle.workflowId, 30);
 }
 
+@test:Config {
+    groups: ["integration"]
+}
+function testStartAgentByTypeUnified() returns error? {
+    // A durable agent starts through the same management API as a workflow, with the
+    // uniform `{query, input}` envelope: the query is the user turn every agent takes.
+    management:WorkflowHandle agentHandle = check management:startWorkflowByType(
+            "stockCheckAgent", {query: "Is the laptop in stock?"});
+
+    test:assertFalse(agentHandle.workflowId == "", "Agent start must return a non-empty workflowId");
+    string result = check stockCheckAgent.waitForResult(agentHandle.workflowId);
+    test:assertEquals(result, "Stock check result: laptop is in stock",
+            "A management-started agent should run the same ReAct loop as agent.run");
+}
+
+@test:Config {
+    groups: ["integration"]
+}
+function testDefinitionsListWorkflowsAndAgentsUnified() returns error? {
+    // Workflows and durable agents list as one set of startable definitions,
+    // distinguished by `kind`, each with its own input schema.
+    management:WorkflowDefinition[] defs = check management:listWorkflowDefinitions();
+
+    management:WorkflowDefinition? agentDef = ();
+    management:WorkflowDefinition? workflowDef = ();
+    foreach management:WorkflowDefinition def in defs {
+        if def.workflowType == "stockCheckAgent" {
+            agentDef = def;
+        }
+        if def.workflowType == "infoTestWorkflow" {
+            workflowDef = def;
+        }
+    }
+
+    test:assertTrue(agentDef is management:WorkflowDefinition,
+            "The durable agent should appear in the unified definitions list");
+    if agentDef is management:WorkflowDefinition {
+        test:assertEquals(agentDef.kind, "AGENT", "Agent definitions carry kind AGENT");
+        string schema = agentDef.inputSchema ?: "";
+        test:assertTrue(schema.includes("\"query\""),
+                "An agent's input schema is the {query, input} start envelope: " + schema);
+    }
+
+    test:assertTrue(workflowDef is management:WorkflowDefinition,
+            "Workflow functions should appear in the unified definitions list");
+    if workflowDef is management:WorkflowDefinition {
+        test:assertEquals(workflowDef.kind, "WORKFLOW", "Workflow definitions carry kind WORKFLOW");
+        test:assertTrue(workflowDef.inputSchema is string,
+                "A workflow's input schema derives from its function signature");
+    }
+}
+
 // ================================================================================
 // HUMAN TASK — getHumanTaskInfo / listAllHumanTasks / failHumanTask
 // ================================================================================
@@ -525,13 +577,24 @@ function testGetReviewActivityInfo() returns error? {
                 "formSchema should describe the editable activity argument 'message', got: " + schema);
     }
 
+    // Audit fields are reported on both sides of a decision. They are read from history
+    // unconditionally: the decision signal is sent before the review closes, so a status
+    // check is not a sound proxy for its absence.
+    test:assertTrue(info.decidedBy is (), "A pending review must report no decider");
+    test:assertTrue(info.decidedAt is (), "A pending review must report no decision time");
+
     // Clean up — decide fail so the workflow terminates (workflow itself will also error out)
-    check management:completeReviewActivity(reviewTask.taskId, {action: "reject"});
+    check management:completeReviewActivity(reviewTask.taskId, {action: "reject"}, userId = "auditor");
     do {
         _ = check workflow:getWorkflowResult(workflowId, 15);
     } on fail {
         // expected — the workflow fails when the retry task action is "fail"
     }
+
+    management:ReviewActivityInfo decided = check management:getReviewActivityInfo(reviewTask.taskId);
+    test:assertFalse(decided.status == "PENDING", "The review must be closed once decided");
+    test:assertEquals(decided.decidedBy, "auditor", "A decided review must still report its decider");
+    test:assertTrue(decided.decidedAt is string, "A decided review must still report its decision time");
 }
 
 @test:Config {

@@ -15,8 +15,9 @@
 // under the License.
 
 // ============================================================================
-// Durable AI agent workflows (imperative AgentContext API) — exercised through
-// the REAL compiler-plugin codegen path against the shared Temporal dev server.
+// Durable AI agent workflows (object-model workflow:DurableAgent declarations) —
+// exercised through the REAL compiler-plugin codegen path against the shared
+// Temporal dev server.
 // The model is a scripted mock ai:ModelProvider so no credentials are needed.
 // ============================================================================
 
@@ -64,6 +65,96 @@ isolated client class AgentMockModelProvider {
 
 final AgentMockModelProvider agentMockModel = new;
 
+// ── AI tools (ToolDecl / ai:ToolConfig) ──────────────────────────────────────
+
+// Deliberately NOT @ai:AgentTool: the ai:ToolConfig carries its own metadata.
+isolated function quoteItemPrice(string item) returns string {
+    return item + " costs $500";
+}
+
+final ai:ToolConfig agentQuoteTool = {
+    name: "agentQuoteTool",
+    description: "Quotes the price of an item",
+    caller: quoteItemPrice
+};
+
+isolated client class ToolAgentMockModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        if messages is ai:ChatMessage[] {
+            foreach ai:ChatMessage message in messages {
+                if message is ai:ChatFunctionMessage && message.name == "agentQuoteTool" {
+                    string? content = message.content;
+                    return {role: ai:ASSISTANT, content: "Quote: " + (content ?: "")};
+                }
+            }
+        }
+        return {
+            role: ai:ASSISTANT,
+            toolCalls: [{name: "agentQuoteTool", arguments: {"item": "laptop"}, id: "call-tool-1"}]
+        };
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final ToolAgentMockModelProvider toolAgentMockModel = new;
+
+# Tool-driven durable agent: the ToolDecl entry wraps an ai:ToolConfig whose caller is a
+# plain function; the plugin forwards the declaration to registerDurableAgentTool and the
+# runner executes the tool durably through the built-in executeAgentTool activity.
+final workflow:DurableAgent quoteAgent = check new ({
+    systemPrompt: {role: "", instructions: "You are a pricing assistant. Use agentQuoteTool."},
+    model: toolAgentMockModel,
+    tools: [{tool: agentQuoteTool, requiresApproval: false}]
+});
+
+isolated client class McpToolAgentMockModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        if messages is ai:ChatMessage[] {
+            foreach ai:ChatMessage message in messages {
+                if message is ai:ChatFunctionMessage && message.name == "quoteItemPriceMcp" {
+                    string? content = message.content;
+                    return {role: ai:ASSISTANT, content: "MCP quote: " + (content ?: "")};
+                }
+            }
+        }
+        return {
+            role: ai:ASSISTANT,
+            toolCalls: [{name: "quoteItemPriceMcp", arguments: {"item": "laptop"}, id: "call-mcp-1"}]
+        };
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final McpToolAgentMockModelProvider mcpToolAgentMockModel = new;
+
+# MCP-tool-driven durable agent. The `ai:McpToolKit` connects to its server eagerly on
+# construction, so an in-package toolkit cannot be part of the module-level declaration
+# (listeners start after module init); the integration test constructs the toolkit at
+# run time and registers it through the same `registerDurableAgentTool` path the
+# compiler plugin generates.
+final workflow:DurableAgent mcpQuoteAgent = check new ({
+    systemPrompt: {role: "", instructions: "You are a pricing assistant. Use quoteItemPriceMcp."},
+    model: mcpToolAgentMockModel
+});
+
 # Prompt-driven durable agent: reasons over the run query.
 final workflow:DurableAgent stockCheckAgent = check new ({
     systemPrompt: {role: "", instructions: "You are an inventory assistant. Use agentCheckStock for availability."},
@@ -72,12 +163,16 @@ final workflow:DurableAgent stockCheckAgent = check new ({
 });
 
 # Chat-driven durable agent: waits durably for the first chat event before reasoning.
+# Deliberately declared with the deprecated array form of `events` (a WORKFLOW_159
+# warning), so the array path keeps end-to-end coverage alongside the mapping form.
 final workflow:DurableAgent chatDrivenStockAgent = check new ({
     systemPrompt: {role: "", instructions: "You are an inventory assistant. Use agentCheckStock for availability."},
     model: agentMockModel,
     activities: [agentCheckStock],
     events: [
-        {name: "chat", request: string, response: string}
+        // Explicit SINGLE_EVENT: this agent takes exactly one chat message per run and
+        // completes after answering it (channels default to MULTI_EVENT).
+        {name: "chat", request: string, response: string, cardinality: workflow:SINGLE_EVENT}
     ]
 });
 
@@ -132,7 +227,7 @@ final ConversationMockModelProvider conversationMockModel = new;
 final workflow:DurableAgent conversationalStockAgent = check new ({
     systemPrompt: {role: "", instructions: "Chat with the user until they say bye."},
     model: conversationMockModel,
-    events: [
-        {name: "chat", request: string, response: string, cardinality: workflow:MULTI_EVENT}
-    ]
+    events: {
+        chat: {request: string, response: string, cardinality: workflow:MULTI_EVENT}
+    }
 });

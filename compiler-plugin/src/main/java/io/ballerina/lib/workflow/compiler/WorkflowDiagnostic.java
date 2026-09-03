@@ -204,6 +204,68 @@ public enum WorkflowDiagnostic {
     WORKFLOW_150("WORKFLOW_150",
             "Duplicate capability name '%s' in durable agent '%s': events, tools, activities, human "
                     + "tasks, and peers share one flat namespace",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_151("WORKFLOW_151",
+            "A 'workflow:DurableAgent' must be assigned to a named variable and initialized inline "
+                    + "with 'new ({...})' or 'new workflow:DurableAgent({...})': the agent and its "
+                    + "capabilities (activities, tools, events, and human tasks) are registered from "
+                    + "this declaration at startup, and every worker replica must derive the same "
+                    + "registration deterministically",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_152("WORKFLOW_152",
+            "Durable agent '%s' declares no data-event channel named '%s'",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_153("WORKFLOW_153",
+            "Data-event channel '%s' of durable agent '%s' is one-way (no 'response' type is "
+                    + "declared), so the send produces no readable turn result: discard the "
+                    + "correlation token with '_ = ...' or declare a 'response' type on the channel",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_154("WORKFLOW_154",
+            "The 'input' argument of 'run' does not match durable agent '%s': %s",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_155("WORKFLOW_155",
+            "Tool '%s' of durable agent '%s' declares an authorization requirement "
+                    + "(@ai:AgentTool auth), which durable agents do not support yet: the tool "
+                    + "would run without token acquisition or scope validation",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_156("WORKFLOW_156",
+            "The %s name must be a constant string: templates with interpolations or computed "
+                    + "expressions are not allowed, since the name drives the designer rendering "
+                    + "and the Temporal registration",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_157("WORKFLOW_157",
+            "Activity '%s' of durable agent '%s' takes parameter '%s' of type '%s', which is not "
+                    + "data the model can supply: fix the argument at registration by declaring the "
+                    + "activity as '{activity: %s, bindings: {%s: <value>}}', or expose an activity "
+                    + "whose parameters are all data",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_158("WORKFLOW_158",
+            "The 'data' argument of 'sendData' does not match data-event channel '%s' of durable "
+                    + "agent '%s': %s",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_159("WORKFLOW_159",
+            "The array form of '%s' is deprecated: declare each entry as a mapping field keyed by "
+                    + "its name — %s: {%s: {...}} — which makes the name a compile-time constant "
+                    + "by construction",
+            DiagnosticSeverity.WARNING),
+    // 160 and 161, not 158 and 159: those codes went to main while this branch was open, and a
+    // diagnostic code is part of the published contract — a user's suppression or a docs link
+    // keyed on 158 must keep meaning what it meant.
+    WORKFLOW_160("WORKFLOW_160",
+            "Step id '%s' is already used by another step in this workflow. A step id identifies one "
+                    + "step of the workflow's graph, so this one is described with a numeric suffix "
+                    + "instead. Give it an id of its own to control what it is called",
+            DiagnosticSeverity.WARNING),
+    WORKFLOW_161("WORKFLOW_161",
+            "A step id must be a constant string: it is recorded in the workflow's graph at build "
+                    + "time, so an expression evaluated per execution cannot be described. Use a "
+                    + "literal, or omit it and let the compiler generate one",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_162("WORKFLOW_162",
+            "'%s' must be a type reference: it is published in the workflow descriptor at build "
+                    + "time, so a type computed per execution cannot be described — and it is what "
+                    + "the payload and the result of this task are checked against, which only "
+                    + "means something if every execution of the task agrees on it. Name a type",
             DiagnosticSeverity.ERROR);
 
     private final String code;
@@ -231,7 +293,7 @@ public enum WorkflowDiagnostic {
      * @return the diagnostic message
      */
     public String getMessage() {
-        return message;
+        return escapeForDisplay(message);
     }
 
     /**
@@ -241,7 +303,42 @@ public enum WorkflowDiagnostic {
      * @return the formatted message
      */
     public String getMessage(Object... args) {
-        return String.format(message, args);
+        return escapeForDisplay(String.format(message, args));
+    }
+
+    /**
+     * Turns a finished message into a {@code MessageFormat} pattern that renders back to itself.
+     *
+     * <p>A {@code DiagnosticInfo}'s message is run through {@code MessageFormat} once more when the
+     * diagnostic is displayed, and that pass reads three characters as syntax rather than text:
+     * <ul>
+     *   <li>{@code '} quotes the text after it, so a message handed over verbatim reaches the
+     *       developer with every quote it was written with stripped out — {@code the field
+     *       'shipTo.country'} prints as {@code the field shipTo.country}. A doubled {@code ''} is
+     *       how the pattern language spells a literal quote.</li>
+     *   <li>{@code &#123;} opens a format element, so a message that shows Ballerina syntax
+     *       ({@code new (&#123;...&#125;)}, a record body) fails to parse outright once its
+     *       surrounding quotes stop protecting it. Quoting each brace makes it literal.</li>
+     * </ul>
+     *
+     * <p>The quote doubling has to happen in the same pass as the brace quoting, not before it:
+     * the quotes this method adds around a brace are syntax and must not themselves be doubled.
+     *
+     * @param rendered the fully formatted message
+     * @return the message escaped for the display pass
+     */
+    private static String escapeForDisplay(String rendered) {
+        StringBuilder escaped = new StringBuilder(rendered.length());
+        for (int i = 0; i < rendered.length(); i++) {
+            char c = rendered.charAt(i);
+            switch (c) {
+                case '\'' -> escaped.append("''");
+                case '{' -> escaped.append("'{'");
+                case '}' -> escaped.append("'}'");
+                default -> escaped.append(c);
+            }
+        }
+        return escaped.toString();
     }
 
     /**

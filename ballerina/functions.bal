@@ -69,24 +69,25 @@ isolated function sendDataNative(function workflow, string workflowId, string da
     name: "sendData"
 } external;
 
-# Lists the requests a running durable agent has accepted but not yet answered.
-# Use after a crash or restart to rediscover in-flight turns for a session and
-# fetch their answers via `getAgentUpdateResult` — nothing is lost while the
-# agent works, however long the turn takes.
+# Lists the data events a running durable agent has accepted but not yet
+# answered. Use after a crash or restart to rediscover in-flight event turns
+# for a session and fetch their answers via `DurableAgent.getDataResult` /
+# `waitForDataResult` — nothing is lost while the agent works, however long
+# the turn takes.
 #
 # ```ballerina
-# workflow:PendingAgentUpdate[] pending = check workflow:getPendingAgentUpdates(agentId);
-# foreach var update in pending {
-#     string answer = check workflow:getAgentUpdateResult(agentId, update.updateId);
+# workflow:PendingAgentEvent[] pending = check workflow:getPendingAgentEvents(agentId);
+# foreach var pendingEvent in pending {
+#     string answer = check agent.waitForDataResult(agentId, pendingEvent.token);
 # }
 # ```
 #
 # + agentId - Target agent (workflow) ID
-# + return - The in-flight updates (empty when the agent is idle), or an error
-public isolated function getPendingAgentUpdates(string agentId)
-        returns PendingAgentUpdate[]|error = @java:Method {
+# + return - The in-flight event turns (empty when the agent is idle), or an error
+public isolated function getPendingAgentEvents(string agentId)
+        returns PendingAgentEvent[]|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
-    name: "getPendingAgentUpdates"
+    name: "getPendingAgentEvents"
 } external;
 
 # Waits for a workflow to complete and returns its result.
@@ -111,9 +112,9 @@ isolated function getWorkflowResultNative(string workflowId, int timeoutSeconds)
 } external;
 
 # Completes a pending human task by sending the result back to the waiting workflow.
-# The `taskWorkflowId` is the child workflow ID of the task, which is
-# available via the inbox/task-listing API and is composed as:
-# `"humantask-<parentWorkflowId>-<taskName>-<uuid>"`.
+# The `taskWorkflowId` is the child workflow ID of the task, available via the
+# inbox/task-listing API. It is an opaque UUID — the task's kind and name travel in the
+# execution's memo and type, not in the ID.
 #
 # ```ballerina
 # check workflow:completeHumanTask(taskWorkflowId, {approved: true, comment: "LGTM"});

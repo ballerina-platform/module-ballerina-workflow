@@ -30,6 +30,7 @@ isolated boolean programStarted = false;
 # + return - An error if initialization fails, otherwise nil
 function init() returns error? {
     initModule();
+    registerDurableAgentRunnerNatives();
     check initWorkflowRuntime();
     runtime:onGracefulStop(stopWorkflowRuntime);
 }

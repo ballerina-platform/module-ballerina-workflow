@@ -14,7 +14,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import ballerina/http;
 import ballerina/test;
 
 // ── Cursor token encode / decode ──────────────────────────────────────────────
@@ -300,16 +299,6 @@ function testParseRolesHeaderSkipsBlankEntries() {
     }
 }
 
-// ── errorBody ─────────────────────────────────────────────────────────────────
-
-@test:Config {groups: ["unit"]}
-function testErrorBodyStructure() {
-    map<json> body = errorBody("something went wrong");
-    test:assertTrue(body.hasKey("error"), "errorBody must have 'error' key");
-    map<json> inner = <map<json>>body["error"];
-    test:assertEquals(inner["message"], "something went wrong");
-}
-
 // ── buildCompletionResponse ───────────────────────────────────────────────────
 
 @test:Config {groups: ["unit"]}
@@ -345,78 +334,79 @@ function testBuildReviewDecisionResponseNoUserId() {
     test:assertEquals(info.decision, "reject");
 }
 
-// ── humanTaskErrorResponse ────────────────────────────────────────────────────
-
-// Full response union produced by humanTaskErrorResponse (includes 422 for invalid payloads).
-type HumanTaskErrorResp http:NotFound|http:Forbidden|http:Conflict|http:UnprocessableEntity|http:InternalServerError;
+// ── Runtime error classification ──────────────────────────────────────────────
+// The runtime reports failures as plain errors whose message carries the reason.
+// classifyRuntimeError turns those into the management error types; mapping those
+// to a transport's vocabulary (status codes and the like) is the adapter's job.
 
 @test:Config {groups: ["unit"]}
-function testHumanTaskErrorResponseNotFound() {
-    error err = error("workflow not found in Temporal");
-    HumanTaskErrorResp resp = humanTaskErrorResponse(err);
-    test:assertTrue(resp is http:NotFound, "NOT_FOUND message should produce 404");
+function testClassifyNotFound() {
+    test:assertTrue(classifyRuntimeError(error("workflow not found in Temporal")) is NotFoundError,
+        "A missing target must classify as NotFoundError");
 }
 
 @test:Config {groups: ["unit"]}
-function testHumanTaskErrorResponseForbidden() {
-    error err = error("Unauthorized: caller role not in userRoles");
-    HumanTaskErrorResp resp = humanTaskErrorResponse(err);
-    test:assertTrue(resp is http:Forbidden, "Unauthorized message should produce 403");
+function testClassifyForeignTaskQueueIsAccessDenied() {
+    error err = error("Unauthorized: human task 'humantask-x' belongs to task queue 'other-q', " +
+        "which is served by a different integration");
+    test:assertTrue(classifyRuntimeError(err) is AccessDeniedError,
+        "A task served by a different integration must classify as AccessDeniedError");
 }
 
 @test:Config {groups: ["unit"]}
-function testHumanTaskErrorResponseConflict() {
-    error err = error("task is already completed");
-    HumanTaskErrorResp resp = humanTaskErrorResponse(err);
-    test:assertTrue(resp is http:Conflict, "already-completed message should produce 409");
+function testClassifyNotAuthorizedIsAccessDenied() {
+    test:assertTrue(classifyRuntimeError(error("not authorized to complete this task")) is AccessDeniedError,
+        "A not-authorized message must classify as AccessDeniedError");
 }
 
 @test:Config {groups: ["unit"]}
-function testHumanTaskErrorResponseUnprocessableEntity() {
-    // A payload that does not match the task's expected result type is semantically invalid → 422.
+function testClassifyAlreadyCompletedIsConflict() {
+    test:assertTrue(classifyRuntimeError(error("task is already completed")) is ConflictError,
+        "An already-completed task must classify as ConflictError");
+}
+
+@test:Config {groups: ["unit"]}
+function testClassifyNotRunningIsConflict() {
+    test:assertTrue(classifyRuntimeError(error("task is not running")) is ConflictError,
+        "A task that is not running must classify as ConflictError");
+}
+
+@test:Config {groups: ["unit"]}
+function testClassifyInvalidPayload() {
+    // A payload that does not match the task's declared result type is semantically
+    // invalid rather than malformed.
     error err = error("Invalid payload for human task 'order.approve': " +
             "'string' value 'oops' cannot be converted to 'ApprovalDecision'");
-    HumanTaskErrorResp resp = humanTaskErrorResponse(err);
-    test:assertTrue(resp is http:UnprocessableEntity, "Invalid-payload message should produce 422");
+    test:assertTrue(classifyRuntimeError(err) is InvalidPayloadError,
+        "A mismatched payload must classify as InvalidPayloadError");
 }
 
 @test:Config {groups: ["unit"]}
-function testHumanTaskErrorResponseInternalError() {
-    error err = error("unexpected Temporal gRPC error");
-    HumanTaskErrorResp resp = humanTaskErrorResponse(err);
-    test:assertTrue(resp is http:InternalServerError, "Unknown error should produce 500");
-}
-
-// ── reviewActivityErrorResponse ────────────────────────────────────────────────────
-
-@test:Config {groups: ["unit"]}
-function testReviewActivityErrorResponseNotFound() {
-    error err = error("workflow NOT_FOUND");
-    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
-            reviewActivityErrorResponse(err);
-    test:assertTrue(resp is http:NotFound, "NOT_FOUND message should produce 404");
+function testClassifyUnknownIsExecutionError() {
+    test:assertTrue(classifyRuntimeError(error("unexpected Temporal gRPC error")) is ExecutionError,
+        "An unrecognized runtime failure must classify as ExecutionError");
 }
 
 @test:Config {groups: ["unit"]}
-function testReviewActivityErrorResponseForbidden() {
-    error err = error("not authorized to complete this task");
-    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
-            reviewActivityErrorResponse(err);
-    test:assertTrue(resp is http:Forbidden, "not-authorized message should produce 403");
+function testNotFoundOrExecutionErrorKeepsCallerMessage() {
+    Error err = notFoundOrExecutionError(error("NOT_FOUND"), "Workflow not found: wf-1");
+    test:assertTrue(err is NotFoundError);
+    test:assertEquals(err.message(), "Workflow not found: wf-1",
+        "The operation's own not-found message must be used");
 }
 
 @test:Config {groups: ["unit"]}
-function testReviewActivityErrorResponseConflict() {
-    error err = error("task is not running");
-    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
-            reviewActivityErrorResponse(err);
-    test:assertTrue(resp is http:Conflict, "not-running message should produce 409");
+function testNotFoundOrExecutionErrorPrefixesFailures() {
+    Error err = notFoundOrExecutionError(error("boom"), "Workflow not found: wf-1",
+            "Failed to get history: ");
+    test:assertTrue(err is ExecutionError);
+    test:assertEquals(err.message(), "Failed to get history: boom");
 }
 
 @test:Config {groups: ["unit"]}
-function testReviewActivityErrorResponseInternalError() {
-    error err = error("some unexpected failure");
-    http:NotFound|http:Forbidden|http:Conflict|http:InternalServerError resp =
-            reviewActivityErrorResponse(err);
-    test:assertTrue(resp is http:InternalServerError, "Unknown error should produce 500");
+function testNotFoundOrExecutionErrorIgnoresTaskSemantics() {
+    // Lifecycle operations distinguish only missing-vs-failed: an "Unauthorized"
+    // message from the runtime is still a failure, not an access decision.
+    test:assertTrue(notFoundOrExecutionError(error("Unauthorized: something")) is ExecutionError,
+        "Lifecycle classification must not infer access decisions");
 }

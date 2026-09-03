@@ -96,6 +96,7 @@ task buildExamples {
     description = 'Builds and tests all example projects using the locally built workflow module'
     group = 'build'
     dependsOn(':workflow-ballerina:build')
+    mustRunAfter(':workflow-ballerina:clearBirCache')
     // When the shared Temporal server is also scheduled (e.g. via mergeCoverageReports →
     // workflow-integration-tests:test), ensure LOCAL-mode examples run after it is ready.
     mustRunAfter(':startSharedTestServer')

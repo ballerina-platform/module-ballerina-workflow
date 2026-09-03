@@ -81,4 +81,5 @@ public record ProcessFunctionInfo(String functionName, Map<String, String> activ
     public Set<String> humanTaskNames() {
         return Collections.unmodifiableSet(humanTaskNames);
     }
+
 }

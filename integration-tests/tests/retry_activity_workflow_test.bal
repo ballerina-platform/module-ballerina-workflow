@@ -180,7 +180,9 @@ function testRetryExhaustFallback() returns error? {
     RetryActivityInput input = {id: testId, mode: "exhaust_fallback"};
     string workflowId = check workflow:run(retryExhaustFallbackWorkflow, input);
 
-    anydata result = check workflow:getWorkflowResult(workflowId, 60);
+    // The exhaust-then-fallback path runs the full retry backoff schedule first; on a
+    // loaded CI runner that can exceed 60s (observed on the post-release main build).
+    anydata result = check workflow:getWorkflowResult(workflowId, 120);
     test:assertTrue((<string>result).startsWith("Fallback:"),
         "Result should indicate the fallback path was taken");
 }
@@ -290,8 +292,22 @@ function testManualRetryWithInputRecovery() returns error? {
     string workflowId = check workflow:run(manualRetryWithInputWorkflow, input);
 
     management:ReviewActivitySummary reviewTask = check waitForPendingReviewActivity(workflowId);
-    test:assertTrue(reviewTask.taskId.startsWith("reviewactivity-"),
-        "Manual retry review ID should use the reviewactivity prefix");
+    // A bare id, deliberately. What a task IS now travels in its memo and its Temporal type,
+    // not in a prefix on its id — so the assertion is that the id classifies nothing and the
+    // activity is still identifiable from the fields that do. The runtime keeps reading the old
+    // prefixes as a fallback, for instances started before the memo existed.
+    test:assertFalse(reviewTask.taskId.startsWith("reviewactivity-"),
+        "A review id should no longer classify itself with a prefix");
+    // The canonical UUID structure, not just the length: 36 characters of anything would
+    // also pass a length check.
+    test:assertTrue(re `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`
+            .isFullMatch(reviewTask.taskId),
+        "A review id should be a bare UUID: " + reviewTask.taskId);
+    // Qualified on purpose, and not the qualifier this branch dropped: an activity is now
+    // SCHEDULED under its plain name, while a review still reports which workflow's activity is
+    // under review. That attribution is what the id's prefix never carried.
+    test:assertEquals(reviewTask.activityName, "manualRetryWithInputWorkflow.recoverableByInputActivity",
+        "A review should name the reviewed activity and the workflow it belongs to");
 
     check management:completeReviewActivity(reviewTask.taskId,
         {action: "proceed-with-input", input: {mode: "ok"}});

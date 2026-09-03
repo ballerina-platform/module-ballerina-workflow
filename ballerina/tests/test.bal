@@ -171,51 +171,51 @@ function setupTests() returns error? {
     // generates registerWorkflow calls at module init time in real applications.
     
     // Basic process registration
-    _ = check wfInternal:registerWorkflow(testProcessFunction, "test-process");
+    _ = check registerWorkflowForTest(testProcessFunction, "test-process");
     
     // Process with activities
     map<function> activities1 = {
         "testActivityFunction": testActivityFunction,
         "testActivityFunction2": testActivityFunction2
     };
-    _ = check wfInternal:registerWorkflow(processWithActivities, "process-with-activities", activities1);
+    _ = check registerWorkflowForTest(processWithActivities, "process-with-activities", activities1);
     
     // Process with events (named record type)
-    _ = check wfInternal:registerWorkflow(processWithEvents, "process-with-events");
+    _ = check registerWorkflowForTest(processWithEvents, "process-with-events");
     
     // Process with single event
-    _ = check wfInternal:registerWorkflow(processWithContextAndEvents, "process-single-event");
+    _ = check registerWorkflowForTest(processWithContextAndEvents, "process-single-event");
     
     // Process without events (to verify empty events list)
-    _ = check wfInternal:registerWorkflow(testProcessFunction, "no-events-process");
+    _ = check registerWorkflowForTest(testProcessFunction, "no-events-process");
     
     // Process with both activities and events
     map<function> activities2 = {
         "testActivityFunction": testActivityFunction
     };
-    _ = check wfInternal:registerWorkflow(processWithEvents, "process-activities-events", activities2);
+    _ = check registerWorkflowForTest(processWithEvents, "process-activities-events", activities2);
     
     // Inline record event processes
-    _ = check wfInternal:registerWorkflow(processWithInlineEvents, "inline-multi-events");
-    _ = check wfInternal:registerWorkflow(processWithSingleInlineEvent, "inline-single-event");
-    _ = check wfInternal:registerWorkflow(processWithMixedInlineEvents, "inline-mixed-events");
-    _ = check wfInternal:registerWorkflow(processWithInlineEventsNoContext, "inline-no-context");
+    _ = check registerWorkflowForTest(processWithInlineEvents, "inline-multi-events");
+    _ = check registerWorkflowForTest(processWithSingleInlineEvent, "inline-single-event");
+    _ = check registerWorkflowForTest(processWithMixedInlineEvents, "inline-mixed-events");
+    _ = check registerWorkflowForTest(processWithInlineEventsNoContext, "inline-no-context");
     
     // Inline record with activities
     map<function> activities3 = {
         "testActivityFunction": testActivityFunction,
         "testActivityFunction2": testActivityFunction2
     };
-    _ = check wfInternal:registerWorkflow(processWithInlineEvents, "inline-with-activities", activities3);
+    _ = check registerWorkflowForTest(processWithInlineEvents, "inline-with-activities", activities3);
     
     // Process for run tests
-    _ = check wfInternal:registerWorkflow(simpleWorkflowProcess, "simple-workflow");
+    _ = check registerWorkflowForTest(simpleWorkflowProcess, "simple-workflow");
 
     // Process with dependently-typed external activity
     map<function> dependentActivities = {
         "testDependentActivity": testDependentActivity
     };
-    _ = check wfInternal:registerWorkflow(processWithDependentActivity, "dependent-activity-process",
+    _ = check registerWorkflowForTest(processWithDependentActivity, "dependent-activity-process",
             dependentActivities);
 
     // Start the in-memory workflow runtime after all registrations are done.
@@ -245,7 +245,7 @@ function testRegisterProcess() returns error? {
 function testRegisterProcessDuplicate() returns error? {
     // Attempt to register a process with the same name that was already registered
     // This should fail because "test-process" was registered in @BeforeSuite
-    boolean|error result = wfInternal:registerWorkflow(testProcessFunction, "test-process");
+    boolean|error result = registerWorkflowForTest(testProcessFunction, "test-process");
     test:assertTrue(result is error, "Duplicate registration should fail");
 }
 
@@ -608,7 +608,7 @@ function workflowWithRetryFailingActivity(Context ctx, string input) returns str
 function testGetWorkflowResultStatusCompleted() returns error? {
     // Register the simple workflow used in this test (idempotent — safe if already registered).
     // Use a unique name to avoid clashing with registrations done in @BeforeSuite.
-    _ = check wfInternal:registerWorkflow(simpleWorkflowProcess, "simple-workflow-status-test");
+    _ = check registerWorkflowForTest(simpleWorkflowProcess, "simple-workflow-status-test");
 
     map<string> input = {id: "test-status-completed-001"};
     string|error runResult = run(simpleWorkflowProcess, input);
@@ -629,7 +629,7 @@ function testGetWorkflowResultStatusCompleted() returns error? {
 @test:Config {groups: ["unit"]}
 function testGetWorkflowResultWorkflowType() returns error? {
     // Verify that getWorkflowResult populates workflowType correctly.
-    _ = check wfInternal:registerWorkflow(simpleWorkflowProcess, "simple-workflow-type-test");
+    _ = check registerWorkflowForTest(simpleWorkflowProcess, "simple-workflow-type-test");
 
     map<string> input = {id: "test-type-001"};
     string|error runResult = run(simpleWorkflowProcess, input);
@@ -650,7 +650,7 @@ function testGetWorkflowResultStatusFailedOnActivityError() returns error? {
     // Verify that when an activity returns a Ballerina error the workflow is marked FAILED
     // (not COMPLETED) in Temporal, and getWorkflowResult reflects status="FAILED".
     map<function> activities = {"alwaysFailingActivity": alwaysFailingActivity};
-    _ = check wfInternal:registerWorkflow(workflowWithFailingActivity,
+    _ = check registerWorkflowForTest(workflowWithFailingActivity,
             "workflow-failing-activity-test", activities);
 
     map<string> input = {id: "test-activity-fail-001", input: "trigger"};
@@ -689,7 +689,7 @@ function testActivityInvocationsTrackedOnSuccess() returns error? {
         "testActivityFunction": testActivityFunction,
         "testActivityFunction2": testActivityFunction2
     };
-    _ = check wfInternal:registerWorkflow(workflowWithTwoActivities,
+    _ = check registerWorkflowForTest(workflowWithTwoActivities,
             "workflow-two-activities-test", activities);
 
     map<string> input = {id: "test-invocations-001", input: "hello"};
@@ -736,7 +736,7 @@ function testActivityInvocationsShowRetriesOnFailure() returns error? {
     // Register a workflow that calls a failing activity with retryOnError=true, maxRetries=2.
     // The activity always fails, so Temporal retries it (total 3 attempts: 1 initial + 2 retries).
     map<function> activities = {"alwaysFailingActivity": alwaysFailingActivity};
-    _ = check wfInternal:registerWorkflow(workflowWithRetryFailingActivity,
+    _ = check registerWorkflowForTest(workflowWithRetryFailingActivity,
             "workflow-retry-failing-test", activities);
 
     map<string> input = {id: "test-retry-fail-001", input: "trigger"};
@@ -785,7 +785,7 @@ function testActivityInvocationsOnSingleFailNoRetry() returns error? {
     // When retryOnError=false (default), the activity fails once with attempt=1.
     // Re-use the existing workflowWithFailingActivity process.
     map<function> activities = {"alwaysFailingActivity": alwaysFailingActivity};
-    _ = check wfInternal:registerWorkflow(workflowWithFailingActivity,
+    _ = check registerWorkflowForTest(workflowWithFailingActivity,
             "workflow-single-fail-invocations-test", activities);
 
     map<string> input = {id: "test-single-fail-inv-001", input: "trigger"};
@@ -817,18 +817,50 @@ function testActivityInvocationsOnSingleFailNoRetry() returns error? {
 }
 
 // ============================================================================
-// ManualRetry Type / Configuration Tests
+// HumanReview Type / Configuration Tests
 // ============================================================================
 
 @test:Config {groups: ["unit"]}
-function testManualRetryIsRolesAlias() {
-    // ManualRetry is the reviewer role(s): a role name or a list of role names.
-    ManualRetry single = "manager";
-    ManualRetry many = ["finance", "manager"];
-    AutoRetry|ManualRetry|NoRetry policy = single;
-    test:assertEquals(policy, "manager");
-    policy = many;
-    test:assertEquals(policy, <string[]>["finance", "manager"]);
+function testHumanReviewDeclaresTheReviewLikeAHumanTask() {
+    // A review is declared the way a human task is: one record, `userRoles` required,
+    // everything else optional and derived from the reviewed activity when omitted.
+    HumanTaskDefinition single = {userRoles: "manager"};
+    test:assertEquals(single.userRoles, "manager");
+    test:assertTrue(single.title is (), "title defaults to the derived phrase");
+    test:assertTrue(single.description is (), "description defaults to the derived text");
+    test:assertTrue(single.timeout is (), "no timeout means wait indefinitely");
+
+    HumanTaskDefinition many = {userRoles: ["finance", "manager"]};
+    test:assertEquals(many.userRoles, <string[]>["finance", "manager"]);
+
+    HumanTaskDefinition full = {
+        userRoles: "manager",
+        title: "Ledger posting needs a look",
+        description: "The ledger rejected the posting.",
+        timeout: {hours: 4}
+    };
+    test:assertEquals(full.title, "Ledger posting needs a look");
+    test:assertEquals(full.description, "The ledger rejected the posting.");
+}
+
+@test:Config {groups: ["unit"]}
+function testHumanReviewIsOpenForFutureOptions() {
+    // Open, for the same reason HumanTaskOptions is: an option written for a newer
+    // module rides along in the rest rather than failing to compile.
+    HumanTaskDefinition review = {userRoles: "manager", "escalateAfter": "P1D"};
+    test:assertEquals(review["escalateAfter"], "P1D");
+}
+
+@test:Config {groups: ["unit"]}
+function testRetryPolicyMembersAreDistinguishable() {
+    // Both records; `userRoles` is what tells them apart, at compile time and at run time.
+    AutoRetry|HumanTaskDefinition|NoAutomaticRetry policy = <HumanTaskDefinition>{userRoles: "manager"};
+    test:assertTrue(policy is HumanTaskDefinition, "a policy naming roles is a review");
+    test:assertFalse(policy is AutoRetry, "and is not an automatic retry");
+    policy = <AutoRetry>{maxRetries: 2};
+    test:assertTrue(policy is AutoRetry);
+    test:assertFalse(policy is HumanTaskDefinition,
+            "an AutoRetry has no userRoles, so it is no decision");
 }
 
 @test:Config {groups: ["unit"]}
@@ -854,7 +886,7 @@ function testAutoRetryCustomValues() {
 function testNoRetryIsUnit() {
     // NoRetry is the () constant — passing it as the retryPolicy union member
     // should be indistinguishable from omitting the parameter.
-    AutoRetry|ManualRetry|NoRetry policy = NoRetry;
+    AutoRetry|HumanTaskDefinition|NoRetry policy = NoRetry;
     test:assertTrue(policy is (), "NoRetry should be unit type ()");
 }
 
@@ -870,19 +902,33 @@ function failingActivityForRetry(string orderId) returns string|error {
     return error("Transient failure processing order: " + orderId);
 }
 
-// Workflow that uses ManualRetry for a critical step.
+// Workflow whose critical step raises a review when it fails — the short declaration,
+// where everything but the deciding role is derived from the activity.
 @Workflow
 function workflowWithManualRetry(Context ctx, string orderId) returns string|error {
     string result = check ctx->callActivity(failingActivityForRetry, {"orderId": orderId},
-            retryPolicy = "manager");
+            retryPolicy = {userRoles: "manager"});
     return result;
 }
 
-// Workflow that uses ManualRetry — the human will choose "fail" so the workflow errors.
+// The same, with the human choosing "fail" so the workflow errors.
 @Workflow
 function workflowWithManualRetryFail(Context ctx, string orderId) returns string|error {
     string result = check ctx->callActivity(failingActivityForRetry, {"orderId": orderId},
-            retryPolicy = "manager");
+            retryPolicy = {userRoles: "manager"});
+    return result;
+}
+
+// The full declaration: the review says what it is called and how it reads, instead of
+// taking the phrasing derived from the activity.
+@Workflow
+function workflowWithDescribedReview(Context ctx, string orderId) returns string|error {
+    string result = check ctx->callActivity(failingActivityForRetry, {"orderId": orderId},
+            retryPolicy = {
+                userRoles: ["finance", "manager"],
+                title: "Ledger posting needs a decision",
+                description: "The ledger rejected this posting. Rerun it, edit the input, or fail it."
+            });
     return result;
 }
 
@@ -890,7 +936,7 @@ function workflowWithManualRetryFail(Context ctx, string orderId) returns string
 function testManualRetryWorkflowCreatesReviewActivity() returns error? {
     // Register the workflow that uses ManualRetry.
     map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
-    _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
+    _ = check registerWorkflowForTest(workflowWithManualRetry,
             "workflow-manual-retry-test", activities);
 
     map<string> input = {id: "test-manual-retry-001", orderId: "ORD-MR-001"};
@@ -913,8 +959,9 @@ function testManualRetryWorkflowCreatesReviewActivity() returns error? {
             "Should have at least one pending retry task, got " + pendingTasks.length().toString());
 
     management:ReviewActivitySummary task = pendingTasks[0];
-    test:assertTrue(task.taskId.startsWith("reviewactivity-"),
-            "Task ID should start with 'reviewactivity-', got: " + task.taskId);
+    test:assertTrue(re `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`
+            .isFullMatch(task.taskId),
+            "Task ID should be a bare UUID (the kind travels in the memo), got: " + task.taskId);
     test:assertEquals(task.parentWorkflowId, workflowId, "parentWorkflowId should match");
     test:assertEquals(task.status, "PENDING", "Pending review activity should be in PENDING status");
     test:assertTrue(task.taskName.includes("failingActivityForRetry"),
@@ -922,9 +969,71 @@ function testManualRetryWorkflowCreatesReviewActivity() returns error? {
 }
 
 @test:Config {groups: ["unit"]}
+function testDeclaredReviewWordingReachesTheTask() returns error? {
+    // What the declaration says beats what the activity would imply: the review is listed
+    // under the chosen task name and reads with the chosen title and description.
+    map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
+    _ = check registerWorkflowForTest(workflowWithDescribedReview,
+            "workflow-described-review-test", activities);
+
+    map<string> input = {id: "test-described-review-001", orderId: "ORD-MR-DESC"};
+    string|error runResult = run(workflowWithDescribedReview, input);
+    if runResult is error {
+        return; // No server available – skip.
+    }
+    string workflowId = runResult;
+    runtime:sleep(2);
+
+    management:ReviewActivitySummary[]|error pendingTasks = management:listPendingReviewActivities(workflowId);
+    if pendingTasks is error || pendingTasks.length() == 0 {
+        return;
+    }
+    management:ReviewActivitySummary task = pendingTasks[0];
+    test:assertTrue(task.taskName.includes("failingActivityForRetry"),
+            "A review's name is always derived from the activity, got: " + task.taskName);
+    test:assertEquals(task.title, "Ledger posting needs a decision",
+            "The declared title is what the inbox shows");
+    test:assertEquals(task.userRoles, <string[]>["finance", "manager"],
+            "Both declared roles may answer the review");
+
+    management:ReviewActivityInfo|error infoResult = management:getReviewActivityInfo(task.taskId);
+    if infoResult is management:ReviewActivityInfo {
+        test:assertTrue(infoResult.description.includes("Rerun it, edit the input, or fail it"),
+                "The declared description is what the decision reads with");
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testUndeclaredReviewWordingIsDerived() returns error? {
+    // And the short form still gets sensible wording for free — that is what makes
+    // `{userRoles: "manager"}` worth writing.
+    map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
+    _ = check registerWorkflowForTest(workflowWithManualRetry,
+            "workflow-derived-review-test", activities);
+
+    map<string> input = {id: "test-derived-review-001", orderId: "ORD-MR-DERIVED"};
+    string|error runResult = run(workflowWithManualRetry, input);
+    if runResult is error {
+        return;
+    }
+    runtime:sleep(2);
+    management:ReviewActivitySummary[]|error pendingTasks =
+            management:listPendingReviewActivities(runResult);
+    if pendingTasks is error || pendingTasks.length() == 0 {
+        return;
+    }
+    management:ReviewActivitySummary task = pendingTasks[0];
+    test:assertTrue(task.taskName.includes("failingActivityForRetry"),
+            "An undeclared name is derived from the activity, got: " + task.taskName);
+    test:assertTrue(task.title.includes("failingActivityForRetry"),
+            "An undeclared title names the activity being reviewed, got: " + task.title);
+    test:assertEquals(task.userRoles, <string[]>["manager"], "The declared role still applies");
+}
+
+@test:Config {groups: ["unit"]}
 function testManualReviewActivityInfoContainsCorrectMetadata() returns error? {
     map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
-    _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
+    _ = check registerWorkflowForTest(workflowWithManualRetry,
             "workflow-manual-retry-info-test", activities);
 
     map<string> input = {id: "test-manual-retry-info-001", orderId: "ORD-MR-002"};
@@ -962,7 +1071,7 @@ function testCompleteReviewActivityWithProceed() returns error? {
     // eventually fail again (because the activity always fails), creating another
     // retry task. We verify the workflow is still running after the first decision.
     map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
-    _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
+    _ = check registerWorkflowForTest(workflowWithManualRetry,
             "workflow-manual-retry-complete-test", activities);
 
     map<string> input = {id: "test-manual-retry-complete-001", orderId: "ORD-MR-003"};
@@ -998,7 +1107,7 @@ function testCompleteReviewActivityWithReject() returns error? {
     // Complete a retry task with action="fail" — the workflow should surface the
     // original error and transition to FAILED.
     map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
-    _ = check wfInternal:registerWorkflow(workflowWithManualRetryFail,
+    _ = check registerWorkflowForTest(workflowWithManualRetryFail,
             "workflow-manual-retry-fail-test", activities);
 
     map<string> input = {id: "test-manual-retry-fail-001", orderId: "ORD-MR-004"};
@@ -1033,7 +1142,7 @@ function testCompleteReviewActivityWithProceedWithInput() returns error? {
     // We test the retry-with-input path by substituting input that makes it succeed.
     // (Here the activity always fails so we just verify the signal is accepted.)
     map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
-    _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
+    _ = check registerWorkflowForTest(workflowWithManualRetry,
             "workflow-manual-retry-input-test", activities);
 
     map<string> input = {id: "test-manual-retry-input-001", orderId: "ORD-MR-005"};
@@ -1061,7 +1170,7 @@ function testCompleteReviewActivityWithProceedWithInput() returns error? {
 function testCompleteReviewActivityUnauthorizedRole() returns error? {
     // Attempt to complete a retry task with a caller role not in the permitted set.
     map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
-    _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
+    _ = check registerWorkflowForTest(workflowWithManualRetry,
             "workflow-manual-retry-auth-test", activities);
 
     map<string> input = {id: "test-manual-retry-auth-001", orderId: "ORD-MR-006"};
@@ -1093,7 +1202,7 @@ function testCompleteReviewActivityUnauthorizedRole() returns error? {
 @test:Config {groups: ["unit"]}
 function testListAllReviewActivitiesReturnsCreatedTask() returns error? {
     map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
-    _ = check wfInternal:registerWorkflow(workflowWithManualRetry,
+    _ = check registerWorkflowForTest(workflowWithManualRetry,
             "workflow-list-all-retry-test", activities);
 
     map<string> input = {id: "test-list-all-retry-001", orderId: "ORD-MR-007"};
@@ -1112,10 +1221,11 @@ function testListAllReviewActivitiesReturnsCreatedTask() returns error? {
     test:assertTrue(allTasks.length() >= 1,
             "listAllReviewActivities should return at least the task we created");
 
-    // Every returned task ID must start with the reviewactivity- prefix.
+    // Instance ids are bare UUIDs — what a task is travels in its memo and type, never its id.
     foreach management:ReviewActivitySummary t in allTasks {
-        test:assertTrue(t.taskId.startsWith("reviewactivity-"),
-                "All returned tasks should have reviewactivity- prefix, got: " + t.taskId);
+        test:assertTrue(re `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`
+                .isFullMatch(t.taskId),
+                "All returned task ids should be bare UUIDs, got: " + t.taskId);
     }
 }
 

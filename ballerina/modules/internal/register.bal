@@ -18,21 +18,6 @@ import ballerina/ai;
 import ballerina/jballerina.java;
 import ballerina/log;
 
-# Registers a workflow function with the program runtime.
-#
-# This is an **internal** function used by the compiler plugin to register
-# workflows at module initialization time. It is not intended to be
-# called directly by users.
-#
-# + workflowFunction - The workflow function to register (must be annotated with @workflow:Workflow)
-# + workflowName - The unique name to register the workflow under
-# + activities - Optional map of activity function pointers used by the workflow
-# + return - `true` if registration was successful, or an error if registration fails
-public isolated function registerWorkflow(function workflowFunction, string workflowName, map<function>? activities = ()) returns boolean|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
-    name: "registerWorkflow"
-} external;
-
 # Starts the workflow runtime after all workflows have been registered.
 #
 # This is an **internal** function used by the compiler plugin as the last
@@ -80,46 +65,20 @@ public isolated function registerConnection(string name, object {} connection)
     name: "registerConnection"
 } external;
 
-# Registers an AI tool function of a durable agent so that the built-in
-# `executeAgentTool` activity wrapper can resolve and invoke it on any worker.
+# Hands the build-time workflow descriptor (workflow.def.json) to the runtime as data.
 #
-# This is an **internal** function used by the compiler plugin. It is emitted at
-# module init time for every function reference found in the `tools: [...]` list
-# of a `final workflow:DurableAgent` declaration. The tool's advertised name is
-# derived from its `@ai:AgentTool` annotation (falling back to the function
-# name), matching the runtime normalization performed by
-# `AgentContext.registerAgentTool`.
+# This is an **internal** function: the compiler plugin embeds the canonical descriptor
+# document in the generated `__registerWorkflowsAndStart()` so the runtime can register
+# every described workflow, activity, and human task and resolve the implementation
+# functions by their recorded coordinates when the worker starts. This single data-only
+# call replaces the former per-workflow `registerWorkflow`/`registerHumanTask` codegen.
 #
-# + agentName - The agent's registered workflow name
-# + tool - The `@ai:AgentTool` function to register
-# + return - `true` on success (idempotent), or an error
-public isolated function registerAgentTool(string agentName, ai:FunctionTool tool) returns boolean|error {
-    ai:ToolConfig[] configs = ai:getToolConfigs([tool]);
-    if configs.length() == 0 {
-        return error("Agent tool functions must be annotated with @ai:AgentTool");
-    }
-    return registerAgentToolNative(agentName, configs[0].name, tool);
-}
-
-isolated function registerAgentToolNative(string agentName, string toolName, function tool)
+# + descriptorJson - The canonical descriptor document
+# + return - `true` on success, or an error when the document is not valid JSON
+public isolated function registerWorkflowDescriptor(string descriptorJson)
         returns boolean|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
-    name: "registerAgentToolFunction"
-} external;
-
-# Registers a human task type so that the workflow worker can route child workflows
-# whose type equals `taskName` to the built-in human task handler.
-#
-# This is an **internal** function intended to be called by the compiler plugin at
-# module initialization time for every `awaitHumanTask` call site found in user code,
-# similar to how `registerWorkflow` is generated for `@Workflow` functions.
-#
-# + taskName - The task name passed to `awaitHumanTask`; used directly as the
-#              Temporal child workflow type
-# + return - `true` on success (idempotent for the same name), or an error
-public isolated function registerHumanTask(string taskName) returns boolean|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
-    name: "registerHumanTask"
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowDescriptorNative",
+    name: "registerWorkflowDescriptor"
 } external;
 
 // ---------------------------------------------------------------------------
@@ -137,9 +96,14 @@ public isolated function registerHumanTask(string taskName) returns boolean|erro
 # + model - The agent's `ai:ModelProvider`
 # + systemPrompt - The agent's system prompt (`role` + `instructions`)
 # + maxIter - Per-turn reasoning iteration cap
+# + inputType - The type of the structured JSON payload accepted alongside the
+#               query: `json` for any payload, a narrower type to validate its
+#               shape, or `()` for a query-only agent
+# + resultType - The agent's declared result type, or `()` for the final text response
 # + return - `true` on success, or an error for a duplicate agent name
 public isolated function registerDurableAgentDecl(string agentName, ai:ModelProvider model,
-        json systemPrompt, int maxIter) returns boolean|error = @java:Method {
+        json systemPrompt, int maxIter, typedesc<json>? inputType = json,
+        typedesc<anydata>? resultType = (), json eventTimeout = ()) returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
     name: "registerDurableAgentDecl"
 } external;
@@ -150,9 +114,12 @@ public isolated function registerDurableAgentDecl(string agentName, ai:ModelProv
 # + toolName - The tool name advertised to the model
 # + activity - The `@workflow:Activity` function
 # + meta - Declaration metadata (description, gating, retry policy)
+# + bindings - Arguments fixed at registration, keyed by parameter name; client
+#              objects are passed by reference to their module-level variable
 # + return - `true` on success, or an error for an unknown agent
 public isolated function registerDurableAgentActivity(string agentName, string toolName,
-        function activity, json meta = ()) returns boolean|error = @java:Method {
+        function activity, json meta = (), map<anydata|object {}>? bindings = ())
+        returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
     name: "registerDurableAgentActivity"
 } external;
@@ -163,11 +130,11 @@ public isolated function registerDurableAgentActivity(string agentName, string t
 # + eventName - The channel name
 # + request - The channel's request type
 # + response - The channel's response type; `()` for one-way channels
-# + cardinality - `"SINGLE_EVENT"` or `"MULTI_EVENT"`
+# + cardinality - `"MULTI_EVENT"` (default) or `"SINGLE_EVENT"`
 # + return - `true` on success, or an error for an unknown agent
 public isolated function registerDurableAgentEvent(string agentName, string eventName,
         typedesc<anydata> request, typedesc<anydata>? response = (),
-        string cardinality = "SINGLE_EVENT") returns boolean|error = @java:Method {
+        string cardinality = "MULTI_EVENT") returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
     name: "registerDurableAgentEvent"
 } external;
@@ -190,33 +157,58 @@ public isolated function registerDurableAgentHumanTask(string agentName, string 
 # registry (so the built-in `executeAgentTool` activity can resolve it).
 #
 # + agentName - The agent's name (its module-level variable name)
-# + tool - The `@ai:AgentTool` function
+# + tool - The tool: an `@ai:AgentTool` function, an `ai:ToolConfig`, or a toolkit
+# + requiresApproval - When `true`, a `PRE_RUN` review activity gates every call
+# + userRoles - Role(s) permitted to decide reviews of this tool
 # + return - `true` on success, or an error
-public isolated function registerDurableAgentTool(string agentName, ai:FunctionTool tool)
-        returns boolean|error {
-    ai:ToolConfig[] configs = ai:getToolConfigs([tool]);
-    if configs.length() == 0 {
-        return error("Agent tool functions must be annotated with @ai:AgentTool");
+public isolated function registerDurableAgentTool(string agentName,
+        ai:BaseToolKit|ai:ToolConfig|ai:FunctionTool tool, boolean requiresApproval = false,
+        string|string[]? userRoles = ()) returns boolean|error {
+    ai:ToolConfig[] configs;
+    boolean isMcp = tool is ai:McpBaseToolKit;
+    if tool is ai:BaseToolKit {
+        configs = tool.getTools();
+    } else if tool is ai:ToolConfig {
+        configs = [tool];
+    } else {
+        configs = ai:getToolConfigs([tool]);
+        if configs.length() == 0 {
+            return error("Agent tool functions must be annotated with @ai:AgentTool");
+        }
     }
-    return registerDurableAgentToolNative(agentName, configs[0].name, tool);
+    boolean result = true;
+    foreach ai:ToolConfig config in configs {
+        map<json>? parameters = config.parameters;
+        json meta = {
+            description: config.description,
+            parameters: parameters is () ? () : parameters.toJsonString(),
+            requiresApproval,
+            userRoles,
+            isMcp
+        };
+        boolean registered =
+            check registerDurableAgentToolNative(agentName, config.name, config.caller, meta);
+        result = result && registered;
+    }
+    return result;
 }
 
-isolated function registerDurableAgentToolNative(string agentName, string toolName, function tool)
-        returns boolean|error = @java:Method {
+isolated function registerDurableAgentToolNative(string agentName, string toolName, function tool,
+        json meta) returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
     name: "registerDurableAgentTool"
 } external;
 
 # Registers the shared object-model runner as an agent's workflow: the agent gets
 # its own workflow type (`workflow-<agentName>`) whose activities are the agent's
-# declared activity functions plus the built-in agent activities.
+# declared activity functions plus the built-in agent activities. The runner and
+# the built-ins are captured natively at workflow-module init, so callers pass
+# only the agent name — no runner machinery leaks into any public API.
 #
 # + agentName - The agent's name (its module-level variable name)
-# + runner - The shared runner function (`workflow:runDurableAgentObject`)
-# + builtinActivities - The built-in agent activities keyed by activity name
 # + return - `true` on success, or an error
-public isolated function registerDurableAgentRunner(string agentName, function runner,
-        map<function> builtinActivities) returns boolean|error = @java:Method {
+public isolated function registerDurableAgentRunner(string agentName)
+        returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
     name: "registerDurableAgentRunner"
 } external;

@@ -10,7 +10,7 @@ distribution-version = "2201.13.4"
 [[package]]
 org = "ballerina"
 name = "ai"
-version = "1.11.2"
+version = "1.13.0"
 dependencies = [
 	{org = "ballerina", name = "cache"},
 	{org = "ballerina", name = "constraint"},
@@ -104,11 +104,12 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "email"
-version = "2.13.0"
+version = "2.14.0"
 dependencies = [
 	{org = "ballerina", name = "jballerina.java"},
 	{org = "ballerina", name = "log"},
 	{org = "ballerina", name = "mime"},
+	{org = "ballerina", name = "oauth2"},
 	{org = "ballerina", name = "task"}
 ]
 modules = [
@@ -301,11 +302,14 @@ version = "1.2.0"
 [[package]]
 org = "ballerina"
 name = "mcp"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
 	{org = "ballerina", name = "http"},
 	{org = "ballerina", name = "jballerina.java"},
 	{org = "ballerina", name = "uuid"}
+]
+modules = [
+	{org = "ballerina", packageName = "mcp", moduleName = "mcp"}
 ]
 
 [[package]]
@@ -439,12 +443,15 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "workflow"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
 	{org = "ballerina", name = "ai"},
 	{org = "ballerina", name = "email"},
 	{org = "ballerina", name = "http"},
+	{org = "ballerina", name = "io"},
 	{org = "ballerina", name = "jballerina.java"},
+	{org = "ballerina", name = "jwt"},
+	{org = "ballerina", name = "lang.array"},
 	{org = "ballerina", name = "lang.runtime"},
 	{org = "ballerina", name = "log"},
 	{org = "ballerina", name = "mime"},
@@ -458,13 +465,14 @@ modules = [
 	{org = "ballerina", packageName = "workflow", moduleName = "workflow.activity"},
 	{org = "ballerina", packageName = "workflow", moduleName = "workflow.internal"},
 	{org = "ballerina", packageName = "workflow", moduleName = "workflow.management"},
+	{org = "ballerina", packageName = "workflow", moduleName = "workflow.management.rest"},
 	{org = "ballerina", packageName = "workflow", moduleName = "workflow.observe"}
 ]
 
 [[package]]
 org = "ballerina"
 name = "workflow_tests"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
 	{org = "ballerina", name = "ai"},
 	{org = "ballerina", name = "email"},
@@ -473,6 +481,7 @@ dependencies = [
 	{org = "ballerina", name = "jballerina.java"},
 	{org = "ballerina", name = "lang.regexp"},
 	{org = "ballerina", name = "lang.runtime"},
+	{org = "ballerina", name = "mcp"},
 	{org = "ballerina", name = "observe"},
 	{org = "ballerina", name = "soap"},
 	{org = "ballerina", name = "test"},

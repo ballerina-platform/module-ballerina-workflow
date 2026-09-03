@@ -33,7 +33,6 @@
 
 import ballerina/lang.runtime;
 import ballerina/test;
-import ballerina/workflow.internal as wfInternal;
 import ballerina/workflow.management;
 
 type HtDecision record {|
@@ -44,16 +43,26 @@ type HtDecision record {|
 // Workflow that waits for a human decision typed as a (non-nilable) record.
 @Workflow
 function htRecordWorkflow(Context ctx, string orderId) returns HtDecision|error {
-    HtDecision decision = check ctx->awaitHumanTask("htApproveOrder", "APPROVER",
-            payload = {"orderId": orderId});
+    HtDecision decision = check ctx->awaitHumanTask("htApproveOrder", {"orderId": orderId}, userRoles = "APPROVER");
+    return decision;
+}
+
+// The forward-compatibility contract of HumanTaskOptions: the record is open, so an
+// option this module version does not know yet ("futureOption") can be written today —
+// as a member of the options record literal (an unknown NAMED ARGUMENT is still a
+// compile error; the record's open rest is the door). It rides along and changes
+// nothing until a version understands it.
+@Workflow
+function htFutureOptionWorkflow(Context ctx, string orderId) returns HtDecision|error {
+    HtDecision decision = check ctx->awaitHumanTask("htApproveFuture", {"orderId": orderId}, HtDecision, (),
+            {userRoles: "APPROVER", "futureOption": "understood-by-a-later-version"});
     return decision;
 }
 
 // Workflow whose human decision is nilable, so an empty completion is valid.
 @Workflow
 function htNilableWorkflow(Context ctx, string orderId) returns HtDecision?|error {
-    HtDecision? decision = check ctx->awaitHumanTask("htApproveOptional", "APPROVER",
-            payload = {"orderId": orderId});
+    HtDecision? decision = check ctx->awaitHumanTask("htApproveOptional", {"orderId": orderId}, userRoles = "APPROVER");
     return decision;
 }
 
@@ -73,7 +82,7 @@ function firstPendingHumanTaskId(string workflowId) returns string? {
 
 @test:Config {groups: ["unit"]}
 function testCompleteHumanTaskWithValidRecordPayload() returns error? {
-    _ = check wfInternal:registerWorkflow(htRecordWorkflow, "human-task-record-valid-test");
+    _ = check registerWorkflowForTest(htRecordWorkflow, "human-task-record-valid-test");
 
     map<string> input = {id: "test-ht-valid-001", orderId: "ORD-HT-001"};
     string|error runResult = run(htRecordWorkflow, input);
@@ -104,8 +113,37 @@ function testCompleteHumanTaskWithValidRecordPayload() returns error? {
 }
 
 @test:Config {groups: ["unit"]}
+function testUnknownOptionRidesAlongTheOpenRecord() returns error? {
+    // A named argument no field declares lands in the open record's rest: the task is
+    // created, waits, and completes exactly as if the option were not there.
+    _ = check registerWorkflowForTest(htFutureOptionWorkflow, "human-task-future-option-test");
+
+    map<string> input = {id: "test-ht-future-001", orderId: "ORD-HT-FUT"};
+    string|error runResult = run(htFutureOptionWorkflow, input);
+    if runResult is error {
+        return; // No server available — skip.
+    }
+    string workflowId = runResult;
+    runtime:sleep(2);
+
+    string? taskId = firstPendingHumanTaskId(workflowId);
+    if taskId is () {
+        return; // Task not visible — skip.
+    }
+    HtDecision expected = {approved: true, comment: "future-proof"};
+    error? completeResult = management:completeHumanTask(taskId, expected, ["APPROVER"]);
+    test:assertTrue(completeResult is (), "Completion should succeed with an unknown option present");
+    anydata|error wfResult = getWorkflowResult(workflowId, 15);
+    if wfResult is error {
+        return;
+    }
+    test:assertEquals(check wfResult.ensureType(HtDecision), expected,
+        "An unknown future option must not change the task's behaviour");
+}
+
+@test:Config {groups: ["unit"]}
 function testCompleteHumanTaskEmptyForNilableType() returns error? {
-    _ = check wfInternal:registerWorkflow(htNilableWorkflow, "human-task-nilable-test");
+    _ = check registerWorkflowForTest(htNilableWorkflow, "human-task-nilable-test");
 
     map<string> input = {id: "test-ht-nil-001", orderId: "ORD-HT-002"};
     string|error runResult = run(htNilableWorkflow, input);
@@ -133,7 +171,7 @@ function testCompleteHumanTaskEmptyForNilableType() returns error? {
 
 @test:Config {groups: ["unit"]}
 function testCompleteHumanTaskInvalidPayloadDoesNotComplete() returns error? {
-    _ = check wfInternal:registerWorkflow(htRecordWorkflow, "human-task-record-invalid-test");
+    _ = check registerWorkflowForTest(htRecordWorkflow, "human-task-record-invalid-test");
 
     map<string> input = {id: "test-ht-invalid-001", orderId: "ORD-HT-003"};
     string|error runResult = run(htRecordWorkflow, input);
@@ -182,7 +220,7 @@ function testCompleteHumanTaskInvalidPayloadDoesNotComplete() returns error? {
 function testFailHumanTaskBypassesPayloadValidation() returns error? {
     // failHumanTask sends a rejection sentinel ({__rejected: true, ...}) that intentionally does not
     // conform to the task's result type. Payload validation must not block it (ballerina-library#8866).
-    _ = check wfInternal:registerWorkflow(htRecordWorkflow, "human-task-record-reject-test");
+    _ = check registerWorkflowForTest(htRecordWorkflow, "human-task-record-reject-test");
 
     map<string> input = {id: "test-ht-reject-001", orderId: "ORD-HT-004"};
     string|error runResult = run(htRecordWorkflow, input);

@@ -60,8 +60,6 @@ public final class EventExtractor {
 
     // Context type name for identifying workflow context parameter
     private static final String CONTEXT_TYPE_NAME = "Context";
-    // AgentContext type name for identifying a durable agent's context parameter
-    private static final String AGENT_CONTEXT_TYPE_NAME = "AgentContext";
 
     private EventExtractor() {
         // Utility class, prevent instantiation
@@ -81,8 +79,18 @@ public final class EventExtractor {
         if (processFunction == null) {
             return Collections.emptyList();
         }
+        return extractEvents(processFunction.getType(), processName);
+    }
 
-        Type funcType = processFunction.getType();
+    /**
+     * Extracts event information from a workflow function's type — the form used for
+     * descriptor-registered symbol references, which carry the function type without a pointer.
+     *
+     * @param funcType    the workflow function's type
+     * @param processName the name of the process (for error messages)
+     * @return list of EventInfo objects, empty if no events found
+     */
+    public static List<EventInfo> extractEvents(Type funcType, String processName) {
         if (!(funcType instanceof FunctionType functionType)) {
             return Collections.emptyList();
         }
@@ -310,8 +318,17 @@ public final class EventExtractor {
         if (processFunction == null) {
             return null;
         }
+        return getEventsRecordType(processFunction.getType());
+    }
 
-        Type funcType = processFunction.getType();
+    /**
+     * Gets the events record type from a workflow function's type — the form used for
+     * descriptor-registered symbol references.
+     *
+     * @param funcType the workflow function's type
+     * @return the events RecordType, or null if no events parameter found
+     */
+    public static RecordType getEventsRecordType(Type funcType) {
         if (!(funcType instanceof FunctionType functionType)) {
             return null;
         }
@@ -438,31 +455,9 @@ public final class EventExtractor {
         if (type == null) {
             return false;
         }
-        // Check by type name - Context / AgentContext are object types from the workflow module.
-        // Both occupy the leading "context" parameter slot for arg alignment purposes.
-        String typeName = type.getName();
-        return CONTEXT_TYPE_NAME.equals(typeName) || AGENT_CONTEXT_TYPE_NAME.equals(typeName);
-    }
-
-    /**
-     * Checks whether the function's first parameter is a {@code workflow:AgentContext}.
-     *
-     * @param processFunction the function pointer
-     * @return true if the first parameter is AgentContext
-     */
-    public static boolean hasAgentContextParameter(BFunctionPointer processFunction) {
-        if (processFunction == null) {
-            return false;
-        }
-        Type funcType = processFunction.getType();
-        if (!(funcType instanceof FunctionType functionType)) {
-            return false;
-        }
-        Parameter[] parameters = functionType.getParameters();
-        if (parameters == null || parameters.length == 0) {
-            return false;
-        }
-        return AGENT_CONTEXT_TYPE_NAME.equals(parameters[0].type.getName());
+        // workflow:Context by type name, or the raw native handle taken by the durable agent
+        // runner workflow — both occupy the leading "context" parameter slot for arg alignment.
+        return CONTEXT_TYPE_NAME.equals(type.getName()) || type.getTag() == TypeTags.HANDLE_TAG;
     }
 
     /**
@@ -475,8 +470,17 @@ public final class EventExtractor {
         if (processFunction == null) {
             return false;
         }
+        return hasContextParameter(processFunction.getType());
+    }
 
-        Type funcType = processFunction.getType();
+    /**
+     * Checks whether the first parameter is a workflow Context — the form used for
+     * descriptor-registered symbol references.
+     *
+     * @param funcType the workflow function's type
+     * @return true if the first parameter is Context
+     */
+    public static boolean hasContextParameter(Type funcType) {
         if (!(funcType instanceof FunctionType functionType)) {
             return false;
         }

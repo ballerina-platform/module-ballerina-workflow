@@ -92,13 +92,13 @@ isolated client class EchoModelProvider {
 final EchoModelProvider chatModel = new;
 
 // A conversational agent: the MULTI_EVENT chat channel keeps the instance alive
-// between turns; each sendEvent("chat", ...) is one turn answered via its token.
+// between turns; each sendData("chat", ...) is one turn answered via its token.
 final workflow:DurableAgent chatAgent = check new ({
     systemPrompt: {role: "Chat assistant", instructions: "Echo the user's messages."},
     model: chatModel,
-    events: [
-        {name: "chat", request: string, response: string, cardinality: workflow:MULTI_EVENT}
-    ],
+    events: {
+        chat: {request: string, response: string, cardinality: workflow:MULTI_EVENT}
+    },
     maxIter: 4
 });
 
@@ -142,12 +142,12 @@ final workflow:DurableAgent orderAgent = check new ({
         {activity: reserveStock, name: "reserve", requiresApproval: true}
     ],
     tools: [priceLookup],
-    events: [
-        {name: "escalate", request: EscalationReq}
-    ],
-    humanTasks: [
-        {name: "approval", roles: "manager", title: "Approve the order"}
-    ],
+    events: {
+        escalate: {request: EscalationReq}
+    },
+    humanTasks: {
+        approval: {userRoles: "manager", title: "Approve the order"}
+    },
     maxIter: 8
 });
 
@@ -217,8 +217,8 @@ function orchestratorWorkflow(workflow:Context ctx, OrchestratorInput input) ret
 
     // Conversational sub-agent driven turn-by-turn via reply signals.
     string chatChildId = check chatAgent.run("Hello from the orchestrator");
-    string turnToken = check chatAgent.sendEvent(chatChildId, "chat", "One turn from a workflow");
-    string turnReply = check chatAgent.waitForEventResult(chatChildId, turnToken);
+    string turnToken = check chatAgent.sendData(chatChildId, "chat", "One turn from a workflow");
+    string turnReply = check chatAgent.waitForDataResult(chatChildId, turnToken);
 
     return subResult + " | " + turnReply;
 }
@@ -251,16 +251,16 @@ public function main() returns error? {
     string chatId = check chatAgent.run("Hello there!");
     io:println("chatAgent.run() -> instance " + chatId);
 
-    // Each sendEvent is one turn: the token correlates that turn's reply.
-    string turn = check chatAgent.sendEvent(chatId, "chat", "How are you today?");
-    io:println("chatAgent.sendEvent() -> token " + turn);
+    // Each sendData is one turn: the token correlates that turn's reply.
+    string turn = check chatAgent.sendData(chatId, "chat", "How are you today?");
+    io:println("chatAgent.sendData() -> token " + turn);
 
-    string reply = check chatAgent.waitForEventResult(chatId, turn);
-    io:println("chatAgent.waitForEventResult() -> " + reply);
+    string reply = check chatAgent.waitForDataResult(chatId, turn);
+    io:println("chatAgent.waitForDataResult() -> " + reply);
 
-    string secondTurn = check chatAgent.sendEvent(chatId, "chat", "Tell me a joke.");
-    string secondReply = check chatAgent.waitForEventResult(chatId, secondTurn);
-    io:println("chatAgent.waitForEventResult() [turn 2] -> " + secondReply);
+    string secondTurn = check chatAgent.sendData(chatId, "chat", "Tell me a joke.");
+    string secondReply = check chatAgent.waitForDataResult(chatId, secondTurn);
+    io:println("chatAgent.waitForDataResult() [turn 2] -> " + secondReply);
 
     // --- Agent-to-agent: a workflow orchestrating sub-agents as true children ---
 

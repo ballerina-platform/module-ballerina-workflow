@@ -43,6 +43,14 @@
 //   # 2. List pending approvals
 //   curl -s 'http://localhost:8234/workflow/human-tasks?status=PENDING'
 //
+//   # 2b. Task-queue scoping: listings are namespace-wide (the project); every row
+//   #     carries `namespace` and `taskQueue` identifying the owning integration, and
+//   #     an optional `taskQueue` query param scopes to one integration (also on
+//   #     /workflows and /human-tasks/pending-count and /review-activities):
+//   curl -s 'http://localhost:8234/workflow/human-tasks?taskQueue=MY_QUEUE'
+//   #     Mutations (complete/fail/decide) of a task served by a DIFFERENT integration
+//   #     return 403 - route them to that integration's management API.
+//
 //   # 3. Approve the request (replace TASK_ID with the taskId from step 2)
 //   curl -s -X POST http://localhost:8234/workflow/human-tasks/TASK_ID/complete \
 //        -H 'Content-Type: application/json' \
@@ -64,6 +72,7 @@ import ballerina/http;
 import ballerina/io;
 import ballerina/workflow;
 import ballerina/workflow.management;
+import ballerina/workflow.management.rest as _;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -176,13 +185,12 @@ function processProcurementRequest(workflow:Context ctx, ProcurementRequest inpu
     if input.amount > APPROVAL_THRESHOLD {
         io:println(string `[Workflow] Requesting approval for ${input.requestId} ($${input.amount})`);
 
-        ApprovalDecision decision = check ctx->awaitHumanTask("approveRequest", "MANAGER",
-                payload = {
+        ApprovalDecision decision = check ctx->awaitHumanTask("approveRequest", {
                     requestId: input.requestId,
                     item: input.item,
                     amount: input.amount.toString(),
                     requester: input.requesterEmail
-                },
+                }, userRoles = "MANAGER",
                 title = string `Approve purchase of '${input.item}' ($${input.amount}) ${input.requestId}`);
 
         io:println(string `[Workflow] Approval decision: approved=${decision.approved}`);
@@ -204,7 +212,7 @@ function processProcurementRequest(workflow:Context ctx, ProcurementRequest inpu
         "toEmail": input.notifyEmail,
         "item": input.item,
         "amount": input.amount
-    }, retryPolicy = "OPS");
+    }, retryPolicy = {userRoles: "OPS"});
 
     io:println(string `[Workflow] Procurement completed for ${input.requestId}`);
     return {

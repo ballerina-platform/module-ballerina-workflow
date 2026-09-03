@@ -1,0 +1,8 @@
+[package]
+org = "test"
+name = "call_activity_named_args"
+version = "1.0.0"
+distribution = "2201.13.0"
+
+[build-options]
+observabilityIncluded = false

@@ -75,4 +75,42 @@
         <Class name="io.ballerina.lib.workflow.compiler.WorkflowSourceModifier"/>
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
     </Match>
+
+    <!-- The descriptor store is deliberately shared: the generator builds the document while
+         the semantic model is live, and the lifecycle task writes it once the JAR exists — the
+         same hand-off the ICP bridge's swagger-pack uses. -->
+    <Match>
+        <Class name="io.ballerina.lib.workflow.compiler.descriptor.WorkflowDescriptorGenerator"/>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+    </Match>
+
+    <Match>
+        <Class name="io.ballerina.lib.workflow.compiler.descriptor.DescriptorLifecycleListener"/>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+    </Match>
+
+    <Match>
+        <Class name="io.ballerina.lib.workflow.compiler.descriptor.DescriptorPackLifecycleTask"/>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+    </Match>
+
+    <!-- The store hands byte arrays between the two, by design. -->
+    <Match>
+        <Class name="io.ballerina.lib.workflow.compiler.descriptor.WorkflowDescriptorStore"/>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+    </Match>
+
+    <!-- One walk, two consumers: the descriptor writes the graph and the modifier injects the
+         same site ids, so the result is handed over rather than copied. -->
+    <Match>
+        <Class name="~io\.ballerina\.lib\.workflow\.compiler\.descriptor\.WorkflowGraphBuilder.*"/>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+    </Match>
+
+    <!-- build() returns null to mean "this package declares no workflows" — a zero-length
+         array would be indistinguishable from an empty descriptor document. -->
+    <Match>
+        <Class name="io.ballerina.lib.workflow.compiler.descriptor.WorkflowDescriptorBuilder"/>
+        <Bug pattern="PZLA_PREFER_ZERO_LENGTH_ARRAYS"/>
+    </Match>
 </FindBugsFilter>

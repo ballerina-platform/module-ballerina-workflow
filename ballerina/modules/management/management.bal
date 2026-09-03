@@ -16,27 +16,12 @@
 
 import ballerina/jballerina.java;
 
-// Captures this submodule's reference so native code can create records in this module,
-// validates the management API configuration so any misconfiguration causes a
-// descriptive error at startup rather than a silent runtime failure, and then starts
-// the management HTTP service programmatically (see service.bal) when
-// enableManagementApi = true. When the API is disabled, no listener is created and
-// no port is reserved — importing this module purely for its programmatic helpers
-// stays port-free.
-//
-// The service is attached and started from here — not via a module-level `listener`
-// declaration — so this module fully owns the listener lifecycle. The started
-// listener is registered as a dynamic listener with the runtime, which keeps the
-// program alive after a `main` function returns so programs that use an entry point
-// other than services can still serve the management API. The listener is
-// deregistered and stopped on graceful shutdown so signal-driven termination
-// (SIGINT/SIGTERM) is not blocked.
-#
-# + return - An error if the management service cannot be started
-function init() returns error? {
+// Captures this submodule's reference so native code can create records in this
+// module. This module is a pure Ballerina API: it opens no port and starts no
+// service. The management HTTP API lives in `ballerina/workflow.management.rest`,
+// which imports this module and owns the listener lifecycle.
+function init() {
     initManagementModule();
-    validateManagementApiConfig();
-    check startManagementService();
 }
 
 isolated function initManagementModule() = @java:Method {
@@ -93,8 +78,9 @@ public isolated function getAgentResponse(string agentId) returns string?|error 
 } external;
 
 # Lists all workflow types registered with this worker, for use in the workflow launcher UI.
-# Returns one entry per registered workflow function. The `inputSchema` field is `()` until
-# the compiler plugin generates JSON Schema at build time.
+# Returns one entry per registered workflow function. The `inputSchema` field is derived at
+# runtime from the registered workflow function's signature, or `()` when the workflow takes
+# no data input.
 #
 # ```ballerina
 # management:WorkflowDefinition[] defs = check management:listWorkflowDefinitions();
@@ -120,6 +106,20 @@ public isolated function listWorkflowDefinitions() returns WorkflowDefinition[]|
 # check management:suspendWorkflow(workflowId);
 # ```
 #
+# Wakes a durable agent instance out of its built-in `sleep` tool by sending the
+# `__agent_wake` signal. Harmless when the instance is not sleeping: the request
+# is consumed by the next sleep.
+#
+# ```ballerina
+# check management:wakeAgent(instanceId);
+# ```
+#
+# + workflowId - The agent instance ID to wake
+# + return - An error if the signal cannot be delivered
+public isolated function wakeAgent(string workflowId) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
 # + workflowId - The workflow ID to suspend
 # + return - An error if the signal cannot be delivered
 public isolated function suspendWorkflow(string workflowId) returns error? = @java:Method {
@@ -164,8 +164,9 @@ public isolated function resumeWorkflowRun(string workflowId, string runId) retu
 
 # Returns the pending human task child workflows started by the given parent workflow,
 # grouped by task type and sorted alphabetically by task name. Scans the parent's
-# event history for child workflow start events whose ID matches the
-# `humantask-<parentWorkflowId>-` prefix.
+# event history for child workflow start events whose workflow TYPE has the
+# `humantask-` prefix (the ID itself is a bare UUID; what a task is travels in its
+# type and memo).
 #
 # ```ballerina
 # management:HumanTaskGroup[] groups = check management:listPendingHumanTasks(parentWorkflowId);
@@ -184,7 +185,7 @@ public isolated function listPendingHumanTasks(string parentWorkflowId) returns 
 } external;
 
 # Lists all human task instances across all parent workflows, with optional filters.
-# Queries Temporal's visibility API and filters executions whose workflow ID starts with
+# Queries Temporal's visibility API for executions whose workflow TYPE starts with
 # `humantask-`. The `taskName` and `parentWorkflowId` fields are extracted from the task's
 # Temporal memo (set when the task was created by `awaitHumanTask`).
 #
@@ -201,10 +202,13 @@ public isolated function listPendingHumanTasks(string parentWorkflowId) returns 
 # + startTimeTo - Optional ISO-8601 upper bound on task start time (inclusive)
 # + closeTimeFrom - Optional ISO-8601 lower bound on task close time (inclusive)
 # + closeTimeTo - Optional ISO-8601 upper bound on task close time (inclusive)
+# + taskQueue - Optional task queue filter: only tasks served by that integration.
+#               Omitted, all task queues in the configured namespace are returned
 # + return - Array of human task summaries, or an error
 public isolated function listAllHumanTasks(string? status = (),
         string? startTimeFrom = (), string? startTimeTo = (),
-        string? closeTimeFrom = (), string? closeTimeTo = ()) returns HumanTaskSummary[]|error = @java:Method {
+        string? closeTimeFrom = (), string? closeTimeTo = (),
+        string? taskQueue = ()) returns HumanTaskSummary[]|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 
@@ -215,7 +219,7 @@ public isolated function listAllHumanTasks(string? status = (),
 # management:HumanTaskInfo info = check management:getHumanTaskInfo(taskId);
 # ```
 #
-# + taskId - The child workflow ID of the human task (`humantask-{parentId}-{taskName}-{uuid}`)
+# + taskId - The child workflow ID of the human task (a bare UUID; the kind travels in its memo)
 # + return - Full task info including title, userRoles, payload, and formSchema, or an error
 public isolated function getHumanTaskInfo(string taskId) returns HumanTaskInfo|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
@@ -291,7 +295,8 @@ public isolated function failHumanTask(string taskWorkflowId, string reason,
 # check management:completeReviewActivity(taskId, {action: "reject", feedback: "Amount too high"});
 # ```
 #
-# + taskWorkflowId - Temporal workflow ID of the review activity child workflow (`reviewactivity-...`)
+# + taskWorkflowId - Temporal workflow ID of the review activity child workflow (a bare UUID;
+#                    its `reviewactivity-`-prefixed kind travels in the workflow type and memo)
 # + decision - The review decision: proceed, proceed with new input, or reject
 # + callerRoles - Roles held by the caller; validated against the task's configured `userRoles`
 # + userId - Optional user identifier stored in the audit trail (from `x-user-id` header)
@@ -304,7 +309,8 @@ public isolated function completeReviewActivity(string taskWorkflowId, ReviewDec
 
 # Returns pending review activity child workflows started by the given parent workflow,
 # grouped by task name and sorted alphabetically. Scans the parent's event history for
-# child workflow start events whose ID starts with the `reviewactivity-{parentWorkflowId}-` prefix.
+# child workflow start events whose workflow TYPE has the `reviewactivity-` prefix (the
+# ID itself is a bare UUID).
 #
 # ```ballerina
 # management:ReviewActivitySummary[] tasks = check management:listPendingReviewActivities(parentWorkflowId);
@@ -322,7 +328,8 @@ public isolated function listPendingReviewActivities(string parentWorkflowId)
 } external;
 
 # Lists all review activity instances across all parent workflows, with optional filters.
-# Queries Temporal's visibility API for executions whose workflow ID starts with `reviewactivity-`.
+# Queries Temporal's visibility API for executions whose workflow TYPE starts with
+# `reviewactivity-`.
 #
 # ```ballerina
 # management:ReviewActivitySummary[] pending = check management:listAllReviewActivities(status = "PENDING");
@@ -336,12 +343,25 @@ public isolated function listPendingReviewActivities(string parentWorkflowId)
 # + startTimeTo - Optional ISO-8601 upper bound on task start time (inclusive)
 # + closeTimeFrom - Optional ISO-8601 lower bound on task close time (inclusive)
 # + closeTimeTo - Optional ISO-8601 upper bound on task close time (inclusive)
+# + taskQueue - Optional task queue filter; without it, every queue in the configured namespace
 # + return - Array of review activity summaries, or an error
 public isolated function listAllReviewActivities(string? status = (),
         string? startTimeFrom = (), string? startTimeTo = (),
-        string? closeTimeFrom = (), string? closeTimeTo = ()) returns ReviewActivitySummary[]|error = @java:Method {
+        string? closeTimeFrom = (), string? closeTimeTo = (),
+        string? taskQueue = ()) returns ReviewActivitySummary[]|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative",
     name: "listAllReviewActivities"
+} external;
+
+# Reads only the facts a bulk decision needs about a review activity, with one
+# describe and no history scan. Not public: it exists so a batch does not pay
+# `getReviewActivityInfo`'s two history scans per task for audit fields it never reads.
+#
+# + taskId - The review activity's workflow ID
+# + return - Its trigger, status, and permitted roles, or an error when the ID is not
+#            a review activity
+isolated function getReviewActivityState(string taskId) returns ReviewActivityState|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 
 # Returns detailed info for a single review activity, including the failure context,
@@ -352,7 +372,7 @@ public isolated function listAllReviewActivities(string? status = (),
 # management:ReviewActivityInfo info = check management:getReviewActivityInfo(taskId);
 # ```
 #
-# + taskId - The child workflow ID of the review activity (`reviewactivity-{parentId}-{taskName}-{uuid}`)
+# + taskId - The child workflow ID of the review activity (a bare UUID; the kind travels in its memo)
 # + return - Full review activity info including errorMessage, activityArgs, formSchema, and userRoles,
 #            or an error (including when the ID refers to a human task or any non-review workflow)
 public isolated function getReviewActivityInfo(string taskId) returns ReviewActivityInfo|error = @java:Method {
@@ -393,7 +413,9 @@ public isolated function cancelWorkflow(string workflowId, string runId) returns
 # Starts a new workflow instance by its registered type name.
 #
 # + workflowType - The registered workflow type (function name)
-# + input - Workflow input as a JSON-compatible value
+# + input - Workflow input as a JSON-compatible value. A durable agent is started with
+#           its `{query, input}` envelope: `query` is the user turn, and `input` is the
+#           payload validated against the agent's declared `inputType`
 # + workflowId - Optional explicit workflow ID; a UUID-v7 is generated if omitted
 # + timeoutSeconds - Optional workflow execution timeout in seconds
 # + startedBy - Optional starter user ID; stored with workflow metadata for filtering
@@ -419,11 +441,19 @@ public isolated function startWorkflowByType(string workflowType, json? input,
 # + startTimeTo - Optional ISO-8601 upper bound on workflow start time (inclusive)
 # + closeTimeFrom - Optional ISO-8601 lower bound on workflow close time (inclusive)
 # + closeTimeTo - Optional ISO-8601 upper bound on workflow close time (inclusive)
+# + taskQueue - Optional task queue filter; without it, every queue in the configured namespace
+# + kind - Optional kind filter: `WORKFLOW`, `HUMAN_TASK`, `REVIEW_ACTIVITY`, `CHILD_WORKFLOW`
+#          or `AGENT`. Without it the listing excludes task and review children, as it did
+#          before kinds existed. Each summary reports its own `kind`, so an unfiltered listing
+#          is still self-describing. Filtering needs the `WorkflowKind` search attribute; where
+#          the server has none — the in-memory dev server, which supports no custom attributes —
+#          the listing comes back unfiltered with a warning rather than failing.
 # + return - Paginated list of workflow instance summaries, or an error
 public isolated function listWorkflowInstances(string? status = (), string? workflowType = (),
     string? workflowId = (), string? startedBy = (), int 'limit = 20, string? pageToken = (),
         string? startTimeFrom = (), string? startTimeTo = (),
-        string? closeTimeFrom = (), string? closeTimeTo = ())
+        string? closeTimeFrom = (), string? closeTimeTo = (),
+        string? taskQueue = (), string? kind = ())
         returns WorkflowInstancePage|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
@@ -455,6 +485,70 @@ public isolated function getActivityTree(string workflowId, string runId)
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 
+# Resolves the run a reset acts on, so the run whose points are validated is the run
+# that is reset. Module-private: it exists to pin "latest" for the two calls a reset
+# makes, not as API.
+#
+# + workflowId - The workflow instance ID
+# + runId - An explicit run ID, or `""` for the latest run
+# + return - The concrete run ID, or an error
+isolated function resolveRunId(string workflowId, string runId) returns string|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
+# Finds the run's first or last workflow-task event without reading its whole history.
+# Module-private: resetting to the beginning or the tail needs one event, and the full
+# read refuses the long-lived and wedged runs those targets exist for.
+#
+# + workflowId - The workflow instance ID
+# + runId - The run ID, or `""` for the latest run
+# + first - `true` for the first workflow task, `false` for the last
+# + return - The event ID, or an error when the run has no workflow task yet
+isolated function findBoundaryWorkflowTask(string workflowId, string runId, boolean first)
+        returns int|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
+# Returns the events this run can be reset to — its workflow-task events — each
+# annotated with the activity-tree nodes that task scheduled. A reset target is a
+# workflow task, so the annotation is what lets a caller see which steps a point
+# re-runs before choosing it.
+#
+# + workflowId - The workflow instance ID
+# + runId - The specific run ID (pass empty string for the latest run)
+# + return - Ordered array of reset points, or an error
+public isolated function listResetPoints(string workflowId, string runId)
+        returns ResetPoint[]|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
+# Resets a run to a workflow-task event: history up to that point is preserved and
+# everything after it re-executes as a **new run of the same workflow ID**.
+#
+# Everything downstream of the point runs again, including the error handling and
+# compensation the workflow already performed on its first pass, and replay happens
+# against the worker's current code — a workflow function that changed since the run
+# started can fail to replay.
+#
+# + workflowId - The workflow instance ID
+# + runId - The specific run ID (pass empty string for the latest run)
+# + eventId - The workflow-task event to reset to, from `listResetPoints`
+# + reason - Audit reason recorded with the reset
+# + reapplyType - `signal` | `none` | `all-eligible`
+# + reapplyExclude - Event categories to withhold from reapply
+# + identity - The caller recorded as the reset's identity
+# + idempotencyKey - Identifies the request so a retry is a no-op rather than a second
+#                    reset. Pass the request as the caller made it, not what it resolved
+#                    to: with `runId` omitted, "latest" names a different run once the
+#                    first reset has created one. Empty derives a key from the arguments.
+# + return - Handle carrying the unchanged workflow ID and the new run ID, or an error
+public isolated function resetWorkflowExecution(string workflowId, string runId, int eventId,
+        string reason, string reapplyType, string[] reapplyExclude, string identity,
+        string idempotencyKey = "")
+        returns WorkflowHandle|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
 # Derives a directed execution graph from the workflow history suitable for
 # rendering with D3.js or React Flow. Nodes represent execution steps;
 # edges connect them in the order they were scheduled.
@@ -470,13 +564,11 @@ public isolated function getExecutionGraph(string workflowId, string runId)
 // ================================================================================
 // HTTP SERVICE
 // ================================================================================
-// The management HTTP service is started programmatically from this module's
-// init() (see startManagementService() in service.bal) — and only when
-// enableManagementApi = true: a disabled API creates no listener and reserves
-// no port. Configure it in Config.toml:
+// The management HTTP API lives in `ballerina/workflow.management.rest`. Import
+// that module and enable it in Config.toml to expose these operations over REST:
 //
-//   [ballerina.workflow.management]
+//   import ballerina/workflow.management.rest as _;
+//
+//   [ballerina.workflow.management.rest]
 //   enableManagementApi = true
 //   port = 8234
-//
-// See service.bal for the full list of configurable variables.

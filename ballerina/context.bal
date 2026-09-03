@@ -47,15 +47,23 @@ public client class Context {
     #          `"connection:<name>"` marker for transport across the workflow
     #          execution boundary.
     # + T - Expected return type (inferred from context)
-    # + retryPolicy - Retry behaviour on failure:
-    #   - `()` / `NoAutomaticRetry` (default) — error is returned as-is, no retry.
-    #   - `AutoRetry` — automatic backoff retry with configurable attempts and delays.
-    #   - `HumanReview` — on failure a review task is created for a human to decide
-    #     whether to retry (optionally with new input) or permanently fail the activity.
+    # + stepId - Identity of this step within the workflow, reported by every execution of it and
+    #            matching a node of the descriptor's graph — so a run can be traced back to the
+    #            exact call that ran, the one in the `if` arm rather than the `else`. Name it
+    #            (`stepId = "charge-card"`) for a step you want to follow: a chosen id survives
+    #            edits that shift the generated `<activity>#<ordinal>`. Must be a constant string;
+    #            an id another step already has is suffixed, with a warning.
+    # + options - How the invocation behaves — today `retryPolicy` (`NoAutomaticRetry`
+    #             default, `AutoRetry` backoff, or `HumanReview`: on failure a review
+    #             task lets a person rerun or fail it) — as an included record, so each
+    #             travels as a named argument and a future behaviour option is a new
+    #             record field rather than a new parameter
     # + return - The activity result as `T`, or an error
     remote isolated function callActivity(function activityFunction,
             map<anydata|object {}> args = {},
-            typedesc<anydata> T = <>, AutoRetry|HumanReview|NoAutomaticRetry retryPolicy = NoAutomaticRetry)
+            typedesc<anydata> T = <>,
+            string? stepId = (),
+            *CallActivityOptions options)
             returns T|error = @java:Method {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
         name: "callActivity"
@@ -68,13 +76,16 @@ public client class Context {
     # ```
     #
     # + duration - The duration to sleep
+    # + stepId - Identity of this step within the workflow, as for `callActivity`: name it to follow
+    #            this sleep across edits, or omit it for a generated `sleep#<ordinal>`. Recorded as
+    #            the timer's summary, so an instance diagram can tell two sleeps apart
     # + return - An error if the sleep fails, otherwise nil
-    public isolated function sleep(time:Duration duration) returns error? {
+    public isolated function sleep(Duration duration, string? stepId = ()) returns error? {
         decimal totalSeconds = <decimal>duration.hours * 3600 +
                                <decimal>duration.minutes * 60 +
                                duration.seconds;
         int millis = <int>(totalSeconds * 1000);
-        return sleepContextNative(self.nativeContext, millis);
+        return sleepContextNative(self.nativeContext, millis, stepId);
     }
 
     # Returns the deterministic workflow time. Use instead of `time:utcNow()` inside workflows.
@@ -136,7 +147,7 @@ public client class Context {
     # + return - Positional tuple of values (`nil` for an incomplete position), or an error
     remote isolated function await(future<anydata>[] futures,
             int:Unsigned32 minCount = <int:Unsigned32>futures.length(),
-            time:Duration? timeout = (),
+            Duration? timeout = (),
             typedesc<anydata|error|(anydata|error)[]> T = <>) returns T = @java:Method {
         'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WaitUtils",
         name: "awaitFutures"
@@ -144,37 +155,43 @@ public client class Context {
 
     # Creates a human task and blocks until a human completes it or the optional timeout elapses.
     # Internally, the task is modelled as a durable Temporal child workflow whose type is `taskName`,
-    # so the task survives worker restarts.  Register the task name at module init time via
-    # `wfInternal:registerHumanTask(taskName)` (the compiler plugin generates this call automatically).
+    # so the task survives worker restarts. The task name is registered when the worker starts,
+    # from the workflow descriptor the compiler plugin generates at build time.
     #
     # ```ballerina
-    # ApprovalDecision d = check ctx->awaitHumanTask("approveExpense", "FINANCE_APPROVER",
-    #     payload = {"amount": 1200, "currency": "USD"},
+    # ApprovalDecision d = check ctx->awaitHumanTask("approveExpense",
+    #     {"amount": 1200, "currency": "USD"},
+    #     userRoles = "FINANCE_APPROVER",
     #     title = "Approve order",
     #     timeout = {hours: 24}
-    # ) on fail workflow:HumanTaskTimeoutError e {
-    #     check ctx->callActivity(notifyEscalation, args = {"taskName": e.detail().taskName});
+    # ) on fail workflow:HumanTaskError e {
+    #     if e is workflow:HumanTaskTimeoutError {
+    #         check ctx->callActivity(notifyEscalation, args = {"taskName": e.detail().taskName});
+    #     }
     #     return e;
     # };
     # ```
     #
     # + taskName - Identifies the task type; used as the Temporal workflow type and child workflow ID
-    # + userRoles - One or more roles permitted to complete this task
-    # + payload - Read-only JSON object rendered as key-value pairs next to the form
-    # + title - Short summary shown in the inbox. Defaults to `taskName` when omitted
-    # + description - Additional context shown alongside the form. Optional
-    # + timeout - Maximum time to wait. Omit (or pass `()`) to wait indefinitely
+    # + payload - Read-only object shown beside the form. Pass `{}` when there is nothing to
+    #             show; it is checked against the definition's `payloadType`
     # + T - Expected result type; drives form schema generation and runtime validation
-    # + return - The typed value submitted by the human, or a `HumanTaskTimeoutError`
+    # + stepId - Identity of this step within the workflow, as for `callActivity`: name it
+    #            to follow this task across edits, or omit it for a generated
+    #            `<taskName>#<ordinal>`
+    # + definition - The task's `HumanTaskDefinition`, as an included record: each field
+    #                travels as a named argument (`userRoles = "MANAGER"`)
+    # + return - The typed value submitted by the human, or a `HumanTaskError`: a
+    #            `HumanTaskTimeoutError` if the deadline passed, a `HumanTaskRejectedError`
+    #            if someone rejected the task (carrying their reason and details), or a
+    #            `HumanTaskFailedError` if the task could not produce a result
     remote isolated function awaitHumanTask(
             string taskName,
-            string|string[] userRoles,
-            map<json> payload = {},
-            string? title = (),
-            string? description = (),
-            time:Duration? timeout = (),
-            typedesc<anydata> T = <>)
-            returns T|HumanTaskTimeoutError = @java:Method {
+            map<json> payload,
+            typedesc<anydata> T = <>,
+            string? stepId = (),
+            *HumanTaskDefinition definition)
+            returns T|HumanTaskError = @java:Method {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
         name: "awaitHumanTask"
     } external;
@@ -196,8 +213,10 @@ public client class Context {
     # + childWorkflow - The child workflow function (must have `@Workflow`)
     # + input - Optional input for the child workflow. Must match the child workflow
     #           function's declared input parameter type (any `anydata` subtype)
+    # + stepId - Identity of this step within the workflow, as for `callActivity`
     # + return - The child workflow instance ID, or an error if the child could not start
-    remote isolated function runChildWorkflow(function childWorkflow, anydata input = ())
+    remote isolated function runChildWorkflow(function childWorkflow, anydata input = (),
+            string? stepId = ())
             returns string|error = @java:Method {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
         name: "runChildWorkflow"
@@ -250,7 +269,7 @@ public client class Context {
     # + T - Expected result type (inferred from context)
     # + return - The child's result as `T`, or an error if the child failed
     remote isolated function callWorkflow(function childWorkflow, anydata input = (),
-            typedesc<anydata> T = <>) returns T|error = @java:Method {
+            typedesc<anydata> T = <>, string? stepId = ()) returns T|error = @java:Method {
         'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
         name: "callWorkflow"
     } external;
@@ -277,7 +296,7 @@ public client class Context {
 
 // Native function declarations
 
-isolated function sleepContextNative(handle contextHandle, int millis) returns error? = @java:Method {
+isolated function sleepContextNative(handle contextHandle, int millis, string? stepId) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
     name: "sleepMillis"
 } external;

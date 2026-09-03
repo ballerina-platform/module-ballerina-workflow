@@ -19,6 +19,7 @@
 package io.ballerina.lib.workflow.context;
 
 import io.ballerina.lib.workflow.utils.TypesUtil;
+import io.ballerina.lib.workflow.worker.ActivityNaming;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
 import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
@@ -28,6 +29,7 @@ import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.utils.JsonUtils;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BArray;
+import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BHandle;
 import io.ballerina.runtime.api.values.BMap;
@@ -52,9 +54,11 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Native implementations backing the {@code workflow:AgentContext} client class and the durable agent loop.
+ * Native implementations backing the durable agent context and the durable agent loop. The context travels
+ * through Ballerina as a raw handle injected into the object-model runner workflow; there is no user-facing
+ * agent context API.
  * <p>
- * The imperative agent body registers capabilities on the context — workflow activities
+ * The runner registers the agent's declared capabilities on the context — workflow activities
  * ({@link #recordActivityTool}), AI tools ({@link #recordAiTool}), and human tasks
  * ({@link #recordHumanTaskTool}). The loop advertises them (plus one wait-tool per declared signature event) to the
  * model via {@link #getToolDefs} and dispatches invocations durably: activities and AI tools as Temporal activities
@@ -67,6 +71,41 @@ public final class AgentContextNative {
 
     private static final String CALL_CONFIG_MARKER = "__callConfig__";
     private static final String RETRY_ON_ERROR_KEY = "retryOnError";
+    /** Site prefixes of an agent's graph nodes — see {@code AgentGraphBuilder}. */
+    private static final String AGENT_TOOL_SITE_PREFIX = "tool:";
+    private static final String EXECUTE_AGENT_TOOL_ACTIVITY = "executeAgentTool";
+    private static final String TOOL_NAME_ARG = "toolName";
+    private static final String AGENT_TASK_SITE_PREFIX = "task:";
+    /** The agent graph's model node: every built-in model call belongs to it, not to a tool. */
+    private static final String AGENT_MODEL_SITE = "model";
+    private static final Set<String> MODEL_ACTIVITIES = Set.of("llmChat", "generate", "generateResult");
+
+    /**
+     * The retry curve for the built-in model activities. A model call fails for reasons that
+     * are overwhelmingly transient — a connection blip, a rate limit, a gateway hiccup — and
+     * an agent is a long-lived conversation: letting one such blip fail the whole run threw
+     * away hours of durable state over a second of network weather. Bounded twice, so a
+     * genuinely dead provider still fails the step instead of retrying forever: one that
+     * answers with errors exhausts the five attempts in about a minute (the backoff sums to
+     * ~30s), and one that hangs runs into {@link #MODEL_TOTAL_TIMEOUT} — without that cap,
+     * five attempts each cut off at the per-attempt timeout would stretch to ~25 minutes.
+     * A failed run remains recoverable by reset once the cause is fixed.
+     */
+    private static final RetryOptions MODEL_RETRY_OPTIONS = RetryOptions.newBuilder()
+            .setInitialInterval(Duration.ofSeconds(2))
+            .setBackoffCoefficient(2.0)
+            .setMaximumInterval(Duration.ofSeconds(30))
+            .setMaximumAttempts(5)
+            .build();
+
+    /**
+     * Overall ceiling for one model step, attempts and backoff together (Temporal's
+     * schedule-to-close). Ten minutes: room for one full-length attempt to hang, the curve
+     * above to absorb blips around it, and a second long attempt — while keeping the bound
+     * in minutes. Model calls only; a user activity's per-call {@code retryPolicy} keeps
+     * whatever curve its author declared.
+     */
+    private static final Duration MODEL_TOTAL_TIMEOUT = Duration.ofMinutes(10);
     private static final String CHAT_EVENT = "chat";
 
     // Tool dispatch kinds understood by the Ballerina agent loop.
@@ -75,8 +114,62 @@ public final class AgentContextNative {
     private static final String KIND_HUMAN_TASK = "humantask";
     private static final String KIND_EVENT_PREFIX = "event:";
     private static final String KIND_END = "end";
+    private static final String KIND_SLEEP = "sleep";
+    private static final String KIND_WORKFLOW_ID = "workflowid";
+    private static final String KIND_CURRENT_TIME = "currenttime";
+    private static final String SLEEP_TOOL = "sleep";
+    private static final String WORKFLOW_ID_TOOL = "getWorkflowId";
+    private static final String CURRENT_TIME_TOOL = "getCurrentTime";
     private static final String EVENT_TOOL_PREFIX = "awaitEvent_";
     private static final String END_CONVERSATION_TOOL = "endConversation";
+    // Names of built-in tools published by getAgentToolDefs; user registrations must not
+    // shadow them, or the model would see duplicate definitions with diverging dispatch.
+    private static final java.util.Set<String> RESERVED_TOOL_NAMES =
+            java.util.Set.of(SLEEP_TOOL, END_CONVERSATION_TOOL, WORKFLOW_ID_TOOL, CURRENT_TIME_TOOL);
+
+    private static BError reservedToolNameError(String name) {
+        return ErrorCreator.createError(StringUtils.fromString(
+                "The tool name '" + name + "' is reserved for a built-in agent tool"));
+    }
+
+    /**
+     * Rejects a capability name already taken on this agent context. Activities, AI tools, peers,
+     * and human tasks are all advertised to the model under this one name, which is also what
+     * dispatch keys on: a second registration would show the model two identical tools and
+     * silently shadow the first. The compiler plugin rejects the duplicates it can see in a
+     * declaration (WORKFLOW_150), but names registered on the context are not always statically
+     * known — this is the check that always runs.
+     *
+     * @param info the agent context state
+     * @param name the capability name being registered
+     * @return an error when the name is already registered, otherwise null
+     */
+    private static BError duplicateCapabilityError(AgentContextInfo info, String name) {
+        boolean taken = false;
+        for (ToolMeta tool : info.tools) {
+            if (tool.name().equals(name)) {
+                taken = true;
+                break;
+            }
+        }
+        // Each declared channel is advertised as its own wait-tool, so those generated names
+        // are taken as well even though no ToolMeta carries them.
+        if (!taken && info.eventNames != null) {
+            for (String eventName : info.eventNames) {
+                if (name.equals(EVENT_TOOL_PREFIX + eventName)) {
+                    taken = true;
+                    break;
+                }
+            }
+        }
+        if (!taken) {
+            return null;
+        }
+        return ErrorCreator.createError(StringUtils.fromString(
+                "Duplicate capability name '" + name + "' on agent '" + info.workflowType
+                        + "': activities, tools, human tasks, and events share one namespace, and '"
+                        + name + "' is already registered. Give the capability a different name."));
+    }
 
     // Interaction patterns (mirrors workflow:AgentInteractionPattern).
     private static final String MULTI_EVENT = "MULTI_EVENT";
@@ -116,6 +209,20 @@ public final class AgentContextNative {
         private String closingFailure = null;
         // The model provider configured via ctx.setModelProvider; consumed by runDurableAgent.
         private BObject modelProvider = null;
+        // Where the loop is durably parked right now (a human-readable phrase, used verbatim
+        // in side-turn park notes), or null while it is reasoning. parkedEventName is set
+        // when the park is an event wait, so chat-wait parks keep normal update delivery.
+        private String parkedOn = null;
+        private String parkedEventName = null;
+        private long parkedAtMillis = 0;
+        // One side turn at a time: a second question waits for the first to answer.
+        private boolean sideTurnActive = false;
+        // The clean conversation transcript (system, user, and content-bearing assistant
+        // messages) as Java values, published by the loop; side turns reason over it.
+        private List<Object> chatTranscript = new ArrayList<>();
+        // Question/answer pairs answered by side turns while the loop was parked; the loop
+        // merges them into its history before its next model call.
+        private final List<Map<String, Object>> asides = new ArrayList<>();
 
         public AgentContextInfo(String workflowId, String workflowType, SignalAwaitWrapper signalWrapper,
                                 Set<String> eventNames) {
@@ -127,6 +234,40 @@ public final class AgentContextNative {
 
         public String finalResponse() {
             return finalResponse;
+        }
+
+        void beginPark(String description, String eventName) {
+            this.parkedOn = description;
+            this.parkedEventName = eventName;
+            this.parkedAtMillis = Workflow.currentTimeMillis();
+        }
+
+        void endPark() {
+            this.parkedOn = null;
+            this.parkedEventName = null;
+        }
+
+        /**
+         * Whether an incoming update on the named channel should be answered by a side turn:
+         * a conversational agent (a MULTI_EVENT chat channel), a chat message, and the loop
+         * durably parked on something OTHER than the chat wait itself. A message arriving
+         * while the loop waits on chat is the next turn — it takes the normal path.
+         *
+         * @param eventName the update's channel
+         * @return true when a side turn should answer this update
+         */
+        public boolean sideTurnEligible(String eventName) {
+            return multiEvent && CHAT_EVENT.equals(eventName)
+                    && eventNames != null && eventNames.contains(CHAT_EVENT)
+                    && parkedOn != null && !CHAT_EVENT.equals(parkedEventName);
+        }
+
+        public boolean sideTurnActive() {
+            return sideTurnActive;
+        }
+
+        public void setSideTurnActive(boolean active) {
+            this.sideTurnActive = active;
         }
 
         /**
@@ -162,7 +303,7 @@ public final class AgentContextNative {
      *                     to {@code "connection:<name>"} markers; {@code null} when absent or for other kinds
      * @param requiresApproval when {@code true}, a PRE_RUN review activity gates the tool before it runs
      * @param retryPolicy  the activity tool's failure policy: {@code null} (NoRetry), an AutoRetry {@code BMap}, or
-     *                     the {@code "MANUAL_RETRY"} {@code BString}; {@code null} for non-activity tools
+     *                     a {@code HumanReview} record; {@code null} for non-activity tools
      * @param reviewRoles  role(s) permitted to decide this tool's approval reviews; empty when the tool declares
      *                     none, in which case the agent-level approval roles apply
      */
@@ -219,10 +360,8 @@ public final class AgentContextNative {
             Long timeoutMillis = eventTimeout instanceof BMap
                     ? WorkflowContextNative.computeTimeoutMillis((BMap<BString, Object>) eventTimeout)
                     : null;
-            if (multiEvent && timeoutMillis == null) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "MULTI_EVENT interaction requires an eventTimeout as its safety mechanism"));
-            }
+            // No timeout means each event wait is open-ended — a chat session lives as long
+            // as the conversation does. The maxEventWaits cap remains the runaway backstop.
             if (maxEventWaits < 1) {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "maxEventWaits must be at least 1"));
@@ -288,15 +427,22 @@ public final class AgentContextNative {
             String activityName = name;
             String[] reviewRoles = info.approvalUserRoles;
             for (ToolMeta tool : info.tools) {
-                if (KIND_ACTIVITY.equals(tool.kind()) && tool.name().equals(name) && tool.activityName() != null) {
-                    activityName = tool.activityName();
-                    if (tool.reviewRoles().length > 0) {
-                        reviewRoles = tool.reviewRoles();
-                    }
-                    break;
+                if (!tool.name().equals(name)) {
+                    continue;
                 }
+                if (KIND_ACTIVITY.equals(tool.kind()) && tool.activityName() != null) {
+                    activityName = tool.activityName();
+                }
+                // Declared per-tool roles (activities and AI tools alike) override the
+                // agent-level approval roles.
+                if (tool.reviewRoles().length > 0) {
+                    reviewRoles = tool.reviewRoles();
+                }
+                break;
             }
-            String qualifiedName = Workflow.getInfo().getWorkflowType() + "." + activityName;
+            String workflowType = Workflow.getInfo().getWorkflowType();
+            String reviewTaskName = ActivityNaming.reviewTaskNameFor(workflowType, activityName);
+            String activityType = ActivityNaming.activityTypeFor(workflowType, activityName);
 
             Object parsedArgs = JsonUtils.parse(argsJson.getValue());
             Map<String, Object> argsMap = new LinkedHashMap<>();
@@ -305,8 +451,19 @@ public final class AgentContextNative {
                 argsMap.putAll((Map<String, Object>) m);
             }
 
-            Map<String, Object> decision = WorkflowContextNative.startReviewActivity(
-                    "PRE_RUN", qualifiedName, argsMap, "", reviewRoles, info.approvalTimeoutMillis);
+            info.beginPark("a human approval decision for the gated tool '" + activityName + "'", null);
+            Map<String, Object> decision;
+            try {
+                // The step id names the graph node the model called: the ADVERTISED tool name
+                // (as callActivityTool uses), which differs from the underlying activity when a
+                // registration-time override renames it. The review task name and activity type
+                // keep the real activity, so the reviewer still sees what would run.
+                decision = WorkflowContextNative.startReviewActivity(
+                        "PRE_RUN", reviewTaskName, activityType, argsMap, "", reviewRoles,
+                        info.approvalTimeoutMillis, AGENT_TOOL_SITE_PREFIX + name);
+            } finally {
+                info.endPark();
+            }
             return StringUtils.fromString(TypesUtil.toJsonString(decision));
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -354,8 +511,16 @@ public final class AgentContextNative {
             }
             Set<String> boundNames = bindings == null ? Set.of() : bindings.keySet();
             Map<String, Object> schema = parameterSchemaOf(fn, boundNames, activityName);
-            // NoRetry arrives as nil; AutoRetry as a BMap; ManualRetry as the "MANUAL_RETRY" BString.
-            Object policy = retryPolicy instanceof BMap || retryPolicy instanceof BString ? retryPolicy : null;
+            // NoAutomaticRetry arrives as nil; AutoRetry and HumanReview are both records,
+            // told apart downstream by `userRoles` (WorkflowContextNative.readHumanReview).
+            Object policy = retryPolicy instanceof BMap ? retryPolicy : null;
+            if (RESERVED_TOOL_NAMES.contains(toolName)) {
+                return reservedToolNameError(toolName);
+            }
+            BError duplicate = duplicateCapabilityError(info, toolName);
+            if (duplicate != null) {
+                return duplicate;
+            }
             info.tools.add(new ToolMeta(toolName, description, schema, KIND_ACTIVITY, activityName, bindings,
                     requiresApproval, policy, parseReviewRoles(userRolesArg)));
             return null;
@@ -403,6 +568,13 @@ public final class AgentContextNative {
             properties.put("query", query);
             schema.put("properties", properties);
             schema.put("required", java.util.List.of("query"));
+            if (RESERVED_TOOL_NAMES.contains(name.getValue())) {
+                return reservedToolNameError(name.getValue());
+            }
+            BError duplicate = duplicateCapabilityError(info, name.getValue());
+            if (duplicate != null) {
+                return duplicate;
+            }
             info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, kindSpec.getValue(),
                     null, null, requiresApproval, null, new String[0]));
             return null;
@@ -412,8 +584,42 @@ public final class AgentContextNative {
         }
     }
 
+    /**
+     * Durable, interruptible sleep for the built-in agent sleep tool: a workflow-side timer
+     * that ends early when the {@code __agent_wake} signal arrives (sent by the management
+     * API). The wake request is consumed so it interrupts exactly one sleep.
+     *
+     * @param handle the agent context handle (unused; the current workflow sleeps)
+     * @param millis how long to sleep
+     * @return true when the timer ran to completion, false when a wake interrupted it,
+     *         or a BError on failure
+     */
+    public static Object agentInterruptibleSleep(BHandle handle, long millis) {
+        try {
+            io.ballerina.lib.workflow.worker.WorkflowWorkerNative.awaitWhileSuspended();
+            AgentContextInfo info = (AgentContextInfo) handle.getValue();
+            info.beginPark("a timer (the built-in sleep tool)", null);
+            boolean woken;
+            try {
+                woken = Workflow.await(java.time.Duration.ofMillis(millis),
+                        io.ballerina.lib.workflow.worker.WorkflowWorkerNative::isWakeRequested);
+            } finally {
+                info.endPark();
+            }
+            if (woken) {
+                io.ballerina.lib.workflow.worker.WorkflowWorkerNative.clearWakeRequest();
+            }
+            return !woken;
+        } catch (io.temporal.worker.NonDeterministicException | io.temporal.failure.TemporalFailure e) {
+            throw e;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString("Agent sleep failed: " + e.getMessage()));
+        }
+    }
+
     public static Object recordAiTool(BHandle handle, BFunctionPointer fn, BString name, BString description,
-                                      Object parametersJson, boolean requiresApproval) {
+                                      Object parametersJson, boolean requiresApproval, Object userRolesArg,
+                                      boolean mcpTool) {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             Map<String, Object> schema;
@@ -422,9 +628,16 @@ public final class AgentContextNative {
             } else {
                 schema = parameterSchemaOf(fn);
             }
+            if (RESERVED_TOOL_NAMES.contains(name.getValue())) {
+                return reservedToolNameError(name.getValue());
+            }
+            BError duplicate = duplicateCapabilityError(info, name.getValue());
+            if (duplicate != null) {
+                return duplicate;
+            }
             info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, KIND_AI_TOOL,
-                    null, null, requiresApproval, null, new String[0]));
-            WorkflowWorkerNative.putAgentTool(info.workflowType, name.getValue(), fn);
+                    null, null, requiresApproval, null, parseReviewRoles(userRolesArg)));
+            WorkflowWorkerNative.putAgentTool(info.workflowType, name.getValue(), fn, mcpTool);
             return null;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -463,6 +676,13 @@ public final class AgentContextNative {
             Map<String, Object> schema = new LinkedHashMap<>();
             schema.put("type", "object");
             schema.put("additionalProperties", Boolean.TRUE);
+            if (RESERVED_TOOL_NAMES.contains(name)) {
+                return reservedToolNameError(name);
+            }
+            BError duplicate = duplicateCapabilityError(info, name);
+            if (duplicate != null) {
+                return duplicate;
+            }
             info.tools.add(new ToolMeta(name, descriptionStr, schema, KIND_HUMAN_TASK));
             info.humanTasks.put(name, new HumanTaskMeta(userRoles, titleStr, descriptionStr, resultType,
                     timeout instanceof BMap ? timeout : null));
@@ -513,6 +733,38 @@ public final class AgentContextNative {
                             + "end the conversation.",
                     schema, KIND_END));
         }
+        // Durable sleep is always available: the timer is a workflow-side operation
+        // (never an activity), so the agent survives restarts while sleeping.
+        Map<String, Object> sleepSchema = new LinkedHashMap<>();
+        sleepSchema.put("type", "object");
+        Map<String, Object> sleepProperties = new LinkedHashMap<>();
+        Map<String, Object> secondsProperty = new LinkedHashMap<>();
+        secondsProperty.put("type", "integer");
+        secondsProperty.put("description", "How long to sleep, in seconds");
+        secondsProperty.put("minimum", 1);
+        sleepProperties.put("seconds", secondsProperty);
+        sleepSchema.put("properties", sleepProperties);
+        sleepSchema.put("required", java.util.List.of("seconds"));
+        defs.add(toolDef(SLEEP_TOOL,
+                "Pauses this agent durably for the given number of seconds. The agent survives worker "
+                        + "restarts while sleeping and resumes exactly where it left off; a wake signal "
+                        + "from the management API ends the sleep early.",
+                sleepSchema, KIND_SLEEP));
+        // Workflow-context reads a plain workflow gets from ctx: the agent loop answers these
+        // deterministically on the workflow thread, so no activity (and no worker slot) is spent.
+        Map<String, Object> emptySchema = new LinkedHashMap<>();
+        emptySchema.put("type", "object");
+        emptySchema.put("properties", new LinkedHashMap<>());
+        defs.add(toolDef(WORKFLOW_ID_TOOL,
+                "Returns this run's workflow instance ID - the durable reference identifier of this "
+                        + "agent execution. Use it whenever the user or an external system needs a "
+                        + "reference ID for this run or conversation.",
+                emptySchema, KIND_WORKFLOW_ID));
+        defs.add(toolDef(CURRENT_TIME_TOOL,
+                "Returns the current date and time as an ISO-8601 UTC timestamp. This is the "
+                        + "workflow's deterministic clock - always call this instead of guessing "
+                        + "the current date or time.",
+                emptySchema, KIND_CURRENT_TIME));
         return StringUtils.fromString(TypesUtil.toJsonString(defs));
     }
 
@@ -572,6 +824,18 @@ public final class AgentContextNative {
         if (eventName.isEmpty() || eventName.contains(".") || eventName.contains("|")) {
             return ErrorCreator.createError(StringUtils.fromString(
                     "Invalid update channel name '" + eventName + "': must be non-empty and not contain '.' or '|'"));
+        }
+        // A channel is advertised to the model as a wait-tool, so it shares the capability
+        // namespace: a repeated channel would advertise that tool twice, and a channel whose
+        // wait-tool name is already taken would make dispatch ambiguous.
+        if (info.eventNames.contains(eventName)) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Duplicate data-event channel '" + eventName + "' on agent '" + info.workflowType
+                            + "': the channel is already registered."));
+        }
+        BError duplicate = duplicateCapabilityError(info, EVENT_TOOL_PREFIX + eventName);
+        if (duplicate != null) {
+            return duplicate;
         }
         info.eventNames.add(eventName);
         info.updateEvents.put(eventName, new Object[] {requestType, responseType});
@@ -705,6 +969,9 @@ public final class AgentContextNative {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Timed out waiting for the initial 'chat' event"));
             }
+            if (data instanceof BError) {
+                return data;
+            }
             Object ballerina = TypesUtil.convertJavaToBallerinaType(data);
             if (ballerina instanceof BString bStr) {
                 return bStr;
@@ -728,6 +995,122 @@ public final class AgentContextNative {
      * @param eventName the event field name declared in the agent's signature
      * @return the event data, or a Ballerina error
      */
+    /**
+     * Stores the loop's published conversation transcript — the clean view (system, user,
+     * and content-bearing assistant messages) side turns reason over.
+     *
+     * @param handle the agent context handle
+     * @param transcript the transcript as JSON (an AgentChatMessage array)
+     */
+    @SuppressWarnings("unchecked")
+    public static void publishTranscript(BHandle handle, Object transcript) {
+        AgentContextInfo info = (AgentContextInfo) handle.getValue();
+        Object javaValue = TypesUtil.convertBallerinaToJavaType(transcript);
+        List<Object> messages = new ArrayList<>();
+        if (javaValue instanceof List<?> list) {
+            messages.addAll((List<Object>) list);
+        }
+        info.chatTranscript = messages;
+    }
+
+    /**
+     * Drains the question/answer pairs side turns answered while the loop was parked, as a
+     * JSON array of {@code {question, answer}} — the loop merges them into its history
+     * before its next model call, so the main conversation sees everything that was said.
+     *
+     * @param handle the agent context handle
+     * @return a JSON array string
+     */
+    public static BString drainAsides(BHandle handle) {
+        AgentContextInfo info = (AgentContextInfo) handle.getValue();
+        if (info.asides.isEmpty()) {
+            return StringUtils.fromString("[]");
+        }
+        List<Map<String, Object>> drained = new ArrayList<>(info.asides);
+        info.asides.clear();
+        return StringUtils.fromString(TypesUtil.toJsonString(drained));
+    }
+
+    /**
+     * Answers one chat update with a side turn while the main loop is durably parked: one
+     * bounded, tool-less model call over the published transcript plus a park-state note.
+     * The update completes with the side answer — still exactly one response per request —
+     * and the pair is recorded for the loop to merge into its history when it resumes.
+     * This is what keeps a parked agent conversational (and breaks the mutual wait where
+     * the agent holds for an event while the user holds for a reply before sending it).
+     * <p>
+     * Runs on the update handler's own workflow coroutine; the model call is a recorded
+     * activity, so the whole side turn replays deterministically. Side turns never touch
+     * the event queues, the turn pairing, or the event-wait budget.
+     *
+     * @param info the agent context state
+     * @param payload the update's chat message
+     * @return the side answer
+     */
+    public static String sideTurnAnswer(AgentContextInfo info, Object payload) {
+        Object javaPayload = TypesUtil.convertBallerinaToJavaType(payload);
+        String question = String.valueOf(javaPayload);
+        String parkedDescription = info.parkedOn != null ? info.parkedOn : "its current step";
+        String since = java.time.Instant.ofEpochMilli(
+                info.parkedAtMillis > 0 ? info.parkedAtMillis : Workflow.currentTimeMillis()).toString();
+        String parkNote = "You are the same assistant, answering a quick side question while your main "
+                + "work is paused: you are currently waiting on " + parkedDescription + " (since " + since
+                + "). Answer briefly from the conversation so far and this status. You cannot run tools "
+                + "or take any action right now and must not claim to; the main work continues "
+                + "automatically once the wait resolves.";
+
+        List<Object> messages = new ArrayList<>(info.chatTranscript);
+        Map<String, Object> note = new LinkedHashMap<>();
+        note.put("role", "system");
+        note.put("content", parkNote);
+        messages.add(note);
+        Map<String, Object> userMessage = new LinkedHashMap<>();
+        userMessage.put("role", "user");
+        userMessage.put("content", question);
+        messages.add(userMessage);
+
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("agentName", info.workflowType);
+        args.put("messages", messages);
+        args.put("tools", new ArrayList<>());
+        Map<String, Object> callConfig = new LinkedHashMap<>();
+        callConfig.put(CALL_CONFIG_MARKER, true);
+        callConfig.put(RETRY_ON_ERROR_KEY, false);
+        callConfig.put(WorkflowContextNative.STEP_ID_KEY, AGENT_MODEL_SITE);
+
+        String answer = null;
+        try {
+            ActivityOptions options = ActivityOptions.newBuilder()
+                    .setStartToCloseTimeout(Duration.ofMinutes(5))
+                    .setRetryOptions(RetryOptions.newBuilder().setMaximumAttempts(1).build())
+                    .setSummary(AGENT_MODEL_SITE)
+                    .build();
+            io.temporal.workflow.ActivityStub stub = Workflow.newUntypedActivityStub(options);
+            String activityType = ActivityNaming.activityTypeFor(info.workflowType, "llmChat");
+            Object result = stub.execute(activityType, Object.class, new Object[]{args, callConfig});
+            if (result instanceof Map<?, ?> reply && reply.get("content") instanceof String content
+                    && !content.isBlank()) {
+                answer = content;
+            }
+        } catch (NonDeterministicException e) {
+            throw e;
+        } catch (Exception e) {
+            // The side answer must never fail the user's update: fall through to the
+            // deterministic status line below.
+        }
+        if (answer == null) {
+            // The model was unavailable or tried to act anyway — answer with the status the
+            // framework knows for certain.
+            answer = "I'm still working on it - currently waiting on " + parkedDescription
+                    + ". I'll pick the conversation back up as soon as that resolves.";
+        }
+        Map<String, Object> aside = new LinkedHashMap<>();
+        aside.put("question", question);
+        aside.put("answer", answer);
+        info.asides.add(aside);
+        return answer;
+    }
+
     public static Object awaitEvent(BHandle handle, BString eventName) {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
@@ -740,6 +1123,9 @@ public final class AgentContextNative {
             if (data instanceof TimedOut) {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Timed out waiting for event '" + name + "'"));
+            }
+            if (data instanceof BError) {
+                return data;
             }
             return TypesUtil.convertJavaToBallerinaType(data);
         } catch (NonDeterministicException | TemporalFailure e) {
@@ -763,27 +1149,45 @@ public final class AgentContextNative {
     private static Object awaitSignal(AgentContextInfo info, String eventName) throws Exception {
         info.eventWaitCount++;
         if (info.eventWaitCount > info.maxEventWaits) {
-            throw ApplicationFailure.newNonRetryableFailure(
-                    "Agent exceeded the maximum number of event waits (" + info.maxEventWaits
-                            + "). Configure ctx.setInteraction(...) to raise the limit.", "AGENT_EVENT_WAIT_LIMIT");
+            // Returned as a Ballerina error (not thrown): a Java failure crossing the
+            // Ballerina boundary loses its message. The loop recognizes this message
+            // prefix and fails the agent instead of feeding it to the model.
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Agent exceeded the maximum number of event waits (" + info.maxEventWaits + ")."));
         }
 
         CompletablePromise<SignalAwaitWrapper.SignalData> future = info.multiEvent
                 ? info.signalWrapper.takeSignalFuture(eventName)
                 : info.signalWrapper.getSignalFuture(eventName);
 
-        if (info.eventTimeoutMillis != null) {
-            boolean arrived = Workflow.await(Duration.ofMillis(info.eventTimeoutMillis),
-                    future::isCompleted);
-            if (!arrived) {
-                // Remove the abandoned FIFO waiter so a later signal is not consumed silently.
-                if (info.multiEvent) {
-                    info.signalWrapper.cancelWaiter(eventName, future);
+        // Publish the wait to the execution memo/history (as for workflow data-event waits in
+        // TemporalFutureValue) so diagrams can render where the agent is halted; cleared as soon
+        // as the wait unblocks. A buffered event that completes the wait instantly is skipped —
+        // the agent never actually blocked.
+        boolean tracked = !future.isCompleted();
+        if (tracked) {
+            WaitingEventsTracker.beginWait(eventName);
+        }
+        info.beginPark("the external event '" + eventName + "'", eventName);
+        try {
+            if (info.eventTimeoutMillis != null) {
+                boolean arrived = Workflow.await(Duration.ofMillis(info.eventTimeoutMillis),
+                        future::isCompleted);
+                if (!arrived) {
+                    // Remove the abandoned FIFO waiter so a later signal is not consumed silently.
+                    if (info.multiEvent) {
+                        info.signalWrapper.cancelWaiter(eventName, future);
+                    }
+                    return TimedOut.INSTANCE;
                 }
-                return TimedOut.INSTANCE;
+            } else {
+                Workflow.await(future::isCompleted);
             }
-        } else {
-            Workflow.await(future::isCompleted);
+        } finally {
+            info.endPark();
+            if (tracked) {
+                WaitingEventsTracker.endWait(eventName);
+            }
         }
 
         SignalAwaitWrapper.SignalData signalData = future.get();
@@ -820,9 +1224,15 @@ public final class AgentContextNative {
         BMap<BString, Object> payloadMap = payload instanceof BMap
                 ? (BMap<BString, Object>) payload
                 : ValueCreator.createMapValue();
-        return WorkflowContextNative.awaitHumanTask(null, taskName, meta.userRoles(), payloadMap,
-                StringUtils.fromString(meta.title()), StringUtils.fromString(meta.description()),
-                meta.timeout(), meta.resultType());
+        info.beginPark("a person to complete the task '" + taskName.getValue() + "'", null);
+        try {
+            return WorkflowContextNative.awaitHumanTaskExploded(null, taskName, meta.userRoles(), payloadMap,
+                    StringUtils.fromString(meta.title()), StringUtils.fromString(meta.description()),
+                    meta.timeout(), meta.resultType(),
+                    StringUtils.fromString(AGENT_TASK_SITE_PREFIX + taskName.getValue()));
+        } finally {
+            info.endPark();
+        }
     }
 
     /**
@@ -836,7 +1246,17 @@ public final class AgentContextNative {
      * @return the activity result coerced to {@code td}, or a Ballerina error
      */
     public static Object callActivity(BString nameB, BMap<BString, Object> args, BTypedesc td) {
-        return executeActivity(nameB.getValue(), argsToJavaMap(args), td);
+        String name = nameB.getValue();
+        Map<String, Object> namedArgs = argsToJavaMap(args);
+        // An AI-function tool runs inside the executeAgentTool wrapper, so the node this
+        // execution belongs to in the agent's graph is the advertised tool named in the
+        // arguments — never the wrapper's own name, which is machinery the graph doesn't show.
+        String site = null;
+        if (EXECUTE_AGENT_TOOL_ACTIVITY.equals(name)
+                && namedArgs.get(TOOL_NAME_ARG) instanceof String toolName) {
+            site = AGENT_TOOL_SITE_PREFIX + toolName;
+        }
+        return executeActivity(name, namedArgs, td, null, site);
     }
 
     /**
@@ -870,7 +1290,9 @@ public final class AgentContextNative {
                 break;
             }
         }
-        return executeActivity(activityName, namedArgs, td, retryPolicy);
+        // The graph names the tool by its advertised name; a registration-time override may run
+        // it as a differently-named activity, but the site stays the tool the model called.
+        return executeActivity(activityName, namedArgs, td, retryPolicy, AGENT_TOOL_SITE_PREFIX + toolName);
     }
 
     private static Map<String, Object> argsToJavaMap(BMap<BString, Object> args) {
@@ -881,35 +1303,54 @@ public final class AgentContextNative {
         return namedArgs;
     }
 
-    private static Object executeActivity(String activityName, Map<String, Object> namedArgs, BTypedesc td) {
-        return executeActivity(activityName, namedArgs, td, null);
-    }
-
     /**
      * Runs a registered agent activity durably, applying its retry policy: {@code null} → single attempt (failure
-     * reported to the model), an AutoRetry {@code BMap} → Temporal backoff retries, or the {@code "MANUAL_RETRY"}
-     * sentinel → a rerun loop that creates a review activity on each failure (a human decides to rerun, rerun with
-     * edited input, or fail — the AI cannot decide a manual retry itself).
+     * reported to the model), an {@code AutoRetry} record → Temporal backoff retries, or a {@code HumanReview}
+     * record → a rerun loop that creates a review activity on each failure, listed and worded as that record
+     * declares (a human decides to rerun, rerun with edited input, or fail — the AI cannot decide this itself).
      */
     @SuppressWarnings("unchecked")
     private static Object executeActivity(String activityName, Map<String, Object> namedArgs, BTypedesc td,
-                                          Object retryPolicy) {
+                                          Object retryPolicy, String site) {
         String workflowType = Workflow.getInfo().getWorkflowType();
-        String fullActivityName = workflowType + "." + activityName;
-        boolean manualRetry = retryPolicy instanceof BString s && "MANUAL_RETRY".equals(s.getValue());
-        boolean autoRetry = retryPolicy instanceof BMap;
+        String fullActivityName = ActivityNaming.activityTypeFor(workflowType, activityName);
+        // Both retry-policy records are mappings, so a HumanReview is told from an AutoRetry
+        // by its `userRoles` — see WorkflowContextNative.readHumanReview.
+        WorkflowContextNative.ReviewDeclaration reviewPolicy =
+                WorkflowContextNative.readHumanReview(retryPolicy);
+        boolean manualRetry = reviewPolicy != null;
+        boolean autoRetry = reviewPolicy == null && retryPolicy instanceof BMap;
+
+        // The built-in model activities recover automatically: they are framework machinery,
+        // not user tools, so no declaration site exists where an author could attach a policy.
+        boolean modelCall = MODEL_ACTIVITIES.contains(activityName);
 
         Map<String, Object> callConfig = new HashMap<>();
         callConfig.put(CALL_CONFIG_MARKER, true);
-        callConfig.put(RETRY_ON_ERROR_KEY, autoRetry);
+        callConfig.put(RETRY_ON_ERROR_KEY, autoRetry || modelCall);
+        // An agent has no lexical call site — the model chose this tool — so the site is the
+        // node the call belongs to in the agent's graph: the caller's explicit site when the
+        // activity runs under another identity (a wrapped AI tool, an overridden tool name),
+        // else the model for a built-in model call, else the tool itself.
+        String stepId = site != null ? site
+                : MODEL_ACTIVITIES.contains(activityName)
+                        ? AGENT_MODEL_SITE : AGENT_TOOL_SITE_PREFIX + activityName;
+        callConfig.put(WorkflowContextNative.STEP_ID_KEY, stepId);
 
         RetryOptions retryOptions = autoRetry
                 ? WorkflowContextNative.buildPerCallRetryOptions((BMap<BString, Object>) retryPolicy)
+                : modelCall ? MODEL_RETRY_OPTIONS
                 : RetryOptions.newBuilder().setMaximumAttempts(1).build();
-        ActivityOptions options = ActivityOptions.newBuilder()
+        ActivityOptions.Builder optionsBuilder = ActivityOptions.newBuilder()
                 .setStartToCloseTimeout(Duration.ofMinutes(5))
                 .setRetryOptions(retryOptions)
-                .build();
+                .setSummary(stepId);
+        if (modelCall) {
+            // The per-attempt timeout bounds one attempt; this bounds the whole step, or a
+            // provider that hangs rather than errors would hold the run for attempts × 5min.
+            optionsBuilder.setScheduleToCloseTimeout(MODEL_TOTAL_TIMEOUT);
+        }
+        ActivityOptions options = optionsBuilder.build();
         io.temporal.workflow.ActivityStub stub = Workflow.newUntypedActivityStub(options);
 
         Map<String, Object> currentArgs = namedArgs;
@@ -926,9 +1367,14 @@ public final class AgentContextNative {
                 if (!manualRetry) {
                     return ErrorCreator.createError(StringUtils.fromString(errorMsg));
                 }
-                // Manual retry: a human reviews the failure and decides.
+                // Manual retry: a human reviews the failure and decides. The declaration is
+                // honoured here as it is on a workflow's own callActivity — its roles used to
+                // be dropped on this path, so an agent tool's review was answerable by anyone.
                 Map<String, Object> decision = WorkflowContextNative.startReviewActivity(
-                        "ON_FAILURE", fullActivityName, currentArgs, errorMsg, new String[0], null);
+                        "ON_FAILURE", ActivityNaming.reviewTaskNameFor(workflowType, activityName),
+                        fullActivityName, currentArgs, errorMsg, reviewPolicy.userRoles(),
+                        reviewPolicy.timeoutMillis(), stepId,
+                        reviewPolicy.title(), reviewPolicy.description());
                 String action = decision.containsKey("action") ? String.valueOf(decision.get("action")) : "reject";
                 if ("proceed".equals(action)) {
                     continue;
@@ -983,7 +1429,11 @@ public final class AgentContextNative {
             }
         }
         Parameter[] params = dataParams.toArray(new Parameter[0]);
-        return TypesUtil.toParameterSchemaMap(params, 0, params.length);
+        // Honor declared defaults: a defaultable parameter is one the model may omit, and
+        // the descriptor's compile-time schema (DescriptorSchemaGen.parameterSlot) leaves it
+        // out of `required` too. Passing false here made the two disagree for non-nilable
+        // defaultable parameters.
+        return TypesUtil.toParameterSchemaMap(params, 0, params.length, true);
     }
 
     // Parses a JSON-schema string into the plain-map form used in tool definitions.

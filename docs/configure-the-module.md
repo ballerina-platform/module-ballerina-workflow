@@ -73,6 +73,8 @@ namespace = "default"
 
 The `taskQueue` value must be **unique for each workflow integration deployment**. A task queue is how Temporal routes work to the correct worker — if two deployments share the same task queue on the same Temporal cluster, they will compete for each other's tasks and produce unpredictable results.
 
+Integrations sharing a **namespace** (a project) also share management-API visibility: listings identify each row's `namespace` and `taskQueue`, accept an optional `taskQueue` filter, and task mutations (complete/fail/review decisions) are only accepted by the integration serving that task's queue — other integrations receive a `403`.
+
 > If you run multiple workflow integrations (e.g., an order service and a customer onboarding service) on the same Temporal cluster, give each a distinct task queue name:
 
 ```toml

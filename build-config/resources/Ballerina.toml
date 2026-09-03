@@ -21,6 +21,10 @@ name = "workflow.management"
 export = true
 
 [[package.modules]]
+name = "workflow.management.rest"
+export = true
+
+[[package.modules]]
 name = "workflow.observe"
 description = "APIs for adding observability to workflow applications"
 export = true

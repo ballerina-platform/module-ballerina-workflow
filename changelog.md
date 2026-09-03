@@ -8,147 +8,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
-- **`HumanTaskDefinition` and `ReviewTaskDefinition` replace `HumanTaskOptions` and the
-  `string|string[]` retry policy.** `ReviewTaskDefinition` holds `userRoles`, `title`,
-  `description` and `timeout`, and is what a `retryPolicy` takes. `HumanTaskDefinition`
-  includes it and adds `taskInputType` and `resultType`. An agent's `humanTasks` map takes
-  `HumanTaskDefinition` directly; the `HumanTaskConfig` name is gone.
-
-  ```ballerina
-  // before
-  check ctx->callActivity(postToLedger, args, PostingResult, (), {retryPolicy: "OPS"});
-  // after
-  check ctx->callActivity(postToLedger, args, PostingResult, (),
-          {retryPolicy: {userRoles: "OPS"}});
-  ```
-
-- **`awaitHumanTask` takes the task input as a required second argument:**
-  `awaitHumanTask(taskName, taskInput, T = <>, stepId = (), *HumanTaskDefinition)`. Pass `{}`
-  when there is nothing to show. The input is validated against `taskInputType` before the
-  task is created, on both the workflow and agent paths. A step id passed positionally is now
-  the fourth argument.
-
-- **`taskInputType` and `resultType` must name a type** — `WORKFLOW_162` otherwise.
-
-- **`HumanTaskInfo.payload` is now `HumanTaskInfo.taskInput`**, and so is the field in the
-  management REST response and the task's memo. A task created by an earlier runtime reports
-  its input as `()`.
-
-- **A review is a node in the workflow graph.** Kind `REVIEW`, id `<reviewedStep>#review`,
-  joined to the step it gates by an `on failure` edge. Its `metadata` carries
-  `reviewedStepId`, `trigger`, and any `userRoles`, `title` and `description` declared
-  literally. Running reviews report it in their memo and in `ActivityTreeNode.reviewStepId`.
-
-- **Removed:** `HumanTaskOptions`, `HumanReview`, `ManualRetry`, `NoRetry`, `EventDecl`,
-  `HumanTaskDecl`, and the array forms of an agent's `events` and `humanTasks`. An agent's
-  `humanTasks` entries name their deciders with `userRoles`, not `roles`.
-
-- **Removed:** `ActivityOptions`, the last of the pre-`CallActivityOptions` retry API. Nothing
-  reads it and `callActivity` cannot take it; failure behaviour is `retryPolicy`.
-
-- **The guides, the module's API samples and the use cases now compile against this API.**
-  They still passed `retryOnError`/`maxRetries` as arguments, reached for
-  `WorkflowExecutionInfo` and `getWorkflowInfo` through the root `workflow:` prefix, called
-  `getWorkflowResult()` as if it returned one, described `workflow:Context` as optional, and
-  configured a `mode = "TEMPORAL"` with `temporalHost`/`temporalPort` that has never existed.
-  A call to an activity returning `error?` is bound as `() _ = check ctx->callActivity(...)`:
-  the inferred `T` has nothing to infer from in statement position, and a plain `_` does not
-  help. `examples/agent-object-model` is registered, so the build stops skipping it.
-
-- **The built executable now carries `workflow.def.json`** as a root-level entry, written by a
-  compiler-lifecycle task and byte-identical to the generated descriptor. Executables only: a
-  BALA does not carry it, and a consumer that needs it regenerates it from the package.
-  Registration is unchanged.
-
-- **The descriptor now reads the mapping form of `events` and `humanTasks`.** The agent entry's
-  channel and task lists (and with them the agent map's whole inbound column — `event:` and
-  `task:` nodes) were built only from the deprecated array form; a declaration in the primary
-  mapping style (`events: {chat: {...}}`) produced an agent graph with no inbound side at all.
-
-- **A durable agent's `inputType` is now a JSON payload type, and `run` actually checks it.**
-  The field was `typedesc<anydata>?` defaulting to `string`, which made the default declaration
-  say "the query text is the input" — a mode with no payload at all, since `run(query, input)`
-  already takes the query as its own argument. Passing a payload to such an agent produced
-  `WORKFLOW_154` telling the developer their input type was `string`, a type they never wrote.
-
-  `inputType` is now `typedesc<json>?` defaulting to `json`, and `run`'s `input` parameter is
-  `json`. The three declarations mean what they say: `json` (the default) accepts any payload,
-  a narrower type — typically a record — declares the payload's shape, and `()` declares a
-  query-only agent. `inputType: string` is no longer special: it declares a payload that must
-  be a string.
-
-  **`WORKFLOW_154` now checks inline payloads.** A mapping or list constructor is contextually
-  typed against `run`'s parameter, so `subtypeOf` cannot judge it — the validator used to skip
-  those, which meant the most common call shape, `agent.run("...", {...})`, was never checked
-  at all. It is now matched against the declared type structurally, field by field and member
-  by member, through nested records and arrays, and the diagnostic names the specific problem:
-  the unknown field, the missing required fields, the mistyped field and both types, or the
-  tuple arity. Everything else is still compared by subtyping, and the runtime conversion
-  remains the gate for values the compiler cannot see.
-
-- **A durable agent is started through a uniform `{query, input}` envelope.** The management
-  API previously mapped a `string` `inputType` onto the query and any other type onto the
-  payload, so an agent could be given a query or a payload but never both, and the posted shape
-  differed per agent. Every agent now starts with the same object: `query` is the user turn and
-  `input` is the payload.
-
-  The envelope is enforced, and `management:WorkflowDefinition.inputSchema` advertises exactly
-  what it enforces. **Callers that post an agent start today have to change:** the input must be
-  the envelope object rather than a bare value, `query` is required (omitting it is an error, not
-  a start on an empty turn — pass `""` for an agent driven by its events), and an unknown field is
-  rejected instead of being dropped, so a misspelled key can no longer start an agent without the
-  payload it was meant to carry. The payload itself stays optional: omitting it, or passing an
-  explicit `null`, runs the agent on the query alone, exactly as `run(query)` does. The published
-  schema mirrors all of this — `query` in `required`, `input` carrying the declared `inputType`'s
-  own schema (absent for a query-only agent), and `additionalProperties: false`.
-
-- **A generated JSON Schema marks a record field required only when Ballerina does.**
-  `required` was derived from "not declared `?` and not nilable", which is neither half of
-  Ballerina's rule. A defaultable field (`string note = "none"`) was published as required
-  although a value that omits it is valid, and a nilable field with no default (`string? b`) was
-  published as optional although Ballerina rejects a value that omits it. Requiredness now comes
-  from the field's own `REQUIRED` flag. A `json` or `anydata` type also no longer publishes
-  `{"type": "object"}` — it accepts an object, a list, or a bare scalar, so its schema is the
-  permissive `true`. Both affect every generated schema: workflow start inputs, durable agent
-  start envelopes, and human task forms.
-
-- **A durable agent's `events` and `humanTasks` are declared as mappings keyed by name.**
-  `events: {chat: {request: string, response: string}}` and `humanTasks: {signoff: {roles:
-  "manager"}}` — the mapping key is a compile-time constant by construction, so the name needs
-  no separate validation (`WORKFLOW_156` still rejects a computed key). The array forms
-  (`EventDecl[]`, `HumanTaskDecl[]`) keep working unchanged but are deprecated: each array is
-  flagged once with the new `WORKFLOW_159` warning.
-
-- **`sendData`'s payload is validated against the channel's declared `request` type.** It never
-  was, at any level — and a send to an *undeclared* channel was a black hole: the turn was
-  enqueued under a name nobody waits on, so the update parked forever and `waitForDataResult`
-  hung instead of erroring. Now the compiler plugin checks the statically visible call sites
-  (new `WORKFLOW_158`, with the same structural field-by-field matching as `run`'s
-  `WORKFLOW_154`), and at run time the send is validated against the *target instance's*
-  declaration before delivery — an undeclared channel and a mistyped payload are immediate
-  errors naming the declared channels and the declared type. The payload is converted, not
-  just checked, so declared record defaults are filled exactly as on the run-input path.
-
-- **An async peer's `callbackChannel` must name a declared event channel.** The reply
-  self-injects into that channel, so an undeclared one swallowed it silently. Rejected at
-  compile time (`WORKFLOW_152` on the declaration) and again at module-init registration —
-  which is also where `wait: false` with no `callbackChannel` now fails, instead of inside
-  the runner workflow.
-
-- **Activities are scheduled under their plain name.** An activity's Temporal type was
-  `<workflowType>.<activity>`, which added nothing — Ballerina function names are already unique
-  within a package — while making one registry entry per (workflow, activity) pair and a longer
-  type in every history. It is now just the activity name, and a review task is listed as
-  `<workflow>.<activity>` without the runtime's internal `workflow-` prefix.
-
-  An activity's type *is* compared during replay, so the change is gated per execution with
-  `Workflow.getVersion`: an execution started before this release keeps scheduling the qualified
-  name — which stays registered — and only new executions use the plain one. No instance needs
-  draining, at the cost of one marker event per execution that calls an activity.
-
-  The runtime metadata document is unchanged: it still reports one activity per workflow, from an
-  ownership map rather than by splitting the registry key.
-
 - **Breaking**: the management HTTP API moved from `ballerina/workflow.management`
   to the new `ballerina/workflow.management.rest` module. `workflow.management` is
   now a pure Ballerina API — importing it never starts a listener. To serve the
@@ -208,55 +67,174 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   `ReviewActivityPage` moved with the service; the unused `ManagementServiceConfig`
   and `CorsConfig` types were removed.
 
+- **`HumanTaskDefinition` and `ReviewTaskDefinition` replace `HumanTaskOptions` and the
+  `string|string[]` retry policy.** `ReviewTaskDefinition` holds `userRoles`, `title`,
+  `description` and `timeout`, and is what a `retryPolicy` takes. `HumanTaskDefinition`
+  includes it and adds `taskInputType` and `resultType`. An agent's `humanTasks` map takes
+  `HumanTaskDefinition` directly; the `HumanTaskConfig` name is gone.
+
+  ```ballerina
+  // before
+  check ctx->callActivity(postToLedger, args, PostingResult, (), {retryPolicy: "OPS"});
+  // after
+  check ctx->callActivity(postToLedger, args, PostingResult, (),
+          {retryPolicy: {userRoles: "OPS"}});
+  ```
+
+- **`awaitHumanTask` takes the task input as a required second argument:**
+  `awaitHumanTask(taskName, taskInput, T = <>, stepId = (), *HumanTaskDefinition)`. Pass `{}`
+  when there is nothing to show. The input is validated against `taskInputType` before the
+  task is created, on both the workflow and agent paths. A step id passed positionally is now
+  the fourth argument.
+
+- **Removed:** `HumanTaskOptions`, `HumanReview`, `ManualRetry`, `NoRetry`, `EventDecl`,
+  `HumanTaskDecl`, and the array forms of an agent's `events` and `humanTasks`. An agent's
+  `humanTasks` entries name their deciders with `userRoles`, not `roles`.
+
+- **Removed:** `ActivityOptions`, the last of the pre-`CallActivityOptions` retry API. Nothing
+  reads it and `callActivity` cannot take it; failure behaviour is `retryPolicy`.
+
+- **A durable agent's `events` and `humanTasks` are declared as mappings keyed by name.**
+  `events: {chat: {request: string, response: string}}` and `humanTasks: {signoff: {roles:
+  "manager"}}` — the mapping key is a compile-time constant by construction, so the name needs
+  no separate validation (`WORKFLOW_156` still rejects a computed key). The array forms
+  (`EventDecl[]`, `HumanTaskDecl[]`) keep working unchanged but are deprecated: each array is
+  flagged once with the new `WORKFLOW_159` warning.
+
+- **A durable agent's `inputType` is now a JSON payload type, and `run` actually checks it.**
+  The field was `typedesc<anydata>?` defaulting to `string`, which made the default declaration
+  say "the query text is the input" — a mode with no payload at all, since `run(query, input)`
+  already takes the query as its own argument. Passing a payload to such an agent produced
+  `WORKFLOW_154` telling the developer their input type was `string`, a type they never wrote.
+
+  `inputType` is now `typedesc<json>?` defaulting to `json`, and `run`'s `input` parameter is
+  `json`. The three declarations mean what they say: `json` (the default) accepts any payload,
+  a narrower type — typically a record — declares the payload's shape, and `()` declares a
+  query-only agent. `inputType: string` is no longer special: it declares a payload that must
+  be a string.
+
+  **`WORKFLOW_154` now checks inline payloads.** A mapping or list constructor is contextually
+  typed against `run`'s parameter, so `subtypeOf` cannot judge it — the validator used to skip
+  those, which meant the most common call shape, `agent.run("...", {...})`, was never checked
+  at all. It is now matched against the declared type structurally, field by field and member
+  by member, through nested records and arrays, and the diagnostic names the specific problem:
+  the unknown field, the missing required fields, the mistyped field and both types, or the
+  tuple arity. Everything else is still compared by subtyping, and the runtime conversion
+  remains the gate for values the compiler cannot see.
+
+- **A durable agent is started through a uniform `{query, input}` envelope.** The management
+  API previously mapped a `string` `inputType` onto the query and any other type onto the
+  payload, so an agent could be given a query or a payload but never both, and the posted shape
+  differed per agent. Every agent now starts with the same object: `query` is the user turn and
+  `input` is the payload.
+
+  The envelope is enforced, and `management:WorkflowDefinition.inputSchema` advertises exactly
+  what it enforces. **Callers that post an agent start today have to change:** the input must be
+  the envelope object rather than a bare value, `query` is required (omitting it is an error, not
+  a start on an empty turn — pass `""` for an agent driven by its events), and an unknown field is
+  rejected instead of being dropped, so a misspelled key can no longer start an agent without the
+  payload it was meant to carry. The payload itself stays optional: omitting it, or passing an
+  explicit `null`, runs the agent on the query alone, exactly as `run(query)` does. The published
+  schema mirrors all of this — `query` in `required`, `input` carrying the declared `inputType`'s
+  own schema (absent for a query-only agent), and `additionalProperties: false`.
+
+- **`HumanTaskInfo.payload` is now `HumanTaskInfo.taskInput`**, and so is the field in the
+  management REST response and the task's memo. A task created by an earlier runtime reports
+  its input as `()`.
+
+- **`taskInputType` and `resultType` must name a type** — `WORKFLOW_162` otherwise.
+
+- **`sendData`'s payload is validated against the channel's declared `request` type.** It never
+  was, at any level — and a send to an *undeclared* channel was a black hole: the turn was
+  enqueued under a name nobody waits on, so the update parked forever and `waitForDataResult`
+  hung instead of erroring. Now the compiler plugin checks the statically visible call sites
+  (new `WORKFLOW_158`, with the same structural field-by-field matching as `run`'s
+  `WORKFLOW_154`), and at run time the send is validated against the *target instance's*
+  declaration before delivery — an undeclared channel and a mistyped payload are immediate
+  errors naming the declared channels and the declared type. The payload is converted, not
+  just checked, so declared record defaults are filled exactly as on the run-input path.
+
+- **An async peer's `callbackChannel` must name a declared event channel.** The reply
+  self-injects into that channel, so an undeclared one swallowed it silently. Rejected at
+  compile time (`WORKFLOW_152` on the declaration) and again at module-init registration —
+  which is also where `wait: false` with no `callbackChannel` now fails, instead of inside
+  the runner workflow.
+
+- **Activities are scheduled under their plain name.** An activity's Temporal type was
+  `<workflowType>.<activity>`, which added nothing — Ballerina function names are already unique
+  within a package — while making one registry entry per (workflow, activity) pair and a longer
+  type in every history. It is now just the activity name, and a review task is listed as
+  `<workflow>.<activity>` without the runtime's internal `workflow-` prefix.
+
+  An activity's type *is* compared during replay, so the change is gated per execution with
+  `Workflow.getVersion`: an execution started before this release keeps scheduling the qualified
+  name — which stays registered — and only new executions use the plain one. No instance needs
+  draining, at the cost of one marker event per execution that calls an activity.
+
+  The runtime metadata document is unchanged: it still reports one activity per workflow, from an
+  ownership map rather than by splitting the registry key.
+
+- **A review is a node in the workflow graph.** Kind `REVIEW`, id `<reviewedStep>#review`,
+  joined to the step it gates by an `on failure` edge. Its `metadata` carries
+  `reviewedStepId`, `trigger`, and any `userRoles`, `title` and `description` declared
+  literally. Running reviews report it in their memo and in `ActivityTreeNode.reviewStepId`.
+
+- **The descriptor now reads the mapping form of `events` and `humanTasks`.** The agent entry's
+  channel and task lists (and with them the agent map's whole inbound column — `event:` and
+  `task:` nodes) were built only from the deprecated array form; a declaration in the primary
+  mapping style (`events: {chat: {...}}`) produced an agent graph with no inbound side at all.
+
+- **A generated JSON Schema marks a record field required only when Ballerina does.**
+  `required` was derived from "not declared `?` and not nilable", which is neither half of
+  Ballerina's rule. A defaultable field (`string note = "none"`) was published as required
+  although a value that omits it is valid, and a nilable field with no default (`string? b`) was
+  published as optional although Ballerina rejects a value that omits it. Requiredness now comes
+  from the field's own `REQUIRED` flag. A `json` or `anydata` type also no longer publishes
+  `{"type": "object"}` — it accepts an object, a list, or a bare scalar, so its schema is the
+  permissive `true`. Both affect every generated schema: workflow start inputs, durable agent
+  start envelopes, and human task forms.
+
+- **The built executable now carries `workflow.def.json`** as a root-level entry, written by a
+  compiler-lifecycle task and byte-identical to the generated descriptor. Executables only: a
+  BALA does not carry it, and a consumer that needs it regenerates it from the package.
+  Registration is unchanged.
+
+- **The guides, the module's API samples and the use cases now compile against this API.**
+  They still passed `retryOnError`/`maxRetries` as arguments, reached for
+  `WorkflowExecutionInfo` and `getWorkflowInfo` through the root `workflow:` prefix, called
+  `getWorkflowResult()` as if it returned one, described `workflow:Context` as optional, and
+  configured a `mode = "TEMPORAL"` with `temporalHost`/`temporalPort` that has never existed.
+  A call to an activity returning `error?` is bound as `() _ = check ctx->callActivity(...)`:
+  the inferred `T` has nothing to infer from in statement position, and a plain `_` does not
+  help. `examples/agent-object-model` is registered, so the build stops skipping it.
+
 ### Added
 
-- **`bal build --export-openapi` exports the management REST API's OpenAPI description**
-  into `target/openapi/workflow_management_openapi.yaml`, beside the specs of the package's
-  own services. The management service is a library-owned service object on a
-  dynamically-managed listener, so the stock OpenAPI build extension never sees it; the
-  description ships curated inside the compiler plugin, and a plugin test keeps it complete
-  against the service source. `--export-endpoints` registers the surface's endpoint metadata
-  (name, port, base path, spec file) through the same contract the HTTP plugin uses, on
-  ballerina-lang versions that provide it.
+- **Workflow Definition Descriptor (WDD)**: the compiler plugin now generates a
+  versioned, OpenAPI-style definition file describing every workflow component in
+  the package — workflows, activities (input and output), human tasks (completion
+  forms), review activities, events, and durable agents — with embedded JSON
+  Schemas, and packs it into the executable JAR as the fixed-name resource
+  `workflow.def.json`. Every schema-bearing position is a typed slot: the resolved
+  Ballerina type is always recorded, and the JSON Schema is emitted per
+  representability tier (exact for closed anydata shapes, permissive + `lossy` for
+  open anydata, omitted for `xml`/`error`/behavioral types). The document is
+  canonical JSON with a SHA-256 content checksum, so consumers can persist, diff,
+  and audit definitions over time. The packed descriptor is served under the
+  `descriptor` field of `management:getWorkflowMetadata()` (nil when the program
+  was built without one, e.g. under `bal test`). The meta-schema lives in
+  `docs/spec/`.
 
-- **A parked agent stays conversational: chat messages during a durable wait are answered
-  by side turns.** A conversational agent's reasoning loop runs one turn at a time, so a chat
-  message sent while the loop was durably parked — a gated tool awaiting approval, a human
-  task, another channel's event, the sleep timer — queued mutely until the park resolved,
-  which could be hours. Worse, it deadlocked the conversation's two sides: an agent waiting
-  on an event (say, a file upload) while the user waits for an answer before sending it.
-
-  Such a message is now answered by a **side turn**: one bounded, tool-less model call over
-  the conversation so far plus a framework-injected note stating exactly what the agent is
-  waiting on and since when. The update completes with the side answer — still exactly one
-  response per request — and the question/answer pair is merged into the main history when
-  the loop resumes, so the conversation stays whole. Side turns cannot run tools or mutate
-  anything (the main turn owns all state), never touch the event queues, the turn pairing,
-  or the event-wait budget, and are answered with a deterministic status line when the model
-  itself is unavailable. A message arriving while the loop waits on the chat channel itself
-  is the next turn, exactly as before.
-
-- **A durable agent can now read its own workflow context: `getWorkflowId` and `getCurrentTime`
-  join `sleep` as always-available built-in tools.** In a plain workflow these are `ctx` methods;
-  the agent's tools had no `ctx`, so an agent could not hand out its own run's reference ID or
-  know the date without hallucinating one. Both are answered deterministically on the workflow
-  thread — a context read, never an activity, so no worker slot and no history entry is spent.
-  `getWorkflowId` returns the run's instance ID (the durable reference identifier to give to a
-  user or an external system); `getCurrentTime` returns the workflow's deterministic clock as an
-  ISO-8601 UTC instant. Their names are reserved alongside the other built-ins: a user capability
-  registered under either name is rejected.
-
-- **A human task listing now says who decided it.** `HumanTaskSummary` gains `completedBy` and
-  `completedAt`, so a work queue can show who completed or rejected each task without opening it.
-  The completer already existed on `HumanTaskDetail`, read back from the `taskCompletion` signal —
-  one history read per task, which is affordable for one task and not for a page of them. The task
-  workflow now records it in its own memo when it is decided, where it rides the visibility row
-  alongside `kind` and `userRoles`, so listings pay nothing extra for it. Rejections record it too,
-  so a failed task also names who rejected it.
-
-  Both fields are `()` for a task that is still pending, and for tasks decided before the memo
-  carried this — the information exists only in those runs' history, and is not backfilled. The
-  value is a user ID: resolving it to a display name belongs to whatever holds the user directory.
+- **Descriptor-driven registration (zero metadata codegen)**: the compiler plugin no
+  longer generates per-workflow `registerWorkflow`/`registerHumanTask` calls. The
+  generated module-init function hands the canonical descriptor document to the
+  runtime in a single data-only `registerWorkflowDescriptor` call; when the worker
+  starts, the runtime registers every described workflow, activity, and human task
+  and resolves the implementation functions by their recorded module coordinates
+  (symbol references invoked through `Runtime.callFunction` with a concurrent-safe
+  strand). Direct pointer registration remains supported for durable-agent runners
+  and programmatic use. Only runtime values stay generated: module-level client
+  connections and durable-agent declarations.
 
 - **The descriptor now carries each workflow's graph, and executions say where they are in it.**
   A workflow that calls the same activity from both arms of an `if` produced two invocations that
@@ -295,15 +273,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   unaffected; an execution started before this release reports `()`, and a step renamed since a run
   started reports the old id — so treat the join as optional and draw an unmatched node
   unhighlighted rather than failing.
-
-- **`management:ErrorCode` and `management:errorCodeOf(Error)`** — the machine-readable,
-  protocol-independent reason a management operation failed (`NOT_FOUND`, `ACCESS_DENIED`,
-  `INVALID_REQUEST`, `CONFLICT`, `INVALID_PAYLOAD`, `EXECUTION_ERROR`). Consumers that carry
-  errors across a boundary — the HTTP API in `workflow.management.rest`, the ICP bridge's
-  generated command-tunnel glue — branch on the reason instead of `is`-checking this module's
-  error subtypes, and each adapter owns mapping the reason to its wire vocabulary (the
-  management module itself names no status codes). A new error subtype now surfaces as a
-  classified reason everywhere, instead of silently degrading in hand-copied mappings.
 
 - **A run can be restarted from a chosen point.** Recovering a run meant terminating it and
   starting a new one, which loses the work that already succeeded — including the steps that
@@ -365,45 +334,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   selection that resolves to more is rejected rather than truncated, so a caller is never told a
   decision was applied to a larger set than it was.
 
-- **Descriptor-driven registration (zero metadata codegen)**: the compiler plugin no
-  longer generates per-workflow `registerWorkflow`/`registerHumanTask` calls. The
-  generated module-init function hands the canonical descriptor document to the
-  runtime in a single data-only `registerWorkflowDescriptor` call; when the worker
-  starts, the runtime registers every described workflow, activity, and human task
-  and resolves the implementation functions by their recorded module coordinates
-  (symbol references invoked through `Runtime.callFunction` with a concurrent-safe
-  strand). Direct pointer registration remains supported for durable-agent runners
-  and programmatic use. Only runtime values stay generated: module-level client
-  connections and durable-agent declarations.
-- **Workflow Definition Descriptor (WDD)**: the compiler plugin now generates a
-  versioned, OpenAPI-style definition file describing every workflow component in
-  the package — workflows, activities (input and output), human tasks (completion
-  forms), review activities, events, and durable agents — with embedded JSON
-  Schemas, and packs it into the executable JAR as the fixed-name resource
-  `workflow.def.json`. Every schema-bearing position is a typed slot: the resolved
-  Ballerina type is always recorded, and the JSON Schema is emitted per
-  representability tier (exact for closed anydata shapes, permissive + `lossy` for
-  open anydata, omitted for `xml`/`error`/behavioral types). The document is
-  canonical JSON with a SHA-256 content checksum, so consumers can persist, diff,
-  and audit definitions over time. The packed descriptor is served under the
-  `descriptor` field of `management:getWorkflowMetadata()` (nil when the program
-  was built without one, e.g. under `bal test`). The meta-schema lives in
-  `docs/spec/`.
-- `management:getWorkflowMetadata()` — a startup-complete metadata document
-  (definitions with input schemas, human tasks with completion-form schemas,
-  activities with input schemas, the review-action vocabulary, and durable-agent
-  declarations) for control planes to publish. Completion-form schemas are read
-  from the packed workflow descriptor before a task first runs; the registry
-  takes over once the task has executed.
-- `management:executeCommand()` — runs any management operation named by the
-  `management:Operation` enum, returning the operation's `json` payload or a
-  `management:Error`. The HTTP API in `workflow.management.rest` dispatches through
-  the same call, so a command and the matching REST route produce identical
-  payloads. `workflow.management` itself stays free of transport concepts: it
-  reports *why* an operation failed through distinct error types (`NotFoundError`,
-  `AccessDeniedError`, `InvalidRequestError`, `ConflictError`, `InvalidPayloadError`,
-  `ExecutionError`), and each adapter maps those onto its own protocol — status
-  codes in the REST module, and the tunnel envelope in a control-plane bridge.
 - Token-based caller identity for the management REST API: the gateway interceptor
   resolves the caller's identity once per request and stores it in the
   `http:RequestContext` (spec §8.1.11), where every resource reads it — requests are
@@ -414,10 +344,86 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   header precedence). Optional OAuth scope enforcement per operation class via
   `enforceScopes` and the `scopeWorkflowView/Manage`, `scopeHumanTaskView/Manage`
   configurables. Basic auth defaults the audit user ID to the authenticated username.
+
+- `management:executeCommand()` — runs any management operation named by the
+  `management:Operation` enum, returning the operation's `json` payload or a
+  `management:Error`. The HTTP API in `workflow.management.rest` dispatches through
+  the same call, so a command and the matching REST route produce identical
+  payloads. `workflow.management` itself stays free of transport concepts: it
+  reports *why* an operation failed through distinct error types (`NotFoundError`,
+  `AccessDeniedError`, `InvalidRequestError`, `ConflictError`, `InvalidPayloadError`,
+  `ExecutionError`), and each adapter maps those onto its own protocol — status
+  codes in the REST module, and the tunnel envelope in a control-plane bridge.
+
+- `management:getWorkflowMetadata()` — a startup-complete metadata document
+  (definitions with input schemas, human tasks with completion-form schemas,
+  activities with input schemas, the review-action vocabulary, and durable-agent
+  declarations) for control planes to publish. Completion-form schemas are read
+  from the packed workflow descriptor before a task first runs; the registry
+  takes over once the task has executed.
+
+- **`management:ErrorCode` and `management:errorCodeOf(Error)`** — the machine-readable,
+  protocol-independent reason a management operation failed (`NOT_FOUND`, `ACCESS_DENIED`,
+  `INVALID_REQUEST`, `CONFLICT`, `INVALID_PAYLOAD`, `EXECUTION_ERROR`). Consumers that carry
+  errors across a boundary — the HTTP API in `workflow.management.rest`, the ICP bridge's
+  generated command-tunnel glue — branch on the reason instead of `is`-checking this module's
+  error subtypes, and each adapter owns mapping the reason to its wire vocabulary (the
+  management module itself names no status codes). A new error subtype now surfaces as a
+  classified reason everywhere, instead of silently degrading in hand-copied mappings.
+
+- **`bal build --export-openapi` exports the management REST API's OpenAPI description**
+  into `target/openapi/workflow_management_openapi.yaml`, beside the specs of the package's
+  own services. The management service is a library-owned service object on a
+  dynamically-managed listener, so the stock OpenAPI build extension never sees it; the
+  description ships curated inside the compiler plugin, and a plugin test keeps it complete
+  against the service source. `--export-endpoints` registers the surface's endpoint metadata
+  (name, port, base path, spec file) through the same contract the HTTP plugin uses, on
+  ballerina-lang versions that provide it.
+
+- **A human task listing now says who decided it.** `HumanTaskSummary` gains `completedBy` and
+  `completedAt`, so a work queue can show who completed or rejected each task without opening it.
+  The completer already existed on `HumanTaskDetail`, read back from the `taskCompletion` signal —
+  one history read per task, which is affordable for one task and not for a page of them. The task
+  workflow now records it in its own memo when it is decided, where it rides the visibility row
+  alongside `kind` and `userRoles`, so listings pay nothing extra for it. Rejections record it too,
+  so a failed task also names who rejected it.
+
+  Both fields are `()` for a task that is still pending, and for tasks decided before the memo
+  carried this — the information exists only in those runs' history, and is not backfilled. The
+  value is a user ID: resolving it to a display name belongs to whatever holds the user directory.
+
+- **A parked agent stays conversational: chat messages during a durable wait are answered
+  by side turns.** A conversational agent's reasoning loop runs one turn at a time, so a chat
+  message sent while the loop was durably parked — a gated tool awaiting approval, a human
+  task, another channel's event, the sleep timer — queued mutely until the park resolved,
+  which could be hours. Worse, it deadlocked the conversation's two sides: an agent waiting
+  on an event (say, a file upload) while the user waits for an answer before sending it.
+
+  Such a message is now answered by a **side turn**: one bounded, tool-less model call over
+  the conversation so far plus a framework-injected note stating exactly what the agent is
+  waiting on and since when. The update completes with the side answer — still exactly one
+  response per request — and the question/answer pair is merged into the main history when
+  the loop resumes, so the conversation stays whole. Side turns cannot run tools or mutate
+  anything (the main turn owns all state), never touch the event queues, the turn pairing,
+  or the event-wait budget, and are answered with a deterministic status line when the model
+  itself is unavailable. A message arriving while the loop waits on the chat channel itself
+  is the next turn, exactly as before.
+
+- **A durable agent can now read its own workflow context: `getWorkflowId` and `getCurrentTime`
+  join `sleep` as always-available built-in tools.** In a plain workflow these are `ctx` methods;
+  the agent's tools had no `ctx`, so an agent could not hand out its own run's reference ID or
+  know the date without hallucinating one. Both are answered deterministically on the workflow
+  thread — a context read, never an activity, so no worker slot and no history entry is spent.
+  `getWorkflowId` returns the run's instance ID (the durable reference identifier to give to a
+  user or an external system); `getCurrentTime` returns the workflow's deterministic clock as an
+  ISO-8601 UTC instant. Their names are reserved alongside the other built-ins: a user capability
+  registered under either name is rejected.
+
 - Declared agent activities honor `bindings`: arguments fixed at registration (typically a
   client the model cannot supply) are carried from the declaration through to the
   registration, so a connection-based activity can be exposed as an agent tool by binding
   its client to a module-level variable.
+
 - Compile-time guards for durable agent declarations: a tool that declares an
   `@ai:AgentTool` authorization requirement is rejected (durable agents do not run the
   `ai:Agent` loop that acquires tokens and validates scopes), capability names must be
@@ -426,15 +432,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   is left without a `bindings` entry.
 
 ### Fixed
-
-- **A transient model failure no longer kills the agent run.** The built-in model activities
-  (`llmChat`, `generate`, `generateResult`) ran as single-attempt activities, so one connection
-  blip failed the whole conversation — and being framework machinery rather than declared tools,
-  there was no place to attach a retry policy. They now carry a default retry curve (2s initial,
-  2x backoff capped at 30s, five attempts): transient weather recovers invisibly, while a
-  genuinely dead provider (an expired token, say) still fails the step after about a minute —
-  and that failed run remains recoverable with `resetInstance` once the cause is fixed.
-  User-declared tools keep exactly their declared `retryPolicy`.
 
 - **`workflow.def.json` now reaches the built executable.** The descriptor was registered as a
   package resource with `SourceGeneratorContext.addResourceFile`, which puts nothing into the
@@ -473,11 +470,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   A rejection recorded by an older runtime carries no structured details; its
   `HumanTaskRejectedError` reports the reason with `details` as `()`.
 
+- **A transient model failure no longer kills the agent run.** The built-in model activities
+  (`llmChat`, `generate`, `generateResult`) ran as single-attempt activities, so one connection
+  blip failed the whole conversation — and being framework machinery rather than declared tools,
+  there was no place to attach a retry policy. They now carry a default retry curve (2s initial,
+  2x backoff capped at 30s, five attempts): transient weather recovers invisibly, while a
+  genuinely dead provider (an expired token, say) still fails the step after about a minute —
+  and that failed run remains recoverable with `resetInstance` once the cause is fixed.
+  User-declared tools keep exactly their declared `retryPolicy`.
+
 - **A durable agent rejects a duplicate capability name at startup.** Activities, tools, events,
   human tasks and peers share one namespace per agent; a second registration of a claimed name
   now fails instead of replacing the first. Enforced both at module init and on the agent
   context, so it also covers names the `WORKFLOW_150` compile-time check cannot see.
-
 
 ## [0.8.1] - 2026-08-03
 

@@ -29,19 +29,19 @@ What happens next is determined entirely by the workflow code:
 string|error result = ctx->callActivity(processPayment, {"amount": input.amount});
 ```
 
-If the activity is configured with retries (`retryOnError = true`), the workflow engine retries the activity transparently. Each attempt is recorded in history as Temporal task events (for example `ActivityTaskScheduled` / `ActivityTaskStarted` / `ActivityTaskCompleted` or `ActivityTaskFailed`). Only after all retries are exhausted does the final error reach the workflow as a value.
+If the activity is configured with retries (an `AutoRetry` `retryPolicy`), the workflow engine retries the activity transparently. Each attempt is recorded in history as Temporal task events (for example `ActivityTaskScheduled` / `ActivityTaskStarted` / `ActivityTaskCompleted` or `ActivityTaskFailed`). Only after all retries are exhausted does the final error reach the workflow as a value.
 
 Because failures and outcomes are durably recorded in an append-only history, workflows can recover from worker-process restarts mid-execution and resume from the last recorded workflow state — giving durability and observability without extra instrumentation.
 
 If the workflow engine itself is temporarily unavailable, API calls such as `sendData` may fail fast and should be retried by callers. Once the engine and workers recover, execution resumes from recorded history.
 
-> **Retry safety for `sendData`:** retries are safe in the [Alternative Wait — First Wins](handle-data.md#alternative-wait--first-wins) pattern, where multiple senders post to a single shared channel and only the first delivery unblocks the workflow — later duplicates on the same channel are effectively ignored. For sequential workflows or multi-channel scenarios (for example, distinct channels per step or per approver, or a workflow that consumes the same channel more than once), duplicates are **not** auto-suppressed: a blind retry can deliver the same signal twice and advance the workflow further than intended. In those cases, make the send idempotent before retrying — for example, check the workflow status with `workflow:getWorkflowInfo()` to confirm the prior send was not already accepted, or include an idempotency key in the payload that the workflow (or the receiving activity) deduplicates against its recorded state.
+> **Retry safety for `sendData`:** retries are safe in the [Alternative Wait — First Wins](handle-data.md#alternative-wait--first-wins) pattern, where multiple senders post to a single shared channel and only the first delivery unblocks the workflow — later duplicates on the same channel are effectively ignored. For sequential workflows or multi-channel scenarios (for example, distinct channels per step or per approver, or a workflow that consumes the same channel more than once), duplicates are **not** auto-suppressed: a blind retry can deliver the same signal twice and advance the workflow further than intended. In those cases, make the send idempotent before retrying — for example, check the workflow status with `management:getWorkflowInfo()` from `ballerina/workflow.management` to confirm the prior send was not already accepted, or include an idempotency key in the payload that the workflow (or the receiving activity) deduplicates against its recorded state.
 
 ---
 
 ## Controlling Retries
 
-By default (`retryOnError = false`), errors are returned immediately as values and no automatic retries are attempted. This is a safe baseline that keeps retry intent explicit per call.
+By default (`retryPolicy = NoAutomaticRetry`), errors are returned immediately as values and no automatic retries are attempted. This is a safe baseline that keeps retry intent explicit per call.
 
 Business-specific retry behavior (including delayed retries) can still be implemented in workflow logic or enabled via activity retry options when appropriate.
 
@@ -53,20 +53,24 @@ string|error result = ctx->callActivity(chargeCard, {"amount": input.amount});
 
 // Opt-in retries: the workflow engine retries the activity up to 3 times before returning the error
 string|error retried = ctx->callActivity(chargeCard, {"amount": input.amount},
-        retryOnError = true, maxRetries = 3, retryDelay = 2.0, retryBackoff = 1.5);
+        retryPolicy = {maxRetries: 3, retryDelay: 2.0, retryBackoff: 1.5});
 ```
 
 Regardless of whether retries are enabled, the outcome is the same: the error arrives at the workflow as a `T|error` value. Retries never hide the error from the workflow code.
 
 ### Retry Options
 
-| Option | Type | Default | Description |
+Pass an `AutoRetry` record as `callActivity`'s `retryPolicy` argument. Its fields are:
+
+| Field | Type | Default | Description |
 |--------|------|---------|-------------|
-| `retryOnError` | `boolean` | `false` | Enable workflow-engine-level retries |
-| `maxRetries` | `int` | `0` | Maximum number of retry attempts (e.g., `3` means up to 3 retries after the initial attempt, for 4 total attempts) |
+| `maxRetries` | `int` | `3` | Maximum number of retry attempts (e.g., `3` means up to 3 retries after the initial attempt, for 4 total attempts) |
 | `retryDelay` | `decimal` | `1.0` | Initial delay in seconds between retries |
 | `retryBackoff` | `decimal` | `2.0` | Exponential backoff multiplier |
 | `maxRetryDelay`| `decimal?`  | *(none)*| Cap on the delay between retries in seconds (optional) |
+
+Passing `NoAutomaticRetry` (the default) disables engine retries; passing a `ReviewTaskDefinition`
+instead raises a review task on failure so a person decides whether to rerun the activity.
 
 ## State Transition Summary
 
@@ -136,7 +140,7 @@ function sendNotification(workflow:Context ctx, NotificationInput input) returns
     // Try primary with retries; capture the error rather than propagating
     string|error emailResult = ctx->callActivity(sendEmail,
             {"to": input.email, "message": input.message},
-            retryOnError = true, maxRetries = 2, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 2, retryDelay: 1.0, retryBackoff: 2.0});
 
     if emailResult is error {
         // Primary exhausted — fall back to SMS. `check` means: fail if SMS also fails.
@@ -166,7 +170,7 @@ function transferFunds(workflow:Context ctx, TransferInput input) returns string
     // Step 2: capture as T|error so we can compensate on failure.
     string|error creditResult = ctx->callActivity(creditAccount,
             {"accountId": input.destAccount, "amount": input.amount},
-            retryOnError = true, maxRetries = 2, retryDelay = 1.0);
+            retryPolicy = {maxRetries: 2, retryDelay: 1.0});
 
     if creditResult is error {
         // Step 2 exhausted retries — reverse the debit to restore consistency
@@ -199,7 +203,7 @@ function processOrder(workflow:Context ctx, OrderInput input) returns string|err
     // NON-CRITICAL — tolerate failure. Retry once; skip if still failing.
     string|error emailResult = ctx->callActivity(sendConfirmationEmail,
             {"email": input.customerEmail, "orderId": input.orderId},
-            retryOnError = true, maxRetries = 1, retryDelay = 1.0);
+            retryPolicy = {maxRetries: 1, retryDelay: 1.0});
     if emailResult is error {
         return reservationId + " (email skipped: " + emailResult.message() + ")";
     }
@@ -240,7 +244,7 @@ function orderProcess(
 
     if paymentResult is error {
         // Payment failed — notify the user and pause for corrected data
-        check ctx->callActivity(notifyPaymentFailure, {
+        () _ = check ctx->callActivity(notifyPaymentFailure, {
             "orderId": input.orderId,
             "reason": paymentResult.message()
         });

@@ -26,7 +26,7 @@ function transferFunds(workflow:Context ctx, TransferInput input) returns string
     string|error creditResult = ctx->callActivity(creditAccount, {
         "accountId": input.destAccount,
         "amount": input.amount
-    }, retryOnError = true, maxRetries = 2, retryDelay = 1.0, retryBackoff = 2.0);
+    }, retryPolicy = {maxRetries: 2, retryDelay: 1.0, retryBackoff: 2.0});
 
     if creditResult is error {
         // Step 2 exhausted retries — compensate by reversing step 1.
@@ -59,24 +59,24 @@ For N steps, track compensations as each step succeeds and execute them in rever
 
 ```ballerina
 // Step 1 completed
-string _ = check ctx->callActivity(step1, {...});
+string _ = check ctx->callActivity(step1, {"orderId": input.orderId});
 
 // Step 2 captured so it can fail and still allow compensation of step1
-string|error step2Result = ctx->callActivity(step2, {...});
+string|error step2Result = ctx->callActivity(step2, {"orderId": input.orderId});
 if step2Result is error {
-    string _ = check ctx->callActivity(compensateStep1, {...});
+    string _ = check ctx->callActivity(compensateStep1, {"orderId": input.orderId});
     return "ROLLED_BACK";
 }
 
 // Step 2 completed
 
 // Step 3 — capture as T|error
-string|error step3Result = ctx->callActivity(step3, {...});
+string|error step3Result = ctx->callActivity(step3, {"orderId": input.orderId});
 
 if step3Result is error {
     // Compensate in reverse: step 2 first, then step 1
-    string _ = check ctx->callActivity(compensateStep2, {...});
-    string _ = check ctx->callActivity(compensateStep1, {...});
+    string _ = check ctx->callActivity(compensateStep2, {"orderId": input.orderId});
+    string _ = check ctx->callActivity(compensateStep1, {"orderId": input.orderId});
     return "ROLLED_BACK";
 }
 return "COMPLETED";

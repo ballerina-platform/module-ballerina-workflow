@@ -15,6 +15,10 @@ The `ballerina/workflow` library provides practical examples illustrating usage 
 | [alternative-wait](alternative-wait/) | Race multiple data sources — first response wins (approval ladder) |
 | [wait-for-all](wait-for-all/) | Collect data from every source before proceeding (dual authorization) |
 | [forward-recovery](forward-recovery/) | Pause for corrected data and retry a failed activity |
+| [management-api](management-api/) | Expose the workflow management HTTP service alongside a running workflow |
+| [agent-order-processing](agent-order-processing/) | Durable AI agent whose tool calls run as workflow activities |
+| [agent-human-approval](agent-human-approval/) | Durable AI agent that pauses for a manager's approval before acting |
+| [agent-object-model](agent-object-model/) | Declare a durable agent as a module-level `final workflow:DurableAgent` |
 
 ## Prerequisites
 

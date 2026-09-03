@@ -188,13 +188,13 @@ function deliverNotification(workflow:Context ctx, NotificationRequest req)
     // error that aborts the workflow.
     string|error emailResult = ctx->callActivity(sendEmail,
             {"to": req.recipientEmail, "subject": req.subject, "body": req.body},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     if emailResult is string {
         string|error auditResult = ctx->callActivity(postDeliveryAudit,
                 {"text": string `:email: Notification ${req.notificationId} delivered ` +
                         string `via email (${emailResult}).`},
-                retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+                retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
         if auditResult is error {
             log:printWarn("audit post failed; delivery still successful",
                     notificationId = req.notificationId, channel = "EMAIL",
@@ -215,13 +215,13 @@ function deliverNotification(workflow:Context ctx, NotificationRequest req)
     // surfaces as a workflow failure rather than silent loss.
     string smsSid = check ctx->callActivity(sendSms,
             {"to": req.recipientPhone, "body": string `${req.subject}: ${req.body}`},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     string|error smsAuditResult = ctx->callActivity(postDeliveryAudit,
             {"text": string `:warning: Notification ${req.notificationId} delivered ` +
                     string `via SMS fallback (Twilio SID ${smsSid}). ` +
                     string `Email failure: ${emailErrorMsg}.`},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
     if smsAuditResult is error {
         log:printWarn("audit post failed; delivery still successful",
                 notificationId = req.notificationId, channel = "SMS",
@@ -285,7 +285,7 @@ service /notifications on new http:Listener(servicePort) {
     # + workflowId - Workflow id
     # + return - Workflow execution info, or an error
     resource function get [string workflowId]()
-            returns workflow:WorkflowExecutionInfo|error {
+            returns anydata|error {
         return workflow:getWorkflowResult(workflowId);
     }
 }

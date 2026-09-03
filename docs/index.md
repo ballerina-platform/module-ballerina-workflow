@@ -45,4 +45,8 @@ The Ballerina Workflow module provides durable workflow orchestration for Baller
 | [Error Compensation](../examples/error-compensation/) | Saga pattern: undo committed steps when a later step fails |
 | [Graceful Completion](../examples/graceful-completion/) | Tolerate non-critical activity failures and complete successfully |
 | [Forward Recovery](../examples/forward-recovery/) | Pause for corrected data and retry a failed activity |
+| [Management API](../examples/management-api/) | Expose the workflow management HTTP service alongside a running workflow |
+| [Agent — Order Processing](../examples/agent-order-processing/) | Durable AI agent whose tool calls run as workflow activities |
+| [Agent — Human Approval](../examples/agent-human-approval/) | Durable AI agent that pauses for a manager's approval before acting |
+| [Agent — Object Model](../examples/agent-object-model/) | Declare a durable agent as a module-level `final workflow:DurableAgent` |
 

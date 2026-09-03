@@ -12,6 +12,16 @@ Workflows and activities are ordinary Ballerina functions:
 ```ballerina
 import ballerina/workflow;
 
+type OrderRequest record {|
+    string orderId;
+    string item;
+|};
+
+type OrderResult record {|
+    string orderId;
+    string status;
+|};
+
 @workflow:Activity
 function checkInventory(string item) returns boolean|error {
     // Call external inventory API
@@ -82,7 +92,7 @@ Enable automatic retries for transient failures:
 
 ```ballerina
 string result = check ctx->callActivity(chargeCard, {"amount": input.amount},
-    retryOnError = true, maxRetries = 3);
+    retryPolicy = {maxRetries: 3});
 ```
 
 ## Configuration
@@ -98,12 +108,13 @@ For production, connect to a Temporal server:
 
 ```toml
 [ballerina.workflow]
-mode = "TEMPORAL"
-temporalHost = "localhost"
-temporalPort = 7233
+mode = "SELF_HOSTED"
+url = "temporal.mycompany.com:7233"
 namespace = "default"
 taskQueue = "my-task-queue"
 ```
+
+See [Configure the Module](https://github.com/ballerina-platform/module-ballerina-workflow/blob/main/docs/configure-the-module.md) for every mode and field.
 
 ## Documentation
 

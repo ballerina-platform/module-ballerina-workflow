@@ -135,7 +135,11 @@ isolated function maskPhone(string phone) returns string {
     if phone.length() <= 4 {
         return "****";
     }
-    return string `${"*".repeat(phone.length() - 4)}${phone.substring(phone.length() - 4)}`;
+    string mask = "";
+    foreach int _ in 0 ..< phone.length() - 4 {
+        mask += "*";
+    }
+    return string `${mask}${phone.substring(phone.length() - 4)}`;
 }
 
 // -----------------------------------------------------------------------------
@@ -224,12 +228,12 @@ function handleAccessRequest(
 
     string _ = check ctx->callActivity(notifyApprovers,
             {"req": req},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     string wfId = check ctx.getWorkflowId();
     string issueKey = check ctx->callActivity(createAccessApprovalTask,
             {"workflowId": wfId, "req": req},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     AccessDecision decision = check wait events.approval;
     string lower = decision.resolution.toLowerAscii();
@@ -246,7 +250,7 @@ function handleAccessRequest(
                     string `${req.targetSystem} was denied (Jira: ${decision.jiraIssueKey}).`;
     string smsSid = check ctx->callActivity(sendSmsToRequester,
             {"toNumber": req.requesterPhone, "body": smsBody},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     return {
         requestId: req.requestId,
@@ -321,9 +325,9 @@ service /it on new http:Listener(servicePort) {
     # Returns the workflow's final result.
     #
     # + workflowId - Target workflow id
-    # + return - Final execution info, or an error
+    # + return - The workflow's return value, or an error
     resource function get 'access\-requests/[string workflowId]()
-            returns workflow:WorkflowExecutionInfo|error {
+            returns anydata|error {
         return workflow:getWorkflowResult(workflowId);
     }
 }

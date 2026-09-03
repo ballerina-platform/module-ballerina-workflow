@@ -119,7 +119,7 @@ isolated function callRestAPIDispatch(http:Client connection, RestMethod method,
 #
 # @workflow:Workflow
 # isolated function notifyWorkflow(workflow:Context ctx, string recipient) returns error? {
-#     check ctx->callActivity(activity:sendEmail, {
+#     () _ = check ctx->callActivity(activity:sendEmail, {
 #         connection: smtp,
 #         to: recipient,
 #         subject: "Order shipped",

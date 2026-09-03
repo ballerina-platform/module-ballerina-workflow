@@ -210,16 +210,16 @@ function syncCustomer(workflow:Context ctx, CustomerRequest req)
         returns CustomerSyncResult|error {
     string accountId = check ctx->callActivity(createSalesforceAccount,
             {"req": req},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     string contactId = check ctx->callActivity(createSalesforceContact,
             {"accountId": accountId, "req": req},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     string slackTs = check ctx->callActivity(postCrmOpsSlack,
             {"text": string `:white_check_mark: New customer *${req.companyName}* ` +
                     string `(${req.region}) synced. Account ${accountId}, Contact ${contactId}.`},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     string welcomeMessageId = check ctx->callActivity(sendWelcomeEmail,
             {
@@ -230,7 +230,7 @@ function syncCustomer(workflow:Context ctx, CustomerRequest req)
                         string `Salesforce Account: ${accountId}.\n\n` +
                         string `– CRM Operations`
             },
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     return {
         requestId: req.requestId,
@@ -271,7 +271,7 @@ service /crm on new http:Listener(servicePort) {
     # + workflowId - Workflow id
     # + return - Workflow execution info, or an error
     resource function get customers/[string workflowId]()
-            returns workflow:WorkflowExecutionInfo|error {
+            returns anydata|error {
         return workflow:getWorkflowResult(workflowId);
     }
 }

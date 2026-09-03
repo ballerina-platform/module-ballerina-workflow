@@ -197,7 +197,7 @@ function purchaseApproval(
     |} events
 ) returns PurchaseResult|error {
     // Notify both approvers
-    string _ = check ctx->callActivity(notifyApprovers, {...});
+    string _ = check ctx->callActivity(notifyApprovers, {"requestId": input.requestId});
 
     // Wait once — first sendData("approval", ...) wins, rest ignored
     ApprovalDecision decision = check wait events.approval;
@@ -207,7 +207,7 @@ function purchaseApproval(
                 message: "Rejected by " + decision.approverId};
     }
 
-    string poNumber = check ctx->callActivity(processPurchase, {...});
+    string poNumber = check ctx->callActivity(processPurchase, {"requestId": input.requestId});
     return {requestId: input.requestId, status: "APPROVED", message: poNumber};
 }
 ```
@@ -260,7 +260,7 @@ function transferApproval(
         future<ApprovalDecision> complianceApproval;
     |} events
 ) returns TransferResult|error {
-    string _ = check ctx->callActivity(notifyApprovalTeams, {...});
+    string _ = check ctx->callActivity(notifyApprovalTeams, {"transferId": input.transferId});
 
     // Wait for both — order of arrival doesn't matter
     [ApprovalDecision, ApprovalDecision] [opsDecision, compDecision] =
@@ -270,7 +270,7 @@ function transferApproval(
         return {transferId: input.transferId, status: "REJECTED", message: "..."};
     }
 
-    string txnRef = check ctx->callActivity(executeTransfer, {...});
+    string txnRef = check ctx->callActivity(executeTransfer, {"transferId": input.transferId});
     return {transferId: input.transferId, status: "COMPLETED", message: txnRef};
 }
 ```

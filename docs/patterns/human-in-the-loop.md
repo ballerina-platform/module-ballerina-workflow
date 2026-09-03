@@ -1,6 +1,6 @@
 # Pattern: Human in the Loop
 
-Some workflow steps require a human judgement call — approvals, reviews, compliance checks. The workflow pauses durably and waits for a person to send a decision via external data, then continues based on that decision.
+Some workflow steps require a human judgement call — approvals, reviews, compliance checks. The workflow creates a task, records who may answer it, and pauses durably until a person submits a decision — then continues on what they decided.
 
 > **Runnable example:** [`examples/human-in-the-loop/`](../../examples/human-in-the-loop/) — high-value orders require manager approval before fulfillment.
 
@@ -12,83 +12,169 @@ Some workflow steps require a human judgement call — approvals, reviews, compl
 
 ## Code Pattern
 
-### Declare the Data Type and Workflow Signature
+The module has a first-class human task API: `ctx->awaitHumanTask` creates a task, records who
+may answer it, and durably pauses the workflow until someone submits a decision. Use it in
+preference to hand-rolling an approval over a data channel.
+
+### Declare the Decision Type
+
+The type you bind the result to is the task's result shape — it drives the generated form and is
+validated at runtime when the decision is submitted.
 
 ```ballerina
 type ApprovalDecision record {|
-    string approverId;
     boolean approved;
     string? reason;
 |};
-
-@workflow:Workflow
-function processOrder(
-    workflow:Context ctx,
-    OrderInput input,
-    record {| future<ApprovalDecision> approval; |} events
-) returns OrderResult|error {
 ```
-
-The third parameter is the events record. Each field name (`approval`) is the data name used when sending data to this workflow.
 
 ### Pause for Human Approval
 
 ```ballerina
 @workflow:Workflow
-function processOrder(
-    workflow:Context ctx,
-    OrderInput input,
-    record {| future<ApprovalDecision> approval; |} events
-) returns OrderResult|error {
+function processOrder(workflow:Context ctx, OrderInput input) returns OrderResult|error {
     // Validate and prepare
-    check ctx->callActivity(validateOrder, {...});
-
-    // Notify the approval team
-    string _ = check ctx->callActivity(notifyApprover, {
+    string _ = check ctx->callActivity(validateOrder, {
         "orderId": input.orderId,
         "item": input.item,
         "amount": input.amount
     });
 
-    // Workflow pauses here — fully durable — until a human sends the "approval" data
-    ApprovalDecision decision = check wait events.approval;
+    // Workflow pauses here — fully durable — until a manager submits a decision
+    ApprovalDecision decision = check ctx->awaitHumanTask("approveOrder",
+            {orderId: input.orderId, item: input.item, amount: input.amount.toString()},
+            userRoles = "MANAGER",
+            title = string `Approve ${input.item} for $${input.amount}`);
 
     if !decision.approved {
         return {orderId: input.orderId, status: "REJECTED",
-                message: "Rejected by " + decision.approverId};
+                message: string `Rejected: ${decision.reason ?: "no reason given"}`};
     }
 
     // Approved — fulfill the order
-    string fulfillmentId = check ctx->callActivity(fulfillOrder, {...});
+    string fulfillmentId = check ctx->callActivity(fulfillOrder,
+            {"orderId": input.orderId, "item": input.item});
     return {orderId: input.orderId, status: "COMPLETED", message: fulfillmentId};
 }
 ```
 
-### Send the Decision from an HTTP Endpoint
+`awaitHumanTask` takes:
+
+| Argument | Description |
+|----------|-------------|
+| `taskName` | Identifies the task type. Must not contain `.` or `|` (`WORKFLOW_128`) |
+| `taskInput` | Read-only `map<json>` shown beside the form. Pass `{}` when there is nothing to show; it is checked against the definition's `taskInputType` |
+| `userRoles` | Role or roles permitted to answer — from `ReviewTaskDefinition`, passed as a named argument |
+| `title`, `description` | How the task reads in the inbox |
+| `timeout` | Optional deadline; on expiry the call returns a `HumanTaskTimeoutError` |
+| `stepId` | Optional stable step identity, as for `callActivity` |
+
+Internally the task is a durable child workflow, so it survives worker restarts.
+
+### List and Complete Tasks
+
+Pending tasks are read and answered through the `ballerina/workflow.management` module:
+
+```ballerina
+import ballerina/workflow.management;
+
+service /api on new http:Listener(8090) {
+    // List the pending approval tasks for one workflow
+    resource function get orders/[string workflowId]/tasks() returns management:HumanTaskGroup[]|error {
+        return management:listPendingHumanTasks(workflowId);
+    }
+
+    // Submit the manager's decision
+    resource function post tasks/[string taskId]/complete(@http:Payload ApprovalDecision decision)
+            returns record {| string status; |}|error {
+        check workflow:completeHumanTask(taskId, decision);
+        return {status: "accepted"};
+    }
+}
+```
+
+`completeHumanTask` returns once the engine has accepted the decision; the workflow resumes from
+`awaitHumanTask` independently after that. If it fails (the engine is unavailable, or the task ID
+does not exist), the endpoint returns an error and the caller should retry.
+
+### Handling Rejection and Timeout
+
+`awaitHumanTask` reports failure as a `HumanTaskError`, which tells you *how* the task ended.
+An `on fail` clause attaches to a `do` block, so wrap the call in one to handle it:
+
+```ballerina
+do {
+    ApprovalDecision decision = check ctx->awaitHumanTask("approveOrder", {},
+            userRoles = "MANAGER", timeout = {hours: 24});
+    return {orderId: input.orderId, status: decision.approved ? "APPROVED" : "REJECTED",
+            message: ""};
+} on fail workflow:HumanTaskError e {
+    if e is workflow:HumanTaskTimeoutError {
+        () _ = check ctx->callActivity(notifyEscalation, {"taskName": e.detail().taskName});
+    }
+    return e;
+}
+```
+
+- `HumanTaskTimeoutError` — nobody acted before the deadline.
+- `HumanTaskRejectedError` — someone rejected the task; the reason and any structured details are
+  on the error detail, so the workflow can compensate on what the rejecting user said.
+- `HumanTaskFailedError` — the task could not produce a result at all.
+
+## Alternative: Approval over a Data Channel
+
+When the decision arrives from a system rather than a task inbox — a webhook from an external
+approval tool, say — model it as external data instead. The workflow declares an events record and
+waits on it, and the sender calls `workflow:sendData`:
+
+```ballerina
+@workflow:Workflow
+function processOrder(
+    workflow:Context ctx,
+    OrderInput input,
+    record {| future<ApprovalDecision> approval; |} events
+) returns OrderResult|error {
+    string _ = check ctx->callActivity(validateOrder, {"orderId": input.orderId});
+
+    // Workflow pauses here until a caller sends the "approval" data
+    ApprovalDecision decision = check wait events.approval;
+
+    if !decision.approved {
+        return {orderId: input.orderId, status: "REJECTED", message: "Rejected"};
+    }
+
+    string fulfillmentId = check ctx->callActivity(fulfillOrder,
+            {"orderId": input.orderId, "item": input.item});
+    return {orderId: input.orderId, status: "COMPLETED", message: fulfillmentId};
+}
+```
 
 ```ballerina
 service /api on new http:Listener(8090) {
-    resource function post orders/[string workflowId]/approve(ApprovalDecision decision) returns json|error {
+    resource function post orders/[string workflowId]/approve(ApprovalDecision decision)
+            returns json|error {
         check workflow:sendData(processOrder, workflowId, "approval", decision);
         return {status: "accepted"};
     }
 }
 ```
 
-`workflow:sendData` is **asynchronous** — it delivers the signal to the workflow engine and returns once the engine has accepted it. The workflow processes the signal and resumes from `wait events.approval` independently after that.
-
-`return {status: "accepted"}` confirms that the engine accepted the signal, not that the workflow has already acted on it. If `sendData` fails (for example, the engine is unavailable or the workflow ID does not exist), the endpoint returns an error and the caller should retry.
+This route has no inbox, no roles, and no generated form — the workflow simply resumes when the
+data arrives. See [Handle Data](../handle-data.md) for the full reference.
 
 ## Durability While Paused
 
-While the workflow is waiting at `wait events.approval`:
-- Worker process restarts do not lose the paused state — the workflow replays its Event History and returns to the `wait` point.
-- The `notifyApprover` activity is not re-executed on replay — its result is already in the history.
-- The data can also be sent directly from the workflow engine's Web UI without going through your application's HTTP API (useful during incidents).
+While the workflow is paused at `awaitHumanTask` (or at `wait events.approval`):
+- Worker process restarts do not lose the paused state — the workflow replays its Event History and returns to the pause point.
+- Activities that already ran are not re-executed on replay — their results are in the history.
+- A human task is a durable child workflow, so it too survives restarts; the decision can be submitted from the task inbox, the management API, or the workflow engine's Web UI.
 
-## Timeout: Escalate If No Decision Arrives
+## Escalating When No Decision Arrives
 
-You can implement escalation today using `ctx->await` with a timeout.
+`awaitHumanTask` takes a `timeout` directly, and reports expiry as a `HumanTaskTimeoutError` —
+see [Handling Rejection and Timeout](#handling-rejection-and-timeout) above.
+
+On the data-channel route, use `ctx->await` with a timeout instead:
 
 ```ballerina
 [ApprovalDecision] [decision] = check ctx->await([events.approval], timeout = {hours: 24});

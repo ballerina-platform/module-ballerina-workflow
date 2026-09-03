@@ -54,7 +54,7 @@ if !decision.approved {
 }
 
 // Approved — process the purchase
-string poNumber = check ctx->callActivity(processPurchase, {...});
+string poNumber = check ctx->callActivity(processPurchase, {"requestId": input.requestId});
 return {requestId: input.requestId, status: "APPROVED", message: poNumber};
 ```
 

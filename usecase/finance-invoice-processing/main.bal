@@ -194,14 +194,14 @@ function processInvoice(
                     "subject": string `Invoice ${inv.invoiceNumber} auto-approved`,
                     "body": string `Auto-approved invoice from ${inv.vendorName} for $${inv.amountUsd}.`
                 },
-                retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+                retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
         return {invoiceNumber: inv.invoiceNumber, status: "AUTO_APPROVED", amountUsd: inv.amountUsd};
     }
 
     string wfId = check ctx.getWorkflowId();
     string caseId = check ctx->callActivity(createApprovalCase,
             {"workflowId": wfId, "inv": inv},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     () _ = check ctx->callActivity(emailFinanceTeam,
             {
@@ -209,7 +209,7 @@ function processInvoice(
                 "body": string `An AP invoice from ${inv.vendorName} has been filed as ` +
                         string `Salesforce Case ${caseId}. Please review and approve.`
             },
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     InvoiceApproval decision = check wait events.approval;
     boolean approved = decision.caseStatus.toLowerAscii() == "closed - approved";
@@ -217,7 +217,7 @@ function processInvoice(
 
     () _ = check ctx->callActivity(closeSalesforceCase,
             {"caseId": caseId, "finalStatus": finalStatus},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     () _ = check ctx->callActivity(emailFinanceTeam,
             {
@@ -225,7 +225,7 @@ function processInvoice(
                 "body": string `Invoice ${inv.invoiceNumber} from ${inv.vendorName} ` +
                         string `was ${approved ? "approved" : "rejected"} by ${decision.approverName}.`
             },
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     return {
         invoiceNumber: inv.invoiceNumber,
@@ -314,8 +314,8 @@ service /finance on new http:Listener(servicePort) {
     # Returns the workflow's final result.
     #
     # + workflowId - Target workflow id
-    # + return - Final execution info, or an error
-    resource function get invoices/[string workflowId]() returns workflow:WorkflowExecutionInfo|error {
+    # + return - The workflow's return value, or an error
+    resource function get invoices/[string workflowId]() returns anydata|error {
         return workflow:getWorkflowResult(workflowId);
     }
 }

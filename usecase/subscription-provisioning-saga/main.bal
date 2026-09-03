@@ -266,12 +266,12 @@ function provisionSubscription(workflow:Context ctx, SubscriptionRequest req)
     // because there is nothing committed to compensate yet.
     string accountId = check ctx->callActivity(createAccount,
             {"req": req},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     // Step 2 — create Contact. If this fails, compensate step 1 (Account).
     string|error contactResult = ctx->callActivity(createContact,
             {"accountId": accountId, "req": req},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
     if contactResult is error {
         string reason = contactResult.message();
         return rollbackAfterContactFailure(ctx, req, accountId, reason);
@@ -282,7 +282,7 @@ function provisionSubscription(workflow:Context ctx, SubscriptionRequest req)
     // (Contact then Account) in reverse order.
     string|error contractResult = ctx->callActivity(createContract,
             {"accountId": accountId, "req": req},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
     if contractResult is error {
         string reason = contractResult.message();
         return rollbackAfterContractFailure(ctx, req, accountId, contactId, reason);
@@ -293,7 +293,7 @@ function provisionSubscription(workflow:Context ctx, SubscriptionRequest req)
     string|error slackRes = ctx->callActivity(postProvisioningSlack,
             {"text": string `:rocket: Subscription *${req.companyName}* provisioned. ` +
                     string `Account ${accountId}, Contact ${contactId}, Contract ${contractId}.`},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
     if slackRes is error {
         log:printWarn("[saga] Slack audit notification failed",
                 requestId = req.requestId, reason = slackRes.message());
@@ -304,7 +304,7 @@ function provisionSubscription(workflow:Context ctx, SubscriptionRequest req)
                 "body": string `Request ${req.requestId} provisioned successfully. ` +
                         string `Account ${accountId}, Contact ${contactId}, Contract ${contractId}.`
             },
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
     if emailRes is error {
         log:printWarn("[saga] email billing-ops notification failed",
                 requestId = req.requestId, reason = emailRes.message());
@@ -333,7 +333,7 @@ isolated function rollbackAfterContactFailure(workflow:Context ctx,
             requestId = req.requestId, accountId = accountId, reason = reason);
     () _ = check ctx->callActivity(deleteAccount,
             {"accountId": accountId},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
     announceRollback(ctx, req, reason);
     return {
         requestId: req.requestId,
@@ -358,10 +358,10 @@ isolated function rollbackAfterContractFailure(workflow:Context ctx,
             accountId = accountId, contactId = contactId, reason = reason);
     error? contactDeleteError = ctx->callActivity(deleteContact,
             {"contactId": contactId},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
     error? accountDeleteError = ctx->callActivity(deleteAccount,
             {"accountId": accountId},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
     if contactDeleteError !is () || accountDeleteError !is () {
         string contactMsg = contactDeleteError is error ? contactDeleteError.message() : "";
         string accountMsg = accountDeleteError is error ? accountDeleteError.message() : "";
@@ -387,7 +387,7 @@ isolated function announceRollback(workflow:Context ctx,
     string|error slackRes = ctx->callActivity(postProvisioningSlack,
             {"text": string `:warning: Subscription provisioning for *${req.companyName}* ` +
                     string `was rolled back. Reason: ${reason}.`},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
     if slackRes is error {
         log:printWarn("[rollback] Slack notification failed",
                 requestId = req.requestId, reason = slackRes.message());
@@ -398,7 +398,7 @@ isolated function announceRollback(workflow:Context ctx,
                 "body": string `Request ${req.requestId} could not be provisioned. ` +
                         string `Salesforce state has been compensated. Reason: ${reason}.`
             },
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
     if emailRes is error {
         log:printWarn("[rollback] email notification failed",
                 requestId = req.requestId, reason = emailRes.message());
@@ -454,7 +454,7 @@ service /subscriptions on new http:Listener(servicePort) {
     # + workflowId - Workflow id
     # + return - Workflow execution info, or an error
     resource function get [string workflowId]()
-            returns workflow:WorkflowExecutionInfo|error {
+            returns anydata|error {
         return workflow:getWorkflowResult(workflowId);
     }
 }

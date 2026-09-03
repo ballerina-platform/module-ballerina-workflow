@@ -2,7 +2,7 @@
 org = "ballerina_usecases"
 name = "ehr_downtime_recovery"
 version = "0.1.0"
-distribution = "2201.13.0"
+distribution = "2201.13.4"
 
 [build-options]
 observabilityIncluded = true

@@ -34,7 +34,7 @@ type OrderRequest record {|
 |};
 
 @workflow:Workflow
-function processOrder(OrderRequest request) returns string|error {
+function processOrder(workflow:Context ctx, OrderRequest request) returns string|error {
     return string `Order ${request.orderId}: ${request.quantity} unit(s) of "${request.item}" received.`;
 }
 
@@ -43,14 +43,15 @@ public function main() returns error? {
     string workflowId = check workflow:run(processOrder, {orderId: "ORD-001", item: "laptop", quantity: 2});
     io:println("Workflow started with ID: " + workflowId);
 
-    workflow:WorkflowExecutionInfo result = check workflow:getWorkflowResult(workflowId);
-    io:println("Result: " + result.result.toString());
+    anydata result = check workflow:getWorkflowResult(workflowId);
+    io:println("Result: " + result.toString());
 }
 ```
 
 ### Key Concepts
 
 - **`@workflow:Workflow`** marks a function as a durable workflow. The runtime checkpoints its state and recovers from failures automatically.
+- **`workflow:Context`** is the mandatory first parameter of every workflow function. It is the handle to the workflow runtime; Step 2 uses it to call activities.
 - **`workflow:run()`** starts a new workflow instance and returns a unique **workflow instance ID**.
 - **Workflow instance ID** is a unique string identifying a running workflow. Use it to query status, send data, or retrieve results.
 
@@ -133,7 +134,7 @@ function processOrder(workflow:Context ctx, OrderRequest request) returns string
 
 #### Key Concepts
 
-- **`workflow:Context`** is the first parameter of a workflow that interacts with the workflow runtime. Use it to call activities or retrieve workflow state.
+- **`workflow:Context`** is the workflow's handle to the runtime. Use it to call activities or retrieve workflow state.
 - **`ctx->callActivity()`** is not a regular function call. It invokes the activity and records its result in the workflow state. This ensures the activity result is preserved even if the workflow is interrupted and recovered.
 
 ### Final Code
@@ -187,8 +188,8 @@ public function main() returns error? {
     string workflowId = check workflow:run(processOrder, {orderId: "ORD-001", item: "laptop", quantity: 2});
     io:println("Workflow started with ID: " + workflowId);
 
-    workflow:WorkflowExecutionInfo result = check workflow:getWorkflowResult(workflowId);
-    io:println("Result: " + result.result.toString());
+    anydata result = check workflow:getWorkflowResult(workflowId);
+    io:println("Result: " + result.toString());
 }
 ```
 

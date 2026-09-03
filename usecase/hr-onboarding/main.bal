@@ -240,7 +240,7 @@ function onboardEmployee(
 
     string _ = check ctx->callActivity(announceOnSlack,
             {"fullName": hire.fullName, "department": hire.department, "startDate": hire.startDate},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     string? jiraIssueKey = ();
     boolean equipmentApproved = false;
@@ -258,7 +258,7 @@ function onboardEmployee(
                         "amountUsd": hire.equipmentRequestUsd,
                         "managerAccountId": hire.managerJiraAccountId
                     },
-                    retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+                    retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
             jiraIssueKey = issueKey;
 
             // 3) Wait for the Jira webhook callback.
@@ -273,7 +273,7 @@ function onboardEmployee(
                         string `equipment request was not approved (Jira: ${decision.jiraIssueKey}).`;
                 string _ = check ctx->callActivity(sendWelcomeEmail,
                         {"workEmail": hire.workEmail, "fullName": hire.fullName, "summaryText": body},
-                        retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+                        retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
                 return {
                     employeeId: hire.employeeId,
                     status: "REJECTED",
@@ -294,7 +294,7 @@ function onboardEmployee(
     string body = string `Welcome ${hire.fullName}! Your accounts have been provisioned (${outcome}).`;
     string _ = check ctx->callActivity(sendWelcomeEmail,
             {"workEmail": hire.workEmail, "fullName": hire.fullName, "summaryText": body},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     OnboardingResult result = {
         employeeId: hire.employeeId,
@@ -356,8 +356,8 @@ service /hr on new http:Listener(servicePort) {
     # Returns the workflow's final result. Blocks until the workflow completes.
     #
     # + workflowId - Target workflow id
-    # + return - Final execution info, or an error
-    resource function get onboarding/[string workflowId]() returns workflow:WorkflowExecutionInfo|error {
+    # + return - The workflow's return value, or an error
+    resource function get onboarding/[string workflowId]() returns anydata|error {
         return workflow:getWorkflowResult(workflowId);
     }
 }

@@ -79,6 +79,33 @@ public final class AgentContextNative {
     /** The agent graph's model node: every built-in model call belongs to it, not to a tool. */
     private static final String AGENT_MODEL_SITE = "model";
     private static final Set<String> MODEL_ACTIVITIES = Set.of("llmChat", "generate", "generateResult");
+
+    /**
+     * The retry curve for the built-in model activities. A model call fails for reasons that
+     * are overwhelmingly transient — a connection blip, a rate limit, a gateway hiccup — and
+     * an agent is a long-lived conversation: letting one such blip fail the whole run threw
+     * away hours of durable state over a second of network weather. Bounded twice, so a
+     * genuinely dead provider still fails the step instead of retrying forever: one that
+     * answers with errors exhausts the five attempts in about a minute (the backoff sums to
+     * ~30s), and one that hangs runs into {@link #MODEL_TOTAL_TIMEOUT} — without that cap,
+     * five attempts each cut off at the per-attempt timeout would stretch to ~25 minutes.
+     * A failed run remains recoverable by reset once the cause is fixed.
+     */
+    private static final RetryOptions MODEL_RETRY_OPTIONS = RetryOptions.newBuilder()
+            .setInitialInterval(Duration.ofSeconds(2))
+            .setBackoffCoefficient(2.0)
+            .setMaximumInterval(Duration.ofSeconds(30))
+            .setMaximumAttempts(5)
+            .build();
+
+    /**
+     * Overall ceiling for one model step, attempts and backoff together (Temporal's
+     * schedule-to-close). Ten minutes: room for one full-length attempt to hang, the curve
+     * above to absorb blips around it, and a second long attempt — while keeping the bound
+     * in minutes. Model calls only; a user activity's per-call {@code retryPolicy} keeps
+     * whatever curve its author declared.
+     */
+    private static final Duration MODEL_TOTAL_TIMEOUT = Duration.ofMinutes(10);
     private static final String CHAT_EVENT = "chat";
 
     // Tool dispatch kinds understood by the Ballerina agent loop.
@@ -1294,9 +1321,13 @@ public final class AgentContextNative {
         boolean manualRetry = reviewPolicy != null;
         boolean autoRetry = reviewPolicy == null && retryPolicy instanceof BMap;
 
+        // The built-in model activities recover automatically: they are framework machinery,
+        // not user tools, so no declaration site exists where an author could attach a policy.
+        boolean modelCall = MODEL_ACTIVITIES.contains(activityName);
+
         Map<String, Object> callConfig = new HashMap<>();
         callConfig.put(CALL_CONFIG_MARKER, true);
-        callConfig.put(RETRY_ON_ERROR_KEY, autoRetry);
+        callConfig.put(RETRY_ON_ERROR_KEY, autoRetry || modelCall);
         // An agent has no lexical call site — the model chose this tool — so the site is the
         // node the call belongs to in the agent's graph: the caller's explicit site when the
         // activity runs under another identity (a wrapped AI tool, an overridden tool name),
@@ -1308,12 +1339,18 @@ public final class AgentContextNative {
 
         RetryOptions retryOptions = autoRetry
                 ? WorkflowContextNative.buildPerCallRetryOptions((BMap<BString, Object>) retryPolicy)
+                : modelCall ? MODEL_RETRY_OPTIONS
                 : RetryOptions.newBuilder().setMaximumAttempts(1).build();
-        ActivityOptions options = ActivityOptions.newBuilder()
+        ActivityOptions.Builder optionsBuilder = ActivityOptions.newBuilder()
                 .setStartToCloseTimeout(Duration.ofMinutes(5))
                 .setRetryOptions(retryOptions)
-                .setSummary(stepId)
-                .build();
+                .setSummary(stepId);
+        if (modelCall) {
+            // The per-attempt timeout bounds one attempt; this bounds the whole step, or a
+            // provider that hangs rather than errors would hold the run for attempts × 5min.
+            optionsBuilder.setScheduleToCloseTimeout(MODEL_TOTAL_TIMEOUT);
+        }
+        ActivityOptions options = optionsBuilder.build();
         io.temporal.workflow.ActivityStub stub = Workflow.newUntypedActivityStub(options);
 
         Map<String, Object> currentArgs = namedArgs;

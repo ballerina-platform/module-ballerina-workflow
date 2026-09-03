@@ -11,8 +11,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **`HumanTaskDefinition` and `ReviewTaskDefinition` replace `HumanTaskOptions` and the
   `string|string[]` retry policy.** `ReviewTaskDefinition` holds `userRoles`, `title`,
   `description` and `timeout`, and is what a `retryPolicy` takes. `HumanTaskDefinition`
-  includes it and adds `taskInputType` and `resultType`. An agent's `HumanTaskConfig` is now
-  `HumanTaskDefinition`.
+  includes it and adds `taskInputType` and `resultType`. An agent's `humanTasks` map takes
+  `HumanTaskDefinition` directly; the `HumanTaskConfig` name is gone.
 
   ```ballerina
   // before

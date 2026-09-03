@@ -788,7 +788,7 @@ public final class WorkflowContextNative {
      *                     mechanics, so a parameter rather than an options field
      * @param taskInput    what the decider is shown, checked against the declared taskInputType
      * @param definition   the {@code HumanTaskDefinition} record
-     * @return the coerced result value, a payload-shape error, or a
+     * @return the coerced result value, a task-input-shape error, or a
      *         {@code HumanTaskTimeoutError} BError
      */
     public static Object awaitHumanTask(BObject self, BString taskNameBStr, BMap<BString, Object> taskInput,
@@ -821,6 +821,19 @@ public final class WorkflowContextNative {
     static BError validateTaskInputShape(BMap<BString, Object> taskInput, BMap<BString, Object> definition,
                                          String taskName) {
         Object declared = definition == null ? null : definition.get(StringUtils.fromString("taskInputType"));
+        return validateTaskInputShape(taskInput, declared, taskName);
+    }
+
+    /**
+     * The typedesc form of {@link #validateTaskInputShape(BMap, BMap, String)}: the agent path
+     * carries the declared type on its own registration rather than in a definition record.
+     *
+     * @param taskInput the input supplied
+     * @param declared  the declared input typedesc, or anything else for "no declaration"
+     * @param taskName  the task's name, for the message
+     * @return an error describing the mismatch, or null when the shape holds
+     */
+    static BError validateTaskInputShape(BMap<BString, Object> taskInput, Object declared, String taskName) {
         if (!(declared instanceof BTypedesc inputType) || taskInput == null) {
             return null;
         }

@@ -96,14 +96,6 @@ public type ToolDecl record {|
     string|string[] userRoles?;
 |};
 
-# One human task capability of a durable agent, declared in the mapping form of
-# `humanTasks` where the mapping key is the task name.
-#
-# A `HumanTaskDefinition`: the agent declares both `resultType` and `taskInputType`, and the
-# input it supplies when it asks is checked against the latter.
-public type HumanTaskConfig HumanTaskDefinition;
-
-
 # A peer durable agent advertised to this agent's model as a delegable tool.
 # The framework runs the peer as a Temporal child workflow.
 #
@@ -167,7 +159,7 @@ public type DurableAgentConfig record {|
     (ActivityDecl|function)[] activities = [];
     (ToolDecl|ai:ToolConfig|ai:BaseToolKit|function)[] tools = [];
     map<EventConfig> events = {};
-    map<HumanTaskConfig> humanTasks = {};
+    map<HumanTaskDefinition> humanTasks = {};
     PeerDecl[] peers = [];
     int maxIter = 16;
     Duration? eventTimeout = ();
@@ -341,6 +333,7 @@ type DurableAgentHumanTaskSpec record {|
     string name;
     json meta = ();
     typedesc<anydata> resultType = anydata;
+    typedesc<map<json>>? taskInputType = ();
 |};
 
 type DurableAgentPeerSpec record {|

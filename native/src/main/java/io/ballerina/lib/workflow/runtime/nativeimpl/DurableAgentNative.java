@@ -318,13 +318,16 @@ public final class DurableAgentNative {
     /**
      * Registers a human task capability declaration of a durable agent.
      *
-     * @param agentName the agent name
-     * @param taskName  the task name
-     * @param meta      declaration metadata (roles, result type, title, description, timeout)
+     * @param agentName     the agent name
+     * @param taskName      the task name
+     * @param meta          declaration metadata (roles, title, description, timeout)
+     * @param resultType    the expected completion result typedesc
+     * @param taskInputType the declared input shape, or null for the open default — typedescs
+     *                      travel beside {@code meta}, never inside it, because meta is json
      * @return true on success, or a BError when the agent is unknown
      */
     public static Object registerDurableAgentHumanTask(BString agentName, BString taskName, Object meta,
-                                                       BTypedesc resultType) {
+                                                       BTypedesc resultType, Object taskInputType) {
         AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName.getValue());
         if (decl == null) {
             return unknownAgentError(agentName.getValue());
@@ -333,17 +336,19 @@ public final class DurableAgentNative {
         if (duplicate != null) {
             return duplicate;
         }
-        decl.humanTasks().put(taskName.getValue(), new HumanTaskDeclEntry(meta, resultType));
+        decl.humanTasks().put(taskName.getValue(), new HumanTaskDeclEntry(meta, resultType,
+                taskInputType instanceof BTypedesc t ? t : null));
         return true;
     }
 
     /**
      * A declared human task capability.
      *
-     * @param meta       declaration metadata (roles, title, description)
-     * @param resultType the expected result typedesc
+     * @param meta          declaration metadata (roles, title, description)
+     * @param resultType    the expected result typedesc
+     * @param taskInputType the declared input shape, or null for the open default
      */
-    public record HumanTaskDeclEntry(Object meta, BTypedesc resultType) { }
+    public record HumanTaskDeclEntry(Object meta, BTypedesc resultType, BTypedesc taskInputType) { }
 
     /**
      * Resolves a declared durable agent by name, or null when not registered. Used by the runner
@@ -526,6 +531,9 @@ public final class DurableAgentNative {
                 if (task.getValue() instanceof HumanTaskDeclEntry entry) {
                     fields.put("meta", entry.meta());
                     fields.put("resultType", entry.resultType());
+                    if (entry.taskInputType() != null) {
+                        fields.put("taskInputType", entry.taskInputType());
+                    }
                 } else {
                     fields.put("meta", task.getValue());
                 }

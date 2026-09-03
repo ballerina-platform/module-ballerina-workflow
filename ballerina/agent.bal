@@ -780,9 +780,9 @@ isolated function registerAgentEvent(handle agentCtx, string name, typedesc<anyd
 # + return - An error if the task cannot be registered, otherwise nil
 isolated function registerHumanTask(handle agentCtx, string taskName, string|string[] userRoles,
         typedesc<anydata> resultType = anydata, string? title = (), string? description = (),
-        Duration? timeout = ()) returns error? {
+        Duration? timeout = (), typedesc<map<json>>? taskInputType = ()) returns error? {
     return recordHumanTaskTool(agentCtx, taskName, userRoles, resultType, title, description,
-            timeout);
+            timeout, taskInputType);
 }
 
 # Registers a peer durable agent as a delegable tool of this agent.
@@ -874,8 +874,8 @@ isolated function setAgentApproval(handle nativeContext, string|string[] userRol
 } external;
 
 isolated function recordHumanTaskTool(handle nativeContext, string taskName, string|string[] userRoles,
-        typedesc<anydata> resultType, string? title, string? description, Duration? timeout)
-        returns error? = @java:Method {
+        typedesc<anydata> resultType, string? title, string? description, Duration? timeout,
+        typedesc<map<json>>? taskInputType) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "recordHumanTaskTool"
 } external;
@@ -1171,7 +1171,8 @@ isolated function registerDeclaredHumanTask(handle agentCtx, DurableAgentHumanTa
             timeout = check timeoutJson.cloneWithType();
         }
     }
-    check registerHumanTask(agentCtx, taskSpec.name, roles, taskSpec.resultType, title, description, timeout);
+    check registerHumanTask(agentCtx, taskSpec.name, roles, taskSpec.resultType, title, description, timeout,
+            taskSpec.taskInputType);
 }
 
 # Dispatches one model-requested peer delegation. The peer runs as a true Temporal

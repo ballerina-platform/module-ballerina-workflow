@@ -321,7 +321,7 @@ public final class AgentContextNative {
     }
 
     private record HumanTaskMeta(Object userRoles, String title, String description, BTypedesc resultType,
-                                 Object timeout) { }
+                                 Object timeout, BTypedesc taskInputType) { }
 
     /**
      * Parses a per-tool reviewer-roles value (a BString for one role or a BArray of role strings) into a role
@@ -650,17 +650,19 @@ public final class AgentContextNative {
      * sub-workflow and suspends the agent until completion.
      *
      * @param handle      the agent context handle
-     * @param taskName    the task name (also the tool name advertised to the model)
-     * @param userRoles   role or roles permitted to complete the task
-     * @param resultType  the expected completion result type
-     * @param title       optional short title
-     * @param description optional description (also the tool description)
-     * @param timeout     optional {@code time:Duration} after which the task times out
+     * @param taskName      the task name (also the tool name advertised to the model)
+     * @param userRoles     role or roles permitted to complete the task
+     * @param resultType    the expected completion result type
+     * @param title         optional short title
+     * @param description   optional description (also the tool description)
+     * @param timeout       optional {@code time:Duration} after which the task times out
+     * @param taskInputType the declared input shape the model's payload is checked against,
+     *                      or null for the open default
      * @return null on success, or a Ballerina error
      */
     public static Object recordHumanTaskTool(BHandle handle, BString taskName, Object userRoles,
                                              BTypedesc resultType, Object title, Object description,
-                                             Object timeout) {
+                                             Object timeout, Object taskInputType) {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             String name = taskName.getValue();
@@ -685,7 +687,8 @@ public final class AgentContextNative {
             }
             info.tools.add(new ToolMeta(name, descriptionStr, schema, KIND_HUMAN_TASK));
             info.humanTasks.put(name, new HumanTaskMeta(userRoles, titleStr, descriptionStr, resultType,
-                    timeout instanceof BMap ? timeout : null));
+                    timeout instanceof BMap ? timeout : null,
+                    taskInputType instanceof BTypedesc t ? t : null));
             return null;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -1224,6 +1227,15 @@ public final class AgentContextNative {
         BMap<BString, Object> payloadMap = payload instanceof BMap
                 ? (BMap<BString, Object>) payload
                 : ValueCreator.createMapValue();
+        // The declared taskInputType gates the agent path too: the model supplies this input,
+        // so the check the workflow surface runs before creating a task runs here as well.
+        // The mismatch goes back as a tool error, which the loop feeds to the model as text —
+        // the task is never created with input a person would see and distrust.
+        BError inputMismatch = WorkflowContextNative.validateTaskInputShape(
+                payloadMap, meta.taskInputType(), taskName.getValue());
+        if (inputMismatch != null) {
+            return inputMismatch;
+        }
         info.beginPark("a person to complete the task '" + taskName.getValue() + "'", null);
         try {
             return WorkflowContextNative.awaitHumanTaskExploded(null, taskName, meta.userRoles(), payloadMap,

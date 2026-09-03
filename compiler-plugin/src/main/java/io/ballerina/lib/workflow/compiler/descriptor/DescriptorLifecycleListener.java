@@ -18,6 +18,7 @@
 
 package io.ballerina.lib.workflow.compiler.descriptor;
 
+import io.ballerina.lib.workflow.compiler.ManagementApiArtifactExporter;
 import io.ballerina.projects.plugins.CompilerLifecycleContext;
 import io.ballerina.projects.plugins.CompilerLifecycleListener;
 
@@ -38,5 +39,6 @@ public class DescriptorLifecycleListener extends CompilerLifecycleListener {
     @Override
     public void init(CompilerLifecycleContext lifecycleContext) {
         lifecycleContext.addCodeGenerationCompletedTask(new DescriptorPackLifecycleTask(store));
+        lifecycleContext.addCodeGenerationCompletedTask(new ManagementApiArtifactExporter());
     }
 }

@@ -147,6 +147,11 @@ task ballerinaTest {
     finalizedBy(commitTomlFiles)
 
     doLast {
+        // A leftover report from an earlier run must not speak for this one: the check below
+        // reads whatever file exists, and a stale failed tally would fail a green run (or a
+        // stale green one bless a run that never wrote a report).
+        delete "${project.projectDir}/target/report/test_results.json"
+
         exec {
             workingDir project.projectDir
             environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"

@@ -18,6 +18,7 @@
 
 package io.ballerina.lib.workflow.runtime;
 
+import io.ballerina.lib.workflow.observability.WorkflowMetrics;
 import io.ballerina.lib.workflow.utils.CorrelationExtractor;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
 import io.temporal.client.WorkflowClient;
@@ -154,6 +155,7 @@ public final class WorkflowRuntime {
             // Start the workflow asynchronously with the input data
             workflowStub.start(input);
 
+            WorkflowMetrics.recordWorkflowStart(processName);
             LOGGER.debug("Started workflow: type={}, id={}", processName, workflowId);
             return workflowId;
 
@@ -223,6 +225,7 @@ public final class WorkflowRuntime {
                 workflowStub.signal(signalName);
             }
 
+            WorkflowMetrics.recordDataSent(signalName);
             LOGGER.debug("Sent signal directly to workflow: id={}, signalName={}", workflowId, signalName);
             return true;
 

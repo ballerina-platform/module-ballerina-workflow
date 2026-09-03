@@ -339,9 +339,13 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "observe"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
 	{org = "ballerina", name = "jballerina.java"}
+]
+modules = [
+	{org = "ballerina", packageName = "observe", moduleName = "observe"},
+	{org = "ballerina", packageName = "observe", moduleName = "observe.mockextension"}
 ]
 
 [[package]]
@@ -451,6 +455,7 @@ dependencies = [
 	{org = "ballerina", name = "lang.runtime"},
 	{org = "ballerina", name = "log"},
 	{org = "ballerina", name = "mime"},
+	{org = "ballerina", name = "observe"},
 	{org = "ballerina", name = "soap"},
 	{org = "ballerina", name = "test"},
 	{org = "ballerina", name = "time"}
@@ -460,7 +465,8 @@ modules = [
 	{org = "ballerina", packageName = "workflow", moduleName = "workflow.activity"},
 	{org = "ballerina", packageName = "workflow", moduleName = "workflow.internal"},
 	{org = "ballerina", packageName = "workflow", moduleName = "workflow.management"},
-	{org = "ballerina", packageName = "workflow", moduleName = "workflow.management.rest"}
+	{org = "ballerina", packageName = "workflow", moduleName = "workflow.management.rest"},
+	{org = "ballerina", packageName = "workflow", moduleName = "workflow.observe"}
 ]
 
 [[package]]
@@ -476,11 +482,13 @@ dependencies = [
 	{org = "ballerina", name = "lang.regexp"},
 	{org = "ballerina", name = "lang.runtime"},
 	{org = "ballerina", name = "mcp"},
+	{org = "ballerina", name = "observe"},
 	{org = "ballerina", name = "soap"},
 	{org = "ballerina", name = "test"},
 	{org = "ballerina", name = "time"},
 	{org = "ballerina", name = "workflow"},
-	{org = "ballerinai", name = "observe"}
+	{org = "ballerinai", name = "observe"},
+	{org = "ballerinax", name = "prometheus"}
 ]
 modules = [
 	{org = "ballerina", packageName = "workflow_tests", moduleName = "workflow_tests"}
@@ -508,5 +516,20 @@ dependencies = [
 ]
 modules = [
 	{org = "ballerinai", packageName = "observe", moduleName = "observe"}
+]
+
+[[package]]
+org = "ballerinax"
+name = "prometheus"
+version = "1.0.0"
+scope = "testOnly"
+dependencies = [
+	{org = "ballerina", name = "http"},
+	{org = "ballerina", name = "io"},
+	{org = "ballerina", name = "lang.string"},
+	{org = "ballerina", name = "observe"}
+]
+modules = [
+	{org = "ballerinax", packageName = "prometheus", moduleName = "prometheus"}
 ]
 

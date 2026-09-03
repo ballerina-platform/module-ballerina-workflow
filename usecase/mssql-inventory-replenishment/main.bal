@@ -171,19 +171,19 @@ function syncInventoryChange(workflow:Context ctx, InventorySyncInput input)
     InventoryChange item = input.item;
     string snapshotId = check ctx->callActivity(createInventorySnapshot,
             {"action": action, "item": item},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     boolean lowStock = item.quantityOnHand <= item.reorderPoint ||
             item.quantityOnHand <= reorderThreshold;
     string _ = check ctx->callActivity(postOperationsSlack,
             {"text": string `:package: Inventory ${action} for *${item.sku}* ` +
                     string `${item.productName}: ${item.quantityOnHand}/${item.reorderPoint}.`},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     if lowStock {
         string _ = check ctx->callActivity(emailReorder,
                 {"item": item},
-                retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+                retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
     }
 
     return {
@@ -199,7 +199,7 @@ function syncInventoryDelete(workflow:Context ctx, InventoryDelete deleted)
         returns InventorySyncResult|error {
     string _ = check ctx->callActivity(postOperationsSlack,
             {"text": string `:warning: Inventory tracking deleted for *${deleted.sku}* ${deleted.productName}.`},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
     return {
         sku: deleted.sku,
         action: "DELETE",
@@ -261,7 +261,7 @@ function intCell(record {} row, string column) returns int|error {
         return value;
     }
     if value is decimal {
-        return int:fromString(value.truncate().toString());
+        return <int>value.round(0);
     }
     if value is float {
         return <int>value;
@@ -274,7 +274,7 @@ function intCell(record {} row, string column) returns int|error {
 
 service /inventory on new http:Listener(servicePort) {
 
-    resource function get syncs/[string workflowId]() returns workflow:WorkflowExecutionInfo|error {
+    resource function get syncs/[string workflowId]() returns anydata|error {
         return workflow:getWorkflowResult(workflowId);
     }
 }

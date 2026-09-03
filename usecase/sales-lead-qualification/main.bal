@@ -215,7 +215,7 @@ function qualifyLead(
 
     string sfLeadId = check ctx->callActivity(createSalesforceLead,
             {"lead": lead},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     string wfId = check ctx.getWorkflowId();
     string slackText = string `:dart: New lead *${lead.firstName} ${lead.lastName}* ` +
@@ -223,13 +223,13 @@ function qualifyLead(
             string `${lead.assignedRepName}. Workflow: ${wfId}`;
     string _ = check ctx->callActivity(postSlackMessage,
             {"channel": salesChannel, "text": slackText},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     string smsBody = string `New lead assigned: ${lead.firstName} ${lead.lastName} ` +
             string `at ${lead.company} (${lead.phone}). Please respond within ${slaHours}h.`;
     string _ = check ctx->callActivity(sendSms,
             {"toNumber": lead.assignedRepPhone, "body": smsBody},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     // Wait for the rep's response, bounded by SLA.
     [QualificationDecision]|error awaited = ctx->await(
@@ -244,13 +244,13 @@ function qualifyLead(
         // SLA breach — escalate.
         () _ = check ctx->callActivity(updateLeadStatus,
                 {"salesforceLeadId": sfLeadId, "status": "Stale - Escalated"},
-                retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+                retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
         string escalateText = string `:rotating_light: SLA breached: lead *${lead.firstName} ` +
                 string `${lead.lastName}* (${lead.company}) was not contacted by ` +
                 string `${lead.assignedRepName} within ${slaHours}h.`;
         string _ = check ctx->callActivity(postSlackMessage,
                 {"channel": managerChannel, "text": escalateText},
-                retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+                retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
         return {
             leadId: lead.leadId,
             salesforceLeadId: sfLeadId,
@@ -271,13 +271,13 @@ function qualifyLead(
                     : "Open - Not Contacted");
     () _ = check ctx->callActivity(updateLeadStatus,
             {"salesforceLeadId": sfLeadId, "status": status},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     string outcomeText = string `:white_check_mark: Lead *${lead.firstName} ${lead.lastName}* ` +
             string `marked *${decision.outcome}* by ${lead.assignedRepName}. ${decision.notes}`;
     string _ = check ctx->callActivity(postSlackMessage,
             {"channel": salesChannel, "text": outcomeText},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     string finalStatus = normalizedOutcome == "qualified" ? "QUALIFIED"
             : normalizedOutcome == "disqualified" ? "DISQUALIFIED"
@@ -353,8 +353,8 @@ service /sales on new http:Listener(servicePort) {
     # Returns the workflow's final result.
     #
     # + workflowId - Target workflow id
-    # + return - Final execution info, or an error
-    resource function get leads/[string workflowId]() returns workflow:WorkflowExecutionInfo|error {
+    # + return - The workflow's return value, or an error
+    resource function get leads/[string workflowId]() returns anydata|error {
         return workflow:getWorkflowResult(workflowId);
     }
 }

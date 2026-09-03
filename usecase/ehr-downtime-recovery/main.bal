@@ -256,7 +256,7 @@ isolated function sendDeliveryReport(DispatchResult result) returns string|error
 # + msg - Clinical message to deliver
 # + return - HTTP status code, or an error if the EHR is unreachable / non-2xx
 function probeEhrDelivery(workflow:Context ctx, ClinicalMessageDispatch msg) returns int|error {
-    return ctx->callActivity(deliverToEhr, {"msg": msg}, retryOnError = false);
+    return ctx->callActivity(deliverToEhr, {"msg": msg});
 }
 
 # Re-attempts EHR delivery with exponential backoff.
@@ -269,7 +269,7 @@ function probeEhrDelivery(workflow:Context ctx, ClinicalMessageDispatch msg) ret
 #   are exhausted
 function retryEhrDelivery(workflow:Context ctx, ClinicalMessageDispatch msg) returns int|error {
     return ctx->callActivity(deliverToEhr, {"msg": msg},
-            retryOnError = true, maxRetries = 20, retryDelay = 30.0, retryBackoff = 1.5);
+            retryPolicy = {maxRetries: 20, retryDelay: 30.0, retryBackoff: 1.5});
 }
 
 # Sends a downtime alert only when notifications are enabled.
@@ -286,7 +286,7 @@ function notifyEhrDownIfEnabled(workflow:Context ctx, ClinicalMessageDispatch ms
     string _ = check ctx->callActivity(notifySlackEhrDown,
             {"messageId": msg.messageId, "sourceSystem": msg.sourceSystem,
              "messageType": msg.messageType, "failureReason": failureReason},
-            retryOnError = true, maxRetries = 3, retryDelay = 5.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 5.0, retryBackoff: 2.0});
 }
 
 # Sends a first-attempt delivery notice only when notifications are enabled.
@@ -303,7 +303,7 @@ function notifyEhrDeliveredIfEnabled(workflow:Context ctx, ClinicalMessageDispat
     string _ = check ctx->callActivity(notifySlackEhrDelivered,
             {"messageId": msg.messageId, "sourceSystem": msg.sourceSystem,
              "httpStatusCode": statusCode},
-            retryOnError = true, maxRetries = 3, retryDelay = 5.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 5.0, retryBackoff: 2.0});
 }
 
 # Sends a recovery alert only when notifications are enabled.
@@ -320,7 +320,7 @@ function notifyEhrRecoveredIfEnabled(workflow:Context ctx, ClinicalMessageDispat
     string _ = check ctx->callActivity(notifySlackEhrRecovered,
             {"messageId": msg.messageId, "sourceSystem": msg.sourceSystem,
              "httpStatusCode": statusCode},
-            retryOnError = true, maxRetries = 3, retryDelay = 5.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 5.0, retryBackoff: 2.0});
 }
 
 # Sends a delivery report only when notifications are enabled.
@@ -333,7 +333,7 @@ function sendDeliveryReportIfEnabled(workflow:Context ctx, DispatchResult result
         return;
     }
     string _ = check ctx->callActivity(sendDeliveryReport, {"result": result},
-            retryOnError = true, maxRetries = 3, retryDelay = 5.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 5.0, retryBackoff: 2.0});
 }
 
 // -----------------------------------------------------------------------------
@@ -470,7 +470,7 @@ service /interop on new http:Listener(servicePort) {
     # + workflowId - Workflow id returned by the dispatch endpoint
     # + return - Workflow execution info, or an error
     resource function get dispatch/[string workflowId]()
-            returns workflow:WorkflowExecutionInfo|error {
+            returns anydata|error {
         return workflow:getWorkflowResult(workflowId);
     }
 }

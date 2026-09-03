@@ -150,14 +150,14 @@ function createCampaignFromSheet(workflow:Context ctx, CampaignRow row)
     string _ = check ctx->callActivity(postMarketingSlack,
             {"text": string `:mega: Created Salesforce Campaign *${row.campaignName}* ` +
                     string `from sheet request ${row.requestId}. Campaign id: ${campaignId}`},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
     string _ = check ctx->callActivity(emailOwner,
             {
                 "to": row.ownerEmail,
                 "subject": string `Campaign synced: ${row.campaignName}`,
                 "body": string `Salesforce Campaign ${campaignId} was created from request ${row.requestId}.`
             },
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
     return {requestId: row.requestId, action: "CREATED", salesforceCampaignId: campaignId};
 }
 
@@ -166,11 +166,11 @@ function updateCampaignFromSheet(workflow:Context ctx, CampaignRow row)
         returns CampaignSyncResult|error {
     () _ = check ctx->callActivity(updateSalesforceCampaign,
             {"row": row},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
     string _ = check ctx->callActivity(postMarketingSlack,
             {"text": string `:arrows_counterclockwise: Synced campaign ${row.salesforceCampaignId} ` +
                     string `to status ${row.status} from sheet request ${row.requestId}.`},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
     return {
         requestId: row.requestId,
         action: "UPDATED",

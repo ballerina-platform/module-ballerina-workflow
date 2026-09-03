@@ -254,7 +254,7 @@ function resolveSupportCase(
     string wfId = check ctx.getWorkflowId();
     string caseId = check ctx->callActivity(createSupportCase,
             {"workflowId": wfId, "req": req},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     string _ = check ctx->callActivity(sendCustomerEmail,
             {
@@ -264,26 +264,26 @@ function resolveSupportCase(
                         string `for ${req.companyName}. Please upload logs and reproduction steps ` +
                         string `from your portal or chatbot so our engineers can continue.`
             },
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     string slackText = string `:ticket: New ${req.severity} support case *${req.caseRef}* ` +
             string `for *${req.companyName}*: ${req.subject}. Workflow: ${wfId}`;
     string _ = check ctx->callActivity(postSlackUpdate,
             {"channel": supportChannel, "text": slackText},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     [DiagnosticsProvided]|error diagnosticsAwaited = ctx->await(
             [events.diagnosticsProvided],
             timeout = {hours: diagnosticsTimeoutHours});
 
     if diagnosticsAwaited is error {
-        string _ = check ctx->callActivity(updateSupportCase,
+        () _ = check ctx->callActivity(updateSupportCase,
                 {
                     "caseId": caseId,
                     "status": "Waiting on Customer",
                     "description": string `${req.description}\n\nTimed out waiting for diagnostics.`
                 },
-                retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+                retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
         string _ = check ctx->callActivity(sendCustomerEmail,
                 {
                     "to": req.customerEmail,
@@ -291,7 +291,7 @@ function resolveSupportCase(
                     "body": string `Hi ${req.customerName},\n\nWe still need diagnostics for ` +
                             string `${req.caseRef}. The case is waiting on your response.`
                 },
-                retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+                retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
         return {
             caseRef: req.caseRef,
             status: "TIMED_OUT",
@@ -304,19 +304,19 @@ function resolveSupportCase(
     string diagnosticDescription = string `${req.description}\n\nDiagnostics:\n` +
             string `Logs: ${diagnostics.logsUrl}\nEnvironment: ${diagnostics.environment}\n` +
             string `Steps: ${diagnostics.reproductionSteps}`;
-    string _ = check ctx->callActivity(updateSupportCase,
+    () _ = check ctx->callActivity(updateSupportCase,
             {"caseId": caseId, "status": "In Progress", "description": diagnosticDescription},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     EngineerTriaged triage = check wait events.engineerTriaged;
-    string _ = check ctx->callActivity(updateSupportCase,
+    () _ = check ctx->callActivity(updateSupportCase,
             {
                 "caseId": caseId,
                 "status": triage.requiresDeployment ? "Escalated" : "Working",
                 "description": string `${diagnosticDescription}\n\nTriage by ${triage.engineerName}: ` +
                         string `${triage.classification}. ${triage.notes}`
             },
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     if triage.requiresDeployment {
         string _ = check ctx->callActivity(postSlackUpdate,
@@ -325,17 +325,17 @@ function resolveSupportCase(
                     "text": string `:rotating_light: ${req.caseRef} requires deployment. ` +
                             string `Classification: ${triage.classification}. Owner: ${triage.engineerName}.`
                 },
-                retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+                retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
         FixDeployed deployment = check wait events.fixDeployed;
-        string _ = check ctx->callActivity(updateSupportCase,
+        () _ = check ctx->callActivity(updateSupportCase,
                 {
                     "caseId": caseId,
                     "status": "Solution Provided",
                     "description": string `${diagnosticDescription}\n\nFix deployed: ` +
                             string `${deployment.version} (${deployment.deploymentId}) by ${deployment.deployedBy}.`
                 },
-                retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+                retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
         string _ = check ctx->callActivity(sendCustomerEmail,
                 {
                     "to": req.customerEmail,
@@ -343,7 +343,7 @@ function resolveSupportCase(
                     "body": string `Hi ${req.customerName},\n\nWe deployed ${deployment.version} ` +
                             string `for ${req.caseRef}. Please confirm whether the issue is resolved.`
                 },
-                retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+                retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
     } else {
         string _ = check ctx->callActivity(sendCustomerEmail,
                 {
@@ -353,7 +353,7 @@ function resolveSupportCase(
                             string `reviewed the case and provided this guidance: ${triage.notes}\n\n` +
                             string `Please confirm whether this resolves the issue.`
                 },
-                retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+                retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
     }
 
     [CustomerConfirmed]|error confirmationAwaited = ctx->await(
@@ -361,13 +361,13 @@ function resolveSupportCase(
             timeout = {hours: confirmationTimeoutHours});
 
     if confirmationAwaited is error {
-        string _ = check ctx->callActivity(updateSupportCase,
+        () _ = check ctx->callActivity(updateSupportCase,
                 {
                     "caseId": caseId,
                     "status": "Solution Provided",
                     "description": string `${diagnosticDescription}\n\nWaiting for customer confirmation.`
                 },
-                retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+                retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
         return {
             caseRef: req.caseRef,
             status: "ACTION_REQUIRED",
@@ -379,13 +379,13 @@ function resolveSupportCase(
     [CustomerConfirmed] [confirmation] = confirmationAwaited;
     boolean resolved = confirmation.confirmed;
     string finalStatus = resolved ? "Closed" : "Escalated";
-    string _ = check ctx->callActivity(updateSupportCase,
+    () _ = check ctx->callActivity(updateSupportCase,
             {
                 "caseId": caseId,
                 "status": finalStatus,
                 "description": string `${diagnosticDescription}\n\nCustomer confirmation: ${confirmation.comment}`
             },
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     string _ = check ctx->callActivity(postSlackUpdate,
             {
@@ -393,7 +393,7 @@ function resolveSupportCase(
                 "text": string `${resolved ? ":white_check_mark:" : ":warning:"} Support case ` +
                         string `*${req.caseRef}* ${resolved ? "resolved" : "needs more work"}.`
             },
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     string _ = check ctx->callActivity(sendCustomerEmail,
             {
@@ -404,7 +404,7 @@ function resolveSupportCase(
                         : string `Hi ${req.customerName},\n\nThanks for the update. We escalated ` +
                                 string `${req.caseRef} for further investigation.`
             },
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     return {
         caseRef: req.caseRef,
@@ -484,8 +484,8 @@ service /support on new http:Listener(servicePort) {
     # Returns the workflow's final result.
     #
     # + workflowId - Target workflow id
-    # + return - Final execution info, or an error
-    resource function get cases/[string workflowId]() returns workflow:WorkflowExecutionInfo|error {
+    # + return - The workflow's return value, or an error
+    resource function get cases/[string workflowId]() returns anydata|error {
         return workflow:getWorkflowResult(workflowId);
     }
 }

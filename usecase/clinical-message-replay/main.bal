@@ -237,7 +237,7 @@ function attemptDelivery(workflow:Context ctx, ClinicalMessage req) returns int|
             {"req": req});
     return ctx->callActivity(deliverToEmr,
             {"req": req},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 }
 
 # Posts an interop audit message only when notifications are enabled.
@@ -251,7 +251,7 @@ function postInteropAuditIfEnabled(workflow:Context ctx, string text) returns er
     }
     string _ = check ctx->callActivity(postInteropAudit,
             {"text": text},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 }
 
 # Applies analyst instructions to the original message before replay.
@@ -306,7 +306,7 @@ function replayClinicalMessage(
     string workflowId = check ctx.getWorkflowId();
     string issueKey = check ctx->callActivity(createReplayTask,
             {"workflowId": workflowId, "req": req, "failureReason": failureReason},
-            retryOnError = true, maxRetries = 3, retryDelay = 1.0, retryBackoff = 2.0);
+            retryPolicy = {maxRetries: 3, retryDelay: 1.0, retryBackoff: 2.0});
 
     string alertText = string `:warning: Replay required for *${req.messageId}* ` +
             string `(${req.messageType}) from *${req.sourceSystem}*. Jira: ${issueKey}. ` +
@@ -438,7 +438,7 @@ service /interop on new http:Listener(servicePort) {
     # + workflowId - Target workflow id
     # + return - Workflow execution info, or an error
     resource function get messages/[string workflowId]()
-            returns workflow:WorkflowExecutionInfo|error {
+            returns anydata|error {
         return workflow:getWorkflowResult(workflowId);
     }
 }

@@ -9,7 +9,7 @@ See the full pattern explanation in [Handle Errors — Compensation](../../docs/
 ## What This Example Shows
 
 - Executing multiple activities in sequence (step 1 then step 2)
-- Retrying step 2 on transient failures with `retryOnError = true, maxRetries = 2`
+- Retrying step 2 on transient failures with `retryPolicy = {maxRetries: 2}`
 - Running a compensating activity to undo step 1 when step 2 fails
 - Workflow completes with ROLLED_BACK status (not Failed)
 

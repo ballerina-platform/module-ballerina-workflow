@@ -107,6 +107,7 @@ The `@Workflow` annotation marks the workflow entry point:
 @workflow:Workflow
 function processOrder(workflow:Context ctx, OrderRequest request) returns OrderResult|error {
     // Workflow logic with activity calls via ctx->callActivity()
+    return {orderId: request.orderId, status: "COMPLETED"};
 }
 ```
 

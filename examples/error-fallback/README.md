@@ -8,7 +8,7 @@ See the full pattern explanation in [Handle Errors — Fallback](../../docs/patt
 
 ## What This Example Shows
 
-- Opting into Temporal retries with `retryOnError = true, maxRetries = 2`
+- Opting into Temporal retries with `retryPolicy = {maxRetries: 2}`
 - Capturing the `T|error` return value after retries are exhausted
 - Calling a secondary (fallback) activity when the primary fails
 - Workflow completes successfully even when the primary path fails

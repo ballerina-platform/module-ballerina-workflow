@@ -19,7 +19,7 @@
 // Demonstrates the Ballerina Workflow Management HTTP Service alongside a
 // realistic workflow that uses:
 //   - awaitHumanTask — pauses execution for a human approval decision
-//   - Human-review retry (roles value) — pauses execution when an activity fails so an OPS user
+//   - Human-review retry (a ReviewTaskDefinition) — pauses execution when an activity fails so an OPS user
 //                      can retry (optionally with corrected input)
 //
 // Scenario — IT Equipment Procurement:

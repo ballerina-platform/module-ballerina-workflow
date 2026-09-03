@@ -100,11 +100,7 @@ public class ManagementApiArtifactExportTest {
     /** Builds the fixture, emits the executable (which runs the lifecycle task), and returns the spec path. */
     private static Path emitWithOptions(String fixture, boolean exportOpenApi, boolean exportEndpoints,
             String tempPrefix) throws IOException {
-        // Offline always: the hierarchical import in the fixtures (workflow.management.rest)
-        // otherwise sends package-name resolution to Central, and these tests must resolve
-        // entirely against the distribution built beside them.
         BuildOptions options = BuildOptions.builder()
-                .setOffline(true)
                 .setExportOpenAPI(exportOpenApi)
                 .setExportEndpoints(exportEndpoints)
                 .build();

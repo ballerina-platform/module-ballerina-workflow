@@ -64,22 +64,6 @@ public type AutoRetry record {|
     decimal maxRetryDelay?;
 |};
 
-
-# Options for activity execution via `callActivity`.
-#
-# + retryOnError - Enable automatic retries on failure (default: `false`)
-# + maxRetries - Maximum retry attempts (default: 0, no retries)
-# + retryDelay - Initial delay in seconds before the first retry (default: 1.0)
-# + retryBackoff - Multiplier applied to delay after each retry (default: 2.0)
-# + maxRetryDelay - Cap on the delay between retries, in seconds
-public type ActivityOptions record {|
-    boolean retryOnError = false;
-    int maxRetries = 0;
-    decimal retryDelay = 1.0;
-    decimal retryBackoff = 2.0;
-    decimal maxRetryDelay?;
-|};
-
 # Information about a registered workflow process.
 #
 # + name - The name of the registered process
@@ -140,7 +124,7 @@ public type HumanTaskRejectedDetail record {|
 # ```ballerina
 # Approval|workflow:HumanTaskError approval = ctx->awaitHumanTask("approve", userRoles = "FINANCE");
 # if approval is workflow:HumanTaskRejectedError {
-#     _ = check ctx->callActivity(notifyRejected, args = {"reason": approval.detail().reason});
+#     () _ = check ctx->callActivity(notifyRejected, args = {"reason": approval.detail().reason});
 # }
 # ```
 public type HumanTaskRejectedError distinct error<HumanTaskRejectedDetail>;

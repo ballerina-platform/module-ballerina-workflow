@@ -79,7 +79,8 @@ configurable int maxConcurrentActivities = 100;
 
 # Initial delay (in seconds) before the first activity retry attempt.
 # Part of the default retry policy applied to all activities unless
-# overridden per-call via `ActivityOptions` (e.g., `maxRetries`, `retryDelay`).
+# overridden per-call via `callActivity`'s `retryPolicy` (e.g., an `AutoRetry`
+# record setting `maxRetries` or `retryDelay`).
 # Must be a positive integer.
 configurable int activityRetryInitialInterval = 1;
 

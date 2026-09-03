@@ -39,6 +39,14 @@ public client class Context {
     # PaymentResult result = check ctx->callActivity(processPayment, args = {"orderId": orderId});
     # ```
     #
+    # The result type `T` is inferred from what the result is assigned to, so the call must
+    # always be bound — including when the activity returns nothing but `error?`. Bind such a
+    # call to `() _`; a bare statement or a plain `_` gives the compiler nothing to infer from:
+    #
+    # ```ballerina
+    # () _ = check ctx->callActivity(reserveStock, args = {"orderId": orderId});
+    # ```
+    #
     # + activityFunction - The activity function (must have `@Activity`)
     # + args - Arguments to pass to the activity. Values are normally `anydata`.
     #          Module-level `final` `client object` variables may also be passed for
@@ -159,17 +167,20 @@ public client class Context {
     # from the workflow descriptor the compiler plugin generates at build time.
     #
     # ```ballerina
-    # ApprovalDecision d = check ctx->awaitHumanTask("approveExpense",
-    #     {"amount": 1200, "currency": "USD"},
-    #     userRoles = "FINANCE_APPROVER",
-    #     title = "Approve order",
-    #     timeout = {hours: 24}
-    # ) on fail workflow:HumanTaskError e {
+    # do {
+    #     ApprovalDecision d = check ctx->awaitHumanTask("approveExpense",
+    #         {"amount": 1200, "currency": "USD"},
+    #         userRoles = "FINANCE_APPROVER",
+    #         title = "Approve order",
+    #         timeout = {hours: 24}
+    #     );
+    #     return d;
+    # } on fail workflow:HumanTaskError e {
     #     if e is workflow:HumanTaskTimeoutError {
-    #         check ctx->callActivity(notifyEscalation, args = {"taskName": e.detail().taskName});
+    #         () _ = check ctx->callActivity(notifyEscalation, args = {"taskName": e.detail().taskName});
     #     }
     #     return e;
-    # };
+    # }
     # ```
     #
     # + taskName - Identifies the task type; used as the Temporal workflow type and child workflow ID

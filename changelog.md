@@ -198,6 +198,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- **`bal build --export-openapi` exports the management REST API's OpenAPI description**
+  into `target/openapi/workflow_management_openapi.yaml`, beside the specs of the package's
+  own services. The management service is a library-owned service object on a
+  dynamically-managed listener, so the stock OpenAPI build extension never sees it; the
+  description ships curated inside the compiler plugin, and a plugin test keeps it complete
+  against the service source. `--export-endpoints` registers the surface's endpoint metadata
+  (name, port, base path, spec file) through the same contract the HTTP plugin uses, on
+  ballerina-lang versions that provide it.
+
 - **A parked agent stays conversational: chat messages during a durable wait are answered
   by side turns.** A conversational agent's reasoning loop runs one turn at a time, so a chat
   message sent while the loop was durably parked — a gated tool awaiting approval, a human

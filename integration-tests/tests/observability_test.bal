@@ -50,8 +50,9 @@ function testWorkflowMetricsEmission() returns error? {
     check assertMetricAtLeast("workflow_starts_total", {workflow_type: "workflow-observabilityFlow"}, 1.0);
     check assertMetricAtLeast("workflow_completions_total",
             {workflow_type: "workflow-observabilityFlow", status: "completed"}, 1.0);
+    // Activities are scheduled under their plain function name (no workflow qualifier).
     check assertMetricAtLeast("workflow_activity_executions_total",
-            {activity_type: "workflow-observabilityFlow.observabilityEcho", status: "completed"}, 1.0);
+            {activity_type: "observabilityEcho", status: "completed"}, 1.0);
     check assertMetricAtLeast("workflow_data_events_sent_total", {data_name: "obsApproval"}, 1.0);
 
     // Duration summaries exist for the completed run (value is duration, not a count).
@@ -59,7 +60,7 @@ function testWorkflowMetricsEmission() returns error? {
             {workflow_type: "workflow-observabilityFlow", status: "completed"}) !is (),
             "workflow_duration_seconds should be recorded for the completed run");
     test:assertTrue(findMetricValue("workflow_activity_duration_seconds",
-            {activity_type: "workflow-observabilityFlow.observabilityEcho", status: "completed"}) !is (),
+            {activity_type: "observabilityEcho", status: "completed"}) !is (),
             "workflow_activity_duration_seconds should be recorded for the activity execution");
 }
 

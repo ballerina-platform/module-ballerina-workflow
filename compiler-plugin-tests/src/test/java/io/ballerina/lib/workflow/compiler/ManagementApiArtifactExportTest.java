@@ -58,8 +58,7 @@ public class ManagementApiArtifactExportTest {
     public void testExportOpenApiWritesTheManagementSpec() throws IOException {
         // The fixture imports workflow.management.rest — the module that owns the service —
         // so this package genuinely can serve the API the exported spec describes.
-        Path specPath = emitWithOptions("management_rest_consumer",
-                BuildOptions.builder().setExportOpenAPI(true).build(), "wf-openapi-export");
+        Path specPath = emitWithOptions("management_rest_consumer", true, false, "wf-openapi-export");
 
         Assert.assertTrue(Files.exists(specPath),
                 "--export-openapi must write the management spec beside the package's own: " + specPath);
@@ -69,8 +68,19 @@ public class ManagementApiArtifactExportTest {
     }
 
     @Test
+    public void testExportEndpointsAloneStillWritesTheSpec() throws IOException {
+        // The endpoint metadata names the spec file as its artifact, so an endpoints-only
+        // build must write it too — metadata pointing at a file that was never written would
+        // hand every consumer of the export a dangling reference.
+        Path specPath = emitWithOptions("management_rest_consumer", false, true, "wf-endpoints-only");
+        Assert.assertTrue(Files.exists(specPath),
+                "--export-endpoints advertises the spec file in its metadata; the file must exist: "
+                        + specPath);
+    }
+
+    @Test
     public void testWithoutTheFlagNothingIsExported() throws IOException {
-        Path specPath = emitWithOptions("management_rest_consumer", null, "wf-openapi-noflag");
+        Path specPath = emitWithOptions("management_rest_consumer", false, false, "wf-openapi-noflag");
         Assert.assertFalse(Files.exists(specPath),
                 "The spec is an explicit opt-in; a plain build must not write it");
     }
@@ -81,19 +91,25 @@ public class ManagementApiArtifactExportTest {
         // workflow.management.rest there is no service object and no listener, so the package
         // cannot serve /workflow under any configuration — exporting a description of it
         // would hand a gateway a route that can never answer.
-        Path specPath = emitWithOptions("descriptor_generation",
-                BuildOptions.builder().setExportOpenAPI(true).build(), "wf-openapi-noimport");
+        Path specPath = emitWithOptions("descriptor_generation", true, false, "wf-openapi-noimport");
         Assert.assertFalse(Files.exists(specPath),
                 "A package that does not import workflow.management.rest cannot serve the API; "
                         + "the spec must not be exported for it");
     }
 
     /** Builds the fixture, emits the executable (which runs the lifecycle task), and returns the spec path. */
-    private static Path emitWithOptions(String fixture, BuildOptions options, String tempPrefix)
-            throws IOException {
-        BuildProject project = options == null
-                ? BuildProject.load(getEnvironmentBuilder(), RESOURCE_DIRECTORY.resolve(fixture))
-                : BuildProject.load(getEnvironmentBuilder(), RESOURCE_DIRECTORY.resolve(fixture), options);
+    private static Path emitWithOptions(String fixture, boolean exportOpenApi, boolean exportEndpoints,
+            String tempPrefix) throws IOException {
+        // Offline always: the hierarchical import in the fixtures (workflow.management.rest)
+        // otherwise sends package-name resolution to Central, and these tests must resolve
+        // entirely against the distribution built beside them.
+        BuildOptions options = BuildOptions.builder()
+                .setOffline(true)
+                .setExportOpenAPI(exportOpenApi)
+                .setExportEndpoints(exportEndpoints)
+                .build();
+        BuildProject project = BuildProject.load(getEnvironmentBuilder(),
+                RESOURCE_DIRECTORY.resolve(fixture), options);
         project.currentPackage().runCodeGenAndModifyPlugins();
         PackageCompilation compilation = project.currentPackage().getCompilation();
         Assert.assertEquals(compilation.diagnosticResult().errorCount(), 0,

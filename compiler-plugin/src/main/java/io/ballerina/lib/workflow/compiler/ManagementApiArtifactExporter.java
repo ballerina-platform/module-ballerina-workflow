@@ -60,7 +60,8 @@ import java.nio.file.StandardCopyOption;
  *       .addEndpointMetadata}, reached reflectively exactly as the HTTP plugin reaches it,
  *       because the API exists only in newer ballerina-lang versions. On a lang without it
  *       the request has nothing to land on; on one with it, a contract mismatch is reported
- *       as a warning rather than swallowed.</li>
+ *       as a warning rather than swallowed. The spec is written under this flag too — the
+ *       metadata names it as its artifact, so it must exist.</li>
  * </ul>
  *
  * <p>The exports run only for a package that imports {@code ballerina/workflow.management.rest}
@@ -111,9 +112,9 @@ public class ManagementApiArtifactExporter implements CompilerLifecycleTask<Comp
         if (!importsManagementRest(context.currentPackage())) {
             return;
         }
-        if (options.exportOpenAPI()) {
-            exportSpec(context);
-        }
+        // Either flag writes the spec: the endpoint metadata names it as its artifact, so an
+        // endpoints-only export must not advertise a file that was never written.
+        exportSpec(context);
         if (options.exportEndpoints()) {
             registerEndpointMetadata(context);
         }

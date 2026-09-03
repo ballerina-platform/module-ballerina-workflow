@@ -43,6 +43,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   `HumanTaskDecl`, and the array forms of an agent's `events` and `humanTasks`. An agent's
   `humanTasks` entries name their deciders with `userRoles`, not `roles`.
 
+- **Removed:** `ActivityOptions`, the last of the pre-`CallActivityOptions` retry API. Nothing
+  reads it and `callActivity` cannot take it; failure behaviour is `retryPolicy`.
+
+- **The guides, the module's API samples and the use cases now compile against this API.**
+  They still passed `retryOnError`/`maxRetries` as arguments, reached for
+  `WorkflowExecutionInfo` and `getWorkflowInfo` through the root `workflow:` prefix, called
+  `getWorkflowResult()` as if it returned one, described `workflow:Context` as optional, and
+  configured a `mode = "TEMPORAL"` with `temporalHost`/`temporalPort` that has never existed.
+  A call to an activity returning `error?` is bound as `() _ = check ctx->callActivity(...)`:
+  the inferred `T` has nothing to infer from in statement position, and a plain `_` does not
+  help. `examples/agent-object-model` is registered, so the build stops skipping it.
+
 - **The built executable now carries `workflow.def.json`** as a root-level entry, written by a
   compiler-lifecycle task and byte-identical to the generated descriptor. Executables only: a
   BALA does not carry it, and a consumer that needs it regenerates it from the package.

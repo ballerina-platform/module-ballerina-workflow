@@ -28,6 +28,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Records workflow runtime metrics through the Ballerina observability metric registry.
@@ -130,6 +131,18 @@ public final class WorkflowMetrics {
     }
 
     /**
+     * The most distinct {@code data_name} tag values given their own series. Declared event
+     * names are compile-time constants for declared workflows, but a dynamic {@code sendData}
+     * name skips that validation and reaches here as whatever the caller computed — and every
+     * distinct tag set is a new series in the registry and the exporter. Past the cap, new
+     * names collapse into {@link #OTHER_DATA_NAME}; the counter still counts, the name is the
+     * only thing surrendered.
+     */
+    private static final int MAX_DATA_NAME_SERIES = 64;
+    private static final String OTHER_DATA_NAME = "__other__";
+    private static final Set<String> SEEN_DATA_NAMES = ConcurrentHashMap.newKeySet();
+
+    /**
      * Records a data event delivered to a running workflow instance by this runtime.
      *
      * @param dataName the declared data/event name the payload was delivered to
@@ -140,10 +153,27 @@ public final class WorkflowMetrics {
         }
         try {
             counter("workflow_data_events_sent_total", "Total data events sent to workflow instances",
-                    Set.of(Tag.of(TAG_DATA_NAME, dataName))).increment();
+                    Set.of(Tag.of(TAG_DATA_NAME, boundedDataName(dataName)))).increment();
         } catch (Exception e) {
             LOGGER.debug("Failed to record data event metric", e);
         }
+    }
+
+    /**
+     * The tag value for one delivery: the name itself while the distinct-name budget lasts,
+     * {@value #OTHER_DATA_NAME} afterwards. The check-then-add race can overshoot the cap by
+     * a few concurrent senders; the bound this exists for is "not one series per request",
+     * and that holds either way.
+     */
+    private static String boundedDataName(String dataName) {
+        if (SEEN_DATA_NAMES.contains(dataName)) {
+            return dataName;
+        }
+        if (SEEN_DATA_NAMES.size() >= MAX_DATA_NAME_SERIES) {
+            return OTHER_DATA_NAME;
+        }
+        SEEN_DATA_NAMES.add(dataName);
+        return dataName;
     }
 
     private static boolean isMetricsEnabled() {

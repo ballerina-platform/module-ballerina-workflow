@@ -20,6 +20,7 @@ package io.ballerina.lib.workflow.runtime.nativeimpl;
 
 import io.ballerina.lib.workflow.ModuleUtils;
 import io.ballerina.lib.workflow.context.WorkflowContextNative;
+import io.ballerina.lib.workflow.observability.WorkerSpans;
 import io.ballerina.lib.workflow.runtime.WorkflowRuntime;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
@@ -611,11 +612,13 @@ public final class DurableAgentNative {
         if (isInsideWorkflow()) {
             return WorkflowContextNative.startDurableAgentChild(agentName, runInput);
         }
+        final Map<String, String> traceContext = WorkerSpans.captureTraceContext(env);
         return env.yieldAndRun(() -> {
             CompletableFuture<Object> balFuture = new CompletableFuture<>();
             WorkflowRuntime.getInstance().getExecutor().execute(() -> {
                 try {
-                    String workflowId = WorkflowRuntime.getInstance().createInstance(workflowType, runInput);
+                    String workflowId = WorkflowRuntime.getInstance().createInstance(workflowType, runInput,
+                            traceContext);
                     balFuture.complete(StringUtils.fromString(workflowId));
                 } catch (Exception e) {
                     balFuture.complete(ErrorCreator.createError(StringUtils.fromString(

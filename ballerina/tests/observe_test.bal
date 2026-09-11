@@ -15,6 +15,7 @@
 // under the License.
 
 import ballerina/jballerina.java;
+import ballerina/lang.runtime;
 import ballerina/observe as observability;
 import ballerina/observe.mockextension as mock;
 import ballerina/test;
@@ -158,6 +159,39 @@ function testWorkflowSpanSurfaceEndToEnd() returns error? {
     test:assertEquals(sendSpan.tags["workflow.data.name"], "chat");
     mock:Span resultSpan = check findUnitSpan("get_workflow_result", "workflow.instance.id", runId);
     test:assertEquals(resultSpan.tags["module"], "workflow");
+
+    // The run's own story joins the trace its start opened: the run, the model call, the chat wait
+    // and the activity attempt are worker spans sharing the start span's trace id.
+    mock:Span startSpan = check findUnitSpan("start_workflow", "workflow.instance.id", runId);
+    mock:Span[] story = check workerSpansOf(runId, 4);
+    test:assertTrue(hasOperation(story, "workflow workflow-chatStockAgent"), "the run itself is a span");
+    test:assertTrue(hasOperation(story, "agent.model_call llmChat"), "each model call is a span");
+    test:assertTrue(hasOperation(story, "agent.event_wait chat"), "each event wait is a span");
+    test:assertTrue(hasOperation(story, "activity llmChat"), "each activity attempt is a span");
+    foreach mock:Span span in story {
+        test:assertEquals(span.traceId, startSpan.traceId,
+                string `worker span '${span.operationName}' should join the trace that started the run`);
+        test:assertEquals(span.tags["type"], "worker");
+    }
+}
+
+// The worker-side spans tagged with the instance, once at least `atLeast` of them have finished.
+function workerSpansOf(string instanceId, int atLeast) returns mock:Span[]|error {
+    mock:Span[] found = [];
+    foreach int attempt in 0 ..< 20 {
+        found = from mock:Span span in mock:getFinishedSpans("workflow")
+            where span.tags["workflow.instance.id"] == instanceId
+            select span;
+        if found.length() >= atLeast {
+            return found;
+        }
+        runtime:sleep(0.5);
+    }
+    return error(string `only ${found.length()} worker spans finished for ${instanceId}`);
+}
+
+function hasOperation(mock:Span[] spans, string operationName) returns boolean {
+    return spans.some(span => span.operationName == operationName);
 }
 
 @test:Config {

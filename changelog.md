@@ -15,6 +15,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
     `DurableAgent.sendData`, nesting into the caller's existing request trace. Spans are
     suppressed inside workflow bodies (replay safety) and record structural identifiers —
     and, on a decision, who made it.
+  - **One trace per run.** The caller's trace context travels with every start as an engine
+    header, and the worker records the run's execution under it, replay-safely: the run
+    itself (`workflow <type>`), each activity attempt (`activity <type>`), each data event
+    received (`workflow.data_received <name>`) and each durable-agent step
+    (`agent.model_call`, `agent.tool_call <tool>`, `agent.event_wait <event>`, `agent.sleep`,
+    `agent.task_wait <task>`, `agent.tool_review <tool>`), all tagged with the instance id and
+    published under the service `workflow`. A run started without a trace context forms a
+    trace of its own.
   - Metrics, following the Ballerina integration observability standard: one
     `workflow_events_total` counter carries every lifecycle event (`started`, `closed`,
     `activity_executed`, `data_sent`, `task_decided`), recorded replay-safely; logical

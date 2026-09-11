@@ -82,9 +82,12 @@ a series.
 
 ## Traces with Jaeger
 
-Tracing answers *what happened inside one request*: starting a workflow, sending it data,
-deciding a human task each leave a span nested in the caller's trace, tagged with the
-workflow type, instance ID, and — on decisions — who decided and in which roles.
+Tracing answers *what happened to one run*. The request that starts a workflow opens a
+trace; the run's execution joins it — the run itself, each activity attempt, each data event
+it receives and, for a durable agent, each model call, tool call, event wait, sleep and
+human-task wait become spans under that trace, on whichever worker they run and across
+restarts. Sending data and deciding a task leave spans in their own callers' traces, tagged
+with the same instance ID (and, on decisions, who decided and in which roles).
 
 [Jaeger](https://www.jaegertracing.io) is Ballerina's supported tracing backend, via
 `ballerinax/jaeger`:
@@ -112,11 +115,16 @@ docker run -d --name jaeger \
     jaegertracing/all-in-one:1.60
 ```
 
-In the UI, search by the span tags: `workflow.instance.id` finds every client-side
-operation that touched one instance; `user.id` finds every decision one person made. The
-spans deliberately stop at the client boundary — a durable run may execute for days across
-restarts, so execution-side visibility comes from the engine history and the management
-API, joined to a trace by `workflow.instance.id`.
+In the UI, the service `workflow` holds the execution spans (`workflow <type>`,
+`activity <type>`, `agent.tool_call <tool>`, …), and your own services hold the client
+spans (`start_workflow`, `send_data`, `complete_human_task`, …). Open the trace of the
+request that started a run to read the run's whole story; search by the tag
+`workflow.instance.id` to gather every trace that touched one instance, including the
+decisions people made on it; search by `user.id` for every decision one person made.
+
+A span the worker opened is lost if that worker stops before the step ends — a run that
+survives a restart shows a `workflow.closed` marker instead of one long `workflow` span,
+and the metrics still count every step.
 
 By default the trace sampler is `const` with rate 1 (every trace is reported); for
 production volumes configure sampling under `[ballerinax.jaeger]` (`samplerType`,

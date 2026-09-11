@@ -23,6 +23,8 @@ import io.ballerina.lib.workflow.context.AgentContextNative;
 import io.ballerina.lib.workflow.context.SignalAwaitWrapper;
 import io.ballerina.lib.workflow.context.WorkflowContextNative;
 import io.ballerina.lib.workflow.observability.ActivityContentLog;
+import io.ballerina.lib.workflow.observability.TraceContextPropagator;
+import io.ballerina.lib.workflow.observability.WorkerSpans;
 import io.ballerina.lib.workflow.observability.WorkflowMetrics;
 import io.ballerina.lib.workflow.observability.WorkflowSampleLog;
 import io.ballerina.lib.workflow.registry.EventInfo;
@@ -52,6 +54,7 @@ import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BObject;
 import io.ballerina.runtime.api.values.BString;
+import io.opentelemetry.api.trace.Span;
 import io.temporal.activity.DynamicActivity;
 import io.temporal.api.common.v1.WorkflowExecution;
 import io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest;
@@ -602,6 +605,8 @@ public final class WorkflowWorkerNative {
                     io.temporal.client.WorkflowClientOptions.newBuilder()
                                                             .setNamespace(ns)
                                                             .setDataConverter(dataConverter)
+                                                            .setContextPropagators(
+                                                                    List.of(new TraceContextPropagator()))
                                                             .build();
             workflowClient = WorkflowClient.newInstance(serviceStubs, clientOptions);
 
@@ -684,6 +689,8 @@ public final class WorkflowWorkerNative {
                                                                       io.temporal.client.WorkflowClientOptions
                                                                               .newBuilder()
                                                                               .setDataConverter(dataConverter)
+                                                                              .setContextPropagators(List.of(
+                                                                                      new TraceContextPropagator()))
                                                                               .build())
                                                               .build();
             testEnvironment = TestWorkflowEnvironment.newInstance(testOptions);
@@ -1991,15 +1998,28 @@ public final class WorkflowWorkerNative {
         // This ensures isolation between workflow instances and proper state management
         private BObject serviceObject;
         private String workflowType;
+        private Span runSpan;
+        private Map<String, String> runTraceContext;
 
         /**
          * No-arg constructor required by Temporal for dynamic workflows.
          */
         public BallerinaWorkflowAdapter() {
+            // A signal delivered in the first workflow task is handled before execute() runs, and a signal
+            // handler's thread carries the signal's own header context, not the run's: keep the run's here.
+            runTraceContext = TraceContextPropagator.current();
             // Register a dynamic signal handler that handles all signals
             Workflow.registerListener(
                     (io.temporal.workflow.DynamicSignalHandler) (signalName, encodedArgs) -> {
                         LOGGER.debug("[JWorkflowAdapter] Signal received: {}", signalName);
+                        if (!Workflow.isReplaying() && !isFrameworkSignal(signalName)) {
+                            Map<String, String> tags = WorkerSpans.runTags(Workflow.getInfo());
+                            tags.put("workflow.data.name", signalName);
+                            // Signal handlers run on their own workflow thread, which the engine does not
+                            // hand the propagated context to; the run's context was kept at first execution.
+                            WorkerSpans.point("workflow.data_received " + signalName, tags, null,
+                                    runTraceContext != null ? runTraceContext : TraceContextPropagator.current());
+                        }
 
                         // Framework-owned lifecycle signals: suspend/resume (ballerina-library#8903).
                         // These set the per-execution suspended flag that awaitWhileSuspended() gates
@@ -2334,11 +2354,22 @@ public final class WorkflowWorkerNative {
         public Object execute(EncodedValues args) {
             io.temporal.workflow.WorkflowInfo workflowInfo = Workflow.getInfo();
             String executingType = workflowInfo.getWorkflowType();
+            if (runTraceContext == null) {
+                runTraceContext = TraceContextPropagator.current();
+            }
             // The run's first execution is where every start path converges; on replay the body
             // runs again but nothing new started.
             if (!Workflow.isReplaying()) {
                 WorkflowMetrics.recordWorkflowStarted(executingType);
                 WorkflowSampleLog.workflowStarted(executingType, workflowInfo.getWorkflowId(), workflowInfo.getRunId());
+                runSpan = WorkerSpans.begin("workflow " + executingType, WorkerSpans.runTags(workflowInfo));
+                // What the run does from here — activities, agent steps, child tasks, data events — nests
+                // under the run span, and the engine carries that context to them.
+                Map<String, String> runContext = WorkerSpans.contextOf(runSpan);
+                if (runContext != null) {
+                    runTraceContext = runContext;
+                    TraceContextPropagator.setCurrent(runContext);
+                }
             }
             try {
                 Object result = executeInternal(args);
@@ -2348,6 +2379,7 @@ public final class WorkflowWorkerNative {
                     WorkflowMetrics.recordWorkflowClosed(executingType, elapsed, null);
                     WorkflowSampleLog.workflowClosed(executingType, workflowInfo.getWorkflowId(),
                             workflowInfo.getRunId(), elapsed, false);
+                    closeRunSpan(workflowInfo, elapsed, null);
                 }
                 return result;
             } catch (io.temporal.worker.NonDeterministicException e) {
@@ -2358,9 +2390,24 @@ public final class WorkflowWorkerNative {
                     WorkflowMetrics.recordWorkflowClosed(executingType, elapsed, e);
                     WorkflowSampleLog.workflowClosed(executingType, workflowInfo.getWorkflowId(),
                             workflowInfo.getRunId(), elapsed, true);
+                    closeRunSpan(workflowInfo, elapsed, e);
                 }
                 throw e;
             }
+        }
+
+        // The run span is open only while this worker saw the run from its start; after a restart the
+        // close is recorded as a span of its own, carrying the run's duration.
+        private void closeRunSpan(io.temporal.workflow.WorkflowInfo info, long elapsedMillis, Throwable failure) {
+            Map<String, String> tags = WorkerSpans.runTags(info);
+            tags.put("workflow.duration.seconds", String.valueOf(elapsedMillis / 1000.0));
+            if (runSpan != null) {
+                WorkerSpans.tag(runSpan, tags);
+                WorkerSpans.end(runSpan, failure);
+                runSpan = null;
+                return;
+            }
+            WorkerSpans.point("workflow.closed " + info.getWorkflowType(), tags, failure);
         }
 
         private Object executeInternal(EncodedValues args) {
@@ -2911,6 +2958,7 @@ public final class WorkflowWorkerNative {
             String executingActivityType = info.getActivityType();
             // The built-in implicit activities are engine plumbing, not user activities: no telemetry for them.
             boolean observed = !executingActivityType.startsWith(BUILTIN_PREFIX);
+            Span span = observed ? WorkerSpans.begin("activity " + executingActivityType, activityTags(info)) : null;
             long startNanos = System.nanoTime();
             Object result = null;
             Exception failure = null;
@@ -2927,8 +2975,19 @@ public final class WorkflowWorkerNative {
                             durationMillis, failure);
                     WorkflowSampleLog.activityExecuted(info, durationMillis, failure != null);
                     ActivityContentLog.record(info, args, durationMillis, result, failure);
+                    WorkerSpans.end(span, failure);
                 }
             }
+        }
+
+        private static Map<String, String> activityTags(io.temporal.activity.ActivityInfo info) {
+            Map<String, String> tags = new java.util.LinkedHashMap<>();
+            tags.put("workflow.instance.id", info.getWorkflowId());
+            tags.put("workflow.run.id", info.getRunId());
+            tags.put("workflow.type", info.getWorkflowType());
+            tags.put("workflow.activity.type", info.getActivityType());
+            tags.put("workflow.activity.attempt", String.valueOf(info.getAttempt()));
+            return tags;
         }
 
         @SuppressWarnings("unchecked")

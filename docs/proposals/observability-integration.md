@@ -72,6 +72,48 @@ Every span carries `workflow.operation.name` and `span.type = workflow` (mirrori
 attribute `gen_ai.agent.name` so agent traces correlate with `ai.observe` spans; decision
 spans reuse the OpenTelemetry `user.id` and `user.roles` attributes for who decided.
 
+### Execution spans: one trace per run
+
+Client spans alone leave the story in pieces: the request that started a run is one trace,
+the request that sent it data is another, and the days of execution in between — activities,
+an agent's steps, a human task waiting on a person — are not in any trace. The module closes
+that gap in two moves, both compatible with replay.
+
+**The trace context travels with the run.** `run`, `DurableAgent.run` and the management
+start read the caller's current span (its trace and span id, from the Ballerina observer
+context — the `start_workflow` span itself when nothing else is active) and hand it to the
+engine as a header through a Temporal `ContextPropagator`. The engine delivers that header to
+every workflow task, every activity attempt and every child workflow of the run — human
+tasks, review activities, child agents — so the worker always knows which trace the run
+belongs to, on whichever worker and however many restarts later. Once the worker has opened
+the run's own span it propagates that instead, so the run's steps nest under the run. The
+worker opens its spans through the OpenTelemetry API with that explicit parent rather than
+through header injection, which is the tracer provider's business and not every provider
+does it. A run started by an untraced caller carries no context; its execution spans then
+form a trace of their own, still tagged with the instance id.
+
+**The worker records what happens, as spans under that context**, from the same replay-gated
+points that record the metrics, so no span is emitted twice:
+
+| Span | Opened / closed | Tags beyond the run's (`workflow.instance.id`, `workflow.run.id`, `workflow.type`, task kind/name for a task child) |
+|---|---|---|
+| `workflow <type>` | the run's first execution → its close on the same worker; after a restart the close is recorded as `workflow.closed <type>` on its own | `workflow.duration.seconds`; error tags on failure |
+| `activity <type>` | around each attempt, on the activity thread | `workflow.activity.type`, `workflow.activity.attempt`; error tags on failure |
+| `workflow.data_received <name>` | when a data event reaches the run | `workflow.data.name` |
+| `agent.model_call <activity>`, `agent.tool_call <tool>`, `agent.event_wait <event>`, `agent.sleep`, `agent.task_wait <task>`, `agent.tool_review <tool>` | around each agent step, on the workflow thread; a step that began on another worker gets a span at completion carrying its duration | `workflow.agent.step`, `workflow.agent.tool`, `workflow.data.name`, `workflow.task.name`, `workflow.task.action`, `workflow.step.duration.seconds`; a timed-out wait is an error span with `error.type = TIMEOUT` |
+
+Execution spans are published under the service name `workflow` with the identity tags and
+`type = worker`, so a tracing UI lists them beside the client-side `client` spans of the
+integration's own services. A human task child's `workflow humantask-<def>.<task>` span is
+the wait for the person; the decision that ends it stays in the decider's own trace (the
+person acted in a different request) but carries the same `workflow.instance.id`, so a tag
+search still gathers everything that touched the run.
+
+Two limits follow from durable execution: a span this worker opened is lost if the worker
+stops before the step ends (the close is then a marker span, and the metrics still count
+the step), and the activity span does not become the parent of the Ballerina spans the
+activity's own code emits — those keep their existing shape.
+
 ### Metrics: one events counter, uniform labels
 
 The metrics follow the Ballerina integration observability standard (the model the file

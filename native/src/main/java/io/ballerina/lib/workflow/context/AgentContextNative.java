@@ -39,6 +39,7 @@ import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BObject;
 import io.ballerina.runtime.api.values.BString;
 import io.ballerina.runtime.api.values.BTypedesc;
+import io.opentelemetry.api.trace.Span;
 import io.temporal.activity.ActivityOptions;
 import io.temporal.common.RetryOptions;
 import io.temporal.failure.ActivityFailure;
@@ -455,6 +456,7 @@ public final class AgentContextNative {
             }
 
             info.beginPark("a human approval decision for the gated tool '" + activityName + "'", null);
+            Span span = AgentStepTelemetry.begin("agent.tool_review " + name);
             long startedAt = Workflow.currentTimeMillis();
             Map<String, Object> decision;
             try {
@@ -469,7 +471,7 @@ public final class AgentContextNative {
                 info.endPark();
             }
             AgentStepTelemetry.record(AgentStep.toolReviewed(workflowType, name, reviewTaskName,
-                    String.valueOf(decision.get("action")), Workflow.currentTimeMillis() - startedAt));
+                    String.valueOf(decision.get("action")), Workflow.currentTimeMillis() - startedAt), span);
             return StringUtils.fromString(TypesUtil.toJsonString(decision));
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -605,6 +607,7 @@ public final class AgentContextNative {
             io.ballerina.lib.workflow.worker.WorkflowWorkerNative.awaitWhileSuspended();
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             info.beginPark("a timer (the built-in sleep tool)", null);
+            Span span = AgentStepTelemetry.begin("agent.sleep");
             long startedAt = Workflow.currentTimeMillis();
             boolean woken;
             try {
@@ -617,7 +620,7 @@ public final class AgentContextNative {
                 io.ballerina.lib.workflow.worker.WorkflowWorkerNative.clearWakeRequest();
             }
             AgentStepTelemetry.record(AgentStep.slept(Workflow.getInfo().getWorkflowType(), woken,
-                                                      Workflow.currentTimeMillis() - startedAt));
+                                                      Workflow.currentTimeMillis() - startedAt), span);
             return !woken;
         } catch (io.temporal.worker.NonDeterministicException | io.temporal.failure.TemporalFailure e) {
             throw e;
@@ -1159,12 +1162,13 @@ public final class AgentContextNative {
      * Enforces the max-event-waits cap (hard failure) and the per-wait timeout (returns {@link TimedOut}).
      */
     private static Object awaitSignal(AgentContextInfo info, String eventName) throws Exception {
+        Span span = AgentStepTelemetry.begin("agent.event_wait " + eventName);
         long startedAt = Workflow.currentTimeMillis();
         Object data = awaitSignalUnrecorded(info, eventName);
         String errorType = data instanceof TimedOut ? AgentStep.ERROR_EVENT_TIMEOUT
                 : data instanceof BError ? AgentStep.ERROR_EVENT_WAIT_CAP : null;
         AgentStepTelemetry.record(AgentStep.eventReceived(Workflow.getInfo().getWorkflowType(), eventName,
-                                                          Workflow.currentTimeMillis() - startedAt, errorType));
+                                                          Workflow.currentTimeMillis() - startedAt, errorType), span);
         return data;
     }
 
@@ -1256,6 +1260,7 @@ public final class AgentContextNative {
             return inputMismatch;
         }
         info.beginPark("a person to complete the task '" + taskName.getValue() + "'", null);
+        Span span = AgentStepTelemetry.begin("agent.task_wait " + taskName.getValue());
         long startedAt = Workflow.currentTimeMillis();
         Object result;
         try {
@@ -1269,7 +1274,7 @@ public final class AgentContextNative {
         String workflowType = Workflow.getInfo().getWorkflowType();
         AgentStepTelemetry.record(AgentStep.taskAwaited(workflowType, taskName.getValue(),
                 humanTaskNameFor(workflowType, taskName.getValue()),
-                Workflow.currentTimeMillis() - startedAt, taskErrorTypeOf(result)));
+                Workflow.currentTimeMillis() - startedAt, taskErrorTypeOf(result)), span);
         return result;
     }
 
@@ -1374,14 +1379,17 @@ public final class AgentContextNative {
      */
     private static Object executeActivity(String activityName, Map<String, Object> namedArgs, BTypedesc td,
                                           Object retryPolicy, String site, String toolName) {
+        boolean modelCall = MODEL_ACTIVITIES.contains(activityName);
+        String tool = toolName != null ? toolName : activityName;
+        Span span = AgentStepTelemetry.begin(
+                modelCall ? "agent.model_call " + activityName : "agent.tool_call " + tool);
         long startedAt = Workflow.currentTimeMillis();
         ActivityOutcome outcome = runActivity(activityName, namedArgs, td, retryPolicy, site);
         long elapsed = Workflow.currentTimeMillis() - startedAt;
         String workflowType = Workflow.getInfo().getWorkflowType();
-        AgentStepTelemetry.record(MODEL_ACTIVITIES.contains(activityName)
+        AgentStepTelemetry.record(modelCall
                 ? AgentStep.modelCall(workflowType, activityName, elapsed, outcome.errorType())
-                : AgentStep.toolCall(workflowType, activityName, toolName != null ? toolName : activityName,
-                                     elapsed, outcome.errorType()));
+                : AgentStep.toolCall(workflowType, activityName, tool, elapsed, outcome.errorType()), span);
         return outcome.value();
     }
 

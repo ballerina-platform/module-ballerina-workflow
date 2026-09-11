@@ -18,6 +18,7 @@
 
 package io.ballerina.lib.workflow.runtime;
 
+import io.ballerina.lib.workflow.observability.TraceContextPropagator;
 import io.ballerina.lib.workflow.observability.WorkflowMetrics;
 import io.ballerina.lib.workflow.observability.WorkflowSampleLog;
 import io.ballerina.lib.workflow.utils.CorrelationExtractor;
@@ -114,6 +115,11 @@ public final class WorkflowRuntime {
      * @throws RuntimeException if the process is not registered
      */
     public String createInstance(String processName, Object input) {
+        return createInstance(processName, input, null);
+    }
+
+    // As above, with the caller's trace context riding the start so the run's spans join the caller's trace.
+    public String createInstance(String processName, Object input, java.util.Map<String, String> traceContext) {
         // Verify the process is registered in WorkflowWorkerNative
         if (!WorkflowWorkerNative.getProcessRegistry().containsKey(processName)) {
             throw new RuntimeException("Process not registered: " + processName);
@@ -155,7 +161,7 @@ public final class WorkflowRuntime {
 
             // Start the workflow asynchronously with the input data. The started event is
             // counted at the worker's first execution, where every start path converges.
-            workflowStub.start(input);
+            TraceContextPropagator.runWith(traceContext, () -> workflowStub.start(input));
 
             LOGGER.debug("Started workflow: type={}, id={}", processName, workflowId);
             return workflowId;

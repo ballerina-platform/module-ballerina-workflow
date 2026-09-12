@@ -43,6 +43,8 @@ import io.ballerina.runtime.api.values.BArray;
 import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.temporal.api.common.v1.Payload;
 import io.temporal.api.common.v1.Payloads;
 import io.temporal.api.common.v1.WorkflowExecution;
@@ -59,8 +61,6 @@ import io.temporal.api.workflowservice.v1.GetWorkflowExecutionHistoryRequest;
 import io.temporal.api.workflowservice.v1.GetWorkflowExecutionHistoryResponse;
 import io.temporal.api.workflowservice.v1.GetWorkflowExecutionHistoryReverseRequest;
 import io.temporal.api.workflowservice.v1.GetWorkflowExecutionHistoryReverseResponse;
-import io.temporal.api.workflowservice.v1.ListWorkflowExecutionsRequest;
-import io.temporal.api.workflowservice.v1.ListWorkflowExecutionsResponse;
 import io.temporal.api.workflowservice.v1.ResetWorkflowExecutionRequest;
 import io.temporal.api.workflowservice.v1.ResetWorkflowExecutionResponse;
 import io.temporal.client.WorkflowClient;
@@ -480,6 +480,13 @@ public final class ManagementNative {
             // scanning the namespace and discarding.
             clauses.add("WorkflowType STARTS_WITH '" + WorkflowWorkerNative.HUMANTASK_TYPE_PREFIX + "'");
             String query = String.join(" AND ", clauses);
+            // The same filters a server without the query API cannot read off the query. The type
+            // is left out: the loop below re-checks it anyway.
+            VisibilityCompat.Filter filter = new VisibilityCompat.Filter()
+                    .statuses(taskStatusesOf(statusFilter))
+                    .taskQueue(taskQueue)
+                    .startTime(startTimeFrom, startTimeTo)
+                    .closeTime(closeTimeFrom, closeTimeTo);
 
             RecordType summaryType = (RecordType) ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                                  "HumanTaskSummary").getType();
@@ -487,29 +494,17 @@ public final class ManagementNative {
 
             ByteString pageToken = ByteString.EMPTY;
             do {
-                ListWorkflowExecutionsRequest request = ListWorkflowExecutionsRequest
-                        .newBuilder()
-                        .setNamespace(client.getOptions().getNamespace())
-                        .setQuery(query)
-                        .setPageSize(100)
-                        .setNextPageToken(pageToken)
-                        .build();
+                VisibilityCompat.Page page = VisibilityCompat.fetchPage(client, query, filter, 100, pageToken,
+                                                                        GET_INFO_DEADLINE_SECONDS);
 
-                ListWorkflowExecutionsResponse response =
-                        client
-                                .getWorkflowServiceStubs()
-                                .blockingStub()
-                                .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                                .listWorkflowExecutions(request);
-
-                for (WorkflowExecutionInfo wfInfo : response.getExecutionsList()) {
+                for (WorkflowExecutionInfo wfInfo : page.executions()) {
                     if (!isHumanTaskType(wfInfo.getType().getName())) {
                         continue;
                     }
                     result.append(toHumanTaskSummaryRecord(client, wfInfo));
                 }
 
-                pageToken = response.getNextPageToken();
+                pageToken = page.nextPageToken();
             } while (!pageToken.isEmpty());
 
             return result;
@@ -897,6 +892,41 @@ public final class ManagementNative {
         }
     }
 
+    // The structured form of addTaskStatusClause, for the path where the filter is applied in the
+    // client rather than by the server. A status this does not know narrows nothing, the same way
+    // the clause builder passes an unknown status through to the server.
+    private static Set<WorkflowExecutionStatus> taskStatusesOf(String status) {
+        if (status == null) {
+            return null;
+        }
+        return switch (status.toUpperCase(Locale.ROOT)) {
+            case "PENDING", "RUNNING" -> Set.of(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING);
+            case "COMPLETED" -> Set.of(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_COMPLETED);
+            case "FAILED" -> Set.of(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_FAILED,
+                                    WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_TIMED_OUT);
+            case "CANCELED" -> Set.of(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_CANCELED);
+            case "TERMINATED" -> Set.of(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_TERMINATED);
+            default -> null;
+        };
+    }
+
+    // The structured form of the instance-listing status clause. SUSPENDED is Running here too:
+    // the memo flag that distinguishes it is read per row, after the status filter.
+    private static Set<WorkflowExecutionStatus> workflowStatusesOf(String status) {
+        if (status == null) {
+            return null;
+        }
+        return switch (status.toUpperCase(Locale.ROOT)) {
+            case "RUNNING", "SUSPENDED" -> Set.of(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING);
+            case "COMPLETED" -> Set.of(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_COMPLETED);
+            case "FAILED" -> Set.of(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_FAILED);
+            case "CANCELED" -> Set.of(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_CANCELED);
+            case "TERMINATED" -> Set.of(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_TERMINATED);
+            case "TIMED_OUT" -> Set.of(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_TIMED_OUT);
+            default -> null;
+        };
+    }
+
     /**
      * Returns {@code true} when the workflow type names a human task child. The type is the
      * classifier — instance ids are bare UUIDs and say nothing about what an instance is.
@@ -1238,6 +1268,13 @@ public final class ManagementNative {
                     + "' OR WorkflowType = '" + WorkflowWorkerNative.LEGACY_RETRYTASK_WORKFLOW_TYPE
                     + "' OR WorkflowType STARTS_WITH '" + WorkflowWorkerNative.LEGACY_RETRYTASK_WORKFLOW_TYPE + "-')");
             String query = String.join(" AND ", clauses);
+            // As in listAllHumanTasks: the type stays with the loop's own check, which already
+            // covers the legacy retrytask forms this query spells out.
+            VisibilityCompat.Filter filter = new VisibilityCompat.Filter()
+                    .statuses(taskStatusesOf(statusFilter))
+                    .taskQueue(taskQueue)
+                    .startTime(startTimeFrom, startTimeTo)
+                    .closeTime(closeTimeFrom, closeTimeTo);
 
             RecordType summaryType = (RecordType) ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                                  "ReviewActivitySummary").getType();
@@ -1245,29 +1282,17 @@ public final class ManagementNative {
 
             ByteString pageToken = ByteString.EMPTY;
             do {
-                ListWorkflowExecutionsRequest request = ListWorkflowExecutionsRequest
-                        .newBuilder()
-                        .setNamespace(client.getOptions().getNamespace())
-                        .setQuery(query)
-                        .setPageSize(100)
-                        .setNextPageToken(pageToken)
-                        .build();
+                VisibilityCompat.Page page = VisibilityCompat.fetchPage(client, query, filter, 100, pageToken,
+                                                                        GET_INFO_DEADLINE_SECONDS);
 
-                ListWorkflowExecutionsResponse response =
-                        client
-                                .getWorkflowServiceStubs()
-                                .blockingStub()
-                                .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                                .listWorkflowExecutions(request);
-
-                for (WorkflowExecutionInfo wfInfo : response.getExecutionsList()) {
+                for (WorkflowExecutionInfo wfInfo : page.executions()) {
                     if (!isReviewActivityType(wfInfo.getType().getName())) {
                         continue;
                     }
                     result.append(toReviewActivitySummaryRecord(client, wfInfo));
                 }
 
-                pageToken = response.getNextPageToken();
+                pageToken = page.nextPageToken();
             } while (!pageToken.isEmpty());
 
             return result;
@@ -1786,6 +1811,21 @@ public final class ManagementNative {
             addKindClause(clauses, kind);
 
             String query = String.join(" AND ", clauses);
+            // The clauses above restated for a server without the query API. Suspension is not
+            // here: it is a memo flag the loop below splits out of Running either way.
+            VisibilityCompat.Filter filter = new VisibilityCompat.Filter()
+                    .statuses(workflowStatusesOf(statusFilter))
+                    .taskQueue(taskQueue)
+                    .startTime(startTimeFrom, startTimeTo)
+                    .closeTime(closeTimeFrom, closeTimeTo);
+            if (workflowType instanceof BString filterType) {
+                filter.exactType(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + filterType.getValue());
+            } else if (!(kind instanceof BString filterKind && !filterKind.getValue().isBlank())) {
+                filter.typePrefix(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX);
+            }
+            if (workflowId instanceof BString filterId) {
+                filter.workflowIdPrefix(filterId.getValue());
+            }
             int pageSize = (int) Math.min(limit, 100);
 
             ByteString nextPageTokenBytes = ByteString.EMPTY;
@@ -1810,23 +1850,10 @@ public final class ManagementNative {
             ByteString nextToken = nextPageTokenBytes;
 
             while (matchedCount < pageSize) {
-                int temporalPageSize = pageSize;
-                ListWorkflowExecutionsRequest request = ListWorkflowExecutionsRequest
-                        .newBuilder()
-                        .setNamespace(client.getOptions().getNamespace())
-                        .setQuery(query)
-                        .setPageSize(temporalPageSize)
-                        .setNextPageToken(nextToken)
-                        .build();
+                VisibilityCompat.Page visPage = VisibilityCompat.fetchPage(client, query, filter, pageSize,
+                                                                           nextToken, GET_INFO_DEADLINE_SECONDS);
 
-                ListWorkflowExecutionsResponse response =
-                        client
-                                .getWorkflowServiceStubs()
-                                .blockingStub()
-                                .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                                .listWorkflowExecutions(request);
-
-                for (WorkflowExecutionInfo wfInfo : response.getExecutionsList()) {
+                for (WorkflowExecutionInfo wfInfo : visPage.executions()) {
                     if (hasStartedByFilter) {
                         String startedByMemo = decodeMemoString(client.getOptions().getDataConverter(),
                                                                 wfInfo.getMemo().getFieldsMap(), "startedBy", null);
@@ -1895,7 +1922,7 @@ public final class ManagementNative {
                     }
                 }
 
-                nextToken = response.getNextPageToken();
+                nextToken = visPage.nextPageToken();
                 if (nextToken.isEmpty()) {
                     break;
                 }
@@ -2811,20 +2838,40 @@ public final class ManagementNative {
                     pageToken = resp.getNextPageToken();
                 } while (!pageToken.isEmpty());
             } else {
-                do {
-                    GetWorkflowExecutionHistoryReverseResponse resp = client.getWorkflowServiceStubs().blockingStub()
-                            .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                            .getWorkflowExecutionHistoryReverse(
-                                    GetWorkflowExecutionHistoryReverseRequest.newBuilder()
-                                            .setNamespace(ns).setExecution(exec.build())
-                                            .setNextPageToken(pageToken).setMaximumPageSize(500).build());
-                    for (HistoryEvent event : resp.getHistory().getEventsList()) {
+                try {
+                    do {
+                        GetWorkflowExecutionHistoryReverseResponse resp = client.getWorkflowServiceStubs()
+                                .blockingStub()
+                                .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                                .getWorkflowExecutionHistoryReverse(
+                                        GetWorkflowExecutionHistoryReverseRequest.newBuilder()
+                                                .setNamespace(ns).setExecution(exec.build())
+                                                .setNextPageToken(pageToken).setMaximumPageSize(500).build());
+                        for (HistoryEvent event : resp.getHistory().getEventsList()) {
+                            if (isResettableWorkflowTask(event.getEventType())) {
+                                return event.getEventId();
+                            }
+                        }
+                        pageToken = resp.getNextPageToken();
+                    } while (!pageToken.isEmpty());
+                } catch (StatusRuntimeException e) {
+                    if (e.getStatus().getCode() != Status.Code.UNIMPLEMENTED) {
+                        throw e;
+                    }
+                    // The reverse feed is an optimization, not the only way to reach the last
+                    // task: a server without it (the in-memory dev server) is served by reading
+                    // the history forward and keeping the last match.
+                    long last = -1;
+                    for (HistoryEvent event : fetchFullHistory(client, workflowId.getValue(),
+                            runId.getValue().isEmpty() ? null : runId.getValue())) {
                         if (isResettableWorkflowTask(event.getEventType())) {
-                            return event.getEventId();
+                            last = event.getEventId();
                         }
                     }
-                    pageToken = resp.getNextPageToken();
-                } while (!pageToken.isEmpty());
+                    if (last >= 0) {
+                        return last;
+                    }
+                }
             }
             return ErrorCreator.createError(StringUtils.fromString(
                     "Workflow '" + workflowId.getValue() + "' has no workflow task to reset to"));
@@ -2974,15 +3021,27 @@ public final class ManagementNative {
     private static void recordScheduled(Map<Long, List<String>> nodeIds, Map<Long, List<String>> nodeNames,
                                         Map<Long, Long> schedulerOf, long schedulingTaskId, long eventId,
                                         String name) {
-        schedulerOf.put(eventId, schedulingTaskId);
-        List<String> ids = nodeIds.get(schedulingTaskId);
+        long pointId = resolveSchedulingPoint(nodeIds, schedulingTaskId);
+        schedulerOf.put(eventId, pointId);
+        List<String> ids = nodeIds.get(pointId);
         if (ids == null) {
             // The scheduling task is not itself an eligible point (it can be missing from a
             // truncated or archived history); the node is simply not attributed.
             return;
         }
         ids.add(Long.toString(eventId));
-        nodeNames.get(schedulingTaskId).add(name);
+        nodeNames.get(pointId).add(name);
+    }
+
+    // A scheduled event names the workflow task that scheduled it. Temporal names the task's
+    // COMPLETED event, which is the reset point; the embedded dev server names its STARTED event,
+    // one id earlier, so an exact match would attribute nothing there. Prefer the exact id and
+    // accept the next one only when it is itself a point.
+    private static long resolveSchedulingPoint(Map<Long, List<String>> points, long schedulingTaskId) {
+        if (points.containsKey(schedulingTaskId)) {
+            return schedulingTaskId;
+        }
+        return points.containsKey(schedulingTaskId + 1) ? schedulingTaskId + 1 : schedulingTaskId;
     }
 
     private static BArray toStringArray(List<String> values) {
@@ -3073,6 +3132,18 @@ public final class ManagementNative {
             handle.put(StringUtils.fromString("workflowId"), workflowId);
             handle.put(StringUtils.fromString("runId"), StringUtils.fromString(response.getRunId()));
             return handle;
+        } catch (StatusRuntimeException e) {
+            // Rewinding a run is the one management operation the embedded dev server cannot do:
+            // it implements no ResetWorkflowExecution. Say that, rather than reporting the raw
+            // UNIMPLEMENTED as though the request were at fault.
+            if (e.getStatus().getCode() == Status.Code.UNIMPLEMENTED) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Reset is not supported by this workflow server. The in-memory dev server cannot "
+                                + "rewind a run; run against a Temporal server to reset. To re-run a failed "
+                                + "step, decide its review activity instead."));
+            }
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to reset workflow: " + e.getMessage()));
         } catch (Exception e) {
             return ErrorCreator.createError(
                     StringUtils.fromString("Failed to reset workflow: " + e.getMessage()));

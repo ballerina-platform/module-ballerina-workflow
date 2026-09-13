@@ -147,6 +147,14 @@ isolated function opWakeWorkflow(string workflowId) returns json|Error {
     return {success: true};
 }
 
+isolated function opSendData(string workflowId, string dataName, json data) returns json|Error {
+    error? result = sendDataToWorkflow(workflowId, dataName, data);
+    if result is error {
+        return notFoundOrExecutionError(result);
+    }
+    return {success: true, dataName: dataName};
+}
+
 isolated function opTerminateWorkflow(string workflowId, string? runId, string? reason)
         returns json|Error {
     error? result = terminateWorkflow(workflowId, runId ?: "", reason);

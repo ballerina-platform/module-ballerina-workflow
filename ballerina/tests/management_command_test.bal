@@ -393,6 +393,42 @@ function testCommandSuspendAndResumeInstance() returns error? {
     cleanupInstance(workflowId);
 }
 
+// ── instances.sendData ───────────────────────────────────────────────────────
+
+@test:Config {groups: ["unit"]}
+function testCommandSendDataUnparksInstance() returns error? {
+    CmdOrder input = {reference: "ORD-CMD-DATA"};
+    string workflowId = check run(cmdParkedWorkflow, input);
+    runtime:sleep(1);
+
+    map<json> sent = check commandPayload(management:SEND_DATA_TO_INSTANCE,
+            {workflowId: workflowId, dataName: "go", data: "released"});
+    test:assertEquals(sent["success"], true, "instances.sendData must acknowledge");
+    test:assertEquals(sent["dataName"], "go", "the acknowledgement must name the event it delivered");
+
+    // What proves delivery is the workflow moving, not the acknowledgement: the run was parked
+    // on `wait events.go` and can only return what the event carried.
+    anydata result = check getWorkflowResult(workflowId, 15);
+    test:assertEquals(result, "released",
+        "the parked workflow must resume with the payload instances.sendData delivered");
+}
+
+@test:Config {groups: ["unit"]}
+function testCommandSendDataRequiresDataName() returns error? {
+    json|management:Error result = runCommand(management:SEND_DATA_TO_INSTANCE,
+            {workflowId: "any-instance"});
+    test:assertTrue(result is management:InvalidRequestError,
+        "instances.sendData without a dataName is a malformed request");
+}
+
+@test:Config {groups: ["unit"]}
+function testCommandSendDataToUnknownInstance() returns error? {
+    json|management:Error result = runCommand(management:SEND_DATA_TO_INSTANCE,
+            {workflowId: "cmd-no-such-instance", dataName: "go", data: "x"});
+    test:assertTrue(result is management:NotFoundError,
+        "an event for an instance that is not running is a not-found, not a server failure");
+}
+
 @test:Config {groups: ["unit"]}
 function testCommandWakeInstanceDispatches() returns error? {
     CmdOrder input = {reference: "ORD-CMD-WAKE"};

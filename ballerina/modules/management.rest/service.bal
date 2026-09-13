@@ -630,6 +630,15 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
         return executeToResponse(management:RESUME_INSTANCE, {workflowId: workflowId}, ctx);
     }
 
+    # Delivers a named data event to a running instance. The body is the payload, verbatim:
+    # a workflow waiting on `dataEvents.approval` receives exactly what is posted here.
+    resource isolated function post workflows/[string workflowId]/data/[string dataName](
+            http:RequestContext ctx,
+            @http:Payload json data = ()) returns http:Response {
+        return executeToResponse(management:SEND_DATA_TO_INSTANCE,
+                {workflowId: workflowId, dataName: dataName, data: data}, ctx);
+    }
+
     resource isolated function post workflows/[string workflowId]/terminate(
             http:RequestContext ctx,
             @http:Payload map<json>? body = ()) returns http:Response {

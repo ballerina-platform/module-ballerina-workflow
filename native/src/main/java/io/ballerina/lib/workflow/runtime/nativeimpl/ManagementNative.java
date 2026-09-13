@@ -365,6 +365,31 @@ public final class ManagementNative {
         }
     }
 
+    /**
+     * Delivers a named data event to a running workflow — the management-side counterpart of
+     * {@code workflow:sendData}, which needs the workflow's function pointer and so can only be
+     * called from the program that declares it. The event is a signal, so it always reaches the
+     * instance's currently running run.
+     *
+     * @param workflowId the workflow instance to deliver to
+     * @param dataName   the event name the workflow waits on
+     * @param data       the payload, converted the same way `workflow:sendData` converts it
+     * @return null on success, or a Ballerina error when the instance is not running
+     */
+    public static Object sendDataToWorkflow(BString workflowId, BString dataName, Object data) {
+        try {
+            boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(workflowId.getValue(),
+                    dataName.getValue(), TypesUtil.convertBallerinaToJavaType(data));
+            if (!delivered) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Failed to send data: workflow not found: " + workflowId.getValue()));
+            }
+            return null;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString("Failed to send data: " + e.getMessage()));
+        }
+    }
+
     public static Object suspendWorkflow(BString workflowId) {
         try {
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(workflowId.getValue(),

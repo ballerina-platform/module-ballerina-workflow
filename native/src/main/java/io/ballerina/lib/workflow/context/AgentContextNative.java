@@ -610,7 +610,9 @@ public final class AgentContextNative {
                 io.ballerina.lib.workflow.worker.WorkflowWorkerNative.clearWakeRequest();
             }
             return !woken;
-        } catch (io.temporal.worker.NonDeterministicException | io.temporal.failure.TemporalFailure e) {
+        } catch (io.temporal.worker.NonDeterministicException e) {
+            throw e;
+        } catch (io.temporal.failure.TemporalFailure e) {
             throw e;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString("Agent sleep failed: " + e.getMessage()));
@@ -980,7 +982,9 @@ public final class AgentContextNative {
                 return bStr;
             }
             return StringUtils.fromString(String.valueOf(ballerina));
-        } catch (NonDeterministicException | TemporalFailure e) {
+        } catch (NonDeterministicException e) {
+            throw e;
+        } catch (TemporalFailure e) {
             throw e;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -1131,7 +1135,9 @@ public final class AgentContextNative {
                 return data;
             }
             return TypesUtil.convertJavaToBallerinaType(data);
-        } catch (NonDeterministicException | TemporalFailure e) {
+        } catch (NonDeterministicException e) {
+            throw e;
+        } catch (TemporalFailure e) {
             throw e;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -1149,7 +1155,7 @@ public final class AgentContextNative {
      * one-shot promise; MULTI_EVENT takes from the FIFO channel so repeated waits observe successive signals.
      * Enforces the max-event-waits cap (hard failure) and the per-wait timeout (returns {@link TimedOut}).
      */
-    private static Object awaitSignal(AgentContextInfo info, String eventName) throws Exception {
+    private static Object awaitSignal(AgentContextInfo info, String eventName) {
         info.eventWaitCount++;
         if (info.eventWaitCount > info.maxEventWaits) {
             // Returned as a Ballerina error (not thrown): a Java failure crossing the
@@ -1399,7 +1405,9 @@ public final class AgentContextNative {
                 String msg = feedback instanceof String fb && !fb.isBlank()
                         ? errorMsg + " (reviewer: " + fb + ")" : errorMsg;
                 return ErrorCreator.createError(StringUtils.fromString(msg));
-            } catch (NonDeterministicException | TemporalFailure e) {
+            } catch (NonDeterministicException e) {
+                throw e;
+            } catch (TemporalFailure e) {
                 throw e;
             } catch (Exception e) {
                 return ErrorCreator.createError(StringUtils.fromString("Agent activity failed: " + e.getMessage()));

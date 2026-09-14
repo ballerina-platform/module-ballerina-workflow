@@ -2283,7 +2283,7 @@ public final class WorkflowWorkerNative {
                         } catch (Exception e) {
                             LOGGER.error("[JWorkflowAdapter] Query {} failed with exception: {}",
                                          queryName, e.getMessage());
-                            throw new RuntimeException("Query execution failed: " + e.getMessage(), e);
+                            throw new IllegalStateException("Query execution failed: " + e.getMessage(), e);
                         }
                     }
                                      );
@@ -2871,7 +2871,7 @@ public final class WorkflowWorkerNative {
             if (activityFunction == null) {
                 String errorMsg = "Activity not registered: " + activityName +
                         ". Available activities: " + ACTIVITY_REGISTRY.keySet();
-                throw new RuntimeException(errorMsg);
+                throw new IllegalArgumentException(errorMsg);
             }
 
             // Decode arguments from Temporal.
@@ -2881,7 +2881,7 @@ public final class WorkflowWorkerNative {
             @SuppressWarnings("unchecked")
             Map<String, Object> namedArgs = args.get(0, Map.class);
             if (namedArgs == null) {
-                throw new RuntimeException(
+                throw new IllegalArgumentException(
                         "Malformed activity invocation for '" + activityName +
                                 "': the named-argument map (args[0]) is null. " +
                                 "Ensure callActivity passes a valid map<anydata> as the first argument.");
@@ -2956,7 +2956,7 @@ public final class WorkflowWorkerNative {
                         String connName = s.substring(CONNECTION_MARKER_PREFIX.length());
                         BObject resolved = CONNECTION_REGISTRY.get(connName);
                         if (resolved == null) {
-                            throw new RuntimeException(
+                            throw new IllegalStateException(
                                     "Connection '" + connName + "' is not registered "
                                             + "on this worker. The activity '"
                                             + activityName
@@ -2972,7 +2972,7 @@ public final class WorkflowWorkerNative {
                     // Only optional/defaultable parameters may be absent; required parameters
                     // must always be supplied by the caller.
                     if (!param.isDefault) {
-                        throw new RuntimeException(
+                        throw new IllegalArgumentException(
                                 "Required activity parameter '" + paramName
                                         + "' is missing from the activity arguments map");
                     }
@@ -2981,7 +2981,7 @@ public final class WorkflowWorkerNative {
                     // parameters as null in the positional arg array. This is
                     // only safe for nilable parameter types.
                     if (typedescParam != null && !isNilableType(param.type, 0)) {
-                        throw new RuntimeException(
+                        throw new IllegalArgumentException(
                                 "Activity '" + activityName + "' omits defaultable parameter '"
                                         + paramName + "' with non-nilable type in a "
                                         + "typedesc-dependent signature. Pass this argument "
@@ -3067,7 +3067,7 @@ public final class WorkflowWorkerNative {
 
             io.temporal.client.WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
-                throw new RuntimeException("Workflow client not initialized");
+                throw new IllegalStateException("Workflow client not initialized");
             }
 
             // Fetch workflowType via DescribeWorkflowExecution (best-effort; non-fatal).
@@ -3122,7 +3122,7 @@ public final class WorkflowWorkerNative {
             String agentId = args.get(0, String.class);
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
-                throw new RuntimeException("Workflow client not initialized");
+                throw new IllegalStateException("Workflow client not initialized");
             }
             return client.newUntypedWorkflowStub(agentId)
                     .query(WorkflowWorkerNative.PENDING_AGENT_EVENTS_QUERY, Object.class);
@@ -3133,7 +3133,7 @@ public final class WorkflowWorkerNative {
 
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
-                throw new RuntimeException("Workflow client not initialized");
+                throw new IllegalStateException("Workflow client not initialized");
             }
 
             DescribeWorkflowExecutionRequest request = DescribeWorkflowExecutionRequest.newBuilder()
@@ -3147,12 +3147,12 @@ public final class WorkflowWorkerNative {
                                  .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
                                  .describeWorkflowExecution(request);
             } catch (io.grpc.StatusRuntimeException e) {
-                throw new RuntimeException(
+                throw new IllegalStateException(
                         "gRPC error describing workflow '" + workflowId +
                                 "' in namespace '" + client.getOptions().getNamespace() +
                                 "': [" + e.getStatus().getCode() + "] " + e.getStatus().getDescription(), e);
             } catch (Exception e) {
-                throw new RuntimeException(
+                throw new IllegalStateException(
                         "Failed to describe workflow '" + workflowId +
                                 "' in namespace '" + client.getOptions().getNamespace() + "'", e);
             }

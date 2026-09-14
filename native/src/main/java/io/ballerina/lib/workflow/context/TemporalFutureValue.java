@@ -202,7 +202,7 @@ public class TemporalFutureValue extends FutureValue {
             ensureThisReady();
             return this.completableFuture.get();
         } catch (Exception e) {
-            throw new RuntimeException("Error getting signal value for '" + signalName + "'", e);
+            throw new IllegalStateException("Error getting signal value for '" + signalName + "'", e);
         }
     }
 

@@ -18,10 +18,6 @@ import ballerina/jballerina.java;
 
 # Starts a new workflow instance and returns its unique ID.
 #
-# ```ballerina
-# string workflowId = check workflow:run(orderProcess, input = {"orderId": "ORD-123"});
-# ```
-#
 # + processFunction - The workflow function (must have `@Workflow`)
 # + input - Optional input data for the workflow. Must match the workflow
 #           function's declared input parameter type (any `anydata` subtype)
@@ -33,10 +29,6 @@ public isolated function run(function processFunction, anydata input = ()) retur
 
 # Sends data to a running workflow's events record.
 #
-# ```ballerina
-# check workflow:sendData(orderProcess, workflowId, "approval", {approved: true});
-# ```
-#
 # + workflow - The workflow function (must have `@Workflow`)
 # + workflowId - Target workflow ID (from `run`)
 # + dataName - Field name in the workflow's events record
@@ -46,18 +38,9 @@ public isolated function sendData(function workflow, string workflowId, string d
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative"
 } external;
 
-# Lists the data events a running durable agent has accepted but not yet
-# answered. Use after a crash or restart to rediscover in-flight event turns
-# for a session and fetch their answers via `DurableAgent.getDataResult` /
-# `waitForDataResult` — nothing is lost while the agent works, however long
-# the turn takes.
-#
-# ```ballerina
-# workflow:PendingAgentEvent[] pending = check workflow:getPendingAgentEvents(agentId);
-# foreach var pendingEvent in pending {
-#     string answer = check agent.waitForDataResult(agentId, pendingEvent.token);
-# }
-# ```
+# Lists the data events a running durable agent has accepted but not yet answered. Use it after a
+# restart to rediscover in-flight turns and read their answers with `DurableAgent.getDataResult`
+# or `waitForDataResult`.
 #
 # + agentId - Target agent (workflow) ID
 # + return - The in-flight event turns (empty when the agent is idle), or an error
@@ -69,10 +52,6 @@ public isolated function getPendingAgentEvents(string agentId)
 
 # Waits for a workflow to complete and returns its result.
 #
-# ```ballerina
-# anydata raw = check workflow:getWorkflowResult(workflowId);
-# ```
-#
 # + workflowId - The workflow ID
 # + timeoutSeconds - Maximum wait time in seconds
 # + return - Result of the workflow as anydata, or an error
@@ -80,18 +59,9 @@ public isolated function getWorkflowResult(string workflowId, int timeoutSeconds
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative"
 } external;
 
-# Completes a pending human task by sending the result back to the waiting workflow.
-# The `taskWorkflowId` is the child workflow ID of the task, available via the
-# inbox/task-listing API. It is an opaque UUID — the task's kind and name travel in the
-# execution's memo and type, not in the ID.
-#
-# ```ballerina
-# check workflow:completeHumanTask(taskWorkflowId, {approved: true, comment: "LGTM"});
-# ```
-#
-# If `callerRoles` is provided the function fetches the `userRoles` stored on the task
-# and returns an error when none of the caller's roles appear in that list.
-# When omitted the role check is skipped; enforcement is then the caller's responsibility.
+# Completes a pending human task by sending the result back to the waiting workflow. Given
+# `callerRoles`, the caller must hold one of the task's `userRoles`; omitting them skips the check
+# and leaves enforcement to the caller.
 #
 # + taskWorkflowId - Temporal workflow ID of the human task child workflow
 # + result - The value to return to the workflow (must be compatible with the declared `T`)

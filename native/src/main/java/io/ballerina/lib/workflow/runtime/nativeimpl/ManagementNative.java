@@ -2518,8 +2518,7 @@ public final class ManagementNative {
      * Fetches all history pages for a workflow run and returns them as a flat list. Hard cap at 2000 events to prevent
      * unbounded memory use.
      */
-    private static List<HistoryEvent> fetchFullHistory(WorkflowClient client, String workflowId, String runId)
-            throws Exception {
+    private static List<HistoryEvent> fetchFullHistory(WorkflowClient client, String workflowId, String runId) {
         List<HistoryEvent> events = new ArrayList<>();
         ByteString pageToken = ByteString.EMPTY;
 
@@ -2545,7 +2544,7 @@ public final class ManagementNative {
             events.addAll(resp.getHistory().getEventsList());
             pageToken = resp.getNextPageToken();
             if (events.size() >= 2000) {
-                throw new Exception(
+                throw new IllegalStateException(
                         "History for workflow '" + workflowId + "' exceeds 2000 events and cannot be loaded in full");
             }
         } while (!pageToken.isEmpty());

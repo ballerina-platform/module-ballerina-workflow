@@ -2859,15 +2859,26 @@ public final class ManagementNative {
                         throw e;
                     }
                     // The reverse feed is an optimization, not the only way to reach the last
-                    // task: a server without it (the in-memory dev server) is served by reading
-                    // the history forward and keeping the last match.
+                    // task: a server without it (the in-memory dev server) is served by reading the
+                    // history forward. Each page is scanned and only the latest matching event id
+                    // is kept, so this holds no history in memory and has no length limit of its
+                    // own — `fetchFullHistory` would refuse a run past 2,000 events.
                     long last = -1;
-                    for (HistoryEvent event : fetchFullHistory(client, workflowId.getValue(),
-                            runId.getValue().isEmpty() ? null : runId.getValue())) {
-                        if (isResettableWorkflowTask(event.getEventType())) {
-                            last = event.getEventId();
+                    ByteString forwardToken = ByteString.EMPTY;
+                    do {
+                        GetWorkflowExecutionHistoryResponse resp = client.getWorkflowServiceStubs()
+                                .blockingStub()
+                                .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                                .getWorkflowExecutionHistory(GetWorkflowExecutionHistoryRequest.newBuilder()
+                                        .setNamespace(ns).setExecution(exec.build())
+                                        .setNextPageToken(forwardToken).setMaximumPageSize(500).build());
+                        for (HistoryEvent event : resp.getHistory().getEventsList()) {
+                            if (isResettableWorkflowTask(event.getEventType())) {
+                                last = event.getEventId();
+                            }
                         }
-                    }
+                        forwardToken = resp.getNextPageToken();
+                    } while (!forwardToken.isEmpty());
                     if (last >= 0) {
                         return last;
                     }

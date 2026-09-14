@@ -218,12 +218,37 @@ final class VisibilityCompat {
                         + "in the client, and results are capped at {} rows.", MAX_FALLBACK_ROWS);
             }
         }
-        // The fallback answers the whole window at once, so a request for a later page has nothing
-        // left to return.
-        if (!pageToken.isEmpty()) {
+        List<WorkflowExecutionInfo> matched = listWithoutQuery(client, filter, deadlineSeconds);
+        int from = offsetOf(pageToken);
+        if (from >= matched.size()) {
             return new Page(List.of(), ByteString.EMPTY);
         }
-        return new Page(listWithoutQuery(client, filter, deadlineSeconds), ByteString.EMPTY);
+        int to = pageSize > 0 ? Math.min(from + pageSize, matched.size()) : matched.size();
+        // A caller that pages must be told when rows remain, or a truncated listing reads as a
+        // complete one. There is no server cursor to hand back here, so the token is the offset
+        // into the same filtered listing — which means each page re-reads it. That is affordable
+        // only because this path serves a dev server holding a session's worth of executions.
+        ByteString next = to < matched.size() ? tokenFor(to) : ByteString.EMPTY;
+        return new Page(matched.subList(from, to), next);
+    }
+
+    // The fallback's own continuation token: a decimal offset. It is never mixed with the query
+    // API's opaque token — the path is chosen once per run and latched.
+    private static ByteString tokenFor(int offset) {
+        return ByteString.copyFromUtf8(Integer.toString(offset));
+    }
+
+    private static int offsetOf(ByteString pageToken) {
+        if (pageToken.isEmpty()) {
+            return 0;
+        }
+        try {
+            return Math.max(0, Integer.parseInt(pageToken.toStringUtf8()));
+        } catch (NumberFormatException e) {
+            // A token from the query API (a run that changed paths mid-flight) or a malformed one:
+            // start from the beginning rather than failing the listing.
+            return 0;
+        }
     }
 
     /** Whether the server has already answered UNIMPLEMENTED for the query API this run. */
@@ -303,6 +328,12 @@ final class VisibilityCompat {
                             .build())
                     .getWorkflowExecutionInfo();
         } catch (StatusRuntimeException e) {
+            if (e.getStatus().getCode() != Status.Code.NOT_FOUND) {
+                // Anything else — a deadline, an unavailable server — would otherwise be served as
+                // a row missing its memo, and a human task summary without its task name reads as
+                // data rather than as the failure it is.
+                throw e;
+            }
             // A row that vanished between listing and describing is simply reported as listed.
             LOGGER.debug("Could not describe '{}' while listing; using the listing row as-is",
                     row.getExecution().getWorkflowId(), e);
@@ -323,8 +354,11 @@ final class VisibilityCompat {
         try {
             return Instant.parse(text);
         } catch (RuntimeException e) {
-            // The query path lets the server reject a malformed bound; here it simply does not bind.
-            return null;
+            // The query path has the server reject a malformed bound. Dropping it here instead
+            // would answer a filtered request with an unfiltered listing — more rows than were
+            // asked for, reported as success. The listing entry points turn this into a
+            // management error.
+            throw new IllegalArgumentException("Invalid timestamp '" + text + "': expected ISO-8601", e);
         }
     }
 

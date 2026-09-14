@@ -641,8 +641,8 @@ public final class WorkflowContextNative {
      *
      * @param args the raw BMap passed to {@code callActivity}
      * @return a serializable Java map with connection refs replaced by markers
-     * @throws RuntimeException if a {@link BObject} value is not registered; this surfaces as a workflow-side error in
-     *                          the catch block above.
+     * @throws IllegalArgumentException if a {@link BObject} value is not registered; this surfaces as a
+     *                          workflow-side error in the catch block above.
      */
     @SuppressWarnings("unchecked")
     static Map<String, Object> convertArgsMapWithConnectionMarkers(BMap<BString, Object> args) {
@@ -652,8 +652,8 @@ public final class WorkflowContextNative {
             if (value instanceof BObject bObject) {
                 String name = WorkflowWorkerNative.getConnectionName(bObject);
                 if (name == null) {
-                    throw new RuntimeException("Activity argument '" + key.getValue() + "' is a client object " +
-                                                       "that has not been registered as a module-level " +
+                    throw new IllegalArgumentException("Activity argument '" + key.getValue() + "' is a client " +
+                                                       "object that has not been registered as a module-level " +
                                                        "connection. Only module-level `final` `client object` " +
                                                        "variables may be passed to activities.");
                 }
@@ -699,7 +699,9 @@ public final class WorkflowContextNative {
                     .setSummary(stepIdValue).build();
             Workflow.newTimer(Duration.ofMillis(millis), options).get();
             return null;
-        } catch (io.temporal.worker.NonDeterministicException | io.temporal.failure.TemporalFailure e) {
+        } catch (io.temporal.worker.NonDeterministicException e) {
+            throw e;
+        } catch (io.temporal.failure.TemporalFailure e) {
             throw e;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString("Workflow sleep failed: " + e.getMessage()));
@@ -1013,7 +1015,9 @@ public final class WorkflowContextNative {
             String msg = cause != null ? cause.getMessage() : e.getMessage();
             return buildTaskFailedError("Human task failed: " + msg);
 
-        } catch (io.temporal.worker.NonDeterministicException | io.temporal.failure.TemporalFailure e) {
+        } catch (io.temporal.worker.NonDeterministicException e) {
+            throw e;
+        } catch (io.temporal.failure.TemporalFailure e) {
             throw e;
         } catch (Exception e) {
             return buildTaskFailedError("awaitHumanTask failed: " + e.getMessage());

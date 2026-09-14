@@ -78,33 +78,4 @@
         <Method name="getWorkflowResult" />
         <Bug pattern="DE_MIGHT_IGNORE" />
     </Match>
-    <!-- gradle9-rollout: temporary suppression pending review: surfaced by the SpotBugs plugin version bump needed for Gradle 9 / Java 25 support (see PR body) — pre-existing code, not introduced by this PR -->
-    <Match>
-        <Class name="io.ballerina.lib.workflow.context.AgentContextNative"/>
-        <Bug pattern="THROWS_METHOD_THROWS_CLAUSE_BASIC_EXCEPTION, THROWS_METHOD_THROWS_RUNTIMEEXCEPTION"/>
-    </Match>
-    <Match>
-        <Class name="io.ballerina.lib.workflow.context.TemporalFutureValue"/>
-        <Bug pattern="THROWS_METHOD_THROWS_RUNTIMEEXCEPTION"/>
-    </Match>
-    <Match>
-        <Class name="io.ballerina.lib.workflow.context.WorkflowContextNative"/>
-        <Bug pattern="THROWS_METHOD_THROWS_RUNTIMEEXCEPTION"/>
-    </Match>
-    <Match>
-        <Class name="io.ballerina.lib.workflow.runtime.WorkflowRuntime"/>
-        <Bug pattern="THROWS_METHOD_THROWS_RUNTIMEEXCEPTION"/>
-    </Match>
-    <Match>
-        <Class name="io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"/>
-        <Bug pattern="THROWS_METHOD_THROWS_CLAUSE_BASIC_EXCEPTION"/>
-    </Match>
-    <Match>
-        <Class name="io.ballerina.lib.workflow.worker.WorkflowWorkerNative$BallerinaActivityAdapter"/>
-        <Bug pattern="THROWS_METHOD_THROWS_RUNTIMEEXCEPTION"/>
-    </Match>
-    <Match>
-        <Class name="io.ballerina.lib.workflow.worker.WorkflowWorkerNative$BallerinaWorkflowAdapter"/>
-        <Bug pattern="THROWS_METHOD_THROWS_RUNTIMEEXCEPTION"/>
-    </Match>
 </FindBugsFilter>

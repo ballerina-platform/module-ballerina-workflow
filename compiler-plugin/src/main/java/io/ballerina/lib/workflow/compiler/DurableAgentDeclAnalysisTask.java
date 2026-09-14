@@ -868,7 +868,13 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         if (!meta.isEmpty()) {
             meta.append(", ");
         }
-        meta.append(key).append(": ").append(valueSource);
+        // The key is written as a string literal, not as an identifier: a declaration may name a
+        // field after a keyword — `'wait` on a peer — and `mappingKeyName` hands back the name
+        // without its quote, so emitting it bare would generate `wait: false`, which parses as
+        // the wait action rather than a field. The metadata is read back as json, where a
+        // string key is the same field.
+        meta.append("\"").append(WorkflowSourceModifier.escapeBallerinaStringLiteral(key))
+                .append("\": ").append(valueSource);
     }
 
     /**

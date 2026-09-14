@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -23,6 +23,8 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.JsonFormat;
 import io.ballerina.lib.workflow.ModuleUtils;
+import io.ballerina.lib.workflow.observability.WorkflowMetrics;
+import io.ballerina.lib.workflow.observability.WorkflowSampleLog;
 import io.ballerina.lib.workflow.runtime.WorkflowRuntime;
 import io.ballerina.lib.workflow.utils.CorrelationExtractor;
 import io.ballerina.lib.workflow.utils.EventExtractor;
@@ -370,13 +372,25 @@ public final class ManagementNative {
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(workflowId.getValue(),
                                                                                    "__wf_suspend", null);
             if (!delivered) {
+                recordControl(WorkflowMetrics.EVENT_SUSPENDED, workflowId.getValue(), ERR_TYPE_NOT_FOUND);
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Failed to suspend workflow: workflow not found: " + workflowId.getValue()));
             }
+            recordControl(WorkflowMetrics.EVENT_SUSPENDED, workflowId.getValue(), null);
             return null;
         } catch (Exception e) {
+            recordControl(WorkflowMetrics.EVENT_SUSPENDED, workflowId.getValue(), WorkflowMetrics.errorTypeOf(e));
             return ErrorCreator.createError(StringUtils.fromString("Failed to suspend workflow: " + e.getMessage()));
         }
+    }
+
+    // The error_type of a control operation that found no such instance.
+    private static final String ERR_TYPE_NOT_FOUND = "WorkflowNotFound";
+
+    // Records a control operation as one event and one sample; a null errorType means accepted.
+    private static void recordControl(String event, String workflowId, String errorType) {
+        WorkflowMetrics.recordControl(event, errorType);
+        WorkflowSampleLog.control(event, workflowId, errorType != null);
     }
 
     /**
@@ -397,8 +411,10 @@ public final class ManagementNative {
                     runId.getValue()).build();
             WorkflowStub stub = client.newUntypedWorkflowStub(exec, Optional.empty());
             stub.signal("__wf_suspend");
+            recordControl(WorkflowMetrics.EVENT_SUSPENDED, workflowId.getValue(), null);
             return null;
         } catch (Exception e) {
+            recordControl(WorkflowMetrics.EVENT_SUSPENDED, workflowId.getValue(), WorkflowMetrics.errorTypeOf(e));
             return ErrorCreator.createError(StringUtils.fromString("Failed to suspend workflow: " + e.getMessage()));
         }
     }
@@ -414,11 +430,14 @@ public final class ManagementNative {
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(workflowId.getValue(), "__wf_resume",
                                                                                    null);
             if (!delivered) {
+                recordControl(WorkflowMetrics.EVENT_RESUMED, workflowId.getValue(), ERR_TYPE_NOT_FOUND);
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Failed to resume workflow: workflow not found: " + workflowId.getValue()));
             }
+            recordControl(WorkflowMetrics.EVENT_RESUMED, workflowId.getValue(), null);
             return null;
         } catch (Exception e) {
+            recordControl(WorkflowMetrics.EVENT_RESUMED, workflowId.getValue(), WorkflowMetrics.errorTypeOf(e));
             return ErrorCreator.createError(StringUtils.fromString("Failed to resume workflow: " + e.getMessage()));
         }
     }
@@ -441,8 +460,10 @@ public final class ManagementNative {
                     runId.getValue()).build();
             WorkflowStub stub = client.newUntypedWorkflowStub(exec, Optional.empty());
             stub.signal("__wf_resume");
+            recordControl(WorkflowMetrics.EVENT_RESUMED, workflowId.getValue(), null);
             return null;
         } catch (Exception e) {
+            recordControl(WorkflowMetrics.EVENT_RESUMED, workflowId.getValue(), WorkflowMetrics.errorTypeOf(e));
             return ErrorCreator.createError(StringUtils.fromString("Failed to resume workflow: " + e.getMessage()));
         }
     }
@@ -968,7 +989,7 @@ public final class ManagementNative {
      * @param taskWorkflowId the Temporal workflow ID of the human task child workflow
      * @param result         the value to return to the waiting workflow
      * @param callerRoles    optional caller roles for authorization enforcement
-     * @return {@code null} on success, or a Ballerina error
+     * @return the task's receipt on success, or a Ballerina error — see {@code WorkflowNative.completeHumanTask}
      */
     public static Object completeHumanTask(BString taskWorkflowId, Object result, Object callerRoles, Object userId) {
         return WorkflowNative.completeHumanTask(taskWorkflowId, result, callerRoles, userId);
@@ -985,7 +1006,8 @@ public final class ManagementNative {
      * @param taskWorkflowId the Temporal workflow ID of the retry task child workflow
      * @param decision       the {@code ReviewDecision} BMap ({@code action} + optional {@code input})
      * @param callerRoles    optional caller roles for authorization enforcement
-     * @return {@code null} on success, or a Ballerina error
+     * @return the review's receipt — its {@code taskName}, {@code parentWorkflowId} and {@code assignedRoles}, for
+     *         the decision's audit entry — on success, or a Ballerina error
      */
     @SuppressWarnings("unchecked")
     public static Object completeReviewActivity(BString taskWorkflowId, BMap<BString, Object> decision,
@@ -999,10 +1021,10 @@ public final class ManagementNative {
 
             // Validate workflowKind and optionally enforce caller roles
             BArray callerRolesArray = (callerRoles instanceof BArray ba) ? ba : null;
-            Object validationError = validateReviewActivityAndRoles(client, taskWorkflowId.getValue(),
+            Object validation = validateReviewActivityAndRoles(client, taskWorkflowId.getValue(),
                     callerRolesArray);
-            if (validationError != null) {
-                return validationError;
+            if (!(validation instanceof TaskMemo memo)) {
+                return validation;
             }
 
             // Convert ReviewDecision BMap → serializable Java map
@@ -1030,7 +1052,7 @@ public final class ManagementNative {
                         "Failed to complete retry task: task '" + taskWorkflowId.getValue() +
                                 "' was no longer running when signal was delivered"));
             }
-            return null;
+            return memo.toReceipt();
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString("Failed to complete retry task: " + e.getMessage()));
         }
@@ -1042,7 +1064,8 @@ public final class ManagementNative {
      * one of
      * the caller's roles appears in the task's {@code userRoles}.
      *
-     * @return {@code null} if all checks pass, or a Ballerina error
+     * @return the review's {@link TaskMemo} — its declared name, parent workflow and allowed roles — if all
+     *         checks pass, or a Ballerina error
      */
     @SuppressWarnings("unchecked")
     private static Object validateReviewActivityAndRoles(WorkflowClient client, String taskWorkflowId,
@@ -1091,10 +1114,6 @@ public final class ManagementNative {
                                 workflowKind + ")"));
             }
 
-            if (callerRolesArray == null) {
-                return null;
-            }
-
             Set<String> allowedRoles = new HashSet<>();
             try {
                 Payload rolesPl = memoFields.get("userRoles");
@@ -1103,17 +1122,32 @@ public final class ManagementNative {
                     allowedRoles.addAll(Arrays.asList(rolesArr));
                 }
             } catch (Exception e) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Failed to decode task roles for '" + taskWorkflowId + "': " + e.getMessage()));
+                if (callerRolesArray != null) {
+                    return ErrorCreator.createError(StringUtils.fromString(
+                            "Failed to decode task roles for '" + taskWorkflowId + "': " + e.getMessage()));
+                }
+                // Nothing to enforce against, so an unreadable role list only costs the audit entry its roles.
+                LOGGER.debug("Could not decode userRoles from memo for '{}': {}", taskWorkflowId, e.getMessage());
             }
+            // The decision's audit entry names the review, its parent, and who was allowed to decide it.
+            Object activityArgs;
+            try {
+                Payload argsPl = memoFields.get("activityArgs");
+                activityArgs = argsPl == null ? null : dc.fromPayload(argsPl, Object.class, Object.class);
+            } catch (Exception e) {
+                activityArgs = null; // the audit entry goes without the reviewed arguments
+            }
+            TaskMemo memo = new TaskMemo(decodeMemoString(dc, memoFields, "taskName", null),
+                                         decodeMemoString(dc, memoFields, "parentWorkflowId", null),
+                                         allowedRoles.stream().sorted().toList(), activityArgs);
 
-            if (allowedRoles.isEmpty()) {
-                return null;
+            if (callerRolesArray == null || allowedRoles.isEmpty()) {
+                return memo;
             }
 
             for (int i = 0; i < callerRolesArray.size(); i++) {
                 if (allowedRoles.contains(callerRolesArray.get(i).toString())) {
-                    return null;
+                    return memo;
                 }
             }
 
@@ -1608,8 +1642,10 @@ public final class ManagementNative {
             WorkflowStub stub = rid != null ? client.newUntypedWorkflowStub(wfId, Optional.of(rid), Optional.empty()) :
                                 client.newUntypedWorkflowStub(wfId);
             stub.terminate(reasonStr);
+            recordControl(WorkflowMetrics.EVENT_TERMINATED, wfId, null);
             return null;
         } catch (Exception e) {
+            recordControl(WorkflowMetrics.EVENT_TERMINATED, workflowId.getValue(), WorkflowMetrics.errorTypeOf(e));
             return ErrorCreator.createError(StringUtils.fromString("Failed to terminate workflow: " + e.getMessage()));
         }
     }
@@ -1632,8 +1668,10 @@ public final class ManagementNative {
             WorkflowStub stub = rid != null ? client.newUntypedWorkflowStub(wfId, Optional.of(rid), Optional.empty()) :
                                 client.newUntypedWorkflowStub(wfId);
             stub.cancel();
+            recordControl(WorkflowMetrics.EVENT_CANCELLED, wfId, null);
             return null;
         } catch (Exception e) {
+            recordControl(WorkflowMetrics.EVENT_CANCELLED, workflowId.getValue(), WorkflowMetrics.errorTypeOf(e));
             return ErrorCreator.createError(StringUtils.fromString("Failed to cancel workflow: " + e.getMessage()));
         }
     }
@@ -1703,6 +1741,8 @@ public final class ManagementNative {
             } else {
                 javaInput = input != null ? TypesUtil.convertBallerinaToJavaType(input) : null;
             }
+            // The started event is counted at the worker's first execution, where every
+            // start path converges.
             WorkflowExecution execution = stub.start(javaInput);
 
             BMap<BString, Object> handle = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
@@ -2572,8 +2612,7 @@ public final class ManagementNative {
      * nodes in the activity tree.
      */
     private static boolean isInternalSignal(String signalName) {
-        return signalName.startsWith("__wf_") || "taskCompletion".equals(signalName) || "taskDecision".equals(
-                signalName);
+        return WorkflowWorkerNative.isFrameworkSignal(signalName);
     }
 
     /**

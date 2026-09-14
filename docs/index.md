@@ -23,6 +23,7 @@ The Ballerina Workflow module provides durable workflow orchestration for Baller
 | &emsp;[Alternative Wait](patterns/alternative-wait.md) | Race multiple data sources — first response wins |
 | &emsp;[Wait for All](patterns/wait-for-all.md) | Collect data from every source before proceeding (dual authorization / Four-Eyes Principle) |
 | [Handle Errors](handle-errors.md) | Error propagation, retry, fallback, compensation patterns |
+| [Observe Workflows](observe-workflows.md) | Metrics with Prometheus/Grafana, traces with Jaeger, human-task dashboards, the audit stream |
 | &emsp;[Propagate — Fail the Workflow](patterns/error-propagation.md) | Use `check` to fail immediately when a critical activity fails |
 | &emsp;[Fallback — Try an Alternative](patterns/error-fallback.md) | Try a secondary activity when the primary exhausts its retries |
 | &emsp;[Compensation (Saga)](patterns/error-compensation.md) | Undo committed steps when a later step fails |

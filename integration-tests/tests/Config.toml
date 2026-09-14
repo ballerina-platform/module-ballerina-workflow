@@ -7,3 +7,13 @@ namespace = "default"
 taskQueue = "BALLERINA_WORKFLOW_TASK_QUEUE"
 maxConcurrentWorkflows = 100
 maxConcurrentActivities = 100
+
+[ballerina.observe]
+metricsEnabled = true
+metricsReporter = "prometheus"
+tracingEnabled = true
+tracingProvider = "mock"
+
+[ballerina.workflow.observe]
+captureHumanTaskContent = true
+captureActivityContent = true

@@ -422,6 +422,32 @@ function testCommandSendDataRequiresDataName() returns error? {
 }
 
 @test:Config {groups: ["unit"]}
+function testCommandSendDataRejectsNonStringDataName() returns error? {
+    json|management:Error result = runCommand(management:SEND_DATA_TO_INSTANCE,
+            {workflowId: "any-instance", dataName: 1});
+    test:assertTrue(result is management:InvalidRequestError,
+        "a non-string dataName is a type error, not a missing parameter");
+    if result is management:Error {
+        test:assertEquals(result.message(), "dataName must be a string",
+            "the message must name the type, so the caller fixes the value rather than adding it again");
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testCommandSendDataRejectsFrameworkSignals() returns error? {
+    // Delivering one of these would enter a human task or a review decision without the
+    // ownership, role and payload checks the task operations perform.
+    string[] reserved = ["taskCompletion", "taskDecision", "__wf_suspend", "__wf_resume", "__agent_wake",
+        "__agent_event", "__agent_event_reply"];
+    foreach string name in reserved {
+        json|management:Error result = runCommand(management:SEND_DATA_TO_INSTANCE,
+                {workflowId: "any-instance", dataName: name, data: {}});
+        test:assertTrue(result is management:AccessDeniedError,
+            string `instances.sendData must refuse the framework control signal ${name}`);
+    }
+}
+
+@test:Config {groups: ["unit"]}
 function testCommandSendDataToUnknownInstance() returns error? {
     json|management:Error result = runCommand(management:SEND_DATA_TO_INSTANCE,
             {workflowId: "cmd-no-such-instance", dataName: "go", data: "x"});

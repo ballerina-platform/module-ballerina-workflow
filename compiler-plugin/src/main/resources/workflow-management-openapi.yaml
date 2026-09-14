@@ -227,6 +227,25 @@ paths:
         "200": {$ref: "#/components/responses/Graph"}
         default: {$ref: "#/components/responses/Error"}
 
+  /workflows/{workflowId}/data/{dataName}:
+    post:
+      tags: [workflows]
+      summary: Deliver a named data event to a running instance
+      description: >
+        Names reserved for framework control signals (`__`-prefixed, `taskCompletion`,
+        `taskDecision`) are refused, so a task cannot be completed through this route.
+      operationId: sendDataToWorkflowInstance
+      parameters:
+        - {$ref: "#/components/parameters/workflowId"}
+        - {$ref: "#/components/parameters/dataName"}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {description: The event payload, delivered verbatim}
+      responses:
+        "200": {$ref: "#/components/responses/Acknowledged"}
+        default: {$ref: "#/components/responses/Error"}
   /workflows/{workflowId}/{runId}:
     get:
       tags: [workflows]
@@ -541,6 +560,11 @@ components:
       schema: {type: string}
     taskId:
       name: taskId
+      in: path
+      required: true
+      schema: {type: string}
+    dataName:
+      name: dataName
       in: path
       required: true
       schema: {type: string}

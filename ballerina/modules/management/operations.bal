@@ -150,6 +150,10 @@ isolated function opWakeWorkflow(string workflowId) returns json|Error {
 isolated function opSendData(string workflowId, string dataName, json data) returns json|Error {
     error? result = sendDataToWorkflow(workflowId, dataName, data);
     if result is error {
+        // The runtime refuses framework control signals here; that is a denial, not a failed delivery.
+        if result.message().includes(RESERVED_EVENT_NAME) {
+            return accessDenied(result.message());
+        }
         return notFoundOrExecutionError(result);
     }
     return {success: true, dataName: dataName};

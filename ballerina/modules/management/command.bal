@@ -49,7 +49,7 @@ public enum Operation {
     RESUME_INSTANCE = "instances.resume",
     # Wake a sleeping durable agent instance.
     WAKE_INSTANCE = "instances.wake",
-    # Deliver a named data event to a running instance.
+    # Deliver a named data event to a running instance. Framework control signals are not deliverable.
     SEND_DATA_TO_INSTANCE = "instances.sendData",
     # Terminate an instance.
     TERMINATE_INSTANCE = "instances.terminate",
@@ -409,6 +409,7 @@ final readonly & map<string> PARAM_TYPES = {
     "closeTimeFrom": "string",
     "eventId": "int",
     "closeTimeTo": "string",
+    "dataName": "string",
     "feedback": "string",
     "kind": "string",
     "kinds": "string",

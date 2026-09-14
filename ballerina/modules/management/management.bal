@@ -120,21 +120,13 @@ public isolated function wakeAgent(string workflowId) returns error? = @java:Met
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 
-# Sends a named data event to a running workflow instance.
-#
-# The management-side counterpart of `workflow:sendData`: that function needs the workflow's
-# function pointer, so only the program declaring the workflow can call it. This one addresses
-# the instance by ID, which is all a management caller has.
-#
-# The event is delivered as a signal, so it reaches the instance's currently running run and is
-# durable once accepted — a workflow that has not reached its `wait` yet still receives it.
-#
-# ```ballerina
-# check management:sendDataToWorkflow(workflowId, "approval", {approved: true});
-# ```
+# Sends a named data event to a running workflow instance, addressing it by ID — the
+# management-side counterpart of `workflow:sendData`. The event is durable once accepted,
+# so an instance that has not reached its `wait` yet still receives it.
 #
 # + workflowId - The workflow instance to deliver to
-# + dataName - The event name the workflow waits on
+# + dataName - The event name the workflow waits on. Names reserved for framework control
+#              signals (`__`-prefixed, `taskCompletion`, `taskDecision`) are rejected
 # + data - The payload
 # + return - An error if the instance is not running or the signal cannot be delivered
 public isolated function sendDataToWorkflow(string workflowId, string dataName, anydata data)

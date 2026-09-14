@@ -112,6 +112,9 @@ public final class ManagementNative {
     private static final long RESET_DEADLINE_SECONDS = 30;
     private static final String ERR_CLIENT_NOT_INIT = "Workflow client not initialized";
 
+    // Matched by the management module to answer 403 rather than 500; keep the two in step.
+    private static final String RESERVED_EVENT_NAME_ERROR = "Failed to send data: reserved event name: ";
+
     private ManagementNative() {
         // Utility class — prevent instantiation
     }
@@ -365,18 +368,13 @@ public final class ManagementNative {
         }
     }
 
-    /**
-     * Delivers a named data event to a running workflow — the management-side counterpart of
-     * {@code workflow:sendData}, which needs the workflow's function pointer and so can only be
-     * called from the program that declares it. The event is a signal, so it always reaches the
-     * instance's currently running run.
-     *
-     * @param workflowId the workflow instance to deliver to
-     * @param dataName   the event name the workflow waits on
-     * @param data       the payload, converted the same way `workflow:sendData` converts it
-     * @return null on success, or a Ballerina error when the instance is not running
-     */
+    // Delivers a named data event to a running workflow, addressing the instance by id — the
+    // management-side counterpart of workflow:sendData. Returns an error if it is not running.
     public static Object sendDataToWorkflow(BString workflowId, BString dataName, Object data) {
+        if (isReservedSignal(dataName.getValue())) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    RESERVED_EVENT_NAME_ERROR + dataName.getValue()));
+        }
         try {
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(workflowId.getValue(),
                     dataName.getValue(), TypesUtil.convertBallerinaToJavaType(data));
@@ -2599,6 +2597,12 @@ public final class ManagementNative {
     private static boolean isInternalSignal(String signalName) {
         return signalName.startsWith("__wf_") || "taskCompletion".equals(signalName) || "taskDecision".equals(
                 signalName);
+    }
+
+    // Framework control signals (suspend/resume, agent wake-ups, task completion and review decisions) carry
+    // the ownership, role and payload checks of the operations that send them; a data event must not forge one.
+    private static boolean isReservedSignal(String dataName) {
+        return dataName.startsWith("__") || "taskCompletion".equals(dataName) || "taskDecision".equals(dataName);
     }
 
     /**

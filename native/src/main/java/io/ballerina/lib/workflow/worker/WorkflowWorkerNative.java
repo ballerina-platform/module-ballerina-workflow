@@ -654,7 +654,7 @@ public final class WorkflowWorkerNative {
      *
      * @return null on success, error on failure
      */
-    public static Object initInMemoryWorker(Environment env) {
+    public static Object initInMemoryWorker(Environment env, boolean skipTime) {
         captureRuntime(env);
         suppressTemporalLogs();
 
@@ -678,6 +678,9 @@ public final class WorkflowWorkerNative {
                             .withFailureConverter(new BallerinaFailureConverter());
 
             // Create the in-memory test environment with custom data converter
+            // Time skipping is what lets a workflow that sleeps for a day finish at once, and it is
+            // also why the engine's clock can read ahead of the wall clock. Which of those a run
+            // wants is the caller's decision, not this worker's.
             io.temporal.testing.TestEnvironmentOptions testOptions =
                     io.temporal.testing.TestEnvironmentOptions.newBuilder()
                                                               .setWorkflowClientOptions(
@@ -685,6 +688,7 @@ public final class WorkflowWorkerNative {
                                                                               .newBuilder()
                                                                               .setDataConverter(dataConverter)
                                                                               .build())
+                                                              .setUseTimeskipping(skipTime)
                                                               .build();
             testEnvironment = TestWorkflowEnvironment.newInstance(testOptions);
 

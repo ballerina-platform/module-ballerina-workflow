@@ -60,7 +60,7 @@ isolated function initWorkflowRuntime() returns error? {
         }
         Mode currentMode = mode;
         if currentMode == IN_MEMORY {
-            check initInMemoryProgramNative();
+            check initInMemoryProgramNative(timeSkipping);
             programStarted = true;
             return;
         }
@@ -189,8 +189,9 @@ isolated function initProgramNative(
 # and are lost on restart. Signal-based communication is supported when
 # the workflow ID is known.
 #
+# + skipTime - Whether the engine may jump its clock over idle time
 # + return - An error if initialization fails, otherwise nil
-isolated function initInMemoryProgramNative() returns error? = @java:Method {
+isolated function initInMemoryProgramNative(boolean skipTime) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.worker.WorkflowWorkerNative",
     name: "initInMemoryWorker"
 } external;

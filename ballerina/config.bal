@@ -26,6 +26,13 @@
 #   fields are ignored in this mode.
 configurable Mode mode = LOCAL;
 
+# Lets the IN_MEMORY engine skip idle time: when every workflow is waiting on a timer it jumps
+# its clock to the next deadline instead of waiting, so a workflow that sleeps for a day finishes
+# at once. That also means `Context.currentTime` runs ahead of the wall clock and a timer's
+# duration is not observable. Turn it off for a run where the clock should read as it would in
+# production. Ignored in every other mode.
+configurable boolean timeSkipping = true;
+
 # Server URL for the workflow runtime.
 # For LOCAL mode, defaults to "localhost:7233".
 # For CLOUD mode, use the cloud endpoint (e.g., "<namespace>.<account>.tmprl.cloud:7233").

@@ -17,6 +17,13 @@
  */
 
 import org.apache.tools.ant.taskdefs.condition.Os
+import org.gradle.process.ExecOperations
+
+import javax.inject.Inject
+
+abstract class BallerinaExecHelper {
+    @Inject abstract ExecOperations getExecOperations()
+}
 
 plugins {
     id 'jacoco'
@@ -38,6 +45,8 @@ dependencies {
         transitive = false
     }
 }
+
+def execHelper = project.objects.newInstance(BallerinaExecHelper)
 
 def packageName = "workflow"
 def packageOrg = "ballerina"
@@ -96,7 +105,7 @@ task commitTomlFiles {
         if (!project.hasProperty('commitToml')) {
             return
         }
-        project.exec {
+        execHelper.execOperations.exec {
             ignoreExitValue true
             if (Os.isFamily(Os.FAMILY_WINDOWS)) {
                 commandLine 'cmd', '/c', "git commit -m \"[Automated] Update the native jar versions\" Ballerina.toml Dependencies.toml"
@@ -147,7 +156,7 @@ task ballerinaTest {
     finalizedBy(commitTomlFiles)
 
     doLast {
-        exec {
+        execHelper.execOperations.exec {
             workingDir project.projectDir
             environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
             if (Os.isFamily(Os.FAMILY_WINDOWS)) {
@@ -249,7 +258,7 @@ def runBallerinaTests = { String label, String variantKey ->
     def reportDir = file("${project.projectDir}/target/report")
     new File(reportDir, 'test_results.json').delete()
     new File("${reportDir}/workflow_tests", 'coverage-report.xml').delete()
-    exec {
+    execHelper.execOperations.exec {
         workingDir project.projectDir
         environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
         commandLine 'sh', '-c', "${distributionBinPath}/bal test ${testCoverageParam} --offline"

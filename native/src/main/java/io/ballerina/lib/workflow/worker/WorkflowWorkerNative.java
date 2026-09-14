@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -22,6 +22,9 @@ import io.ballerina.lib.workflow.ModuleUtils;
 import io.ballerina.lib.workflow.context.AgentContextNative;
 import io.ballerina.lib.workflow.context.SignalAwaitWrapper;
 import io.ballerina.lib.workflow.context.WorkflowContextNative;
+import io.ballerina.lib.workflow.observability.ActivityContentLog;
+import io.ballerina.lib.workflow.observability.WorkflowMetrics;
+import io.ballerina.lib.workflow.observability.WorkflowSampleLog;
 import io.ballerina.lib.workflow.registry.EventInfo;
 import io.ballerina.lib.workflow.runtime.WorkflowRuntime;
 import io.ballerina.lib.workflow.utils.BallerinaFailureConverter;
@@ -154,6 +157,15 @@ public final class WorkflowWorkerNative {
      * to the workflow that sent it. Envelope: {token, response} or {token, error}.
      */
     public static final String AGENT_EVENT_REPLY_SIGNAL_NAME = "__agent_event_reply";
+    // Signals the task decision paths send to a task child; not data events, though the names carry no prefix.
+    public static final String TASK_COMPLETION_SIGNAL_NAME = "taskCompletion";
+    public static final String TASK_DECISION_SIGNAL_NAME = "taskDecision";
+
+    // Whether a signal is framework plumbing (control, agent wiring, task decisions) rather than a user data event.
+    public static boolean isFrameworkSignal(String signalName) {
+        return signalName.startsWith("__") || TASK_COMPLETION_SIGNAL_NAME.equals(signalName)
+                || TASK_DECISION_SIGNAL_NAME.equals(signalName);
+    }
 
     /**
      * Query returning the agent updates that were accepted but whose turn has not completed yet
@@ -1202,6 +1214,11 @@ public final class WorkflowWorkerNative {
         return taskQueue;
     }
 
+    // The engine endpoint this runtime is connected to, or in-memory for the embedded engine.
+    public static String getServerUrl() {
+        return serverUrl;
+    }
+
     /**
      * Check if the worker is running in in-memory mode.
      *
@@ -1892,10 +1909,8 @@ public final class WorkflowWorkerNative {
         }
     }
 
-    /**
-     * Formats a JUL record in Ballerina's structured log style:
-     * {@code time=... level=... module=ballerina/workflow message="..." [error="..."]}.
-     */
+    // Formats a JUL record in Ballerina's structured log style; a record whose single parameter is a Map (the
+    // workflow samples) renders each entry as a top-level key=value pair, as ballerina/log does.
     private static final class BallerinaLogFormatter extends java.util.logging.Formatter {
 
         @Override
@@ -1905,6 +1920,21 @@ public final class WorkflowWorkerNative {
                     .append(" level=").append(ballerinaLevel(record.getLevel()))
                     .append(" module=ballerina/workflow")
                     .append(" message=\"").append(escape(formatMessage(record))).append('"');
+            Object[] params = record.getParameters();
+            if (params != null && params.length == 1 && params[0] instanceof Map<?, ?> fields) {
+                for (Map.Entry<?, ?> entry : fields.entrySet()) {
+                    Object value = entry.getValue();
+                    if (value == null) {
+                        continue;
+                    }
+                    line.append(' ').append(entry.getKey()).append('=');
+                    if (value instanceof Number || value instanceof Boolean) {
+                        line.append(value);
+                    } else {
+                        line.append('"').append(escape(String.valueOf(value))).append('"');
+                    }
+                }
+            }
             Throwable thrown = record.getThrown();
             if (thrown != null) {
                 line.append(" error=\"").append(escape(String.valueOf(thrown))).append('"');
@@ -2283,7 +2313,7 @@ public final class WorkflowWorkerNative {
                         } catch (Exception e) {
                             LOGGER.error("[JWorkflowAdapter] Query {} failed with exception: {}",
                                          queryName, e.getMessage());
-                            throw new RuntimeException("Query execution failed: " + e.getMessage(), e);
+                            throw new IllegalStateException("Query execution failed: " + e.getMessage(), e);
                         }
                     }
                                      );
@@ -2302,6 +2332,38 @@ public final class WorkflowWorkerNative {
 
         @Override
         public Object execute(EncodedValues args) {
+            io.temporal.workflow.WorkflowInfo workflowInfo = Workflow.getInfo();
+            String executingType = workflowInfo.getWorkflowType();
+            // The run's first execution is where every start path converges; on replay the body
+            // runs again but nothing new started.
+            if (!Workflow.isReplaying()) {
+                WorkflowMetrics.recordWorkflowStarted(executingType);
+                WorkflowSampleLog.workflowStarted(executingType, workflowInfo.getWorkflowId(), workflowInfo.getRunId());
+            }
+            try {
+                Object result = executeInternal(args);
+                // Only fresh progress counts: a replay re-executes the body without a new completion.
+                if (!Workflow.isReplaying()) {
+                    long elapsed = Workflow.currentTimeMillis() - workflowInfo.getRunStartedTimestampMillis();
+                    WorkflowMetrics.recordWorkflowClosed(executingType, elapsed, null);
+                    WorkflowSampleLog.workflowClosed(executingType, workflowInfo.getWorkflowId(),
+                            workflowInfo.getRunId(), elapsed, false);
+                }
+                return result;
+            } catch (io.temporal.worker.NonDeterministicException e) {
+                throw e;
+            } catch (Exception e) {
+                if (!Workflow.isReplaying() && !isDestroyWorkflowThreadError(e)) {
+                    long elapsed = Workflow.currentTimeMillis() - workflowInfo.getRunStartedTimestampMillis();
+                    WorkflowMetrics.recordWorkflowClosed(executingType, elapsed, e);
+                    WorkflowSampleLog.workflowClosed(executingType, workflowInfo.getWorkflowId(),
+                            workflowInfo.getRunId(), elapsed, true);
+                }
+                throw e;
+            }
+        }
+
+        private Object executeInternal(EncodedValues args) {
             try {
                 // Get workflow type from Temporal's Workflow.getInfo()
                 io.temporal.workflow.WorkflowInfo info = Workflow.getInfo();
@@ -2838,12 +2900,39 @@ public final class WorkflowWorkerNative {
         public static final String BUILTIN_GET_RESULT = "workflow:getResult";
         public static final String BUILTIN_GET_INFO = "workflow:getInfo";
         public static final String BUILTIN_PENDING_AGENT_EVENTS = "workflow:pendingAgentDataEvents";
+        private static final String BUILTIN_PREFIX = "workflow:";
         private static final String CALL_CONFIG_MARKER = "__callConfig__";
         private static final String RETRY_ON_ERROR_KEY = "retryOnError";
 
         @Override
-        @SuppressWarnings("unchecked")
         public Object execute(EncodedValues args) {
+            io.temporal.activity.ActivityInfo info =
+                    io.temporal.activity.Activity.getExecutionContext().getInfo();
+            String executingActivityType = info.getActivityType();
+            // The built-in implicit activities are engine plumbing, not user activities: no telemetry for them.
+            boolean observed = !executingActivityType.startsWith(BUILTIN_PREFIX);
+            long startNanos = System.nanoTime();
+            Object result = null;
+            Exception failure = null;
+            try {
+                result = executeInternal(args);
+                return result;
+            } catch (Exception e) {
+                failure = e;
+                throw e;
+            } finally {
+                if (observed) {
+                    long durationMillis = (System.nanoTime() - startNanos) / 1_000_000;
+                    WorkflowMetrics.recordActivityExecution(executingActivityType, info.getWorkflowType(),
+                            durationMillis, failure);
+                    WorkflowSampleLog.activityExecuted(info, durationMillis, failure != null);
+                    ActivityContentLog.record(info, args, durationMillis, result, failure);
+                }
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        private Object executeInternal(EncodedValues args) {
             // Get activity name from Temporal's Activity.getExecutionContext()
             io.temporal.activity.ActivityExecutionContext activityContext =
                     io.temporal.activity.Activity.getExecutionContext();
@@ -2871,7 +2960,7 @@ public final class WorkflowWorkerNative {
             if (activityFunction == null) {
                 String errorMsg = "Activity not registered: " + activityName +
                         ". Available activities: " + ACTIVITY_REGISTRY.keySet();
-                throw new RuntimeException(errorMsg);
+                throw new IllegalArgumentException(errorMsg);
             }
 
             // Decode arguments from Temporal.
@@ -2881,7 +2970,7 @@ public final class WorkflowWorkerNative {
             @SuppressWarnings("unchecked")
             Map<String, Object> namedArgs = args.get(0, Map.class);
             if (namedArgs == null) {
-                throw new RuntimeException(
+                throw new IllegalArgumentException(
                         "Malformed activity invocation for '" + activityName +
                                 "': the named-argument map (args[0]) is null. " +
                                 "Ensure callActivity passes a valid map<anydata> as the first argument.");
@@ -2956,7 +3045,7 @@ public final class WorkflowWorkerNative {
                         String connName = s.substring(CONNECTION_MARKER_PREFIX.length());
                         BObject resolved = CONNECTION_REGISTRY.get(connName);
                         if (resolved == null) {
-                            throw new RuntimeException(
+                            throw new IllegalStateException(
                                     "Connection '" + connName + "' is not registered "
                                             + "on this worker. The activity '"
                                             + activityName
@@ -2972,7 +3061,7 @@ public final class WorkflowWorkerNative {
                     // Only optional/defaultable parameters may be absent; required parameters
                     // must always be supplied by the caller.
                     if (!param.isDefault) {
-                        throw new RuntimeException(
+                        throw new IllegalArgumentException(
                                 "Required activity parameter '" + paramName
                                         + "' is missing from the activity arguments map");
                     }
@@ -2981,7 +3070,7 @@ public final class WorkflowWorkerNative {
                     // parameters as null in the positional arg array. This is
                     // only safe for nilable parameter types.
                     if (typedescParam != null && !isNilableType(param.type, 0)) {
-                        throw new RuntimeException(
+                        throw new IllegalArgumentException(
                                 "Activity '" + activityName + "' omits defaultable parameter '"
                                         + paramName + "' with non-nilable type in a "
                                         + "typedesc-dependent signature. Pass this argument "
@@ -3067,7 +3156,7 @@ public final class WorkflowWorkerNative {
 
             io.temporal.client.WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
-                throw new RuntimeException("Workflow client not initialized");
+                throw new IllegalStateException("Workflow client not initialized");
             }
 
             // Fetch workflowType via DescribeWorkflowExecution (best-effort; non-fatal).
@@ -3122,7 +3211,7 @@ public final class WorkflowWorkerNative {
             String agentId = args.get(0, String.class);
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
-                throw new RuntimeException("Workflow client not initialized");
+                throw new IllegalStateException("Workflow client not initialized");
             }
             return client.newUntypedWorkflowStub(agentId)
                     .query(WorkflowWorkerNative.PENDING_AGENT_EVENTS_QUERY, Object.class);
@@ -3133,7 +3222,7 @@ public final class WorkflowWorkerNative {
 
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
-                throw new RuntimeException("Workflow client not initialized");
+                throw new IllegalStateException("Workflow client not initialized");
             }
 
             DescribeWorkflowExecutionRequest request = DescribeWorkflowExecutionRequest.newBuilder()
@@ -3147,12 +3236,12 @@ public final class WorkflowWorkerNative {
                                  .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
                                  .describeWorkflowExecution(request);
             } catch (io.grpc.StatusRuntimeException e) {
-                throw new RuntimeException(
+                throw new IllegalStateException(
                         "gRPC error describing workflow '" + workflowId +
                                 "' in namespace '" + client.getOptions().getNamespace() +
                                 "': [" + e.getStatus().getCode() + "] " + e.getStatus().getDescription(), e);
             } catch (Exception e) {
-                throw new RuntimeException(
+                throw new IllegalStateException(
                         "Failed to describe workflow '" + workflowId +
                                 "' in namespace '" + client.getOptions().getNamespace() + "'", e);
             }

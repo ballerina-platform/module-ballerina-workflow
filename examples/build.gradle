@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, WSO2 LLC. (http://www.wso2.com).
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -17,6 +17,13 @@
  */
 
 import org.apache.tools.ant.taskdefs.condition.Os
+import org.gradle.process.ExecOperations
+
+import javax.inject.Inject
+
+abstract class BallerinaExecHelper {
+    @Inject abstract ExecOperations getExecOperations()
+}
 
 // Map of example directory names to their Ballerina package names
 def examplePackageNames = [
@@ -94,6 +101,7 @@ def runnableExamples = [
 ]
 
 task buildExamples {
+    def execHelper = project.objects.newInstance(BallerinaExecHelper)
     description = 'Builds and tests all example projects using the locally built workflow module'
     group = 'build'
     dependsOn(':workflow-ballerina:build')
@@ -126,7 +134,7 @@ task buildExamples {
         // resolution deterministic without mutating any shared global state.
         def examplesBalHome = new File(project.buildDir, "bal-home")
         def pullOutput = new ByteArrayOutputStream()
-        def pullResult = exec {
+        def pullResult = execHelper.execOperations.exec {
             ignoreExitValue = true
             standardOutput = pullOutput
             errorOutput = pullOutput
@@ -172,7 +180,7 @@ task buildExamples {
             // pinned to that ai version instead of drifting to a newer Central release whose
             // BIR the pinned distribution's toolchain cannot load.
             def balCommand = testsExcluded ? 'build --offline' : "test --offline ${testCoverageParam}"
-            exec {
+            execHelper.execOperations.exec {
                 workingDir exampleDir
                 environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
                 environment "BALLERINA_HOME_DIR", examplesBalHome.absolutePath
@@ -202,6 +210,7 @@ task buildExamples {
 }
 
 task runExamples {
+    def execHelper = project.objects.newInstance(BallerinaExecHelper)
     description = 'Runs examples with a main() function via bal run to verify runtime startup'
     group = 'verification'
     dependsOn(buildExamples)
@@ -220,7 +229,7 @@ task runExamples {
 
             logger.lifecycle("Running example: ${exampleName}")
 
-            exec {
+            execHelper.execOperations.exec {
                 workingDir exampleDir
                 environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
                 environment "BALLERINA_HOME_DIR", examplesBalHome.absolutePath

@@ -6,6 +6,79 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Observability integration at the durable-engine wrapper layer**, plugged into the
+  standard Ballerina observability pipeline (`observabilityIncluded = true`):
+  - Tracing: a new exported `workflow.observe` submodule records client-side spans for
+    `run`, `sendData`, `getWorkflowResult`, the three task decisions, `DurableAgent.run` and
+    `DurableAgent.sendData`, nesting into the caller's existing request trace. Spans are
+    suppressed inside workflow bodies (replay safety) and record structural identifiers —
+    and, on a decision, who made it.
+  - Metrics, following the Ballerina integration observability standard: one
+    `workflow_events_total` counter carries every lifecycle event (`started`, `closed`,
+    `activity_executed`, `data_sent`, `task_decided`), recorded replay-safely; logical
+    metrics are derived by tag filters. Every increment carries the same label keys
+    (`none` where a key does not apply) plus the standard identity tags (`module`,
+    `type`, `remote_url`, `task_queue`, `host`), and outcomes use `outcome =
+    success|failure` with `error_type` on failures. `workflow_duration_seconds` and
+    `workflow_activity_duration_seconds` publish p50–p99 over a five-minute window.
+    Agent runner, human-task and review-activity child workflows count as workflow events.
+    A task child's events carry its `task_kind` and declared `task_name`, so its
+    lifecycle doubles as the task's: created (`started`), decided-and-closed (`closed`,
+    with `error_type` naming a rejection or expiry), and time-to-decision
+    (`workflow_duration_seconds` filtered by task). The management control operations
+    are counted too — `suspended`, `resumed`, `terminated`, `cancelled`, accepted or
+    refused.
+  - **Durable agent steps are metrics.** Each step of an agent's loop is one event on the
+    agent's workflow type, recorded replay-safely when it completes: `agent_model_called`
+    (thinking — `activity_type` names `llmChat`/`generate`/`generateResult`),
+    `agent_tool_called` (by the new `tool_name` label and the activity it ran),
+    `agent_task_awaited` (a human task the agent created, from creation to its decision;
+    `error_type` names a rejection or expiry), `agent_event_received` (an event wait —
+    `outcome="failure"` with `error_type="TIMEOUT"` or `"MAX_EVENT_WAITS"` when it did
+    not arrive), `agent_slept` (`action` = `completed`/`interrupted`) and
+    `agent_tool_reviewed` (a person's decision on a gated tool). Each step's duration, on
+    the engine's clock, lands in `workflow_agent_step_duration_seconds` with the same
+    percentiles, and each publishes an `agent.*` log sample with the same fields.
+  - **Every decision a person makes on a task is recorded.** Completing or rejecting a
+    human task and deciding a review activity — through the root module, `management`, the
+    REST service or `executeCommand` — each write a `ballerina/log` audit entry (task, parent
+    workflow, action, who decided and in which roles, the roles the task allowed, when, and
+    whether it was accepted), a `TaskDecisionSpan` carrying the same on `user.id`,
+    `user.roles` and `workflow.task.action`, and one count in
+    `workflow_events_total{event="task_decided"}`. A refused decision is recorded too, as a
+    `failure` with the refusing error's type. The audit entry and the span also say where
+    the deciding identity came from (`identitySource` / `user.identity.source`): `verified`
+    when the REST gateway resolved it from a credential its auth layer validated (a JWT
+    claim, a basic-auth username), `asserted` when the application supplied it or a trusted
+    gateway forwarded it — carried on `management:Identity.identitySource` through
+    `executeCommand`. The audit entry is unconditional — written whether or not any
+    observability is enabled; the span, the counter and the metric sample follow their
+    respective switches (tracing, metrics, `publishMetricSamples`).
+  - **Content is recorded too, and can be switched off.** `[ballerina.workflow.observe]`
+    gains `captureHumanTaskContent` — what the person was shown (the task's input, or the
+    reviewed activity's arguments) and what they submitted join the decision's span and
+    audit entry — and `captureActivityContent` — every activity attempt logs its arguments
+    and result. Both default to `true`, as `ai.observe` records content: the engine already
+    persists every value a workflow handles in the run's history, so the log carries nothing
+    the workflow store does not, and telemetry retention retires its copy. Turn one off
+    where that content must not leave the workflow store.
+  - **One structured log record per workflow event, for log-based metrics.** Under
+    `logger = "workflow-metrics"`: `workflow.started`, `workflow.closed` (outcome, duration),
+    `activity.executed` (attempt, outcome, duration), `data.sent`, `task.decided`, the
+    control operations (`workflow.suspended`, …) and the agent steps (`agent.*`) — the
+    workflow-domain counterpart of what `ballerinax/metrics.logs` publishes per HTTP request,
+    so a platform that builds metrics from logs can index workflow metrics too. Structural
+    fields only, with the same `outcome` vocabulary as the registry metrics.
+    `publishMetricSamples = false` turns them off.
+  - **Every start path counts once.** The `started` event is recorded at the worker's first
+    execution of a run, where a `workflow:run`, a management start, a child workflow, a
+    human task and an agent run all converge.
+  The integration tests run with observability enabled and assert the emitted metrics,
+  spans and decision records, content included.
+  See `docs/proposals/observability-integration.md` for the design.
+
 ## [0.9.0] - 2026-09-07
 
 ### Changed

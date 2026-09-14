@@ -1,4 +1,4 @@
-// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
 //
 // WSO2 LLC. licenses this file to you under the Apache License,
 // Version 2.0 (the "License"); you may not use this file except
@@ -94,7 +94,7 @@ function testBasicAuthUserDefaulting() {
     req.setHeader("Authorization", "Basic b3BzOnMzY3JldCE=");
     CallerIdentity|http:Forbidden identity =
             resolveCallerIdentity(req, "workflows", defaultIdentityConfig());
-    test:assertEquals(identity, <CallerIdentity>{userId: "ops", roles: []});
+    test:assertEquals(identity, <CallerIdentity>{userId: "ops", roles: [], identitySource: "verified"});
 
     // A forwarded x-user-id is never overridden by the basic-auth default.
     http:Request explicit = new;

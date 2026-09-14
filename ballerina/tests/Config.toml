@@ -2,3 +2,14 @@
 
 [ballerina.workflow]
 mode = "IN_MEMORY"
+
+# The unit tests run observability-enabled (the gradle test task passes
+# --observability-included) with the distribution's mock tracer, so span recording
+# paths execute for real. Metrics stay off here: each test module's session would
+# re-set the process-wide default metric registry, which the runtime forbids —
+# the metric recorders are covered through their registry-taking test seam instead,
+# and end-to-end by the integration tests. The disabled no-op paths stay covered by
+# the integration auth-variant runs, which regenerate their config without this section.
+[ballerina.observe]
+tracingEnabled = true
+tracingProvider = "mock"

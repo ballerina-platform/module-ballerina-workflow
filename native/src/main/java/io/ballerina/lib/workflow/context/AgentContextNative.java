@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -18,6 +18,9 @@
 
 package io.ballerina.lib.workflow.context;
 
+import io.ballerina.lib.workflow.observability.AgentStep;
+import io.ballerina.lib.workflow.observability.AgentStepTelemetry;
+import io.ballerina.lib.workflow.observability.WorkflowMetrics;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.ActivityNaming;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
@@ -452,6 +455,7 @@ public final class AgentContextNative {
             }
 
             info.beginPark("a human approval decision for the gated tool '" + activityName + "'", null);
+            long startedAt = Workflow.currentTimeMillis();
             Map<String, Object> decision;
             try {
                 // The step id names the graph node the model called: the ADVERTISED tool name
@@ -464,6 +468,8 @@ public final class AgentContextNative {
             } finally {
                 info.endPark();
             }
+            AgentStepTelemetry.record(AgentStep.toolReviewed(workflowType, name, reviewTaskName,
+                    String.valueOf(decision.get("action")), Workflow.currentTimeMillis() - startedAt));
             return StringUtils.fromString(TypesUtil.toJsonString(decision));
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -599,6 +605,7 @@ public final class AgentContextNative {
             io.ballerina.lib.workflow.worker.WorkflowWorkerNative.awaitWhileSuspended();
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             info.beginPark("a timer (the built-in sleep tool)", null);
+            long startedAt = Workflow.currentTimeMillis();
             boolean woken;
             try {
                 woken = Workflow.await(java.time.Duration.ofMillis(millis),
@@ -609,8 +616,12 @@ public final class AgentContextNative {
             if (woken) {
                 io.ballerina.lib.workflow.worker.WorkflowWorkerNative.clearWakeRequest();
             }
+            AgentStepTelemetry.record(AgentStep.slept(Workflow.getInfo().getWorkflowType(), woken,
+                                                      Workflow.currentTimeMillis() - startedAt));
             return !woken;
-        } catch (io.temporal.worker.NonDeterministicException | io.temporal.failure.TemporalFailure e) {
+        } catch (io.temporal.worker.NonDeterministicException e) {
+            throw e;
+        } catch (io.temporal.failure.TemporalFailure e) {
             throw e;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString("Agent sleep failed: " + e.getMessage()));
@@ -980,7 +991,9 @@ public final class AgentContextNative {
                 return bStr;
             }
             return StringUtils.fromString(String.valueOf(ballerina));
-        } catch (NonDeterministicException | TemporalFailure e) {
+        } catch (NonDeterministicException e) {
+            throw e;
+        } catch (TemporalFailure e) {
             throw e;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -1131,7 +1144,9 @@ public final class AgentContextNative {
                 return data;
             }
             return TypesUtil.convertJavaToBallerinaType(data);
-        } catch (NonDeterministicException | TemporalFailure e) {
+        } catch (NonDeterministicException e) {
+            throw e;
+        } catch (TemporalFailure e) {
             throw e;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -1149,7 +1164,17 @@ public final class AgentContextNative {
      * one-shot promise; MULTI_EVENT takes from the FIFO channel so repeated waits observe successive signals.
      * Enforces the max-event-waits cap (hard failure) and the per-wait timeout (returns {@link TimedOut}).
      */
-    private static Object awaitSignal(AgentContextInfo info, String eventName) throws Exception {
+    private static Object awaitSignal(AgentContextInfo info, String eventName) {
+        long startedAt = Workflow.currentTimeMillis();
+        Object data = awaitSignalUnrecorded(info, eventName);
+        String errorType = data instanceof TimedOut ? AgentStep.ERROR_EVENT_TIMEOUT
+                : data instanceof BError ? AgentStep.ERROR_EVENT_WAIT_CAP : null;
+        AgentStepTelemetry.record(AgentStep.eventReceived(Workflow.getInfo().getWorkflowType(), eventName,
+                                                          Workflow.currentTimeMillis() - startedAt, errorType));
+        return data;
+    }
+
+    private static Object awaitSignalUnrecorded(AgentContextInfo info, String eventName) {
         info.eventWaitCount++;
         if (info.eventWaitCount > info.maxEventWaits) {
             // Returned as a Ballerina error (not thrown): a Java failure crossing the
@@ -1237,14 +1262,44 @@ public final class AgentContextNative {
             return inputMismatch;
         }
         info.beginPark("a person to complete the task '" + taskName.getValue() + "'", null);
+        long startedAt = Workflow.currentTimeMillis();
+        Object result;
         try {
-            return WorkflowContextNative.awaitHumanTaskExploded(null, taskName, meta.userRoles(), payloadMap,
+            result = WorkflowContextNative.awaitHumanTaskExploded(null, taskName, meta.userRoles(), payloadMap,
                     StringUtils.fromString(meta.title()), StringUtils.fromString(meta.description()),
                     meta.timeout(), meta.resultType(),
                     StringUtils.fromString(AGENT_TASK_SITE_PREFIX + taskName.getValue()));
         } finally {
             info.endPark();
         }
+        String workflowType = Workflow.getInfo().getWorkflowType();
+        AgentStepTelemetry.record(AgentStep.taskAwaited(workflowType, taskName.getValue(),
+                humanTaskNameFor(workflowType, taskName.getValue()),
+                Workflow.currentTimeMillis() - startedAt, taskErrorTypeOf(result)));
+        return result;
+    }
+
+    // The qualified task name the task child is created under, as awaitHumanTask derives it.
+    private static String humanTaskNameFor(String workflowType, String taskName) {
+        String definitionName = workflowType.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX)
+                ? workflowType.substring(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length()) : workflowType;
+        return definitionName + "." + taskName;
+    }
+
+    // error_type of a human task's outcome in the task child's vocabulary: timeout and rejection map to the
+    // engine failure types, any other error keeps its Ballerina type name.
+    private static String taskErrorTypeOf(Object result) {
+        if (!(result instanceof BError error)) {
+            return null;
+        }
+        String typeName = error.getType().getName();
+        if ("HumanTaskTimeoutError".equals(typeName)) {
+            return WorkflowWorkerNative.HUMANTASK_TIMEOUT_FAILURE_TYPE;
+        }
+        if ("HumanTaskRejectedError".equals(typeName)) {
+            return WorkflowWorkerNative.HUMANTASK_REJECTED_FAILURE_TYPE;
+        }
+        return typeName;
     }
 
     /**
@@ -1264,11 +1319,13 @@ public final class AgentContextNative {
         // execution belongs to in the agent's graph is the advertised tool named in the
         // arguments — never the wrapper's own name, which is machinery the graph doesn't show.
         String site = null;
+        String toolName = null;
         if (EXECUTE_AGENT_TOOL_ACTIVITY.equals(name)
-                && namedArgs.get(TOOL_NAME_ARG) instanceof String toolName) {
-            site = AGENT_TOOL_SITE_PREFIX + toolName;
+                && namedArgs.get(TOOL_NAME_ARG) instanceof String wrappedTool) {
+            toolName = wrappedTool;
+            site = AGENT_TOOL_SITE_PREFIX + wrappedTool;
         }
-        return executeActivity(name, namedArgs, td, null, site);
+        return executeActivity(name, namedArgs, td, null, site, toolName);
     }
 
     /**
@@ -1304,7 +1361,7 @@ public final class AgentContextNative {
         }
         // The graph names the tool by its advertised name; a registration-time override may run
         // it as a differently-named activity, but the site stays the tool the model called.
-        return executeActivity(activityName, namedArgs, td, retryPolicy, AGENT_TOOL_SITE_PREFIX + toolName);
+        return executeActivity(activityName, namedArgs, td, retryPolicy, AGENT_TOOL_SITE_PREFIX + toolName, toolName);
     }
 
     private static Map<String, Object> argsToJavaMap(BMap<BString, Object> args) {
@@ -1321,9 +1378,33 @@ public final class AgentContextNative {
      * record → a rerun loop that creates a review activity on each failure, listed and worded as that record
      * declares (a human decides to rerun, rerun with edited input, or fail — the AI cannot decide this itself).
      */
-    @SuppressWarnings("unchecked")
     private static Object executeActivity(String activityName, Map<String, Object> namedArgs, BTypedesc td,
-                                          Object retryPolicy, String site) {
+                                          Object retryPolicy, String site, String toolName) {
+        long startedAt = Workflow.currentTimeMillis();
+        ActivityOutcome outcome = runActivity(activityName, namedArgs, td, retryPolicy, site);
+        long elapsed = Workflow.currentTimeMillis() - startedAt;
+        String workflowType = Workflow.getInfo().getWorkflowType();
+        AgentStepTelemetry.record(MODEL_ACTIVITIES.contains(activityName)
+                ? AgentStep.modelCall(workflowType, activityName, elapsed, outcome.errorType())
+                : AgentStep.toolCall(workflowType, activityName, toolName != null ? toolName : activityName,
+                                     elapsed, outcome.errorType()));
+        return outcome.value();
+    }
+
+    // The value (or Ballerina error) an agent activity call produced, and the failure's type if any.
+    private record ActivityOutcome(Object value, String errorType) {
+        static ActivityOutcome of(Object value) {
+            return new ActivityOutcome(value, null);
+        }
+
+        static ActivityOutcome failed(BError error, Throwable failure) {
+            return new ActivityOutcome(error, WorkflowMetrics.errorTypeOf(failure));
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static ActivityOutcome runActivity(String activityName, Map<String, Object> namedArgs, BTypedesc td,
+                                               Object retryPolicy, String site) {
         String workflowType = Workflow.getInfo().getWorkflowType();
         String fullActivityName = ActivityNaming.activityTypeFor(workflowType, activityName);
         // Both retry-policy records are mappings, so a HumanReview is told from an AutoRetry
@@ -1370,14 +1451,15 @@ public final class AgentContextNative {
             try {
                 Object result = stub.execute(fullActivityName, Object.class, new Object[]{currentArgs, callConfig});
                 Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(result);
-                return TypesUtil.cloneWithType(ballerinaResult, td.getDescribingType());
+                return ActivityOutcome.of(TypesUtil.cloneWithType(ballerinaResult, td.getDescribingType()));
             } catch (ActivityFailure e) {
                 Throwable cause = e.getCause();
+                Throwable failure = cause != null ? cause : e;
                 String errorMsg = cause instanceof ApplicationFailure appFailure
                         ? appFailure.getOriginalMessage()
                         : (cause != null ? cause.getMessage() : e.getMessage());
                 if (!manualRetry) {
-                    return ErrorCreator.createError(StringUtils.fromString(errorMsg));
+                    return ActivityOutcome.failed(ErrorCreator.createError(StringUtils.fromString(errorMsg)), failure);
                 }
                 // Manual retry: a human reviews the failure and decides. The declaration is
                 // honoured here as it is on a workflow's own callActivity — its roles used to
@@ -1398,11 +1480,14 @@ public final class AgentContextNative {
                 Object feedback = decision.get("feedback");
                 String msg = feedback instanceof String fb && !fb.isBlank()
                         ? errorMsg + " (reviewer: " + fb + ")" : errorMsg;
-                return ErrorCreator.createError(StringUtils.fromString(msg));
-            } catch (NonDeterministicException | TemporalFailure e) {
+                return ActivityOutcome.failed(ErrorCreator.createError(StringUtils.fromString(msg)), failure);
+            } catch (NonDeterministicException e) {
+                throw e;
+            } catch (TemporalFailure e) {
                 throw e;
             } catch (Exception e) {
-                return ErrorCreator.createError(StringUtils.fromString("Agent activity failed: " + e.getMessage()));
+                return ActivityOutcome.failed(ErrorCreator.createError(
+                        StringUtils.fromString("Agent activity failed: " + e.getMessage())), e);
             }
         }
     }

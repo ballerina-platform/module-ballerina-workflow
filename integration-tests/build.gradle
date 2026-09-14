@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -156,6 +156,11 @@ task ballerinaTest {
     finalizedBy(commitTomlFiles)
 
     doLast {
+        // A leftover report from an earlier run must not speak for this one: the check below
+        // reads whatever file exists, and a stale failed tally would fail a green run (or a
+        // stale green one bless a run that never wrote a report).
+        file("${project.projectDir}/target/report/test_results.json").delete()
+
         execHelper.execOperations.exec {
             workingDir project.projectDir
             environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
@@ -193,7 +198,11 @@ task ballerinaTest {
                     "Check the Temporal dev server and the bal test output above.")
             }
         } else {
-            logger.warn("Test results file not found: ${testResultFile}")
+            // No report means the run never produced a verified outcome — that is a
+            // failure, not a warning, or CI could pass on a crashed test run.
+            throw new GradleException(
+                "Integration test results file was not produced: ${testResultFile.absolutePath}. " +
+                "The test run may have crashed before writing its report.")
         }
     }
 }
@@ -283,6 +292,19 @@ def writeAuthConfig(String tomlPath, Map cfg) {
     if (cfg.authMtlsCert) lines << "authMtlsCert = \"${cfg.authMtlsCert}\""
     if (cfg.authMtlsKey)  lines << "authMtlsKey = \"${cfg.authMtlsKey}\""
     if (cfg.authCaCert)   lines << "authCaCert = \"${cfg.authCaCert}\""
+    // The observability sections the committed Config.toml carries; without them the observability tests skip.
+    lines.addAll([
+        "",
+        "[ballerina.observe]",
+        "metricsEnabled = true",
+        "metricsReporter = \"prometheus\"",
+        "tracingEnabled = true",
+        "tracingProvider = \"mock\"",
+        "",
+        "[ballerina.workflow.observe]",
+        "captureHumanTaskContent = true",
+        "captureActivityContent = true"
+    ])
     new File(tomlPath).text = lines.join('\n') + '\n'
 }
 

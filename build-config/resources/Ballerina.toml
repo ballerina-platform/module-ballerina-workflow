@@ -24,6 +24,11 @@ export = true
 name = "workflow.management.rest"
 export = true
 
+[[package.modules]]
+name = "workflow.observe"
+description = "APIs for adding observability to workflow applications"
+export = true
+
 [platform.java21]
 graalvmCompatible = false
 

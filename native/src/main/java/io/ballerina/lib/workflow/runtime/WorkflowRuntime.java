@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -18,6 +18,8 @@
 
 package io.ballerina.lib.workflow.runtime;
 
+import io.ballerina.lib.workflow.observability.WorkflowMetrics;
+import io.ballerina.lib.workflow.observability.WorkflowSampleLog;
 import io.ballerina.lib.workflow.utils.CorrelationExtractor;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
 import io.temporal.client.WorkflowClient;
@@ -152,7 +154,8 @@ public final class WorkflowRuntime {
             // Create an untyped workflow stub for dynamic workflow execution
             WorkflowStub workflowStub = client.newUntypedWorkflowStub(processName, options);
 
-            // Start the workflow asynchronously with the input data
+            // Start the workflow asynchronously with the input data. The started event is
+            // counted at the worker's first execution, where every start path converges.
             workflowStub.start(input);
 
             LOGGER.debug("Started workflow: type={}, id={}", processName, workflowId);
@@ -226,15 +229,21 @@ public final class WorkflowRuntime {
                 workflowStub.signal(signalName);
             }
 
+            WorkflowMetrics.recordDataSent(signalName, null);
+            WorkflowSampleLog.dataSent(signalName, workflowId, false);
             LOGGER.debug("Sent signal directly to workflow: id={}, signalName={}", workflowId, signalName);
             return true;
 
         } catch (WorkflowNotFoundException e) {
             // The workflow completed or was terminated before this signal was delivered.
             // Returns false so the caller can decide whether to surface this as an error.
+            WorkflowMetrics.recordDataSent(signalName, e);
+            WorkflowSampleLog.dataSent(signalName, workflowId, true);
             LOGGER.debug("Signal '{}' dropped: workflow {} is no longer running", signalName, workflowId);
             return false;
         } catch (Exception e) {
+            WorkflowMetrics.recordDataSent(signalName, e);
+            WorkflowSampleLog.dataSent(signalName, workflowId, true);
             LOGGER.error("Failed to send signal to workflow {}: {}", workflowId, e.getMessage(), e);
             throw new IllegalStateException("Failed to send signal: " + e.getMessage(), e);
         }

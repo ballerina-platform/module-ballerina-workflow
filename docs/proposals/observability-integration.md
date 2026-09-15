@@ -72,25 +72,42 @@ Every span carries `workflow.operation.name` and `span.type = workflow` (mirrori
 attribute `gen_ai.agent.name` so agent traces correlate with `ai.observe` spans; decision
 spans reuse the OpenTelemetry `user.id` and `user.roles` attributes for who decided.
 
-### Execution spans: one trace per run
+### One trace per instance
 
 Client spans alone leave the story in pieces: the request that started a run is one trace,
-the request that sent it data is another, and the days of execution in between — activities,
-an agent's steps, a human task waiting on a person — are not in any trace. The module closes
-that gap in two moves, both compatible with replay.
+the request that sent it data is another, the decision a person made on it a third, and the
+days of execution in between — activities, an agent's steps, a human task waiting on a
+person — are in no trace at all. Nor can the pieces be joined by propagation: they are
+separate calls, sometimes days apart, in processes that never meet, and the earlier one is
+long finished when the next begins.
 
-**The trace context travels with the run.** `run`, `DurableAgent.run` and the management
-start read the caller's current span (its trace and span id, from the Ballerina observer
-context — the `start_workflow` span itself when nothing else is active) and hand it to the
-engine as a header through a Temporal `ContextPropagator`. The engine delivers that header to
-every workflow task, every activity attempt and every child workflow of the run — human
-tasks, review activities, child agents — so the worker always knows which trace the run
-belongs to, on whichever worker and however many restarts later. Once the worker has opened
-the run's own span it propagates that instead, so the run's steps nest under the run. The
-worker opens its spans through the OpenTelemetry API with that explicit parent rather than
-through header injection, which is the tracer provider's business and not every provider
-does it. A run started by an untraced caller carries no context; its execution spans then
-form a trace of their own, still tagged with the instance id.
+**The instance ID is the join.** It is the one thing every call about a run shares, so it is
+what the trace is derived from: `traceId = SHA-256("ballerina-workflow/instance-trace:" +
+instanceId)[0..16]`, with the next eight bytes standing for an anchor span. Both sides
+compute it — the client spans above open in that trace instead of under their caller, and so
+do the worker's — so everything that names one instance is one trace, with no lookup and no
+context to pass. The derived ids are not secret and not meant to be: an instance ID is
+already on every span as a tag.
+
+The anchor span is never emitted, so a tracing UI shows the trace's top spans as roots. A
+span whose instance is not known cannot join a trace: a decision refused before the runtime
+could say which run owns the task stands in a trace of its own.
+
+**A client span links back to its caller.** The call still happened inside some request, and
+that request's own span is recorded as an OpenTelemetry link on the client span, so a tracing
+UI follows it back. The link is captured from the Ballerina observer context of the calling
+frame at the moment the call is made.
+
+**The context still travels with the run**, through a Temporal `ContextPropagator`, but it
+now carries the instance's anchor rather than the caller's span: the engine delivers it to
+every workflow task, every activity attempt and every child workflow — human tasks, review
+activities, child agents — and once the worker has opened the run's own span it propagates
+that instead, so the run's steps nest under the run rather than beside it. A run whose
+header never arrived falls back to the anchor it can derive: from `getRootWorkflowId()` for
+a child, so a task child belongs to the trace of the run that started it, and from its own
+id otherwise. The worker opens its spans through the OpenTelemetry API with an explicit
+parent rather than through header injection, which is the tracer provider's business and not
+every provider does it.
 
 **The worker records what happens, as spans under that context**, from the same replay-gated
 points that record the metrics, so no span is emitted twice:
@@ -103,11 +120,11 @@ points that record the metrics, so no span is emitted twice:
 | `agent.model_call <activity>`, `agent.tool_call <tool>`, `agent.event_wait <event>`, `agent.sleep`, `agent.task_wait <task>`, `agent.tool_review <tool>` | around each agent step, on the workflow thread; a step that began on another worker gets a span at completion carrying its duration | `workflow.agent.step`, `workflow.agent.tool`, `workflow.data.name`, `workflow.task.name`, `workflow.task.action`, `workflow.step.duration.seconds`; a timed-out wait is an error span with `error.type = TIMEOUT` |
 
 Execution spans are published under the service name `workflow` with the identity tags and
-`type = worker`, so a tracing UI lists them beside the client-side `client` spans of the
-integration's own services. A human task child's `workflow humantask-<def>.<task>` span is
-the wait for the person; the decision that ends it stays in the decider's own trace (the
-person acted in a different request) but carries the same `workflow.instance.id`, so a tag
-search still gathers everything that touched the run.
+`type = worker`; the client spans are published there too, with `type = client`, so one
+service holds both sides of an instance's story. A human task child's
+`workflow humantask-<def>.<task>` span is the wait for the person, and the decision that ends
+it joins the same trace: the decision's receipt names the run that owns the task, which is
+the instance its span derives from.
 
 Two limits follow from durable execution: a span this worker opened is lost if the worker
 stops before the step ends (the close is then a marker span, and the metrics still count
@@ -232,7 +249,7 @@ wrapper turns the call into one `TaskDecisionSpan`, which on close writes three 
   caller), `identitySource`, `assignedRoles` (as declared on the task), `decidedAt`.
   Written at `INFO` for an accepted decision and `WARN` for a refused one, with the
   refusal's error attached;
-- the span above, so the decision sits in the caller's request trace;
+- the span above, in the trace of the run that owns the task;
 - one increment of `workflow_events_total{event="task_decided"}`.
 
 A **refused** decision — wrong role, task no longer running, task not found — is recorded

@@ -15,7 +15,6 @@
 // under the License.
 
 import ballerina/jballerina.java;
-import ballerina/log;
 import ballerina/observe;
 import ballerina/time;
 
@@ -91,70 +90,49 @@ public type WorkflowSpan distinct isolated object {
 };
 
 // Records a span only when tracing is on and the call is outside a workflow body, since bodies replay.
+//
+// The span is built when it closes: which instance the call belongs to is sometimes known only by then, and
+// that is what places the span in the instance's trace rather than under the caller.
 isolated class BaseSpanImp {
     *WorkflowSpan;
-    private final int|error? spanId;
+    private final string name;
+    private final int spanId;
+    private map<string> tags = {};
 
     isolated function init(string name) {
-        if !isSpanRecordingEnabled() {
-            self.spanId = ();
-            return;
-        }
-        int|error spanId = observe:startSpan(name);
-        self.spanId = spanId;
-        if spanId is error {
-            log:printError("failed to start workflow span", 'error = spanId);
-            return;
-        }
-        addOtherTags("span.type", "workflow", spanId);
-        foreach [string, string] [key, value] in spanIdentityTags().entries() {
-            addOtherTags(key, value, spanId);
-        }
+        self.name = name;
+        self.spanId = isSpanRecordingEnabled() ? beginClientSpan() : 0;
     }
 
     isolated function addTag(WorkflowTagNames key, string value) {
-        int|error? spanId = self.spanId;
-        if spanId is () {
+        if self.spanId == 0 {
             return;
         }
-        if spanId is error {
-            return;
-        }
-        error? result = observe:addTagToSpan(key, value, spanId);
-        if result is error {
-            log:printError(string `failed to add tag '${key}' to span with ID '${spanId}'`, 'error = result);
+        lock {
+            self.tags[key] = value;
         }
     }
 
     public isolated function close(error? err = ()) {
-        int|error? spanId = self.spanId;
-        if spanId is () {
+        if self.spanId == 0 {
             return;
         }
-        if spanId is error {
-            return;
+        map<string> tags;
+        lock {
+            tags = self.tags.clone();
         }
-        error? result;
-        if err is error {
-            result = observe:finishSpanWithError(spanId, err);
-        } else {
-            result = observe:finishSpan(spanId);
-        }
-        if result is error {
-            log:printError(string `failed to close span with ID '${spanId}'`, 'error = result);
-        }
+        endClientSpan(self.spanId, self.name, tags, anchorInstanceOf(tags),
+                err is error ? errorTypeName(err) : "", err is error ? err.message() : "");
     }
+}
+
+// The instance whose trace the span joins: the run a call names, or the task it decides when the run is unknown.
+isolated function anchorInstanceOf(map<string> tags) returns string {
+    return tags[INSTANCE_ID] ?: tags[HUMAN_TASK_ID] ?: tags[REVIEW_ACTIVITY_ID] ?: "";
 }
 
 isolated function isSpanRecordingEnabled() returns boolean {
     return observe:isTracingEnabled() && !isInsideWorkflowContext();
-}
-
-isolated function addOtherTags(string key, string value, int spanId) {
-    error? result = observe:addTagToSpan(key, value, spanId);
-    if result is error {
-        log:printError(string `failed to add tag '${key}' to span with ID '${spanId}'`, 'error = result);
-    }
 }
 
 isolated function nowText() returns string => time:utcToString(time:utcNow());
@@ -181,8 +159,14 @@ isolated function recordTaskDecisionMetric(string taskKind, string taskName, str
     'class: "io.ballerina.lib.workflow.observability.ObservabilityNative"
 } external;
 
-// Identity tags every span carries: module, caller side, engine endpoint, task queue, host.
-isolated function spanIdentityTags() returns map<string> = @java:Method {
+// Opens a client-side span recording; 0 when nothing would be recorded.
+isolated function beginClientSpan() returns int = @java:Method {
+    'class: "io.ballerina.lib.workflow.observability.ObservabilityNative"
+} external;
+
+// Records the opened span in the trace of `instanceId`, linked to the span the caller was in.
+isolated function endClientSpan(int spanId, string name, map<string> tags, string instanceId,
+        string errorType, string errorMessage) = @java:Method {
     'class: "io.ballerina.lib.workflow.observability.ObservabilityNative"
 } external;
 

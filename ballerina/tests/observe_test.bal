@@ -163,6 +163,10 @@ function testWorkflowSpanSurfaceEndToEnd() returns error? {
     // The run's own story joins the trace its start opened: the run, the model call, the chat wait
     // and the activity attempt are worker spans sharing the start span's trace id.
     mock:Span startSpan = check findUnitSpan("start_workflow", "workflow.instance.id", runId);
+    // Every call about the run is in the run's trace, though each was a separate call with no context to pass.
+    test:assertEquals(sendSpan.traceId, startSpan.traceId, "sending data joins the run's trace");
+    test:assertEquals(resultSpan.traceId, startSpan.traceId, "waiting for the result joins the run's trace");
+
     mock:Span[] story = check workerSpansOf(runId, 4);
     test:assertTrue(hasOperation(story, "workflow workflow-chatStockAgent"), "the run itself is a span");
     test:assertTrue(hasOperation(story, "agent.model_call llmChat"), "each model call is a span");
@@ -180,7 +184,7 @@ function workerSpansOf(string instanceId, int atLeast) returns mock:Span[]|error
     mock:Span[] found = [];
     foreach int attempt in 0 ..< 20 {
         found = from mock:Span span in mock:getFinishedSpans("workflow")
-            where span.tags["workflow.instance.id"] == instanceId
+            where span.tags["workflow.instance.id"] == instanceId && span.tags["type"] == "worker"
             select span;
         if found.length() >= atLeast {
             return found;
@@ -251,7 +255,11 @@ isolated function deriveTaskDimensions(string workflowType) returns string[] = @
     name: "deriveTaskDimensions"
 } external;
 
-isolated function exerciseMetricRecorders() returns string[] = @java:Method {
+isolated function instanceTraceIdOf(string instanceId) returns string = @java:Method {
+    'class: "io.ballerina.lib.workflow.observability.ObservabilityTestNatives"
+} external;
+
+function exerciseMetricRecorders() returns string[] = @java:Method {
     'class: "io.ballerina.lib.workflow.observability.ObservabilityTestNatives",
     name: "exerciseMetricRecorders"
 } external;
@@ -267,12 +275,25 @@ isolated function exerciseBoundedDataNames(int count) returns string[] = @java:M
 } external;
 
 // ================================================================================
+@test:Config {
+    groups: ["observe"]
+}
+function testInstanceTraceIdIsDerivedFromTheInstanceId() {
+    string first = instanceTraceIdOf("wf-derived-1");
+    test:assertEquals(first.length(), 32, "a trace id is 32 hex characters");
+    test:assertEquals(instanceTraceIdOf("wf-derived-1"), first,
+            "calls that never meet agree on the trace, because the instance id is all they share");
+    test:assertNotEquals(instanceTraceIdOf("wf-derived-2"), first, "a different run is a different trace");
+    test:assertEquals(instanceTraceIdOf(""), "", "without an instance there is no trace to join");
+}
+
 // HELPERS
 // ================================================================================
 
 // Finds a finished span by its workflow.operation.name tag and one identifying tag.
 function findUnitSpan(string operationName, string idTag, string idValue) returns mock:Span|error {
-    foreach string serviceName in ["Ballerina", "Unknown Service"] {
+    // Client spans publish under the module's own service name, beside the worker's.
+    foreach string serviceName in ["workflow", "Ballerina", "Unknown Service"] {
         foreach mock:Span span in mock:getFinishedSpans(serviceName) {
             if span.tags["workflow.operation.name"] == operationName && span.tags[idTag] == idValue {
                 return span;

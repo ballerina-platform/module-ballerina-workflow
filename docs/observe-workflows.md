@@ -82,12 +82,17 @@ a series.
 
 ## Traces with Jaeger
 
-Tracing answers *what happened to one run*. The request that starts a workflow opens a
-trace; the run's execution joins it — the run itself, each activity attempt, each data event
-it receives and, for a durable agent, each model call, tool call, event wait, sleep and
-human-task wait become spans under that trace, on whichever worker they run and across
-restarts. Sending data and deciding a task leave spans in their own callers' traces, tagged
-with the same instance ID (and, on decisions, who decided and in which roles).
+Tracing answers *what happened to one run*. Every instance owns a trace, and the trace's ID
+is derived from the instance ID — so calls that never meet agree on it without passing a
+context. In it are the calls an application makes about the run (starting it, sending it
+data, waiting for its result, deciding one of its tasks — that last one tagged with who
+decided and in which roles) and the run's own execution: the run itself, each activity
+attempt, each data event it receives and, for a durable agent, each model call, tool call,
+event wait, sleep and human-task wait, on whichever worker they run and across restarts. A
+task child or a child workflow belongs to the trace of the run that started it.
+
+The request that made each call is not lost: every client span carries a **link** to the
+caller's own span, which a tracing UI follows back to the request trace.
 
 [Jaeger](https://www.jaegertracing.io) is Ballerina's supported tracing backend, via
 `ballerinax/jaeger`:
@@ -115,12 +120,17 @@ docker run -d --name jaeger \
     jaegertracing/all-in-one:1.60
 ```
 
-In the UI, the service `workflow` holds the execution spans (`workflow <type>`,
-`activity <type>`, `agent.tool_call <tool>`, …), and your own services hold the client
-spans (`start_workflow`, `send_data`, `complete_human_task`, …). Open the trace of the
-request that started a run to read the run's whole story; search by the tag
-`workflow.instance.id` to gather every trace that touched one instance, including the
-decisions people made on it; search by `user.id` for every decision one person made.
+In the UI, the service `workflow` holds both sides: the client spans (`start_workflow`,
+`send_data`, `complete_human_task`, …, tagged `type="client"`) and the execution spans
+(`workflow <type>`, `activity <type>`, `agent.tool_call <tool>`, …, tagged `type="worker"`).
+Search by the tag `workflow.instance.id` for a run and open the one trace it finds to read
+that run's whole story, days of it if that is how long the run took; follow a client span's
+link to reach the request that made the call; search by `user.id` for every decision one
+person made.
+
+The trace's top spans name a parent that is never recorded — the anchor the instance ID
+derives — so a UI shows them as roots. A decision refused before the runtime could say which
+run owns the task has no run to join, and stands in a trace of its own.
 
 A span the worker opened is lost if that worker stops before the step ends — a run that
 survives a restart shows a `workflow.closed` marker instead of one long `workflow` span,

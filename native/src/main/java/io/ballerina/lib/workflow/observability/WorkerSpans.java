@@ -19,13 +19,7 @@
 package io.ballerina.lib.workflow.observability;
 
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
-import io.ballerina.runtime.api.Environment;
-import io.ballerina.runtime.api.utils.StringUtils;
-import io.ballerina.runtime.api.values.BMap;
-import io.ballerina.runtime.api.values.BString;
 import io.ballerina.runtime.observability.ObserveUtils;
-import io.ballerina.runtime.observability.ObserverContext;
-import io.ballerina.runtime.observability.tracer.BSpan;
 import io.ballerina.runtime.observability.tracer.TracersStore;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanBuilder;
@@ -47,8 +41,10 @@ import java.util.Map;
 public final class WorkerSpans {
 
     public static final String SERVICE = "workflow";
-    // The carried context is the caller's trace and span id, not W3C headers: header injection belongs to
-    // the tracer provider's propagators, and not every provider has them.
+    // The carried context is a trace and span id, not W3C headers: header injection belongs to the tracer
+    // provider's propagators, and not every provider has them.
+    static final String INSTANCE_ID = "workflow.instance.id";
+    static final String ROOT_INSTANCE_ID = "workflow.root.instance.id";
     static final String TRACE_ID = "traceId";
     static final String SPAN_ID = "spanId";
     private static final Logger LOGGER = LoggerFactory.getLogger(WorkerSpans.class);
@@ -56,29 +52,16 @@ public final class WorkerSpans {
     private WorkerSpans() {
     }
 
-    // The caller's current span as a trace context to travel with a start; null when there is none.
-    public static Map<String, String> captureTraceContext(Environment env) {
-        try {
-            if (!ObserveUtils.isTracingEnabled() || env == null) {
-                return null;
-            }
-            ObserverContext context = ObserveUtils.getObserverContextOfCurrentFrame(env);
-            BSpan span = context == null ? null : context.getSpan();
-            if (span == null) {
-                return null;
-            }
-            BMap<BString, Object> ids = span.getBSpanContext();
-            String traceId = String.valueOf(ids.get(StringUtils.fromString(TRACE_ID)));
-            String spanId = String.valueOf(ids.get(StringUtils.fromString(SPAN_ID)));
-            if (!SpanContext.createFromRemoteParent(traceId, spanId, TraceFlags.getSampled(),
-                                                    TraceState.getDefault()).isValid()) {
-                return null;
-            }
-            return Map.of(TRACE_ID, traceId, SPAN_ID, spanId);
-        } catch (Exception e) {
-            LOGGER.debug("Could not capture the caller's trace context", e);
+    // The context a start puts on the wire, so the run's spans open in the instance's own trace.
+    public static Map<String, String> instanceContext(String instanceId) {
+        if (!ObserveUtils.isTracingEnabled()) {
             return null;
         }
+        SpanContext anchor = InstanceTrace.anchorOf(instanceId);
+        if (anchor == null) {
+            return null;
+        }
+        return Map.of(TRACE_ID, anchor.getTraceId(), SPAN_ID, anchor.getSpanId());
     }
 
     // Opens a span under the run's propagated trace context (a root span when the run has none); null when off.
@@ -97,6 +80,10 @@ public final class WorkerSpans {
             SpanContext parentContext = parent == null ? null : SpanContext.createFromRemoteParent(
                     parent.getOrDefault(TRACE_ID, ""), parent.getOrDefault(SPAN_ID, ""),
                     TraceFlags.getSampled(), TraceState.getDefault());
+            if (parentContext == null || !parentContext.isValid()) {
+                // Nothing reached this thread — the instance's own trace, derived from its id.
+                parentContext = InstanceTrace.anchorOf(anchorInstanceOf(tags));
+            }
             if (parentContext != null && parentContext.isValid()) {
                 builder.setParent(Context.root().with(Span.wrap(parentContext)));
             } else {
@@ -164,10 +151,22 @@ public final class WorkerSpans {
         end(begin(operation, tags, parent), failure);
     }
 
+    // The instance whose trace a span belongs to: the root run of a tree, else the run itself.
+    static String anchorInstanceOf(Map<String, String> tags) {
+        if (tags == null) {
+            return null;
+        }
+        String root = tags.get(ROOT_INSTANCE_ID);
+        return root != null ? root : tags.get(INSTANCE_ID);
+    }
+
     // The tags that place a span on its run.
     public static Map<String, String> runTags(WorkflowInfo info) {
         Map<String, String> tags = new LinkedHashMap<>();
-        tags.put("workflow.instance.id", info.getWorkflowId());
+        tags.put(INSTANCE_ID, info.getWorkflowId());
+        // A task child or a child workflow belongs to the trace of the run it was started from, not its own.
+        info.getRootWorkflowId().filter(root -> !root.equals(info.getWorkflowId()))
+                .ifPresent(root -> tags.put(ROOT_INSTANCE_ID, root));
         tags.put("workflow.run.id", info.getRunId());
         tags.put("workflow.type", info.getWorkflowType());
         String taskKind = WorkflowMetrics.taskKindOf(info.getWorkflowType());

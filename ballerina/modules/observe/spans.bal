@@ -188,6 +188,10 @@ public isolated distinct class TaskDecisionSpan {
         if name is string {
             self.baseSpan.addTag(TASK_NAME, name);
         }
+        if parent is string {
+            // The run that owns the task, so the decision joins that run's trace rather than standing alone.
+            self.baseSpan.addTag(INSTANCE_ID, parent);
+        }
         if shown is string {
             self.baseSpan.addTag(TASK_INPUT, shown);
         }

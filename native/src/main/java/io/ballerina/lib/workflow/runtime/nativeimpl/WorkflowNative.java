@@ -19,7 +19,6 @@
 package io.ballerina.lib.workflow.runtime.nativeimpl;
 
 import io.ballerina.lib.workflow.ModuleUtils;
-import io.ballerina.lib.workflow.observability.WorkerSpans;
 import io.ballerina.lib.workflow.runtime.WorkflowRuntime;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
@@ -180,14 +179,12 @@ public final class WorkflowNative {
 
         // Outside workflow - use the normal async path
         final Object finalInput = javaInput;
-        final Map<String, String> traceContext = WorkerSpans.captureTraceContext(env);
         return env.yieldAndRun(() -> {
             CompletableFuture<Object> balFuture = new CompletableFuture<>();
 
             WorkflowRuntime.getInstance().getExecutor().execute(() -> {
                 try {
-                    String workflowId = WorkflowRuntime.getInstance().createInstance(processName, finalInput,
-                            traceContext);
+                    String workflowId = WorkflowRuntime.getInstance().createInstance(processName, finalInput);
                     balFuture.complete(StringUtils.fromString(workflowId));
                 } catch (Exception e) {
                     balFuture.complete(

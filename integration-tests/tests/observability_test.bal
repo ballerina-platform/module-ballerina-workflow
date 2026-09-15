@@ -30,8 +30,8 @@ import ballerina/workflow.observe as wfobserve;
 import ballerinax/prometheus as _;
 
 // Service names under which the runtime may register spans; the mock tracer
-// stores finished spans per service.
-final readonly & string[] spanServiceCandidates = ["Ballerina", "Unknown Service"];
+// stores finished spans per service. The module publishes its own under "workflow".
+final readonly & string[] spanServiceCandidates = ["workflow", "Ballerina", "Unknown Service"];
 
 @test:Config {
     groups: ["integration", "observability"]
@@ -115,6 +115,10 @@ function testWorkflowSpanEmission() returns error? {
 
     mock:Span resultSpan = check findSpan(string `get_workflow_result ${workflowId}`, workflowId);
     test:assertEquals(resultSpan.tags["workflow.operation.name"], "get_workflow_result");
+
+    // Three separate calls with no context to hand on, one trace: they all name the same instance.
+    test:assertEquals(sendSpan.traceId, startSpan.traceId, "sending data joins the run's trace");
+    test:assertEquals(resultSpan.traceId, startSpan.traceId, "waiting for the result joins the run's trace");
 
     // The run's execution joins the trace that started it: the run, its activity attempt and the
     // data event it received are worker spans under the start span's trace.
@@ -411,7 +415,7 @@ function workerSpansOf(string instanceId, int atLeast) returns mock:Span[]|error
     mock:Span[] found = [];
     foreach int attempt in 0 ..< 20 {
         found = from mock:Span span in mock:getFinishedSpans("workflow")
-            where span.tags["workflow.instance.id"] == instanceId
+            where span.tags["workflow.instance.id"] == instanceId && span.tags["type"] == "worker"
             select span;
         if found.length() >= atLeast {
             return found;

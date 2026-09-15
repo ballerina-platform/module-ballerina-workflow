@@ -32,7 +32,6 @@ import io.ballerina.lib.workflow.utils.CorrelationExtractor;
 import io.ballerina.lib.workflow.utils.EventExtractor;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
-import io.ballerina.runtime.api.Environment;
 import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.creators.TypeCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
@@ -1694,9 +1693,8 @@ public final class ManagementNative {
      * @param startedBy       optional starter user ID stored in workflow memo
      * @return a Ballerina {@code WorkflowHandle} record or an error
      */
-    public static Object startWorkflowByType(Environment env, BString workflowType, Object input,
-                                             Object workflowIdParam, Object timeoutSeconds, Object startedBy) {
-        Map<String, String> traceContext = WorkerSpans.captureTraceContext(env);
+    public static Object startWorkflowByType(BString workflowType, Object input, Object workflowIdParam,
+                                             Object timeoutSeconds, Object startedBy) {
         try {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {
@@ -1748,7 +1746,8 @@ public final class ManagementNative {
             // The started event is counted at the worker's first execution, where every
             // start path converges.
             Object startInput = javaInput;
-            WorkflowExecution execution = TraceContextPropagator.runWith(traceContext, () -> stub.start(startInput));
+            WorkflowExecution execution = TraceContextPropagator.runWith(WorkerSpans.instanceContext(wfId),
+                                                                        () -> stub.start(startInput));
 
             BMap<BString, Object> handle = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                           "WorkflowHandle");

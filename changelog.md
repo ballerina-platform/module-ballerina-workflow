@@ -22,7 +22,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
     and each durable-agent step (`agent.model_call`, `agent.tool_call <tool>`,
     `agent.event_wait <event>`, `agent.sleep`, `agent.task_wait <task>`,
     `agent.tool_review <tool>`). A task child or a child workflow joins the trace of the run
-    that started it. Every client span carries a link to the caller's own span, which is how
+    that started it: every task and child memo carries `rootWorkflowId`, the decision receipt
+    returns it, and a refused decision still names the owning run in its error detail once the
+    task's memo was read. An agent step that ends in an engine failure is recorded with the
+    failure's type. Every client span carries a link to the caller's own span, which is how
     a tracing UI gets back to the request that made the call. All of it is opened through the
     module's own `workflow` tracer, tagged `type = client|worker`.
   - Metrics, following the Ballerina integration observability standard: one

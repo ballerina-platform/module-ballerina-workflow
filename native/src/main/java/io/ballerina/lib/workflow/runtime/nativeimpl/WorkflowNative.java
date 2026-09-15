@@ -1007,9 +1007,8 @@ public final class WorkflowNative {
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(taskWorkflowId.getValue(),
                                                                                    "taskCompletion", payload);
             if (!delivered) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Failed to complete human task: task '" + taskWorkflowId.getValue() +
-                                "' completed or was no longer running when signal was delivered"));
+                return memo.refusal("Failed to complete human task: task '" + taskWorkflowId.getValue() +
+                                            "' completed or was no longer running when signal was delivered");
             }
             return memo.toReceipt();
         } catch (Exception e) {
@@ -1061,9 +1060,8 @@ public final class WorkflowNative {
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(taskWorkflowId.getValue(),
                                                                                    "taskCompletion", payload);
             if (!delivered) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Failed to fail human task: task '" + taskWorkflowId.getValue() +
-                                "' completed or was no longer running when signal was delivered"));
+                return memo.refusal("Failed to fail human task: task '" + taskWorkflowId.getValue() +
+                                            "' completed or was no longer running when signal was delivered");
             }
             return memo.toReceipt();
         } catch (Exception e) {
@@ -1174,6 +1172,7 @@ public final class WorkflowNative {
             // The decision's audit entry names the task, its parent, and who was allowed to decide it.
             TaskMemo memo = new TaskMemo(decodeMemoText(dc, memoFields, "taskName"),
                                          decodeMemoText(dc, memoFields, "parentWorkflowId"),
+                                         decodeMemoText(dc, memoFields, "rootWorkflowId"),
                                          allowedRoles.stream().sorted().toList(),
                                          decodeMemoValue(dc, memoFields, "taskInput"));
 
@@ -1188,9 +1187,8 @@ public final class WorkflowNative {
                 }
             }
 
-            return ErrorCreator.createError(StringUtils.fromString(
-                    "Unauthorized: caller does not have a required role to complete task '" + taskWorkflowId +
-                            "'. Required one of: " + allowedRoles));
+            return memo.refusal("Unauthorized: caller does not have a required role to complete task '"
+                                        + taskWorkflowId + "'. Required one of: " + allowedRoles);
         } catch (Exception e) {
             return ErrorCreator.createError(
                     StringUtils.fromString("Failed to validate task '" + taskWorkflowId + "': " + e.getMessage()));

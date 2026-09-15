@@ -18,7 +18,6 @@
 
 package io.ballerina.lib.workflow.observability;
 
-import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
 import io.ballerina.runtime.api.Environment;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BMap;
@@ -40,7 +39,6 @@ import org.slf4j.LoggerFactory;
 
 import java.net.InetAddress;
 import java.time.Instant;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -62,6 +60,8 @@ public final class ClientSpans {
     // Bounds the map if a caller ever opens spans it never closes; the module's own wrappers always close.
     private static final int MAX_PENDING = 10000;
     private static final String NONE = "none";
+    // Resolved once: looking the host up can block on DNS, and every client span closes on a request thread.
+    private static final String HOST = hostName();
 
     private record Pending(Instant startedAt, SpanContext caller) {
     }
@@ -142,21 +142,10 @@ public final class ClientSpans {
         return caller.isValid() ? caller : null;
     }
 
-    // Identity tags every client span carries: module, caller side, engine endpoint, task queue, host.
+    // The worker's identity tags plus the host, which places a client call.
     static Map<String, String> identityTags() {
-        Map<String, String> tags = new LinkedHashMap<>();
-        tags.put("span.type", "workflow");
-        tags.put("module", "workflow");
-        tags.put("type", "client");
-        String url = WorkflowWorkerNative.getServerUrl();
-        if (url != null && !url.isEmpty()) {
-            tags.put("remote.url", url);
-        }
-        String queue = WorkflowWorkerNative.getTaskQueue();
-        if (queue != null && !queue.isEmpty()) {
-            tags.put("task.queue", queue);
-        }
-        tags.put("host", hostName());
+        Map<String, String> tags = WorkerSpans.identityTags("client");
+        tags.put("host", HOST);
         return tags;
     }
 

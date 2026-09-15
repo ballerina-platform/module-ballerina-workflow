@@ -24,6 +24,7 @@ import io.temporal.workflow.WorkflowInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 // Records a durable agent's steps from the workflow thread — metric, sample and span — skipping replays.
@@ -71,8 +72,13 @@ public final class AgentStepTelemetry {
         }
     }
 
+    // Closes a step's span when the step ends in an exception the caller surfaces instead of a recorded step.
+    public static void abandon(Span span, Throwable failure) {
+        WorkerSpans.end(span, failure);
+    }
+
     private static Map<String, String> stepTags(AgentStep step) {
-        Map<String, String> tags = new java.util.LinkedHashMap<>();
+        Map<String, String> tags = new LinkedHashMap<>();
         tags.put("workflow.agent.step", step.event());
         if (!WorkflowMetrics.NONE.equals(step.activityType())) {
             tags.put("workflow.activity.type", step.activityType());
@@ -94,7 +100,7 @@ public final class AgentStepTelemetry {
     }
 
     // A step's failure as the span sees it: the type the step reported, no stack.
-    private static final class AgentStepFailure extends Exception {
+    static final class AgentStepFailure extends Exception {
         private final String type;
 
         AgentStepFailure(String type) {

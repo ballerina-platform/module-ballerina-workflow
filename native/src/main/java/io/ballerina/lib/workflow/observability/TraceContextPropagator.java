@@ -65,7 +65,11 @@ public final class TraceContextPropagator implements ContextPropagator {
     @Override
     @SuppressWarnings("unchecked")
     public void setCurrentContext(Object context) {
-        CURRENT.set(context instanceof Map<?, ?> map ? (Map<String, String>) map : null);
+        if (context instanceof Map<?, ?> map) {
+            CURRENT.set((Map<String, String>) map);
+        } else {
+            CURRENT.remove();
+        }
     }
 
     // The trace context the engine delivered for the task running on this thread, or null.

@@ -173,6 +173,7 @@ public isolated distinct class TaskDecisionSpan {
     public isolated function addTaskDetails(map<anydata> receipt) {
         anydata name = receipt["taskName"];
         anydata parent = receipt["parentWorkflowId"];
+        anydata root = receipt["rootWorkflowId"];
         anydata roles = receipt["assignedRoles"];
         string[] & readonly allowed = (roles is anydata[])
             ? (from anydata role in roles where role is string select role).cloneReadOnly()
@@ -192,6 +193,10 @@ public isolated distinct class TaskDecisionSpan {
             // The run that owns the task, so the decision joins that run's trace rather than standing alone.
             self.baseSpan.addTag(INSTANCE_ID, parent);
         }
+        if root is string && root != parent {
+            // The top of the tree: a task under a child workflow joins the one trace the whole tree shares.
+            self.baseSpan.addTag(ROOT_INSTANCE_ID, root);
+        }
         if shown is string {
             self.baseSpan.addTag(TASK_INPUT, shown);
         }
@@ -201,6 +206,21 @@ public isolated distinct class TaskDecisionSpan {
     #
     # + err - The error the runtime refused the decision with, if it did
     public isolated function close(error? err = ()) {
+        if err is error {
+            // A refusal carries the owning run when the runtime got far enough to read the task's memo,
+            // so a denied decision still joins that run's trace instead of standing in one of its own.
+            var parent = err.detail()["parentWorkflowId"];
+            if parent is string {
+                lock {
+                    self.parentWorkflowId = parent;
+                }
+                self.baseSpan.addTag(INSTANCE_ID, parent);
+            }
+            var root = err.detail()["rootWorkflowId"];
+            if root is string && root != parent {
+                self.baseSpan.addTag(ROOT_INSTANCE_ID, root);
+            }
+        }
         self.baseSpan.close(err);
         self.audit(err);
     }

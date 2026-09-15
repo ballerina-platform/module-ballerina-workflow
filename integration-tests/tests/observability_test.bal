@@ -131,6 +131,13 @@ function testWorkflowSpanEmission() returns error? {
                 string `worker span '${span.operationName}' should join the trace that started the run`);
         test:assertEquals(span.tags["workflow.run.id"] is string, true, "worker spans name the run");
     }
+
+    // The propagated context, not just the shared trace id: the attempt nests under the run, and the
+    // run and its start hang from the same derived anchor.
+    mock:Span runSpan = check spanNamed(story, "workflow workflow-observabilityFlow");
+    test:assertEquals(runSpan.parentId, startSpan.parentId, "the run and its start hang from the same anchor");
+    mock:Span attempt = check spanNamed(story, "activity observabilityEcho");
+    test:assertEquals(attempt.parentId, runSpan.spanId, "an activity attempt nests under the run span");
 }
 
 @test:Config {
@@ -195,6 +202,12 @@ function testHumanTaskDecisionTelemetry() returns error? {
         test:assertEquals(denied.tags["user.roles"], "OBS_BYSTANDER", "a refused decision still records who tried");
         test:assertFalse(denied.tags.hasKey("workflow.task.name"),
                 "a refused decision never resolved the task, so it cannot name it");
+        // The runtime read the task's memo before refusing, so it knows which run owns the task: the
+        // refusal belongs on that run's trace, where someone auditing the run will look for it.
+        test:assertEquals(denied.tags["workflow.instance.id"], workflowId,
+                "a refused decision the runtime could place still joins the run's trace");
+        mock:Span runStart = check findSpan("start_workflow workflow-observabilityApprovalFlow", workflowId);
+        test:assertEquals(denied.traceId, runStart.traceId, "and that trace is the run's own");
     }
 }
 

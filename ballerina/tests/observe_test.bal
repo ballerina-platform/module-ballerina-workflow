@@ -177,6 +177,27 @@ function testWorkflowSpanSurfaceEndToEnd() returns error? {
                 string `worker span '${span.operationName}' should join the trace that started the run`);
         test:assertEquals(span.tags["type"], "worker");
     }
+
+    // Sharing a trace id is what the fallback gives too; the propagated context is what nests the steps
+    // under the run, and hangs the run and its start from the same derived anchor.
+    mock:Span runSpan = check spanNamed(story, "workflow workflow-chatStockAgent");
+    test:assertEquals(runSpan.parentId, startSpan.parentId, "the run and its start hang from the same anchor");
+    foreach mock:Span span in story {
+        // A data event delivered in the run's first task is handled before the run span opens.
+        if span.spanId != runSpan.spanId && !span.operationName.startsWith("workflow.data_received") {
+            test:assertEquals(span.parentId, runSpan.spanId,
+                    string `'${span.operationName}' should nest under the run span`);
+        }
+    }
+}
+
+function spanNamed(mock:Span[] spans, string operationName) returns mock:Span|error {
+    foreach mock:Span span in spans {
+        if span.operationName == operationName {
+            return span;
+        }
+    }
+    return error(string `no span named '${operationName}'`);
 }
 
 // The worker-side spans tagged with the instance, once at least `atLeast` of them have finished.

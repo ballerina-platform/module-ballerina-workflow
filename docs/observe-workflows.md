@@ -134,18 +134,21 @@ the execution spans (`workflow <type>`, `activity <type>`, `agent.tool_call <too
 reach the request that made the call; search by `user.id` for every decision one person made.
 
 The trace's top spans name a parent that is never recorded — the anchor the instance ID
-derives — so a UI shows them as roots. A decision refused before the runtime could say which
-run owns the task has no run to join, and stands in a trace of its own.
+derives — so a UI shows them as roots. A refused decision still joins the run's trace when the
+runtime got as far as reading the task (an unauthorized caller, a payload of the wrong shape, a
+task already closed); only a task the runtime could not find stands in a trace of its own.
 
 A span the worker opened is lost if that worker stops before the step ends — a run that
 survives a restart shows a `workflow.closed` marker instead of one long `workflow` span,
 and the metrics still count every step.
 
-By default the trace sampler is `const` with rate 1 (every trace is reported); for
-production volumes configure sampling under `[ballerinax.jaeger]` (`samplerType`,
-`samplerParam`, `reporterFlushInterval`, `reporterBufferSize`). Spans are exported in
-batches: a service keeps flushing as it runs, but a short-lived program should stay up a
-few seconds past its last operation or its final batch may never leave the process.
+By default every trace is reported (the sampler is `parentbased_always_on`); for production
+volumes configure sampling under `[ballerina.otel]` (`tracesSampler`, `tracesSamplerArg`).
+The derived anchor counts as a sampled parent, so a `parentbased_*` sampler keeps every
+workflow span; `traceidratio` samples whole instances, since the trace ID is the instance's. Spans are exported
+in batches (`tracesMaxExportBatchSize`, `tracesExporterTimeoutMillis`): a service keeps
+flushing as it runs, but a short-lived program should stay up a few seconds past its last
+operation or its final batch may never leave the process.
 
 ## Log-based metrics and the audit stream
 

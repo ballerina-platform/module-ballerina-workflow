@@ -1083,9 +1083,8 @@ public final class ManagementNative {
                                                                                    "taskDecision", javaDecision);
 
             if (!delivered) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Failed to complete retry task: task '" + taskWorkflowId.getValue() +
-                                "' was no longer running when signal was delivered"));
+                return memo.refusal("Failed to complete retry task: task '" + taskWorkflowId.getValue() +
+                                            "' was no longer running when signal was delivered");
             }
             return memo.toReceipt();
         } catch (Exception e) {
@@ -1174,6 +1173,7 @@ public final class ManagementNative {
             }
             TaskMemo memo = new TaskMemo(decodeMemoString(dc, memoFields, "taskName", null),
                                          decodeMemoString(dc, memoFields, "parentWorkflowId", null),
+                                         decodeMemoString(dc, memoFields, "rootWorkflowId", null),
                                          allowedRoles.stream().sorted().toList(), activityArgs);
 
             if (callerRolesArray == null || allowedRoles.isEmpty()) {
@@ -1186,9 +1186,8 @@ public final class ManagementNative {
                 }
             }
 
-            return ErrorCreator.createError(StringUtils.fromString(
-                    "Unauthorized: caller does not have a required role to complete retry task '" + taskWorkflowId +
-                            "'. Required one of: " + allowedRoles));
+            return memo.refusal("Unauthorized: caller does not have a required role to complete retry task '"
+                                        + taskWorkflowId + "'. Required one of: " + allowedRoles);
 
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -1710,6 +1709,12 @@ public final class ManagementNative {
     // -------------------------------------------------------------------------
     // WORKFLOW LISTING AND STARTING
     // -------------------------------------------------------------------------
+
+    // Whether a registered type name (without the engine prefix) is a durable agent's.
+    public static boolean isAgentWorkflowType(BString workflowType) {
+        return WorkflowWorkerNative.isAgentWorkflowType(
+                WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + workflowType.getValue());
+    }
 
     /**
      * Starts a new workflow instance by its registered type name. Returns a {@code WorkflowHandle} record with

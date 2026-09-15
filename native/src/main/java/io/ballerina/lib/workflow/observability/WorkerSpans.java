@@ -64,6 +64,11 @@ public final class WorkerSpans {
         return Map.of(TRACE_ID, anchor.getTraceId(), SPAN_ID, anchor.getSpanId());
     }
 
+    // The context a run hands its activities and children when none reached it: the root's derived anchor.
+    public static Map<String, String> fallbackContext(WorkflowInfo info) {
+        return instanceContext(anchorInstanceOf(runTags(info)));
+    }
+
     // Opens a span under the run's propagated trace context (a root span when the run has none); null when off.
     public static Span begin(String operation, Map<String, String> tags) {
         return begin(operation, tags, TraceContextPropagator.current());
@@ -90,7 +95,7 @@ public final class WorkerSpans {
                 builder.setNoParent();
             }
             Span span = builder.startSpan();
-            tag(span, identityTags());
+            tag(span, identityTags("worker"));
             tag(span, tags);
             return span;
         } catch (Exception e) {
@@ -135,7 +140,7 @@ public final class WorkerSpans {
 
     // An agent step reports its failure type as the exception message; engine failures carry a type of their own.
     private static String errorTypeOf(Throwable failure) {
-        if (failure.getClass().getSimpleName().equals("AgentStepFailure")) {
+        if (failure instanceof AgentStepTelemetry.AgentStepFailure) {
             return failure.getMessage();
         }
         return WorkflowMetrics.errorTypeOf(failure);
@@ -177,11 +182,12 @@ public final class WorkerSpans {
         return tags;
     }
 
-    private static Map<String, String> identityTags() {
+    // Identity tags every span of the module carries: module, which side opened it, engine endpoint, task queue.
+    static Map<String, String> identityTags(String type) {
         Map<String, String> tags = new LinkedHashMap<>();
         tags.put("span.type", "workflow");
         tags.put("module", "workflow");
-        tags.put("type", "worker");
+        tags.put("type", type);
         String url = WorkflowWorkerNative.getServerUrl();
         if (url != null && !url.isEmpty()) {
             tags.put("remote.url", url);

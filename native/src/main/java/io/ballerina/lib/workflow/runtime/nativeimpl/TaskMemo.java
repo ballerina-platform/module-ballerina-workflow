@@ -19,20 +19,39 @@
 package io.ballerina.lib.workflow.runtime.nativeimpl;
 
 import io.ballerina.lib.workflow.utils.TypesUtil;
+import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.creators.TypeCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
 import io.ballerina.runtime.api.types.PredefinedTypes;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BArray;
+import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
 
 import java.util.List;
 
 // What the runtime read from a task's memo while validating a decision; returned to Ballerina as the receipt.
-record TaskMemo(String taskName, String parentWorkflowId, List<String> assignedRoles, Object taskInput) {
+record TaskMemo(String taskName, String parentWorkflowId, String rootWorkflowId, List<String> assignedRoles,
+                Object taskInput) {
 
-    // The receipt map<anydata>: taskName, parentWorkflowId, taskInput (when known) and assignedRoles as string[].
+    // A refusal that still knows which run owns the task, so its span and audit entry can name that run.
+    // The parent rides the error's detail; without it the decision would stand outside the run's trace.
+    BError refusal(String message) {
+        if (parentWorkflowId == null) {
+            return ErrorCreator.createError(StringUtils.fromString(message));
+        }
+        BMap<BString, Object> detail =
+                ValueCreator.createMapValue(TypeCreator.createMapType(PredefinedTypes.TYPE_ANYDATA));
+        detail.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentWorkflowId));
+        if (rootWorkflowId != null) {
+            detail.put(StringUtils.fromString("rootWorkflowId"), StringUtils.fromString(rootWorkflowId));
+        }
+        return ErrorCreator.createError(StringUtils.fromString(message), detail);
+    }
+
+    // The receipt map<anydata>: taskName, parentWorkflowId, rootWorkflowId, taskInput (when known) and
+    // assignedRoles as string[].
     BMap<BString, Object> toReceipt() {
         BMap<BString, Object> receipt =
                 ValueCreator.createMapValue(TypeCreator.createMapType(PredefinedTypes.TYPE_ANYDATA));
@@ -41,6 +60,9 @@ record TaskMemo(String taskName, String parentWorkflowId, List<String> assignedR
         }
         if (parentWorkflowId != null) {
             receipt.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentWorkflowId));
+        }
+        if (rootWorkflowId != null) {
+            receipt.put(StringUtils.fromString("rootWorkflowId"), StringUtils.fromString(rootWorkflowId));
         }
         if (taskInput != null) {
             receipt.put(StringUtils.fromString("taskInput"), TypesUtil.convertJavaToBallerinaType(taskInput));

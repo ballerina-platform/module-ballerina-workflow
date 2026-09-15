@@ -90,8 +90,10 @@ context to pass. The derived ids are not secret and not meant to be: an instance
 already on every span as a tag.
 
 The anchor span is never emitted, so a tracing UI shows the trace's top spans as roots. A
-span whose instance is not known cannot join a trace: a decision refused before the runtime
-could say which run owns the task stands in a trace of its own.
+span whose instance is not known cannot join a trace: only a decision on a task the runtime
+could not find stands in a trace of its own. A refusal that came after the task's memo was read
+(authorization, payload shape, a task already closed) carries `parentWorkflowId` and
+`rootWorkflowId` in its error detail, and the decision span reads them from there.
 
 **A client span links back to its caller.** The call still happened inside some request, and
 that request's own span is recorded as an OpenTelemetry link on the client span, so a tracing
@@ -124,8 +126,9 @@ tags and `type = worker`; the client spans use that tracer too, with `type = cli
 service they are listed under is the application's — with an OTLP provider it is the process's
 `service.name` resource attribute — so one service holds both sides of an instance's story. A human task child's
 `workflow humantask-<def>.<task>` span is the wait for the person, and the decision that ends
-it joins the same trace: the decision's receipt names the run that owns the task, which is
-the instance its span derives from.
+it joins the same trace: the decision's receipt names the run that owns the task and, when
+that run is itself a child, the root of the tree (`rootWorkflowId`, written into every task and
+child memo at creation), which is the instance its span derives from.
 
 Two limits follow from durable execution: a span this worker opened is lost if the worker
 stops before the step ends (the close is then a marker span, and the metrics still count

@@ -2370,6 +2370,11 @@ public final class WorkflowWorkerNative {
             if (runTraceContext == null) {
                 runTraceContext = TraceContextPropagator.current();
             }
+            if (runTraceContext == null) {
+                // No header reached this run: what it schedules still joins the root's derived trace.
+                runTraceContext = WorkerSpans.fallbackContext(workflowInfo);
+                TraceContextPropagator.setCurrent(runTraceContext);
+            }
             // The run's first execution is where every start path converges; on replay the body
             // runs again but nothing new started.
             if (!Workflow.isReplaying()) {

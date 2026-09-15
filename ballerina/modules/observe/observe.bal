@@ -54,6 +54,7 @@ enum WorkflowTagNames {
     OPERATION_NAME = "workflow.operation.name",
     WORKFLOW_TYPE = "workflow.type",
     INSTANCE_ID = "workflow.instance.id",
+    ROOT_INSTANCE_ID = "workflow.root.instance.id",
     DATA_NAME = "workflow.data.name",
     HUMAN_TASK_ID = "workflow.human_task.id",
     REVIEW_ACTIVITY_ID = "workflow.review_activity.id",
@@ -126,9 +127,10 @@ isolated class BaseSpanImp {
     }
 }
 
-// The instance whose trace the span joins: the run a call names, or the task it decides when the run is unknown.
+// The instance whose trace the span joins: the top of the run's tree when the receipt named it, else the run a
+// call names, else the task it decides when the run is unknown.
 isolated function anchorInstanceOf(map<string> tags) returns string {
-    return tags[INSTANCE_ID] ?: tags[HUMAN_TASK_ID] ?: tags[REVIEW_ACTIVITY_ID] ?: "";
+    return tags[ROOT_INSTANCE_ID] ?: tags[INSTANCE_ID] ?: tags[HUMAN_TASK_ID] ?: tags[REVIEW_ACTIVITY_ID] ?: "";
 }
 
 isolated function isSpanRecordingEnabled() returns boolean {

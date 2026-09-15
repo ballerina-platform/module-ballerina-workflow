@@ -94,9 +94,10 @@ public final class ObservabilityTestNatives {
                                       WorkflowWorkerNative.HUMANTASK_REJECTED_FAILURE_TYPE),
                 AgentStep.eventReceived("exercisedAgent", "chat", 2000, null),
                 AgentStep.eventReceived("exercisedAgent", "approval", 2000, AgentStep.ERROR_EVENT_TIMEOUT),
-                AgentStep.slept("exercisedAgent", false, 1000),
-                AgentStep.slept("exercisedAgent", true, 250),
-                AgentStep.toolReviewed("exercisedAgent", "chargeCard", "exercisedAgent.chargeCard", "proceed", 5000),
+                AgentStep.slept("exercisedAgent", false, 1000, null),
+                AgentStep.slept("exercisedAgent", true, 250, null),
+                AgentStep.toolReviewed("exercisedAgent", "chargeCard", "exercisedAgent.chargeCard", "proceed", 5000,
+                                       null),
         };
     }
 

@@ -125,10 +125,6 @@ isolated function executionFailed(string message) returns ExecutionError => erro
 
 // ── Classification of runtime errors ──────────────────────────────────────────
 
-// Mirrors RESERVED_EVENT_NAME_ERROR in ManagementNative; keep the two in step.
-const RESERVED_EVENT_NAME = "reserved event name";
-
-
 # Classifies a runtime error for operations that distinguish only "the target does
 # not exist" from "the runtime failed" — the workflow lifecycle and detail
 # operations, where the runtime raises nothing else the caller can act on.

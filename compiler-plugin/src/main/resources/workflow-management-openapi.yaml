@@ -240,12 +240,14 @@ paths:
         - {$ref: "#/components/parameters/dataName"}
       requestBody:
         required: false
+        description: The event payload, delivered verbatim
         content:
           application/json:
-            schema: {description: The event payload, delivered verbatim}
+            schema: {}
       responses:
         "200": {$ref: "#/components/responses/Acknowledged"}
         default: {$ref: "#/components/responses/Error"}
+
   /workflows/{workflowId}/{runId}:
     get:
       tags: [workflows]

@@ -114,7 +114,6 @@ public final class ManagementNative {
     private static final long RESET_DEADLINE_SECONDS = 30;
     private static final String ERR_CLIENT_NOT_INIT = "Workflow client not initialized";
 
-    // Matched by the management module to answer 403 rather than 500; keep the two in step.
     private static final String RESERVED_EVENT_NAME_ERROR = "Failed to send data: reserved event name: ";
 
     private ManagementNative() {
@@ -372,8 +371,48 @@ public final class ManagementNative {
 
     // Delivers a named data event to a running workflow, addressing the instance by id — the
     // management-side counterpart of workflow:sendData. Returns an error if it is not running.
+    /**
+     * The event names declared by the workflow type of a running instance, or {@code null} when this
+     * worker does not know that type — it may belong to another program, whose declarations are not
+     * ours to vouch for. A type that declares no events is not in the registry either, so it reads
+     * the same way.
+     *
+     * @param workflowId the instance to look up
+     * @return a Ballerina {@code string[]} of event names, null when the type is unknown here, or an
+     *         error when the instance cannot be read
+     */
+    public static Object declaredEventNames(BString workflowId) {
+        try {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+            DescribeWorkflowExecutionResponse response = client.getWorkflowServiceStubs()
+                    .blockingStub()
+                    .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                    .describeWorkflowExecution(DescribeWorkflowExecutionRequest.newBuilder()
+                            .setNamespace(client.getOptions().getNamespace())
+                            .setExecution(WorkflowExecution.newBuilder()
+                                    .setWorkflowId(workflowId.getValue()).build())
+                            .build());
+            List<String> declared = WorkflowWorkerNative.getEventRegistry()
+                    .get(response.getWorkflowExecutionInfo().getType().getName());
+            if (declared == null) {
+                return null;
+            }
+            BArray names = ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING));
+            for (String name : declared) {
+                names.append(StringUtils.fromString(name));
+            }
+            return names;
+        } catch (Exception e) {
+            return ErrorCreator.createError(
+                    StringUtils.fromString("Failed to read the declared events: " + e.getMessage()));
+        }
+    }
+
     public static Object sendDataToWorkflow(BString workflowId, BString dataName, Object data) {
-        if (isReservedSignal(dataName.getValue())) {
+        if (isInternalSignal(dataName.getValue())) {
             return ErrorCreator.createError(StringUtils.fromString(
                     RESERVED_EVENT_NAME_ERROR + dataName.getValue()));
         }
@@ -2637,10 +2676,16 @@ public final class ManagementNative {
         return WorkflowWorkerNative.isFrameworkSignal(signalName);
     }
 
-    // Framework control signals (suspend/resume, agent wake-ups, task completion and review decisions) carry
-    // the ownership, role and payload checks of the operations that send them; a data event must not forge one.
-    private static boolean isReservedSignal(String dataName) {
-        return dataName.startsWith("__") || "taskCompletion".equals(dataName) || "taskDecision".equals(dataName);
+    /**
+     * Whether a name is reserved for framework control signals — suspend/resume, agent wake-ups, task
+     * completion and review decisions, each of which carries the ownership, role and payload checks of
+     * the operation that sends it. A data event must not forge one.
+     *
+     * @param dataName the event name a caller asked to deliver
+     * @return whether the runtime reserves it
+     */
+    public static boolean isReservedEventName(BString dataName) {
+        return isInternalSignal(dataName.getValue());
     }
 
     /**

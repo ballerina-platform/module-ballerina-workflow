@@ -414,7 +414,7 @@ paths:
               type: object
               required: [result]
               properties:
-                result: {description: The task's result, matching its declared result type}
+                result: {description: "The task's result, matching its declared result type"}
       responses:
         "200": {$ref: "#/components/responses/Acknowledged"}
         default: {$ref: "#/components/responses/Error"}
@@ -653,7 +653,7 @@ components:
       properties:
         workflowType: {type: string}
         kind: {type: string, enum: [WORKFLOW, AGENT]}
-        inputSchema: {type: string, nullable: true, description: JSON schema of the input, as a string}
+        inputSchema: {type: string, nullable: true, description: "JSON schema of the input, as a string"}
         isActive: {type: boolean}
         workerCount: {type: integer}
     WorkflowExecutionInfo:
@@ -663,7 +663,7 @@ components:
         workflowType: {type: string}
         status: {type: string, enum: [RUNNING, SUSPENDED, COMPLETED, FAILED, CANCELED, TERMINATED, CONTINUED_AS_NEW, TIMED_OUT, UNKNOWN]}
         kind: {type: string, nullable: true, enum: [WORKFLOW, AGENT, HUMAN_TASK, REVIEW_ACTIVITY, CHILD_WORKFLOW]}
-        result: {nullable: true}
+        result: {description: "Any JSON value; null until the run completes"}
         errorMessage: {type: string, nullable: true}
         activityInvocations:
           type: array
@@ -673,7 +673,7 @@ components:
       properties:
         activityName: {type: string}
         input: {type: array, items: {}}
-        output: {nullable: true}
+        output: {description: "Any JSON value; null unless the activity returned one"}
         status: {type: string}
         errorMessage: {type: string, nullable: true}
         attempt: {type: integer}
@@ -773,7 +773,7 @@ components:
             args: {type: object, description: The activity's proposed named arguments}
             inputSchema: {type: string, nullable: true}
             errorMessage: {type: string, nullable: true}
-            decision: {type: object, nullable: true, description: The recorded decision, once made}
+            decision: {type: object, nullable: true, description: "The recorded decision, once made"}
     BulkRetryResult:
       type: object
       properties:
@@ -817,8 +817,8 @@ components:
         status: {type: string}
         startTime: {type: string, format: date-time, nullable: true}
         endTime: {type: string, format: date-time, nullable: true}
-        input: {nullable: true}
-        output: {nullable: true}
+        input: {description: "Any JSON value; null unless the step recorded one"}
+        output: {description: "Any JSON value; null unless the step recorded one"}
         failure: {type: object, nullable: true}
         attempt: {type: integer}
         stepId: {type: string, nullable: true}

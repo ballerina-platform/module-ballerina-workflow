@@ -14,5 +14,5 @@ jobs:
     with:
       package-name: workflow
       package-org: ballerina
-      additional-build-flags: "-x :workflow-integration-tests:test"
+      additional-build-flags: "-x :workflow-integration-tests:test -PcommitToml"
       additional-publish-flags: "-x :workflow-integration-tests:test"

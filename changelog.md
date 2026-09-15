@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **`bal build --export-endpoints` now writes the management API's OpenAPI description into
+  `target/artifact/`**, beside the `endpoints.yaml` that names it. The spec was only ever
+  written to `target/openapi/`, so the `schemaPath` the endpoint metadata advertised pointed at
+  a file that did not exist there. The two flags now mirror the HTTP plugin: `--export-openapi`
+  populates `target/openapi/`, `--export-endpoints` populates `target/artifact/`.
+
 ## [0.9.0] - 2026-09-07
 
 ### Changed

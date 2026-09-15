@@ -55,13 +55,15 @@ import java.nio.file.StandardCopyOption;
  * <ul>
  *   <li>{@code bal build --export-openapi} — the spec lands in {@code target/openapi/},
  *       beside the specs of the package's own services;</li>
- *   <li>{@code bal build --export-endpoints} — the endpoint metadata (name, port, base path,
- *       spec file) is registered through {@code CompilerLifecycleEventContext
- *       .addEndpointMetadata}, reached reflectively exactly as the HTTP plugin reaches it,
- *       because the API exists only in newer ballerina-lang versions. On a lang without it
- *       the request has nothing to land on; on one with it, a contract mismatch is reported
- *       as a warning rather than swallowed. The spec is written under this flag too — the
- *       metadata names it as its artifact, so it must exist.</li>
+ *   <li>{@code bal build --export-endpoints} — the spec lands in {@code target/artifact/},
+ *       beside the {@code endpoints.yaml} ballerina-lang assembles there, and the endpoint
+ *       metadata (name, port, base path, spec file) is registered through
+ *       {@code CompilerLifecycleEventContext.addEndpointMetadata}, reached reflectively
+ *       exactly as the HTTP plugin reaches it, because the API exists only in newer
+ *       ballerina-lang versions. On a lang without it the request has nothing to land on; on
+ *       one with it, a contract mismatch is reported as a warning rather than swallowed. The
+ *       metadata's {@code schemaPath} is resolved against {@code target/artifact/}, which is
+ *       why the spec is copied there and not only into {@code target/openapi/}.</li>
  * </ul>
  *
  * <p>The exports run only for a package that imports {@code ballerina/workflow.management.rest}
@@ -84,7 +86,11 @@ public class ManagementApiArtifactExporter implements CompilerLifecycleTask<Comp
     /** The file name the spec is exported under, following the http plugin's naming. */
     static final String SPEC_FILE_NAME = "workflow_management_openapi.yaml";
 
-    private static final String OPENAPI_DIR = "openapi";
+    /** Where {@code --export-openapi} lands every spec, this one included. */
+    static final String OPENAPI_DIR = "openapi";
+
+    /** Where {@code --export-endpoints} lands the endpoint metadata and the specs it names. */
+    static final String ARTIFACT_DIR = "artifact";
 
     /** The module that owns the service object; without this import there is nothing to describe. */
     private static final String MANAGEMENT_REST_ORG = "ballerina";
@@ -112,10 +118,14 @@ public class ManagementApiArtifactExporter implements CompilerLifecycleTask<Comp
         if (!importsManagementRest(context.currentPackage())) {
             return;
         }
-        // Either flag writes the spec: the endpoint metadata names it as its artifact, so an
-        // endpoints-only export must not advertise a file that was never written.
-        exportSpec(context);
+        Path targetDir = context.currentPackage().project().targetDir();
+        if (options.exportOpenAPI()) {
+            exportSpec(context, targetDir.resolve(OPENAPI_DIR));
+        }
         if (options.exportEndpoints()) {
+            // The metadata's schemaPath is relative to target/artifact, so the spec must be there
+            // or every consumer of endpoints.yaml is handed a dangling reference.
+            exportSpec(context, targetDir.resolve(ARTIFACT_DIR));
             registerEndpointMetadata(context);
         }
     }
@@ -137,7 +147,7 @@ public class ManagementApiArtifactExporter implements CompilerLifecycleTask<Comp
         return false;
     }
 
-    private void exportSpec(CompilerLifecycleEventContext context) {
+    private void exportSpec(CompilerLifecycleEventContext context, Path directory) {
         try (InputStream spec = ManagementApiArtifactExporter.class.getClassLoader()
                 .getResourceAsStream(SPEC_RESOURCE)) {
             if (spec == null) {
@@ -145,9 +155,8 @@ public class ManagementApiArtifactExporter implements CompilerLifecycleTask<Comp
                         + "the compiler plugin; the spec was not exported");
                 return;
             }
-            Path openapiDir = context.currentPackage().project().targetDir().resolve(OPENAPI_DIR);
-            Files.createDirectories(openapiDir);
-            Files.copy(spec, openapiDir.resolve(SPEC_FILE_NAME), StandardCopyOption.REPLACE_EXISTING);
+            Files.createDirectories(directory);
+            Files.copy(spec, directory.resolve(SPEC_FILE_NAME), StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
             // The export is a build convenience: failing the build over it would block the
             // executable a working program needs. Say what happened and move on.

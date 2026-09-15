@@ -1,4 +1,4 @@
-// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
 //
 // WSO2 LLC. licenses this file to you under the Apache License,
 // Version 2.0 (the "License"); you may not use this file except
@@ -13,6 +13,8 @@
 // KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
+import workflow.observe;
 
 // ================================================================================
 // MANAGEMENT COMMANDS
@@ -93,10 +95,16 @@ public enum Operation {
 #
 # + userId - The caller's user ID, or `()` when unknown
 # + roles - The caller's roles; an empty array means the caller holds none
+# + identitySource - `verified` when resolved from a credential the caller's auth layer validated;
+#                    `asserted` (the default) when supplied as given
 public type Identity record {|
     string? userId = ();
     string[] roles = [];
+    IdentitySource identitySource = "asserted";
 |};
+
+# Where a decision's user identity came from, as recorded on its audit entry and span.
+public type IdentitySource observe:IdentitySource;
 
 # A management operation to execute, named by `Operation` and parameterized by a
 # map. Parameter names match the operation's own vocabulary and are documented
@@ -111,62 +119,51 @@ public type Command record {|
     Identity identity = {};
 |};
 
-# Executes a management operation.
+// Parameters per operation, all optional unless stated:
+// - `LIST_DEFINITIONS` — none.
+// - `GET_RUNTIME_INFO` — none.
+// - `LIST_INSTANCES` — `status`, `workflowType`, `workflowId`, `startedBy`, `limit`,
+//   `pageToken`, `startTimeFrom`, `startTimeTo`, `closeTimeFrom`, `closeTimeTo`, `taskQueue`,
+//   `kind` (`WORKFLOW`, `HUMAN_TASK`, `REVIEW_ACTIVITY`, `CHILD_WORKFLOW`, `AGENT`). Without a
+//   `kind` the listing excludes task and review children, as it did before kinds existed; each
+//   row reports its own `kind`, so an unfiltered listing is still self-describing.
+// - `START_INSTANCE` — `workflowType` (required), `input`, `workflowId`, `timeoutSeconds`.
+// - `GET_INSTANCE`, `SUSPEND_INSTANCE`, `RESUME_INSTANCE`, `CANCEL_INSTANCE`,
+//   `GET_INSTANCE_HISTORY`, `GET_INSTANCE_ACTIVITY_TREE`, `GET_INSTANCE_EXECUTION_GRAPH` —
+//   `workflowId` (required), `runId`.
+// - `WAKE_INSTANCE` — `workflowId` (required).
+// - `SEND_DATA_TO_INSTANCE` — `workflowId` (required), `dataName` (required), `data`. The event
+//   reaches the instance's running run; `runId` does not apply.
+// - `TERMINATE_INSTANCE` — `workflowId` (required), `runId`, `reason`.
+// - `LIST_HUMAN_TASKS` — `status`, `parentWorkflowId`, `parentWorkflowType`, `taskName`,
+//   `userRole`, `limit`, `pageToken`, the four time bounds, `taskQueue`.
+// - `LIST_WORK_ITEMS` — `kinds` (comma list of `HUMAN_TASK`/`REVIEW_ACTIVITY`; both when absent),
+//   `status`, `parentWorkflowId`, `parentWorkflowType`, `limit`, `pageToken`, the four time
+//   bounds, `taskQueue`.
+// - `COUNT_PENDING_HUMAN_TASKS` — `taskQueue`.
+// - `GET_HUMAN_TASK` — `taskId` (required).
+// - `COMPLETE_HUMAN_TASK` — `taskId` (required), `result`.
+// - `FAIL_HUMAN_TASK` — `taskId` and `reason` (required), `details`.
+// - `LIST_REVIEW_ACTIVITIES` — `status`, `parentWorkflowId`, `taskName`, `limit`,
+//   `pageToken`, the four time bounds, `taskQueue`.
+// - `GET_REVIEW_ACTIVITY` — `taskId` (required).
+// - `DECIDE_REVIEW_ACTIVITY` — `taskId` and `action` (required), `input`, `feedback`.
+// - `BULK_RETRY_REVIEW_ACTIVITIES` — `action` (required, `"retry"` or `"fail"`), and
+//   exactly one of `taskIds` (an array of review activity IDs) or `parentWorkflowId`;
+//   `activityName` narrows a `parentWorkflowId` selection, `feedback` accompanies
+//   `"fail"`. There is no parameter for replacement arguments: a bulk decision cannot
+//   change the payload an activity is retried with.
+// - `LIST_RESET_POINTS` — `workflowId` (required), `runId`.
+// - `RESET_INSTANCE` — `workflowId` and `resetType` (required), `runId`, `eventId`
+//   (required when `resetType` is `"workflow-task-id"`), `reason`, and `reapply`
+//   (`{"type": …, "exclude": [...]}`).
+//
+
+# Executes a management operation. Parameters per operation are listed in the comment above.
 #
-# Parameters per operation, all optional unless stated:
-# - `LIST_DEFINITIONS` — none.
-# - `GET_RUNTIME_INFO` — none.
-# - `LIST_INSTANCES` — `status`, `workflowType`, `workflowId`, `startedBy`, `limit`,
-#   `pageToken`, `startTimeFrom`, `startTimeTo`, `closeTimeFrom`, `closeTimeTo`, `taskQueue`,
-#   `kind` (`WORKFLOW`, `HUMAN_TASK`, `REVIEW_ACTIVITY`, `CHILD_WORKFLOW`, `AGENT`). Without a
-#   `kind` the listing excludes task and review children, as it did before kinds existed; each
-#   row reports its own `kind`, so an unfiltered listing is still self-describing.
-# - `START_INSTANCE` — `workflowType` (required), `input`, `workflowId`, `timeoutSeconds`.
-# - `GET_INSTANCE`, `SUSPEND_INSTANCE`, `RESUME_INSTANCE`, `CANCEL_INSTANCE`,
-#   `GET_INSTANCE_HISTORY`, `GET_INSTANCE_ACTIVITY_TREE`, `GET_INSTANCE_EXECUTION_GRAPH` —
-#   `workflowId` (required), `runId`.
-# - `WAKE_INSTANCE` — `workflowId` (required).
-# - `SEND_DATA_TO_INSTANCE` — `workflowId` (required), `dataName` (required), `data`. The event
-#   reaches the instance's running run; `runId` does not apply.
-# - `TERMINATE_INSTANCE` — `workflowId` (required), `runId`, `reason`.
-# - `LIST_HUMAN_TASKS` — `status`, `parentWorkflowId`, `parentWorkflowType`, `taskName`,
-#   `userRole`, `limit`, `pageToken`, the four time bounds, `taskQueue`.
-# - `LIST_WORK_ITEMS` — `kinds` (comma list of `HUMAN_TASK`/`REVIEW_ACTIVITY`; both when absent),
-#   `status`, `parentWorkflowId`, `parentWorkflowType`, `limit`, `pageToken`, the four time
-#   bounds, `taskQueue`.
-# - `COUNT_PENDING_HUMAN_TASKS` — `taskQueue`.
-# - `GET_HUMAN_TASK` — `taskId` (required).
-# - `COMPLETE_HUMAN_TASK` — `taskId` (required), `result`.
-# - `FAIL_HUMAN_TASK` — `taskId` and `reason` (required), `details`.
-# - `LIST_REVIEW_ACTIVITIES` — `status`, `parentWorkflowId`, `taskName`, `limit`,
-#   `pageToken`, the four time bounds, `taskQueue`.
-# - `GET_REVIEW_ACTIVITY` — `taskId` (required).
-# - `DECIDE_REVIEW_ACTIVITY` — `taskId` and `action` (required), `input`, `feedback`.
-# - `BULK_RETRY_REVIEW_ACTIVITIES` — `action` (required, `"retry"` or `"fail"`), and
-#   exactly one of `taskIds` (an array of review activity IDs) or `parentWorkflowId`;
-#   `activityName` narrows a `parentWorkflowId` selection, `feedback` accompanies
-#   `"fail"`. There is no parameter for replacement arguments: a bulk decision cannot
-#   change the payload an activity is retried with.
-# - `LIST_RESET_POINTS` — `workflowId` (required), `runId`.
-# - `RESET_INSTANCE` — `workflowId` and `resetType` (required), `runId`, `eventId`
-#   (required when `resetType` is `"workflow-task-id"`), `reason`, and `reapply`
-#   (`{"type": …, "exclude": [...]}`).
-#
-# ```ballerina
-# json|management:Error result = management:executeCommand({
-#     operation: management:COMPLETE_HUMAN_TASK,
-#     params: {taskId: "humantask-...", result: {approved: true}},
-#     identity: {userId: "alice", roles: ["approver"]}
-# });
-# ```
-#
-# This function authenticates nothing. It trusts `command.identity` as given and
-# applies only the role checks the operations themselves perform — the same checks
-# the HTTP API relies on once it has resolved a caller. A consumer that accepts
-# commands from a remote channel is responsible for authenticating that channel and
-# for populating `identity` from a verified credential; scope policies configured
-# for the HTTP API (`enforceScopes` and friends) belong to that module and have no
-# effect here.
+# This function authenticates nothing: `command.identity` is trusted as given, and only the role
+# checks the operations themselves perform apply. A caller accepting commands from a remote
+# channel must authenticate that channel and populate `identity` from a verified credential.
 #
 # + command - The command to execute
 # + return - The operation's payload, or the error explaining why it could not run
@@ -178,6 +175,7 @@ public isolated function executeCommand(Command command) returns json|Error {
     map<json> params = normalized;
     [string, string...]? callerRoles = rolesFromIdentity(command.identity);
     string? userId = command.identity.userId;
+    IdentitySource identitySource = command.identity.identitySource;
 
     match command.operation {
         GET_RUNTIME_INFO => {
@@ -308,7 +306,7 @@ public isolated function executeCommand(Command command) returns json|Error {
             if taskId is Error {
                 return taskId;
             }
-            return opCompleteHumanTask(taskId, params["result"], callerRoles, userId);
+            return opCompleteHumanTask(taskId, params["result"], callerRoles, userId, identitySource);
         }
         FAIL_HUMAN_TASK => {
             string|Error taskId = requiredParam(params, "taskId");
@@ -316,7 +314,7 @@ public isolated function executeCommand(Command command) returns json|Error {
                 return taskId;
             }
             map<json>? details = params["details"] is map<json> ? <map<json>>params["details"] : ();
-            return opFailHumanTask(taskId, params["reason"], details, callerRoles, userId);
+            return opFailHumanTask(taskId, params["reason"], details, callerRoles, userId, identitySource);
         }
         LIST_REVIEW_ACTIVITIES => {
             return opListReviewActivities(strParam(params, "status"),
@@ -344,7 +342,7 @@ public isolated function executeCommand(Command command) returns json|Error {
             }
             map<json>? input = params["input"] is map<json> ? <map<json>>params["input"] : ();
             return opDecideReviewActivity(taskId, action, input,
-                    strParam(params, "feedback"), callerRoles, userId);
+                    strParam(params, "feedback"), callerRoles, userId, identitySource);
         }
         LIST_RESET_POINTS => {
             string|Error workflowId = requiredParam(params, "workflowId");
@@ -374,7 +372,7 @@ public isolated function executeCommand(Command command) returns json|Error {
             }
             return opBulkRetryReviewActivities(action, params["taskIds"],
                     strParam(params, "parentWorkflowId"), strParam(params, "activityName"),
-                    strParam(params, "feedback"), callerRoles, userId);
+                    strParam(params, "feedback"), callerRoles, userId, identitySource);
         }
         _ => {
             // Unreachable for a well-typed Command: the operation field is the enum.

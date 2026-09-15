@@ -1,4 +1,4 @@
-// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
 //
 // WSO2 LLC. licenses this file to you under the Apache License,
 // Version 2.0 (the "License"); you may not use this file except
@@ -107,10 +107,6 @@ public type WorkflowMetadata record {|
 # Integrations in one project share a Temporal namespace, so the queue is the only
 # attribute separating one integration's executions from its neighbours'.
 #
-# ```ballerina
-# string? queue = management:getWorkflowTaskQueue();
-# ```
-#
 # + return - The worker's task queue, or nil before the worker has registered
 public isolated function getWorkflowTaskQueue() returns string? = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowMetadataNative",
@@ -121,12 +117,6 @@ public isolated function getWorkflowTaskQueue() returns string? = @java:Method {
 # definitions, human tasks, activities, and durable agents, with their JSON schemas.
 # The document is complete at module init — before any workflow has executed — so it
 # is safe to read once at startup and publish to a control plane.
-#
-# ```ballerina
-# import ballerina/workflow.management;
-#
-# management:WorkflowMetadata meta = check management:getWorkflowMetadata();
-# ```
 #
 # + return - The metadata document, or an error
 public isolated function getWorkflowMetadata() returns WorkflowMetadata|error {

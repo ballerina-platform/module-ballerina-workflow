@@ -1,4 +1,4 @@
-// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
 //
 // WSO2 LLC. licenses this file to you under the Apache License,
 // Version 2.0 (the "License"); you may not use this file except
@@ -116,17 +116,9 @@ public type HumanTaskRejectedDetail record {|
     string? rejectedBy = ();
 |};
 
-# Returned by `awaitHumanTask` when the task is rejected instead of completed — the
-# `fail` management operation, which records a reason rather than a result. The reason
-# and any structured details submitted with the rejection are on the error detail, so a
-# workflow can compensate on what the rejecting user said:
-#
-# ```ballerina
-# Approval|workflow:HumanTaskError approval = ctx->awaitHumanTask("approve", userRoles = "FINANCE");
-# if approval is workflow:HumanTaskRejectedError {
-#     () _ = check ctx->callActivity(notifyRejected, args = {"reason": approval.detail().reason});
-# }
-# ```
+# Returned by `awaitHumanTask` when the task is rejected instead of completed. The reason and any
+# details submitted with the rejection are on the error detail, so a workflow can compensate on
+# what the rejecting user said.
 public type HumanTaskRejectedError distinct error<HumanTaskRejectedDetail>;
 
 # Returned by `awaitHumanTask` when the task neither completed nor closed with a reason

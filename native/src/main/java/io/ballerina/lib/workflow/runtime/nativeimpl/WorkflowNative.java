@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -977,7 +977,8 @@ public final class WorkflowNative {
      *
      * @param taskWorkflowId the Temporal workflow ID of the human task child workflow
      * @param result         the value to return to the waiting {@code awaitHumanTask} call
-     * @return {@code null} on success, or a Ballerina error
+     * @return the task's receipt — its {@code taskName}, {@code parentWorkflowId} and {@code assignedRoles}, for
+     *         the decision's audit entry — on success, or a Ballerina error
      */
     public static Object completeHumanTask(BString taskWorkflowId, Object result, Object callerRoles, Object userId) {
         try {
@@ -990,10 +991,10 @@ public final class WorkflowNative {
             // intersection when callerRoles is provided, and validate the completion
             // payload against the task's expected result type (ballerina-library#8866).
             BArray callerRolesArray = (callerRoles instanceof BArray ba) ? ba : null;
-            Object validationError = validateHumanTaskAndRoles(client, taskWorkflowId.getValue(), callerRolesArray,
-                                                               result, false);
-            if (validationError != null) {
-                return validationError;
+            Object validation = validateHumanTaskAndRoles(client, taskWorkflowId.getValue(), callerRolesArray,
+                                                          result, false);
+            if (!(validation instanceof TaskMemo memo)) {
+                return validation;
             }
 
             Object javaResult = TypesUtil.convertBallerinaToJavaType(result);
@@ -1010,7 +1011,7 @@ public final class WorkflowNative {
                         "Failed to complete human task: task '" + taskWorkflowId.getValue() +
                                 "' completed or was no longer running when signal was delivered"));
             }
-            return null;
+            return memo.toReceipt();
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString("Failed to complete human task: " + e.getMessage()));
         }
@@ -1029,7 +1030,8 @@ public final class WorkflowNative {
      * @param details        optional structured details recorded with the rejection
      * @param callerRoles    optional caller roles for authorization enforcement
      * @param userId         optional user ID stored in the audit trail
-     * @return {@code null} on success, or a Ballerina error
+     * @return the task's receipt — its {@code taskName}, {@code parentWorkflowId} and {@code assignedRoles}, for
+     *         the decision's audit entry — on success, or a Ballerina error
      */
     public static Object failHumanTask(BString taskWorkflowId, BString reason, Object details,
                                        Object callerRoles, Object userId) {
@@ -1041,10 +1043,10 @@ public final class WorkflowNative {
 
             // Kind/status/role checks only — a rejection carries no result payload to validate.
             BArray callerRolesArray = (callerRoles instanceof BArray ba) ? ba : null;
-            Object validationError = validateHumanTaskAndRoles(client, taskWorkflowId.getValue(), callerRolesArray,
-                                                               null, true);
-            if (validationError != null) {
-                return validationError;
+            Object validation = validateHumanTaskAndRoles(client, taskWorkflowId.getValue(), callerRolesArray,
+                                                          null, true);
+            if (!(validation instanceof TaskMemo memo)) {
+                return validation;
             }
 
             Map<String, Object> payload = new HashMap<>();
@@ -1063,7 +1065,7 @@ public final class WorkflowNative {
                         "Failed to fail human task: task '" + taskWorkflowId.getValue() +
                                 "' completed or was no longer running when signal was delivered"));
             }
-            return null;
+            return memo.toReceipt();
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString("Failed to fail human task: " + e.getMessage()));
         }
@@ -1078,7 +1080,8 @@ public final class WorkflowNative {
      *       one caller role is present in the task's {@code userRoles} memo field.</li>
      * </ol>
      *
-     * <p>Returns {@code null} when all checks pass, or a Ballerina error otherwise.
+     * <p>Returns the task's {@link TaskMemo} — its declared name, parent workflow and allowed roles — when
+     * all checks pass, or a Ballerina error otherwise.
      *
      * <p>If the {@code userRoles} memo field is absent or cannot be decoded the role
      * intersection is skipped (backward-compatible with tasks started before role metadata
@@ -1153,10 +1156,6 @@ public final class WorkflowNative {
             }
 
             // 3. Role intersection — only when callerRoles was supplied
-            if (callerRolesArray == null) {
-                return null;
-            }
-
             Set<String> allowedRoles = new HashSet<>();
             try {
                 io.temporal.api.common.v1.Payload rolesPl = memoFields.get("userRoles");
@@ -1165,18 +1164,27 @@ public final class WorkflowNative {
                     allowedRoles.addAll(Arrays.asList(rolesArr));
                 }
             } catch (Exception e) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Failed to decode task roles for '" + taskWorkflowId + "': " + e.getMessage()));
+                if (callerRolesArray != null) {
+                    return ErrorCreator.createError(StringUtils.fromString(
+                            "Failed to decode task roles for '" + taskWorkflowId + "': " + e.getMessage()));
+                }
+                // Nothing to enforce against, so an unreadable role list only costs the audit entry its roles.
+                LOGGER.debug("Could not decode userRoles from memo for '{}': {}", taskWorkflowId, e.getMessage());
             }
+            // The decision's audit entry names the task, its parent, and who was allowed to decide it.
+            TaskMemo memo = new TaskMemo(decodeMemoText(dc, memoFields, "taskName"),
+                                         decodeMemoText(dc, memoFields, "parentWorkflowId"),
+                                         allowedRoles.stream().sorted().toList(),
+                                         decodeMemoValue(dc, memoFields, "taskInput"));
 
-            if (allowedRoles.isEmpty()) {
-                // No roles configured on the task — nothing to enforce.
-                return null;
+            if (callerRolesArray == null || allowedRoles.isEmpty()) {
+                // No caller roles to check, or no roles configured on the task — nothing to enforce.
+                return memo;
             }
 
             for (int i = 0; i < callerRolesArray.size(); i++) {
                 if (allowedRoles.contains(callerRolesArray.get(i).toString())) {
-                    return null; // at least one matching role — authorized
+                    return memo; // at least one matching role — authorized
                 }
             }
 
@@ -1186,6 +1194,28 @@ public final class WorkflowNative {
         } catch (Exception e) {
             return ErrorCreator.createError(
                     StringUtils.fromString("Failed to validate task '" + taskWorkflowId + "': " + e.getMessage()));
+        }
+    }
+
+    // One string field of a task's memo, or null when absent or undecodable.
+    private static String decodeMemoText(io.temporal.common.converter.DataConverter dc,
+                                         Map<String, io.temporal.api.common.v1.Payload> fields, String key) {
+        try {
+            io.temporal.api.common.v1.Payload payload = fields.get(key);
+            return payload == null ? null : dc.fromPayload(payload, String.class, String.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // One structured field of a task's memo as decoded Java values, or null when absent or undecodable.
+    private static Object decodeMemoValue(io.temporal.common.converter.DataConverter dc,
+                                          Map<String, io.temporal.api.common.v1.Payload> fields, String key) {
+        try {
+            io.temporal.api.common.v1.Payload payload = fields.get(key);
+            return payload == null ? null : dc.fromPayload(payload, Object.class, Object.class);
+        } catch (Exception e) {
+            return null;
         }
     }
 

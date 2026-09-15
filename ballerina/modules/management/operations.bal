@@ -1,4 +1,4 @@
-// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
 //
 // WSO2 LLC. licenses this file to you under the Apache License,
 // Version 2.0 (the "License"); you may not use this file except
@@ -405,12 +405,12 @@ isolated function opGetHumanTask(string taskId, [string, string...]? callerRoles
     return info.toJson();
 }
 
-isolated function opCompleteHumanTask(string taskId, json result, [string, string...]? callerRoles, string? userId)
-        returns json|Error {
+isolated function opCompleteHumanTask(string taskId, json result, [string, string...]? callerRoles,
+        string? userId, IdentitySource identitySource) returns json|Error {
     if callerRoles is () {
         return accessDenied("Unauthorized: caller roles are required");
     }
-    error? err = completeHumanTask(taskId, result, callerRoles, userId);
+    error? err = decideCompleteHumanTask(taskId, result, callerRoles, userId, identitySource);
     if err is error {
         return classifyRuntimeError(err);
     }
@@ -418,7 +418,7 @@ isolated function opCompleteHumanTask(string taskId, json result, [string, strin
 }
 
 isolated function opFailHumanTask(string taskId, json? reason, map<json>? details,
-        [string, string...]? callerRoles, string? userId)
+        [string, string...]? callerRoles, string? userId, IdentitySource identitySource)
         returns json|Error {
     if reason is () {
         return invalidRequest("reason is required");
@@ -426,7 +426,7 @@ isolated function opFailHumanTask(string taskId, json? reason, map<json>? detail
     if callerRoles is () {
         return accessDenied("Unauthorized: caller roles are required");
     }
-    error? err = failHumanTask(taskId, reason.toString(), details, callerRoles, userId);
+    error? err = decideFailHumanTask(taskId, reason.toString(), details, callerRoles, userId, identitySource);
     if err is error {
         return classifyRuntimeError(err);
     }
@@ -471,7 +471,7 @@ isolated function opGetReviewActivity(string taskId, [string, string...]? caller
 }
 
 isolated function opDecideReviewActivity(string taskId, string action, map<json>? input, string? feedback,
-        [string, string...]? callerRoles, string? userId)
+        [string, string...]? callerRoles, string? userId, IdentitySource identitySource)
         returns json|Error {
     AccessDeniedError? roleErr = reviewDecisionRoleError(callerRoles);
     if roleErr is AccessDeniedError {
@@ -490,7 +490,7 @@ isolated function opDecideReviewActivity(string taskId, string action, map<json>
     } else {
         return invalidRequest("Unknown review decision action: " + action);
     }
-    error? err = completeReviewActivity(taskId, decision, callerRoles, userId);
+    error? err = decideReviewActivity(taskId, decision, callerRoles, userId, identitySource);
     if err is error {
         return classifyRuntimeError(err);
     }
@@ -521,8 +521,8 @@ const PENDING_STATUS = "PENDING";
 # + userId - Caller identity recorded in the report
 # + return - The batch report as `json`, or the reason the batch was refused
 isolated function opBulkRetryReviewActivities(string action, json? taskIds, string? parentWorkflowId,
-        string? activityName, string? feedback, [string, string...]? callerRoles, string? userId)
-        returns json|Error {
+        string? activityName, string? feedback, [string, string...]? callerRoles, string? userId,
+        IdentitySource identitySource) returns json|Error {
     if action != "retry" && action != "fail" {
         return invalidRequest("Unknown bulk retry action: " + action
                 + " (expected \"retry\" or \"fail\")");
@@ -543,7 +543,7 @@ isolated function opBulkRetryReviewActivities(string action, json? taskIds, stri
     int skipped = 0;
     int failed = 0;
     foreach BulkCandidate candidate in resolved {
-        BulkItemResult item = decideOneInBulk(candidate, decision, callerRoles, userId);
+        BulkItemResult item = decideOneInBulk(candidate, decision, callerRoles, userId, identitySource);
         items.push(item);
         match item.outcome {
             APPLIED => {
@@ -669,7 +669,7 @@ isolated function oversizedBulk() returns InvalidRequestError =>
 # + userId - Caller identity recorded with the decision
 # + return - What happened to this task
 isolated function decideOneInBulk(BulkCandidate candidate, ReviewDecision decision,
-        [string, string...]? callerRoles, string? userId) returns BulkItemResult {
+        [string, string...]? callerRoles, string? userId, IdentitySource identitySource) returns BulkItemResult {
     ReviewActivitySummary? known = candidate.summary;
     string trigger;
     string status;
@@ -710,7 +710,7 @@ isolated function decideOneInBulk(BulkCandidate candidate, ReviewDecision decisi
             reason: "Already decided: the review activity is " + status
         };
     }
-    error? err = completeReviewActivity(candidate.taskId, decision, callerRoles, userId);
+    error? err = decideReviewActivity(candidate.taskId, decision, callerRoles, userId, identitySource);
     if err is error {
         // A task decided between the eligibility check and the submission is a skip,
         // not a failure: the caller asked for it to be decided and it is.

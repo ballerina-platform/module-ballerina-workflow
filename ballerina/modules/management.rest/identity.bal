@@ -1,4 +1,4 @@
-// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
 //
 // WSO2 LLC. licenses this file to you under the Apache License,
 // Version 2.0 (the "License"); you may not use this file except
@@ -17,6 +17,7 @@
 import ballerina/http;
 import ballerina/jwt;
 import ballerina/lang.array;
+import ballerina/workflow.management;
 
 // ================================================================================
 // CALLER IDENTITY
@@ -82,9 +83,12 @@ configurable string scopeHumanTaskManage = "humantask:manage";
 #
 # + userId - The caller's user ID, or `()` when no scheme established one
 # + roles - The caller's role names; empty when none were established
+# + identitySource - `verified` when resolved from a validated credential (JWT claim, basic-auth user);
+#                    `asserted` for forwarded x-user-* headers or no user
 type CallerIdentity record {|
     string? userId = ();
     string[] roles = [];
+    management:IdentitySource identitySource = "asserted";
 |};
 
 # The request-context key the resolved `CallerIdentity` is stored under.
@@ -141,7 +145,9 @@ isolated function resolveCallerIdentity(http:Request req, string firstSegment,
     if cfg.basicAuthEnabled && identity.userId is () {
         string? basicUser = basicAuthUsername(req);
         if basicUser is string {
+            // The declarative auth layer validated these credentials before this ran.
             identity.userId = basicUser;
+            identity.identitySource = "verified";
         }
     }
 
@@ -184,6 +190,8 @@ isolated function resolveCallerIdentity(http:Request req, string firstSegment,
     if !(cfg.trustForwardedIdentity && hasForwardedUser) {
         json? userId = claimAt(claims, cfg.userIdClaim);
         identity.userId = userId is string && userId.trim().length() > 0 ? userId : ();
+        // The auth layer admitted the token; a user ID read from its claims is verified.
+        identity.identitySource = identity.userId is string ? "verified" : "asserted";
     }
     if !(cfg.trustForwardedIdentity && hasForwardedRoles) {
         string[]? roles = stringArrayFromClaim(claimAt(claims, cfg.rolesClaim));

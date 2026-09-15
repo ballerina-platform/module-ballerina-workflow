@@ -1,4 +1,4 @@
-// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
 //
 // WSO2 LLC. licenses this file to you under the Apache License,
 // Version 2.0 (the "License"); you may not use this file except
@@ -36,22 +36,6 @@ public enum RestMethod {
 # The `connection` argument must be a module-level `final` `http:Client`
 # variable in the user's program. The compiler plugin generates the wiring
 # that makes it available on the activity worker side.
-#
-# Example:
-# ```ballerina
-# final http:Client api = check new ("https://api.example.com");
-#
-# type User record {| int id; string name; |};
-#
-# @workflow:Workflow
-# isolated function myWorkflow(workflow:Context ctx) returns error? {
-#     User user = check ctx->callActivity(activity:callRestAPI, {
-#         connection: api,
-#         method: "GET",
-#         path: "/users/1"
-#     });
-# }
-# ```
 #
 # + connection - The HTTP client to use for the call
 # + method - HTTP method to invoke
@@ -113,22 +97,6 @@ isolated function callRestAPIDispatch(http:Client connection, RestMethod method,
 # variable in the user's program. The activity sends the email using the
 # `email:SmtpClient.send()` method.
 #
-# Example:
-# ```ballerina
-# final email:SmtpClient smtp = check new ("smtp.example.com", "user", "pass");
-#
-# @workflow:Workflow
-# isolated function notifyWorkflow(workflow:Context ctx, string recipient) returns error? {
-#     () _ = check ctx->callActivity(activity:sendEmail, {
-#         connection: smtp,
-#         to: recipient,
-#         subject: "Order shipped",
-#         'from: "no-reply@example.com",
-#         body: "Your order is on the way."
-#     });
-# }
-# ```
-#
 # + connection - The SMTP client to use for sending
 # + to - Recipient address (or list of addresses)
 # + subject - Subject line of the email
@@ -179,21 +147,6 @@ public type EmailOptions record {|
 # `soap12:Client` variable in the user's program. Both SOAP 1.1 and 1.2 clients
 # are supported. The `action` parameter is required for SOAP 1.1 and optional
 # for SOAP 1.2.
-#
-# Example:
-# ```ballerina
-# final soap11:Client calc = check new ("https://calc.example.com/svc?WSDL");
-#
-# @workflow:Workflow
-# isolated function addNumbers(workflow:Context ctx) returns error? {
-#     xml envelope = xml `<soap:Envelope ...><soap:Body>...</soap:Body></soap:Envelope>`;
-#     xml response = check ctx->callActivity(activity:callSoapAPI, {
-#         connection: calc,
-#         body: envelope,
-#         action: "http://tempuri.org/Add"
-#     });
-# }
-# ```
 #
 # + connection - The SOAP client (`soap11:Client` or `soap12:Client`) to use
 # + body - SOAP envelope as `xml`

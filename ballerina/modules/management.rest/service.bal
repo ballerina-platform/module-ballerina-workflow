@@ -1,4 +1,4 @@
-// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
 //
 // WSO2 LLC. licenses this file to you under the Apache License,
 // Version 2.0 (the "License"); you may not use this file except
@@ -108,22 +108,9 @@ configurable boolean corsAllowCredentials = false;
 # Defaults to ~24 hours (84900 seconds).
 configurable decimal corsMaxAge = 84900;
 
-# Enables HTTP Basic Authentication via Ballerina's built-in file user store.
-# Defaults to `true` so that accidentally enabling the management API without
-# any auth is caught at startup rather than silently exposing an endpoint.
-# Set to `false` for K8s-internal deployments (zero-trust / service mesh).
-#
-# When `true`, user credentials must be configured in Config.toml using the
-# standard Ballerina user store format:
-# ```toml
-# [[ballerina.auth.users]]
-# username = "admin"
-# password = "workflowadmin"
-# scopes   = ["admin"]
-# ```
-# Authentication is delegated to Ballerina HTTP's `fileUserStoreConfig` handler,
-# which implements the standard HTTP Basic scheme including proper challenge
-# headers and error responses.
+# Enables HTTP Basic Authentication via Ballerina's built-in file user store, with credentials
+# from `[[ballerina.auth.users]]` in Config.toml. Defaults to `true` so enabling the management
+# API without auth is caught at startup rather than silently exposing an endpoint.
 configurable boolean enableBasicAuth = true;
 
 # Enables JWT Bearer token authentication (`Authorization: Bearer <token>`).
@@ -438,7 +425,7 @@ isolated function executeToResponse(management:Operation operation, map<json> pa
     json|management:Error result = management:executeCommand({
         operation: operation,
         params: params,
-        identity: {userId: identity.userId, roles: identity.roles}
+        identity: {userId: identity.userId, roles: identity.roles, identitySource: identity.identitySource}
     });
     http:Response response = new;
     if result is management:Error {

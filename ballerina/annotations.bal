@@ -1,4 +1,4 @@
-// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
 //
 // WSO2 LLC. licenses this file to you under the Apache License,
 // Version 2.0 (the "License"); you may not use this file except
@@ -15,20 +15,8 @@
 // under the License.
 
 # Marks a function as a workflow.
-#
-# ```ballerina
-# @workflow:Workflow
-# function orderProcess(Order input) returns OrderResult|error {
-# }
-# ```
 public annotation Workflow on function;
 
 # Marks a function as a workflow activity.
-#
-# ```ballerina
-# @workflow:Activity
-# function sendEmail(EmailRequest req) returns EmailResponse|error {
-# }
-# ```
 public annotation Activity on function;
 

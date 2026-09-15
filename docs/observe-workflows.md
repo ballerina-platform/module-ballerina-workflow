@@ -94,22 +94,28 @@ task child or a child workflow belongs to the trace of the run that started it.
 The request that made each call is not lost: every client span carries a **link** to the
 caller's own span, which a tracing UI follows back to the request trace.
 
-[Jaeger](https://www.jaegertracing.io) is Ballerina's supported tracing backend, via
-`ballerinax/jaeger`:
+Spans leave the process over OTLP, through the distribution's own `ballerina/otel` provider:
 
 ```ballerina
-import ballerinax/jaeger as _;
+import ballerina/otel as _;
 ```
 
 ```toml
 # Config.toml
 [ballerina.observe]
 tracingEnabled = true
-tracingProvider = "jaeger"
+tracingProvider = "otel"
 
-[ballerinax.jaeger]
-agentPort = 4317    # Jaeger's OTLP gRPC port; the module's default (55680) is the legacy OTLP port
+[ballerina.otel]
+tracesEndpoint = "http://localhost:4317"
+
+[ballerina.otel.tracesResourceAttributes]
+"service.name" = "claims"    # the name your spans are listed under
 ```
+
+Any OTLP collector accepts them; [Jaeger](https://www.jaegertracing.io) is a good one to read
+them with. (`ballerinax/jaeger` also speaks OTLP, but the exporter it bundles predates the
+OpenTelemetry the distribution now carries.)
 
 Run Jaeger locally (it accepts the OTLP traffic the provider sends on 4317) and open the
 UI at `http://localhost:16686`:
@@ -120,13 +126,12 @@ docker run -d --name jaeger \
     jaegertracing/all-in-one:1.60
 ```
 
-In the UI, the service `workflow` holds both sides: the client spans (`start_workflow`,
-`send_data`, `complete_human_task`, …, tagged `type="client"`) and the execution spans
-(`workflow <type>`, `activity <type>`, `agent.tool_call <tool>`, …, tagged `type="worker"`).
-Search by the tag `workflow.instance.id` for a run and open the one trace it finds to read
-that run's whole story, days of it if that is how long the run took; follow a client span's
-link to reach the request that made the call; search by `user.id` for every decision one
-person made.
+In the UI, pick the service your integration publishes under and search by the tag
+`workflow.instance.id`: one trace comes back, and it holds both sides of the run — the client
+spans (`start_workflow`, `send_data`, `complete_human_task`, …, tagged `type="client"`) and
+the execution spans (`workflow <type>`, `activity <type>`, `agent.tool_call <tool>`, …, tagged
+`type="worker"`), days of it if that is how long the run took. Follow a client span's link to
+reach the request that made the call; search by `user.id` for every decision one person made.
 
 The trace's top spans name a parent that is never recorded — the anchor the instance ID
 derives — so a UI shows them as roots. A decision refused before the runtime could say which

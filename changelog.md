@@ -23,8 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
     `agent.event_wait <event>`, `agent.sleep`, `agent.task_wait <task>`,
     `agent.tool_review <tool>`). A task child or a child workflow joins the trace of the run
     that started it. Every client span carries a link to the caller's own span, which is how
-    a tracing UI gets back to the request that made the call. All of it is published under
-    the service `workflow`, tagged `type = client|worker`.
+    a tracing UI gets back to the request that made the call. All of it is opened through the
+    module's own `workflow` tracer, tagged `type = client|worker`.
   - Metrics, following the Ballerina integration observability standard: one
     `workflow_events_total` counter carries every lifecycle event (`started`, `closed`,
     `activity_executed`, `data_sent`, `task_decided`), recorded replay-safely; logical

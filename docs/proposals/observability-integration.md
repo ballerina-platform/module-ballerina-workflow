@@ -119,9 +119,10 @@ points that record the metrics, so no span is emitted twice:
 | `workflow.data_received <name>` | when a data event reaches the run | `workflow.data.name` |
 | `agent.model_call <activity>`, `agent.tool_call <tool>`, `agent.event_wait <event>`, `agent.sleep`, `agent.task_wait <task>`, `agent.tool_review <tool>` | around each agent step, on the workflow thread; a step that began on another worker gets a span at completion carrying its duration | `workflow.agent.step`, `workflow.agent.tool`, `workflow.data.name`, `workflow.task.name`, `workflow.task.action`, `workflow.step.duration.seconds`; a timed-out wait is an error span with `error.type = TIMEOUT` |
 
-Execution spans are published under the service name `workflow` with the identity tags and
-`type = worker`; the client spans are published there too, with `type = client`, so one
-service holds both sides of an instance's story. A human task child's
+Execution spans are opened through the module's own tracer, named `workflow`, with the identity
+tags and `type = worker`; the client spans use that tracer too, with `type = client`. Which
+service they are listed under is the application's — with an OTLP provider it is the process's
+`service.name` resource attribute — so one service holds both sides of an instance's story. A human task child's
 `workflow humantask-<def>.<task>` span is the wait for the person, and the decision that ends
 it joins the same trace: the decision's receipt names the run that owns the task, which is
 the instance its span derives from.

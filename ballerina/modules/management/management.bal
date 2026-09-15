@@ -487,9 +487,26 @@ public isolated function cancelWorkflow(string workflowId, string runId) returns
 # + startedBy - Optional starter user ID; stored with workflow metadata for filtering
 # + return - Handle with workflowId and runId, or an error
 public isolated function startWorkflowByType(string workflowType, json? input,
-    string? workflowId = (), int? timeoutSeconds = (), string? startedBy = ())
-    returns WorkflowHandle|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+        string? workflowId = (), int? timeoutSeconds = (), string? startedBy = ())
+        returns WorkflowHandle|error {
+    // The engine registers a workflow under this prefix; the span names the type the worker will.
+    observe:StartWorkflowSpan span = observe:createStartWorkflowSpan(string `workflow-${workflowType}`);
+    // Not `handle`: that is a type name.
+    WorkflowHandle|error started = startWorkflowByTypeNative(workflowType, input, workflowId, timeoutSeconds,
+            startedBy);
+    if started is WorkflowHandle {
+        span.addInstanceId(started.workflowId);
+        span.close();
+    } else {
+        span.close(started);
+    }
+    return started;
+}
+
+isolated function startWorkflowByTypeNative(string workflowType, json? input, string? workflowId,
+        int? timeoutSeconds, string? startedBy) returns WorkflowHandle|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative",
+    name: "startWorkflowByType"
 } external;
 
 # Lists workflow instances with optional filtering and pagination.

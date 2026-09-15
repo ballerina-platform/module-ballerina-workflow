@@ -38,6 +38,11 @@ record TaskMemo(String taskName, String parentWorkflowId, String rootWorkflowId,
     // A refusal that still knows which run owns the task, so its span and audit entry can name that run.
     // The parent rides the error's detail; without it the decision would stand outside the run's trace.
     BError refusal(String message) {
+        return refusal(parentWorkflowId, rootWorkflowId, message);
+    }
+
+    // The same refusal from the memo alone, for the checks that run before the rest of it is read.
+    static BError refusal(String parentWorkflowId, String rootWorkflowId, String message) {
         if (parentWorkflowId == null) {
             return ErrorCreator.createError(StringUtils.fromString(message));
         }

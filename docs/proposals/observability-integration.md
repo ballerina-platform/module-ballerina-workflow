@@ -91,9 +91,10 @@ already on every span as a tag.
 
 The anchor span is never emitted, so a tracing UI shows the trace's top spans as roots. A
 span whose instance is not known cannot join a trace: only a decision on a task the runtime
-could not find stands in a trace of its own. A refusal that came after the task's memo was read
-(authorization, payload shape, a task already closed) carries `parentWorkflowId` and
-`rootWorkflowId` in its error detail, and the decision span reads them from there.
+could not find stands in a trace of its own. Every other refusal carries `parentWorkflowId` and
+`rootWorkflowId` in its error detail, and the decision span reads them from there — the task's
+memo arrives with the description the validation already makes, so it is read before the checks
+rather than after them.
 
 **A client span links back to its caller.** The call still happened inside some request, and
 that request's own span is recorded as an OpenTelemetry link on the client span, so a tracing

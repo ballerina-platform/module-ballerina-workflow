@@ -1097,6 +1097,11 @@ public final class WorkflowNative {
                     GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS).describeWorkflowExecution(req);
 
             WorkflowExecutionInfo execInfo = resp.getWorkflowExecutionInfo();
+            Map<String, io.temporal.api.common.v1.Payload> memoFields = execInfo.getMemo().getFieldsMap();
+            io.temporal.common.converter.DataConverter dc = client.getOptions().getDataConverter();
+            // Read before the checks below, so a refused decision still joins the owning run's trace.
+            String owningRun = decodeMemoText(dc, memoFields, "parentWorkflowId");
+            String owningRoot = decodeMemoText(dc, memoFields, "rootWorkflowId");
 
             // Completions must go to the integration serving the task's queue: the user
             // roles and form schemas are configured there, not here. Reads stay
@@ -1105,26 +1110,23 @@ public final class WorkflowNative {
             String localQueue = io.ballerina.lib.workflow.worker.WorkflowWorkerNative.getTaskQueue();
             if (localQueue == null || localQueue.isBlank()) {
                 // Fail closed: without a configured local queue, ownership cannot be verified.
-                return ErrorCreator.createError(StringUtils.fromString(
+                return TaskMemo.refusal(owningRun, owningRoot,
                         "Unauthorized: the local task queue is not configured; cannot verify that human task '"
-                                + taskWorkflowId + "' belongs to this integration"));
+                                + taskWorkflowId + "' belongs to this integration");
             }
             if (!localQueue.equals(owningQueue)) {
-                return ErrorCreator.createError(StringUtils.fromString(
+                return TaskMemo.refusal(owningRun, owningRoot,
                         "Unauthorized: human task '" + taskWorkflowId + "' belongs to task queue '"
-                                + owningQueue + "', which is served by a different integration"));
+                                + owningQueue + "', which is served by a different integration");
             }
 
             // 0. Status check — reject tasks that are no longer running
             WorkflowExecutionStatus execStatus = execInfo.getStatus();
             if (execStatus != WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Human task '" + taskWorkflowId + "' is not running (status=" + convertStatus(execStatus) +
-                                ")"));
+                return TaskMemo.refusal(owningRun, owningRoot,
+                        "Human task '" + taskWorkflowId + "' is not running (status=" + convertStatus(execStatus)
+                                + ")");
             }
-
-            Map<String, io.temporal.api.common.v1.Payload> memoFields = execInfo.getMemo().getFieldsMap();
-            io.temporal.common.converter.DataConverter dc = client.getOptions().getDataConverter();
 
             // 1. workflowKind check — always enforced
             String workflowKind = null;
@@ -1137,9 +1139,9 @@ public final class WorkflowNative {
                 LOGGER.debug("Could not decode workflowKind from memo for '{}': {}", taskWorkflowId, e.getMessage());
             }
             if (!"HUMAN_TASK".equals(workflowKind)) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Invalid task: '" + taskWorkflowId + "' is not a human task workflow (workflowKind=" +
-                                workflowKind + ")"));
+                return TaskMemo.refusal(owningRun, owningRoot,
+                        "Invalid task: '" + taskWorkflowId + "' is not a human task workflow (workflowKind="
+                                + workflowKind + ")");
             }
 
             // 2. Payload type check — reject completions whose result does not match the task's expected type.
@@ -1171,8 +1173,7 @@ public final class WorkflowNative {
             }
             // The decision's audit entry names the task, its parent, and who was allowed to decide it.
             TaskMemo memo = new TaskMemo(decodeMemoText(dc, memoFields, "taskName"),
-                                         decodeMemoText(dc, memoFields, "parentWorkflowId"),
-                                         decodeMemoText(dc, memoFields, "rootWorkflowId"),
+                                         owningRun, owningRoot,
                                          allowedRoles.stream().sorted().toList(),
                                          decodeMemoValue(dc, memoFields, "taskInput"));
 

@@ -134,9 +134,10 @@ the execution spans (`workflow <type>`, `activity <type>`, `agent.tool_call <too
 reach the request that made the call; search by `user.id` for every decision one person made.
 
 The trace's top spans name a parent that is never recorded — the anchor the instance ID
-derives — so a UI shows them as roots. A refused decision still joins the run's trace when the
-runtime got as far as reading the task (an unauthorized caller, a payload of the wrong shape, a
-task already closed); only a task the runtime could not find stands in a trace of its own.
+derives — so a UI shows them as roots. A refused decision joins the run's trace whenever the
+runtime found the task at all: the refusal names the owning run, whether the caller lacked a
+role, the payload was the wrong shape, the task had already closed, or it belongs to another
+integration. Only a task the runtime could not find stands in a trace of its own.
 
 A span the worker opened is lost if that worker stops before the step ends — a run that
 survives a restart shows a `workflow.closed` marker instead of one long `workflow` span,

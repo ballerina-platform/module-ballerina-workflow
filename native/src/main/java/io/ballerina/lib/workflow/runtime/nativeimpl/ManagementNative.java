@@ -1130,15 +1130,18 @@ public final class ManagementNative {
                                 + owningQueue + "', which is served by a different integration"));
             }
 
-            WorkflowExecutionStatus execStatus = execInfo.getStatus();
-            if (execStatus != WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Retry task '" + taskWorkflowId + "' is not running (status=" + convertStatus(execStatus) +
-                                ")"));
-            }
-
             Map<String, Payload> memoFields = execInfo.getMemo().getFieldsMap();
             DataConverter dc = client.getOptions().getDataConverter();
+            // Read before the status check, so a refused decision still joins the owning run's trace.
+            String owningRun = decodeMemoString(dc, memoFields, "parentWorkflowId", null);
+            String owningRoot = decodeMemoString(dc, memoFields, "rootWorkflowId", null);
+
+            WorkflowExecutionStatus execStatus = execInfo.getStatus();
+            if (execStatus != WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING) {
+                return TaskMemo.refusal(owningRun, owningRoot,
+                        "Retry task '" + taskWorkflowId + "' is not running (status=" + convertStatus(execStatus)
+                                + ")");
+            }
 
             // workflowKind check
             String workflowKind = decodeMemoString(dc, memoFields, "workflowKind", null);
@@ -1172,8 +1175,7 @@ public final class ManagementNative {
                 activityArgs = null; // the audit entry goes without the reviewed arguments
             }
             TaskMemo memo = new TaskMemo(decodeMemoString(dc, memoFields, "taskName", null),
-                                         decodeMemoString(dc, memoFields, "parentWorkflowId", null),
-                                         decodeMemoString(dc, memoFields, "rootWorkflowId", null),
+                                         owningRun, owningRoot,
                                          allowedRoles.stream().sorted().toList(), activityArgs);
 
             if (callerRolesArray == null || allowedRoles.isEmpty()) {

@@ -302,6 +302,9 @@ isolated function exerciseBoundedDataNames(int count) returns string[] = @java:M
 function testInstanceTraceIdIsDerivedFromTheInstanceId() {
     string first = instanceTraceIdOf("wf-derived-1");
     test:assertEquals(first.length(), 32, "a trace id is 32 hex characters");
+    // The derivation itself, so changing the digest or the domain prefix has to be deliberate:
+    // SHA-256("ballerina-workflow/instance-trace:wf-derived-1")[0..16].
+    test:assertEquals(first, "e1328957d92ea1ff1d413897d96c0c4a", "the trace id is derived, not invented");
     test:assertEquals(instanceTraceIdOf("wf-derived-1"), first,
             "calls that never meet agree on the trace, because the instance id is all they share");
     test:assertNotEquals(instanceTraceIdOf("wf-derived-2"), first, "a different run is a different trace");

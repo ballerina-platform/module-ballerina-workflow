@@ -51,6 +51,8 @@ public enum Operation {
     RESUME_INSTANCE = "instances.resume",
     # Wake a sleeping durable agent instance.
     WAKE_INSTANCE = "instances.wake",
+    # Deliver a named data event to a running instance. Framework control signals are not deliverable.
+    SEND_DATA_TO_INSTANCE = "instances.sendData",
     # Terminate an instance.
     TERMINATE_INSTANCE = "instances.terminate",
     # Cancel an instance.
@@ -130,6 +132,8 @@ public type Command record {|
 //   `GET_INSTANCE_HISTORY`, `GET_INSTANCE_ACTIVITY_TREE`, `GET_INSTANCE_EXECUTION_GRAPH` —
 //   `workflowId` (required), `runId`.
 // - `WAKE_INSTANCE` — `workflowId` (required).
+// - `SEND_DATA_TO_INSTANCE` — `workflowId` (required), `dataName` (required), `data`. The event
+//   reaches the instance's running run; `runId` does not apply.
 // - `TERMINATE_INSTANCE` — `workflowId` (required), `runId`, `reason`.
 // - `LIST_HUMAN_TASKS` — `status`, `parentWorkflowId`, `parentWorkflowType`, `taskName`,
 //   `userRole`, `limit`, `pageToken`, the four time bounds, `taskQueue`.
@@ -221,6 +225,18 @@ public isolated function executeCommand(Command command) returns json|Error {
                 return workflowId;
             }
             return opWakeWorkflow(workflowId);
+        }
+        SEND_DATA_TO_INSTANCE => {
+            string|Error workflowId = requiredParam(params, "workflowId");
+            if workflowId is Error {
+                return workflowId;
+            }
+            string|Error dataName = requiredParam(params, "dataName");
+            if dataName is Error {
+                return dataName;
+            }
+            // A nil payload is a legitimate event: `wait` on a bare notification carries nothing.
+            return opSendData(workflowId, dataName, params["data"] ?: ());
         }
         TERMINATE_INSTANCE => {
             string|Error workflowId = requiredParam(params, "workflowId");
@@ -391,6 +407,7 @@ final readonly & map<string> PARAM_TYPES = {
     "closeTimeFrom": "string",
     "eventId": "int",
     "closeTimeTo": "string",
+    "dataName": "string",
     "feedback": "string",
     "kind": "string",
     "kinds": "string",

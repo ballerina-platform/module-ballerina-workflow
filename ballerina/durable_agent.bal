@@ -173,23 +173,9 @@ public type DurableAgentConfig record {|
 # forms, which durably wait and are resumable across crashes.
 public type AgentBusyError distinct error;
 
-# A durable AI agent declared as an object. Must be assigned to a module-level
-# `final` variable (compiler-enforced) — the compiler plugin reads the constructor
-# config to generate the Temporal registration at module init, and the module-level
-# variable name becomes the agent's stable identity.
-#
-# The object itself is a declaration anchor: capability registration is generated
-# at compile time from the constructor config, and the driver methods are lowered
-# by the compiler plugin to the context-appropriate runtime primitive.
-#
-# ```ballerina
-# final workflow:DurableAgent orderAgent = check new ({
-#     systemPrompt: {role: "Order assistant", instructions: "Help the user."},
-#     model: wso2Model,
-#     activities: [checkInventory, reserveStock],
-#     events: {chat: {request: string, response: string, cardinality: workflow:MULTI_EVENT}}
-# });
-# ```
+# A durable AI agent declared as an object. Must be assigned to a module-level `final` variable:
+# its capabilities are registered at compile time from the constructor config, and the variable
+# name becomes the agent's stable identity.
 public isolated class DurableAgent {
 
     private string agentName = "";
@@ -247,13 +233,9 @@ public isolated class DurableAgent {
         }
     }
 
-    # Sends an event to a running instance on a declared channel and returns a
-    # correlation token for reading that turn's response.
-    #
-    # The instance must be one of **this** agent's: the compiler plugin checks the
-    # channel and its payload against this declaration, and the runtime checks them
-    # against the target instance's. The two agree exactly when the instance came
-    # from this agent's `run`.
+    # Sends an event to a running instance on a declared channel and returns a correlation token
+    # for reading that turn's response. The instance must be one this agent's `run` returned: the
+    # channel and payload are checked against this declaration.
     #
     # + instanceId - An instance ID this agent's `run` returned
     # + eventName - A channel declared in the agent's `events`

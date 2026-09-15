@@ -108,22 +108,9 @@ configurable boolean corsAllowCredentials = false;
 # Defaults to ~24 hours (84900 seconds).
 configurable decimal corsMaxAge = 84900;
 
-# Enables HTTP Basic Authentication via Ballerina's built-in file user store.
-# Defaults to `true` so that accidentally enabling the management API without
-# any auth is caught at startup rather than silently exposing an endpoint.
-# Set to `false` for K8s-internal deployments (zero-trust / service mesh).
-#
-# When `true`, user credentials must be configured in Config.toml using the
-# standard Ballerina user store format:
-# ```toml
-# [[ballerina.auth.users]]
-# username = "admin"
-# password = "workflowadmin"
-# scopes   = ["admin"]
-# ```
-# Authentication is delegated to Ballerina HTTP's `fileUserStoreConfig` handler,
-# which implements the standard HTTP Basic scheme including proper challenge
-# headers and error responses.
+# Enables HTTP Basic Authentication via Ballerina's built-in file user store, with credentials
+# from `[[ballerina.auth.users]]` in Config.toml. Defaults to `true` so enabling the management
+# API without auth is caught at startup rather than silently exposing an endpoint.
 configurable boolean enableBasicAuth = true;
 
 # Enables JWT Bearer token authentication (`Authorization: Bearer <token>`).

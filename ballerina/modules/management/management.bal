@@ -38,12 +38,6 @@ isolated function initManagementModule() = @java:Method {
 # Gets current execution info for a workflow without waiting for it to finish.
 # Returns the status, workflow type, and ID.
 #
-# ```ballerina
-# import ballerina/workflow.management;
-#
-# WorkflowExecutionInfo info = check management:getWorkflowInfo(workflowId);
-# ```
-#
 # + workflowId - The workflow ID
 # + return - Execution info, or an error
 public isolated function getWorkflowInfo(string workflowId) returns WorkflowExecutionInfo|error = @java:Method {
@@ -66,12 +60,6 @@ public isolated function getWorkflowInfoForRun(string workflowId, string runId)
 # available while the agent is still running (e.g. suspended waiting for the next
 # chat event) as well as after it completes.
 #
-# ```ballerina
-# import ballerina/workflow.management;
-#
-# string? answer = check management:getAgentResponse(agentId);
-# ```
-#
 # + agentId - The agent's workflow ID (from `workflow:run`)
 # + return - The latest response text, `()` when the agent has not produced one yet,
 #            or an error
@@ -84,10 +72,6 @@ public isolated function getAgentResponse(string agentId) returns string?|error 
 # runtime from the registered workflow function's signature, or `()` when the workflow takes
 # no data input.
 #
-# ```ballerina
-# management:WorkflowDefinition[] defs = check management:listWorkflowDefinitions();
-# ```
-#
 # + return - Array of workflow definitions, or an error
 public isolated function listWorkflowDefinitions() returns WorkflowDefinition[]|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
@@ -97,24 +81,8 @@ public isolated function listWorkflowDefinitions() returns WorkflowDefinition[]|
 // LIFECYCLE CONTROL
 // ================================================================================
 
-# Requests a running workflow to suspend (pause) execution.
-# Sends a `__wf_suspend` signal; the workflow stops making progress at its next durable
-# operation (activity call, timer, human task, retry task, or child workflow) and
-# holds there until `resumeWorkflow` is called. While suspended, the workflow's reported
-# status is `SUSPENDED`. An operation already in flight when the signal arrives finishes
-# first — suspension takes effect at the next operation boundary.
-#
-# ```ballerina
-# check management:suspendWorkflow(workflowId);
-# ```
-#
-# Wakes a durable agent instance out of its built-in `sleep` tool by sending the
-# `__agent_wake` signal. Harmless when the instance is not sleeping: the request
-# is consumed by the next sleep.
-#
-# ```ballerina
-# check management:wakeAgent(instanceId);
-# ```
+# Wakes a durable agent instance out of its built-in `sleep` tool. Harmless when the instance is
+# not sleeping: the request is consumed by the next sleep.
 #
 # + workflowId - The agent instance ID to wake
 # + return - An error if the signal cannot be delivered
@@ -122,6 +90,9 @@ public isolated function wakeAgent(string workflowId) returns error? = @java:Met
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 
+# Requests a running workflow to pause. It stops at its next durable operation and holds there
+# until `resumeWorkflow`; while paused its status reads `SUSPENDED`.
+#
 # + workflowId - The workflow ID to suspend
 # + return - An error if the signal cannot be delivered
 public isolated function suspendWorkflow(string workflowId) returns error? = @java:Method {
@@ -139,10 +110,6 @@ public isolated function suspendWorkflowRun(string workflowId, string runId) ret
 } external;
 
 # Resumes a previously suspended workflow by sending a `__wf_resume` signal.
-#
-# ```ballerina
-# check management:resumeWorkflow(workflowId);
-# ```
 #
 # + workflowId - The workflow ID to resume
 # + return - An error if the signal cannot be delivered
@@ -170,16 +137,6 @@ public isolated function resumeWorkflowRun(string workflowId, string runId) retu
 # `humantask-` prefix (the ID itself is a bare UUID; what a task is travels in its
 # type and memo).
 #
-# ```ballerina
-# management:HumanTaskGroup[] groups = check management:listPendingHumanTasks(parentWorkflowId);
-# // groups are sorted alphabetically by taskName
-# foreach management:HumanTaskGroup group in groups {
-#     foreach string taskId in group.taskIds {
-#         check workflow:completeHumanTask(taskId, decision);
-#     }
-# }
-# ```
-#
 # + parentWorkflowId - The Temporal workflow ID of the parent workflow
 # + return - Array of task groups sorted by task name, or an error
 public isolated function listPendingHumanTasks(string parentWorkflowId) returns HumanTaskGroup[]|error = @java:Method {
@@ -190,14 +147,6 @@ public isolated function listPendingHumanTasks(string parentWorkflowId) returns 
 # Queries Temporal's visibility API for executions whose workflow TYPE starts with
 # `humantask-`. The `taskName` and `parentWorkflowId` fields are extracted from the task's
 # Temporal memo (set when the task was created by `awaitHumanTask`).
-#
-# ```ballerina
-# management:HumanTaskSummary[] pending =
-#     check management:listAllHumanTasks(status = "PENDING");
-#
-# management:HumanTaskSummary[] recent =
-#     check management:listAllHumanTasks(startTimeFrom = "2026-06-01T00:00:00Z");
-# ```
 #
 # + status - Optional status filter: `PENDING` | `COMPLETED` | `FAILED` | `CANCELED` | `TERMINATED`
 # + startTimeFrom - Optional ISO-8601 lower bound on task start time (inclusive)
@@ -217,10 +166,6 @@ public isolated function listAllHumanTasks(string? status = (),
 # Returns detailed info for a single human task, including memo fields.
 # Calls Temporal DescribeWorkflowExecution to read the memo set at task creation.
 #
-# ```ballerina
-# management:HumanTaskInfo info = check management:getHumanTaskInfo(taskId);
-# ```
-#
 # + taskId - The child workflow ID of the human task (a bare UUID; the kind travels in its memo)
 # + return - Full task info including title, userRoles, taskInput, and formSchema, or an error
 public isolated function getHumanTaskInfo(string taskId) returns HumanTaskInfo|error = @java:Method {
@@ -229,10 +174,6 @@ public isolated function getHumanTaskInfo(string taskId) returns HumanTaskInfo|e
 
 # Completes a pending human task by sending the result back to the waiting workflow.
 # This is the preferred API location; `workflow:completeHumanTask` delegates here.
-#
-# ```ballerina
-# check management:completeHumanTask(taskWorkflowId, {approved: true, comment: "LGTM"});
-# ```
 #
 # + taskWorkflowId - Temporal workflow ID of the human task child workflow
 # + result - The value to return to the workflow
@@ -271,12 +212,6 @@ isolated function completeHumanTaskNative(string taskWorkflowId, anydata result,
 # Fails (rejects) a pending human task with a reason and optional structured details.
 # Internally sends a rejection payload to the waiting workflow so it can handle the
 # rejection case. The caller's roles are validated against the task's `userRoles`.
-#
-# ```ballerina
-# check management:failHumanTask(taskId, "Missing required documents",
-#         details = {"missingDocs": ["invoice", "receipt"]},
-#         callerRoles = ["finance_approver"]);
-# ```
 #
 # + taskWorkflowId - Temporal workflow ID of the human task child workflow
 # + reason - Human-readable reason for the rejection
@@ -330,17 +265,6 @@ isolated function failHumanTaskNative(string taskWorkflowId, string reason, map<
 # waiting workflow. The `taskWorkflowId` is the child workflow ID of the review
 # activity, available via `listPendingReviewActivities` or `listAllReviewActivities`.
 #
-# ```ballerina
-# // Proceed with the original arguments (run the gated call / rerun the failed one)
-# check management:completeReviewActivity(taskId, {action: "proceed"});
-#
-# // Proceed with edited arguments
-# check management:completeReviewActivity(taskId, {action: "proceed-with-input", input: {"orderId": "NEW-123"}});
-#
-# // Reject: skip the call / fail the activity, with feedback for the agent
-# check management:completeReviewActivity(taskId, {action: "reject", feedback: "Amount too high"});
-# ```
-#
 # + taskWorkflowId - Temporal workflow ID of the review activity child workflow (a bare UUID;
 #                    its `reviewactivity-`-prefixed kind travels in the workflow type and memo)
 # + decision - The review decision: proceed, proceed with new input, or reject
@@ -378,13 +302,6 @@ isolated function completeReviewActivityNative(string taskWorkflowId, ReviewDeci
 # child workflow start events whose workflow TYPE has the `reviewactivity-` prefix (the
 # ID itself is a bare UUID).
 #
-# ```ballerina
-# management:ReviewActivitySummary[] tasks = check management:listPendingReviewActivities(parentWorkflowId);
-# foreach management:ReviewActivitySummary task in tasks {
-#     check management:completeReviewActivity(task.taskId, {action: "proceed"});
-# }
-# ```
-#
 # + parentWorkflowId - The Temporal workflow ID of the parent workflow
 # + return - Array of pending review activity summaries, or an error
 public isolated function listPendingReviewActivities(string parentWorkflowId)
@@ -396,13 +313,6 @@ public isolated function listPendingReviewActivities(string parentWorkflowId)
 # Lists all review activity instances across all parent workflows, with optional filters.
 # Queries Temporal's visibility API for executions whose workflow TYPE starts with
 # `reviewactivity-`.
-#
-# ```ballerina
-# management:ReviewActivitySummary[] pending = check management:listAllReviewActivities(status = "PENDING");
-#
-# management:ReviewActivitySummary[] recent =
-#     check management:listAllReviewActivities(startTimeFrom = "2026-06-01T00:00:00Z");
-# ```
 #
 # + status - Optional status filter: `PENDING` | `COMPLETED` | `FAILED` | `CANCELED` | `TERMINATED`
 # + startTimeFrom - Optional ISO-8601 lower bound on task start time (inclusive)
@@ -433,10 +343,6 @@ isolated function getReviewActivityState(string taskId) returns ReviewActivitySt
 # Returns detailed info for a single review activity, including the failure context,
 # the activity arguments that triggered the task, and the JSON Schema of the input
 # accepted by the `proceed-with-input` decision (`formSchema`).
-#
-# ```ballerina
-# management:ReviewActivityInfo info = check management:getReviewActivityInfo(taskId);
-# ```
 #
 # + taskId - The child workflow ID of the review activity (a bare UUID; the kind travels in its memo)
 # + return - Full review activity info including errorMessage, activityArgs, formSchema, and userRoles,
@@ -492,8 +398,7 @@ public isolated function startWorkflowByType(string workflowType, json? input,
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 
-# Lists workflow instances with optional filtering and pagination.
-# Excludes humantask- and reviewactivity- child workflows automatically.
+# Lists workflow instances, excluding human task and review activity children.
 #
 # + status - Optional status filter: `RUNNING` | `SUSPENDED` | `COMPLETED` | `FAILED` | `CANCELED` | `TERMINATED`.
 #            `RUNNING` excludes suspended workflows; `SUSPENDED` returns only workflows
@@ -588,13 +493,9 @@ public isolated function listResetPoints(string workflowId, string runId)
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 
-# Resets a run to a workflow-task event: history up to that point is preserved and
-# everything after it re-executes as a **new run of the same workflow ID**.
-#
-# Everything downstream of the point runs again, including the error handling and
-# compensation the workflow already performed on its first pass, and replay happens
-# against the worker's current code — a workflow function that changed since the run
-# started can fail to replay.
+# Resets a run to a workflow-task event: history up to that point is preserved and everything
+# after it re-executes as a new run of the same workflow ID — including compensation the run
+# already performed, and against the worker's current code.
 #
 # + workflowId - The workflow instance ID
 # + runId - The specific run ID (pass empty string for the latest run)

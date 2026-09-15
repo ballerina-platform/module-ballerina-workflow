@@ -15,20 +15,8 @@
 // under the License.
 
 # Marks a function as a workflow.
-#
-# ```ballerina
-# @workflow:Workflow
-# function orderProcess(Order input) returns OrderResult|error {
-# }
-# ```
 public annotation Workflow on function;
 
 # Marks a function as a workflow activity.
-#
-# ```ballerina
-# @workflow:Activity
-# function sendEmail(EmailRequest req) returns EmailResponse|error {
-# }
-# ```
 public annotation Activity on function;
 

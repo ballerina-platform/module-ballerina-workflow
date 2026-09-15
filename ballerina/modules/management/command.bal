@@ -117,60 +117,49 @@ public type Command record {|
     Identity identity = {};
 |};
 
-# Executes a management operation.
+// Parameters per operation, all optional unless stated:
+// - `LIST_DEFINITIONS` — none.
+// - `GET_RUNTIME_INFO` — none.
+// - `LIST_INSTANCES` — `status`, `workflowType`, `workflowId`, `startedBy`, `limit`,
+//   `pageToken`, `startTimeFrom`, `startTimeTo`, `closeTimeFrom`, `closeTimeTo`, `taskQueue`,
+//   `kind` (`WORKFLOW`, `HUMAN_TASK`, `REVIEW_ACTIVITY`, `CHILD_WORKFLOW`, `AGENT`). Without a
+//   `kind` the listing excludes task and review children, as it did before kinds existed; each
+//   row reports its own `kind`, so an unfiltered listing is still self-describing.
+// - `START_INSTANCE` — `workflowType` (required), `input`, `workflowId`, `timeoutSeconds`.
+// - `GET_INSTANCE`, `SUSPEND_INSTANCE`, `RESUME_INSTANCE`, `CANCEL_INSTANCE`,
+//   `GET_INSTANCE_HISTORY`, `GET_INSTANCE_ACTIVITY_TREE`, `GET_INSTANCE_EXECUTION_GRAPH` —
+//   `workflowId` (required), `runId`.
+// - `WAKE_INSTANCE` — `workflowId` (required).
+// - `TERMINATE_INSTANCE` — `workflowId` (required), `runId`, `reason`.
+// - `LIST_HUMAN_TASKS` — `status`, `parentWorkflowId`, `parentWorkflowType`, `taskName`,
+//   `userRole`, `limit`, `pageToken`, the four time bounds, `taskQueue`.
+// - `LIST_WORK_ITEMS` — `kinds` (comma list of `HUMAN_TASK`/`REVIEW_ACTIVITY`; both when absent),
+//   `status`, `parentWorkflowId`, `parentWorkflowType`, `limit`, `pageToken`, the four time
+//   bounds, `taskQueue`.
+// - `COUNT_PENDING_HUMAN_TASKS` — `taskQueue`.
+// - `GET_HUMAN_TASK` — `taskId` (required).
+// - `COMPLETE_HUMAN_TASK` — `taskId` (required), `result`.
+// - `FAIL_HUMAN_TASK` — `taskId` and `reason` (required), `details`.
+// - `LIST_REVIEW_ACTIVITIES` — `status`, `parentWorkflowId`, `taskName`, `limit`,
+//   `pageToken`, the four time bounds, `taskQueue`.
+// - `GET_REVIEW_ACTIVITY` — `taskId` (required).
+// - `DECIDE_REVIEW_ACTIVITY` — `taskId` and `action` (required), `input`, `feedback`.
+// - `BULK_RETRY_REVIEW_ACTIVITIES` — `action` (required, `"retry"` or `"fail"`), and
+//   exactly one of `taskIds` (an array of review activity IDs) or `parentWorkflowId`;
+//   `activityName` narrows a `parentWorkflowId` selection, `feedback` accompanies
+//   `"fail"`. There is no parameter for replacement arguments: a bulk decision cannot
+//   change the payload an activity is retried with.
+// - `LIST_RESET_POINTS` — `workflowId` (required), `runId`.
+// - `RESET_INSTANCE` — `workflowId` and `resetType` (required), `runId`, `eventId`
+//   (required when `resetType` is `"workflow-task-id"`), `reason`, and `reapply`
+//   (`{"type": …, "exclude": [...]}`).
+//
+
+# Executes a management operation. Parameters per operation are listed in the comment above.
 #
-# Parameters per operation, all optional unless stated:
-# - `LIST_DEFINITIONS` — none.
-# - `GET_RUNTIME_INFO` — none.
-# - `LIST_INSTANCES` — `status`, `workflowType`, `workflowId`, `startedBy`, `limit`,
-#   `pageToken`, `startTimeFrom`, `startTimeTo`, `closeTimeFrom`, `closeTimeTo`, `taskQueue`,
-#   `kind` (`WORKFLOW`, `HUMAN_TASK`, `REVIEW_ACTIVITY`, `CHILD_WORKFLOW`, `AGENT`). Without a
-#   `kind` the listing excludes task and review children, as it did before kinds existed; each
-#   row reports its own `kind`, so an unfiltered listing is still self-describing.
-# - `START_INSTANCE` — `workflowType` (required), `input`, `workflowId`, `timeoutSeconds`.
-# - `GET_INSTANCE`, `SUSPEND_INSTANCE`, `RESUME_INSTANCE`, `CANCEL_INSTANCE`,
-#   `GET_INSTANCE_HISTORY`, `GET_INSTANCE_ACTIVITY_TREE`, `GET_INSTANCE_EXECUTION_GRAPH` —
-#   `workflowId` (required), `runId`.
-# - `WAKE_INSTANCE` — `workflowId` (required).
-# - `TERMINATE_INSTANCE` — `workflowId` (required), `runId`, `reason`.
-# - `LIST_HUMAN_TASKS` — `status`, `parentWorkflowId`, `parentWorkflowType`, `taskName`,
-#   `userRole`, `limit`, `pageToken`, the four time bounds, `taskQueue`.
-# - `LIST_WORK_ITEMS` — `kinds` (comma list of `HUMAN_TASK`/`REVIEW_ACTIVITY`; both when absent),
-#   `status`, `parentWorkflowId`, `parentWorkflowType`, `limit`, `pageToken`, the four time
-#   bounds, `taskQueue`.
-# - `COUNT_PENDING_HUMAN_TASKS` — `taskQueue`.
-# - `GET_HUMAN_TASK` — `taskId` (required).
-# - `COMPLETE_HUMAN_TASK` — `taskId` (required), `result`.
-# - `FAIL_HUMAN_TASK` — `taskId` and `reason` (required), `details`.
-# - `LIST_REVIEW_ACTIVITIES` — `status`, `parentWorkflowId`, `taskName`, `limit`,
-#   `pageToken`, the four time bounds, `taskQueue`.
-# - `GET_REVIEW_ACTIVITY` — `taskId` (required).
-# - `DECIDE_REVIEW_ACTIVITY` — `taskId` and `action` (required), `input`, `feedback`.
-# - `BULK_RETRY_REVIEW_ACTIVITIES` — `action` (required, `"retry"` or `"fail"`), and
-#   exactly one of `taskIds` (an array of review activity IDs) or `parentWorkflowId`;
-#   `activityName` narrows a `parentWorkflowId` selection, `feedback` accompanies
-#   `"fail"`. There is no parameter for replacement arguments: a bulk decision cannot
-#   change the payload an activity is retried with.
-# - `LIST_RESET_POINTS` — `workflowId` (required), `runId`.
-# - `RESET_INSTANCE` — `workflowId` and `resetType` (required), `runId`, `eventId`
-#   (required when `resetType` is `"workflow-task-id"`), `reason`, and `reapply`
-#   (`{"type": …, "exclude": [...]}`).
-#
-# ```ballerina
-# json|management:Error result = management:executeCommand({
-#     operation: management:COMPLETE_HUMAN_TASK,
-#     params: {taskId: "humantask-...", result: {approved: true}},
-#     identity: {userId: "alice", roles: ["approver"]}
-# });
-# ```
-#
-# This function authenticates nothing. It trusts `command.identity` as given and
-# applies only the role checks the operations themselves perform — the same checks
-# the HTTP API relies on once it has resolved a caller. A consumer that accepts
-# commands from a remote channel is responsible for authenticating that channel and
-# for populating `identity` from a verified credential; scope policies configured
-# for the HTTP API (`enforceScopes` and friends) belong to that module and have no
-# effect here.
+# This function authenticates nothing: `command.identity` is trusted as given, and only the role
+# checks the operations themselves perform apply. A caller accepting commands from a remote
+# channel must authenticate that channel and populate `identity` from a verified credential.
 #
 # + command - The command to execute
 # + return - The operation's payload, or the error explaining why it could not run

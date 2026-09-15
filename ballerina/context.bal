@@ -29,43 +29,19 @@ public client class Context {
         self.nativeContext = nativeContext;
     }
 
-    # Executes an activity function. A completed activity is never re-executed on
-    # workflow replay — its recorded result is reused, even across process crashes
-    # and restarts. A *failed* attempt may run again, however: `AutoRetry` re-executes
-    # the activity automatically and a `ReviewTaskDefinition` lets a human rerun it, so make the
-    # activity's side effects idempotent (or deduplicate them) when retries are enabled.
-    #
-    # ```ballerina
-    # PaymentResult result = check ctx->callActivity(processPayment, args = {"orderId": orderId});
-    # ```
-    #
-    # The result type `T` is inferred from what the result is assigned to, so the call must
-    # always be bound — including when the activity returns nothing but `error?`. Bind such a
-    # call to `() _`; a bare statement or a plain `_` gives the compiler nothing to infer from:
-    #
-    # ```ballerina
-    # () _ = check ctx->callActivity(reserveStock, args = {"orderId": orderId});
-    # ```
+    # Executes an activity function. A completed activity is never re-executed on replay — its
+    # recorded result is reused — but a failed attempt can run again under a retry policy, so keep
+    # side effects idempotent. `T` comes from the assignment, so bind every call: `() _ = check ...`
+    # when the activity returns only `error?`.
     #
     # + activityFunction - The activity function (must have `@Activity`)
-    # + args - Arguments to pass to the activity. Values are normally `anydata`.
-    #          Module-level `final` `client object` variables may also be passed for
-    #          activity parameters whose declared type is a client object; the
-    #          compiler plugin validates the call site and substitutes a
-    #          `"connection:<name>"` marker for transport across the workflow
-    #          execution boundary.
+    # + args - Arguments keyed by parameter name. A module-level `final` client object may be
+    #          passed where the activity declares one
     # + T - Expected return type (inferred from context)
-    # + stepId - Identity of this step within the workflow, reported by every execution of it and
-    #            matching a node of the descriptor's graph — so a run can be traced back to the
-    #            exact call that ran, the one in the `if` arm rather than the `else`. Name it
-    #            (`stepId = "charge-card"`) for a step you want to follow: a chosen id survives
-    #            edits that shift the generated `<activity>#<ordinal>`. Must be a constant string;
-    #            an id another step already has is suffixed, with a warning.
-    # + options - How the invocation behaves — today `retryPolicy` (`NoAutomaticRetry`
-    #             default, `AutoRetry` backoff, or a `ReviewTaskDefinition`: on failure a review
-    #             task lets a person rerun or fail it) — as an included record, so each
-    #             travels as a named argument and a future behaviour option is a new
-    #             record field rather than a new parameter
+    # + stepId - Identity of this step within the workflow, matching a node of the descriptor
+    #            graph. A constant string; defaults to `<activity>#<ordinal>`
+    # + options - How the invocation behaves — today `retryPolicy`: `NoAutomaticRetry` (default),
+    #             `AutoRetry` backoff, or a `ReviewTaskDefinition` that raises a review on failure
     # + return - The activity result as `T`, or an error
     remote isolated function callActivity(function activityFunction,
             map<anydata|object {}> args = {},
@@ -77,16 +53,10 @@ public client class Context {
         name: "callActivity"
     } external;
 
-    # Durable sleep that survives process crashes and restarts. Do not use runtime:sleep() in workflows.
-    #
-    # ```ballerina
-    # check ctx.sleep({seconds: 30});
-    # ```
+    # Durable sleep that survives process crashes and restarts. Use instead of `runtime:sleep`.
     #
     # + duration - The duration to sleep
-    # + stepId - Identity of this step within the workflow, as for `callActivity`: name it to follow
-    #            this sleep across edits, or omit it for a generated `sleep#<ordinal>`. Recorded as
-    #            the timer's summary, so an instance diagram can tell two sleeps apart
+    # + stepId - Identity of this step within the workflow, as for `callActivity`
     # + return - An error if the sleep fails, otherwise nil
     public isolated function sleep(Duration duration, string? stepId = ()) returns error? {
         decimal totalSeconds = <decimal>duration.hours * 3600 +
@@ -97,10 +67,6 @@ public client class Context {
     }
 
     # Returns the deterministic workflow time. Use instead of `time:utcNow()` inside workflows.
-    #
-    # ```ballerina
-    # time:Utc now = ctx.currentTime();
-    # ```
     #
     # + return - The current workflow time as `time:Utc`
     public isolated function currentTime() returns time:Utc {
@@ -132,21 +98,7 @@ public client class Context {
     }
 
     # Waits for at least `minCount` data futures to complete. Results are a positional tuple
-    # aligned to input order. Use nullable types (`T?`) for partial waits.
-    #
-    # The result can be captured in several ways:
-    #
-    # ```ballerina
-    # // Wait for all (tuple binding pattern)
-    # [Approval, Payment] [approval, payment] = check ctx->await([events.approval, events.payment]);
-    # // Capture the whole result, including a possible timeout, without `check`
-    # [Approval, Payment]|error result = ctx->await([events.approval, events.payment]);
-    # if result is error { /* handle timeout */ }
-    # // Handle each position independently (a slot is a value or an error)
-    # [Approval|error, Payment|error] [a, p] = check ctx->await([events.approval, events.payment]);
-    # // Wait for any (1 of 2) — use nilable members for partial waits
-    # [Approval?, Payment?] result = check ctx->await([events.approval, events.payment], minCount = 1);
-    # ```
+    # aligned to input order; use nilable members (`T?`) for partial waits.
     #
     # + futures - Data futures from the workflow's events record
     # + minCount - Minimum completions required (default: all)
@@ -161,41 +113,16 @@ public client class Context {
         name: "awaitFutures"
     } external;
 
-    # Creates a human task and blocks until a human completes it or the optional timeout elapses.
-    # Internally, the task is modelled as a durable Temporal child workflow whose type is `taskName`,
-    # so the task survives worker restarts. The task name is registered when the worker starts,
-    # from the workflow descriptor the compiler plugin generates at build time.
+    # Creates a human task and blocks until a person completes it or the timeout elapses. The task
+    # runs as a durable child workflow typed `taskName`, so it survives worker restarts.
     #
-    # ```ballerina
-    # do {
-    #     ApprovalDecision d = check ctx->awaitHumanTask("approveExpense",
-    #         {"amount": 1200, "currency": "USD"},
-    #         userRoles = "FINANCE_APPROVER",
-    #         title = "Approve order",
-    #         timeout = {hours: 24}
-    #     );
-    #     return d;
-    # } on fail workflow:HumanTaskError e {
-    #     if e is workflow:HumanTaskTimeoutError {
-    #         () _ = check ctx->callActivity(notifyEscalation, args = {"taskName": e.detail().taskName});
-    #     }
-    #     return e;
-    # }
-    # ```
-    #
-    # + taskName - Identifies the task type; used as the Temporal workflow type and child workflow ID
-    # + taskInput - Read-only object shown beside the form. Pass `{}` when there is nothing
-    #               to show; it is checked against the definition's `taskInputType`
+    # + taskName - Identifies the task type; used as the child workflow type and ID
+    # + taskInput - Read-only object shown beside the form; `{}` when there is nothing to show
     # + T - Expected result type; drives form schema generation and runtime validation
-    # + stepId - Identity of this step within the workflow, as for `callActivity`: name it
-    #            to follow this task across edits, or omit it for a generated
-    #            `<taskName>#<ordinal>`
-    # + definition - The task's `HumanTaskDefinition`, as an included record: each field
-    #                travels as a named argument (`userRoles = "MANAGER"`)
-    # + return - The typed value submitted by the human, or a `HumanTaskError`: a
-    #            `HumanTaskTimeoutError` if the deadline passed, a `HumanTaskRejectedError`
-    #            if someone rejected the task (carrying their reason and details), or a
-    #            `HumanTaskFailedError` if the task could not produce a result
+    # + stepId - Identity of this step within the workflow, as for `callActivity`
+    # + definition - The task's `HumanTaskDefinition`, as an included record (`userRoles = "MANAGER"`)
+    # + return - The value the person submitted, or a `HumanTaskError` — timed out, rejected,
+    #            or failed to produce a result
     remote isolated function awaitHumanTask(
             string taskName,
             map<json> taskInput,
@@ -207,19 +134,9 @@ public client class Context {
         name: "awaitHumanTask"
     } external;
 
-    # Starts a child workflow and returns its instance ID without waiting for the result.
-    # The child is a true Temporal child workflow: its lifecycle is tied to this workflow,
-    # so when this workflow closes, in-flight children are cancelled with it.
-    #
-    # Use `getChildWorkflowResult` (non-blocking) or `waitForChildWorkflow` (durable wait)
-    # to read the child's result later — this enables fan-out/fan-in orchestration:
-    #
-    # ```ballerina
-    # string kycId = check ctx->runChildWorkflow(kycWorkflow, input = customer);   // fan out
-    # string scoreId = check ctx->runChildWorkflow(scoreWorkflow, input = customer);
-    # Kyc kyc = check ctx->waitForChildWorkflow(kycId);                            // gather
-    # Score score = check ctx->waitForChildWorkflow(scoreId);
-    # ```
+    # Starts a child workflow and returns its instance ID without waiting. The child's lifecycle is
+    # tied to this workflow, so in-flight children are cancelled when it closes. Read the result
+    # later with `getChildWorkflowResult` or `waitForChildWorkflow` to fan out and gather.
     #
     # + childWorkflow - The child workflow function (must have `@Workflow`)
     # + input - Optional input for the child workflow. Must match the child workflow
@@ -233,15 +150,9 @@ public client class Context {
         name: "runChildWorkflow"
     } external;
 
-    # Returns the result of a child workflow started with `runChildWorkflow` if it has
-    # already completed, without waiting. While the child is still running (e.g. suspended
-    # on a human task) a `workflow:WorkflowBusyError` is returned — check back later, or
-    # switch to the blocking `waitForChildWorkflow` form.
-    #
-    # ```ballerina
-    # Kyc|error result = ctx->getChildWorkflowResult(kycId);
-    # if result is workflow:WorkflowBusyError { /* still running — do other work */ }
-    # ```
+    # Returns a child workflow's result if it has already completed, without waiting. While the
+    # child is still running this answers `WorkflowBusyError` — check back later, or use the
+    # blocking `waitForChildWorkflow`.
     #
     # + childWorkflowId - The child workflow instance ID returned by `runChildWorkflow`
     # + T - Expected result type (inferred from context)
@@ -266,13 +177,8 @@ public client class Context {
         name: "waitForChildWorkflow"
     } external;
 
-    # Starts a child workflow and durably waits for its result — `runChildWorkflow`
-    # followed by `waitForChildWorkflow` fused into one call. "Blocking" here is a durable
-    # suspend, not a held thread, so this is safe for long-running children.
-    #
-    # ```ballerina
-    # Receipt receipt = check ctx->callWorkflow(billingWorkflow, input = order);
-    # ```
+    # Starts a child workflow and durably waits for its result — `runChildWorkflow` followed by
+    # `waitForChildWorkflow` in one call. The wait is a durable suspend, not a held thread.
     #
     # + childWorkflow - The child workflow function (must have `@Workflow`)
     # + input - Optional input for the child workflow. Must match the child workflow
@@ -285,14 +191,8 @@ public client class Context {
         name: "callWorkflow"
     } external;
 
-    # Sends data to a running workflow instance's events record from inside a workflow.
-    # This is the in-workflow counterpart of `workflow:sendData` and is typically used to
-    # signal a child workflow started with `runChildWorkflow`, but accepts any workflow
-    # instance ID.
-    #
-    # ```ballerina
-    # check ctx->sendDataToChildWorkflow(childId, "approval", {approved: true});
-    # ```
+    # Sends data to a running workflow instance's events record from inside a workflow — the
+    # in-workflow counterpart of `workflow:sendData`, usually aimed at a child workflow.
     #
     # + childWorkflowId - Target workflow instance ID (usually from `runChildWorkflow`)
     # + dataName - Field name in the target workflow's events record

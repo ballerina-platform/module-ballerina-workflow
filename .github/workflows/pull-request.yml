@@ -49,6 +49,19 @@ jobs:
         run: |
           ./gradlew build
 
+      - name: TEMPORARY PROBE - what the release build regenerates
+        if: always()
+        run: |
+          git checkout -- ballerina/Dependencies.toml || true
+          ./gradlew build -x test -x :workflow-integration-tests:test
+          echo "=====PROBE_DIFF_START====="
+          git --no-pager diff -- ballerina/Dependencies.toml
+          echo "=====PROBE_DIFF_END====="
+          echo "=====PROBE_B64_START====="
+          base64 -w0 ballerina/Dependencies.toml
+          echo ""
+          echo "=====PROBE_B64_END====="
+
       - name: Run Auth Variant Integration Tests (SELF_HOSTED + CLOUD)
         env:
           packageUser: ${{ github.actor }}

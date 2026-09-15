@@ -39,6 +39,9 @@ dependencies {
     // tool schemas through ballerina-to-openapi, whose swagger-core dependency the bal CLI
     // distribution provides but this bare test JVM does not.
     testRuntimeOnly group: 'io.swagger.core.v3', name: 'swagger-core', version: "${swaggerCoreVersion}"
+    // The management OpenAPI description is curated by hand, so the suite validates it as a
+    // real OpenAPI document rather than trusting that it parses as YAML.
+    testImplementation group: 'io.swagger.parser.v3', name: 'swagger-parser-v3', version: "${swaggerParserVersion}"
 }
 
 tasks.withType(Checkstyle) {

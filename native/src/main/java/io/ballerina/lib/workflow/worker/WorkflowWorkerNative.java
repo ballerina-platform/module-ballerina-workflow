@@ -523,6 +523,10 @@ public final class WorkflowWorkerNative {
         captureRuntime(env);
         suppressTemporalLogs();
 
+        // What the previous connection could serve says nothing about this one: one JVM can hold an
+        // in-memory runtime and later a real server.
+        io.ballerina.lib.workflow.runtime.nativeimpl.VisibilityCompat.reset();
+
         if (!initialized.compareAndSet(false, true)) {
             LOGGER.debug("Singleton worker already initialized");
             return null;
@@ -658,6 +662,10 @@ public final class WorkflowWorkerNative {
         captureRuntime(env);
         suppressTemporalLogs();
 
+        // What the previous connection could serve says nothing about this one: one JVM can hold an
+        // in-memory runtime and later a real server.
+        io.ballerina.lib.workflow.runtime.nativeimpl.VisibilityCompat.reset();
+
         if (!initialized.compareAndSet(false, true)) {
             LOGGER.debug("Singleton worker already initialized");
             return null;
@@ -678,6 +686,10 @@ public final class WorkflowWorkerNative {
                             .withFailureConverter(new BallerinaFailureConverter());
 
             // Create the in-memory test environment with custom data converter
+            // Time skipping off: the embedded engine differs from a real server in where the state
+            // lives, not in how time passes. Left on (the SDK default) it jumps its clock to the
+            // next timer deadline whenever every workflow is waiting, so `Context.currentTime`
+            // reads into the future and a sleep finishes before anyone can see it happen.
             io.temporal.testing.TestEnvironmentOptions testOptions =
                     io.temporal.testing.TestEnvironmentOptions.newBuilder()
                                                               .setWorkflowClientOptions(
@@ -685,6 +697,7 @@ public final class WorkflowWorkerNative {
                                                                               .newBuilder()
                                                                               .setDataConverter(dataConverter)
                                                                               .build())
+                                                              .setUseTimeskipping(false)
                                                               .build();
             testEnvironment = TestWorkflowEnvironment.newInstance(testOptions);
 

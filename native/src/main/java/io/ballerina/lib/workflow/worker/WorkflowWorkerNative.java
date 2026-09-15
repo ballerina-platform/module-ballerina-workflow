@@ -2383,7 +2383,7 @@ public final class WorkflowWorkerNative {
                 runSpan = WorkerSpans.begin("workflow " + executingType, WorkerSpans.runTags(workflowInfo));
                 // What the run does from here — activities, agent steps, child tasks, data events — nests
                 // under the run span, and the engine carries that context to them.
-                Map<String, String> runContext = WorkerSpans.contextOf(runSpan);
+                Map<String, String> runContext = WorkerSpans.runContext(runSpan, workflowInfo);
                 if (runContext != null) {
                     runTraceContext = runContext;
                     TraceContextPropagator.setCurrent(runContext);
@@ -3001,6 +3001,12 @@ public final class WorkflowWorkerNative {
         private static Map<String, String> activityTags(io.temporal.activity.ActivityInfo info) {
             Map<String, String> tags = new java.util.LinkedHashMap<>();
             tags.put("workflow.instance.id", info.getWorkflowId());
+            // An activity is told which workflow scheduled it — the child's id under a task or child
+            // workflow — so the tree's root comes from the run's context, which travels with the task.
+            String root = WorkerSpans.rootOf(TraceContextPropagator.current());
+            if (root != null && !root.equals(info.getWorkflowId())) {
+                tags.put("workflow.root.instance.id", root);
+            }
             tags.put("workflow.run.id", info.getRunId());
             tags.put("workflow.type", info.getWorkflowType());
             tags.put("workflow.activity.type", info.getActivityType());

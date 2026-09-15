@@ -366,6 +366,27 @@ function testDurableAgentStepMetrics() returns error? {
     }
 }
 
+@test:Config {
+    groups: ["integration", "observability"]
+}
+function testChildWorkflowActivityJoinsTheRootTrace() returns error? {
+    if !observe:isTracingEnabled() {
+        return;
+    }
+    string name = uniqueId("obs-tree");
+    string workflowId = check workflow:run(observabilityParentFlow, {name});
+    anydata result = check workflow:getWorkflowResult(workflowId, 60);
+    test:assertEquals(<string>result, "obs:" + name, "the parent returns what the child's activity echoed");
+
+    // The activity ran inside the child, which knows only the workflow that scheduled it. The run's
+    // context carries the tree's root, so the attempt names it and joins the trace the parent opened.
+    mock:Span parentRun = check findSpan("workflow workflow-observabilityParentFlow", workflowId);
+    mock:Span attempt = check spanInTree("activity observabilityEcho", workflowId);
+    test:assertNotEquals(attempt.tags["workflow.instance.id"], workflowId,
+            "the attempt belongs to the child, not to the run that started the tree");
+    test:assertEquals(attempt.traceId, parentRun.traceId, "the child's activity joins the root's trace");
+}
+
 // ================================================================================
 // HELPERS
 // ================================================================================
@@ -436,6 +457,19 @@ function workerSpansOf(string instanceId, int atLeast) returns mock:Span[]|error
         runtime:sleep(0.5);
     }
     return error(string `only ${found.length()} worker spans finished for ${instanceId}`);
+}
+
+// A worker span of a run's tree: one naming `rootInstanceId` as its root, retrying briefly.
+function spanInTree(string operationName, string rootInstanceId) returns mock:Span|error {
+    foreach int attempt in 0 ..< 20 {
+        foreach mock:Span span in mock:getFinishedSpans("workflow") {
+            if span.operationName == operationName && span.tags["workflow.root.instance.id"] == rootInstanceId {
+                return span;
+            }
+        }
+        runtime:sleep(0.5);
+    }
+    return error(string `no '${operationName}' span named '${rootInstanceId}' as its root`);
 }
 
 function hasOperation(mock:Span[] spans, string operationName) returns boolean {

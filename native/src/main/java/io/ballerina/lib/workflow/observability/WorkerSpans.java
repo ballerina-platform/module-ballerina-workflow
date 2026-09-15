@@ -66,7 +66,28 @@ public final class WorkerSpans {
 
     // The context a run hands its activities and children when none reached it: the root's derived anchor.
     public static Map<String, String> fallbackContext(WorkflowInfo info) {
-        return instanceContext(anchorInstanceOf(runTags(info)));
+        String root = anchorInstanceOf(runTags(info));
+        return withRoot(instanceContext(root), root);
+    }
+
+    // The context a run's own steps carry: the span to hang them from, and the instance whose trace that is.
+    public static Map<String, String> runContext(Span span, WorkflowInfo info) {
+        return withRoot(contextOf(span), anchorInstanceOf(runTags(info)));
+    }
+
+    // The instance a carried context belongs to, for a thread that knows no more than the context it was given.
+    public static String rootOf(Map<String, String> context) {
+        return context == null ? null : context.get(ROOT_INSTANCE_ID);
+    }
+
+    // An activity is told only the workflow that scheduled it, so the run's context names the tree's root too.
+    private static Map<String, String> withRoot(Map<String, String> context, String root) {
+        if (context == null || root == null || root.isEmpty()) {
+            return context;
+        }
+        Map<String, String> carried = new LinkedHashMap<>(context);
+        carried.put(ROOT_INSTANCE_ID, root);
+        return carried;
     }
 
     // Opens a span under the run's propagated trace context (a root span when the run has none); null when off.

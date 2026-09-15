@@ -82,26 +82,40 @@ a series.
 
 ## Traces with Jaeger
 
-Tracing answers *what happened inside one request*: starting a workflow, sending it data,
-deciding a human task each leave a span nested in the caller's trace, tagged with the
-workflow type, instance ID, and — on decisions — who decided and in which roles.
+Tracing answers *what happened to one run*. Every instance owns a trace, and the trace's ID
+is derived from the instance ID — so calls that never meet agree on it without passing a
+context. In it are the calls an application makes about the run (starting it, sending it
+data, waiting for its result, deciding one of its tasks — that last one tagged with who
+decided and in which roles) and the run's own execution: the run itself, each activity
+attempt, each data event it receives and, for a durable agent, each model call, tool call,
+event wait, sleep and human-task wait, on whichever worker they run and across restarts. A
+task child or a child workflow belongs to the trace of the run that started it.
 
-[Jaeger](https://www.jaegertracing.io) is Ballerina's supported tracing backend, via
-`ballerinax/jaeger`:
+The request that made each call is not lost: every client span carries a **link** to the
+caller's own span, which a tracing UI follows back to the request trace.
+
+Spans leave the process over OTLP, through the distribution's own `ballerina/otel` provider:
 
 ```ballerina
-import ballerinax/jaeger as _;
+import ballerina/otel as _;
 ```
 
 ```toml
 # Config.toml
 [ballerina.observe]
 tracingEnabled = true
-tracingProvider = "jaeger"
+tracingProvider = "otel"
 
-[ballerinax.jaeger]
-agentPort = 4317    # Jaeger's OTLP gRPC port; the module's default (55680) is the legacy OTLP port
+[ballerina.otel]
+tracesEndpoint = "http://localhost:4317"
+
+[ballerina.otel.tracesResourceAttributes]
+"service.name" = "claims"    # the name your spans are listed under
 ```
+
+Any OTLP collector accepts them; [Jaeger](https://www.jaegertracing.io) is a good one to read
+them with. (`ballerinax/jaeger` also speaks OTLP, but the exporter it bundles predates the
+OpenTelemetry the distribution now carries.)
 
 Run Jaeger locally (it accepts the OTLP traffic the provider sends on 4317) and open the
 UI at `http://localhost:16686`:
@@ -112,17 +126,30 @@ docker run -d --name jaeger \
     jaegertracing/all-in-one:1.60
 ```
 
-In the UI, search by the span tags: `workflow.instance.id` finds every client-side
-operation that touched one instance; `user.id` finds every decision one person made. The
-spans deliberately stop at the client boundary — a durable run may execute for days across
-restarts, so execution-side visibility comes from the engine history and the management
-API, joined to a trace by `workflow.instance.id`.
+In the UI, pick the service your integration publishes under and search by the tag
+`workflow.instance.id`: one trace comes back, and it holds both sides of the run — the client
+spans (`start_workflow`, `send_data`, `complete_human_task`, …, tagged `type="client"`) and
+the execution spans (`workflow <type>`, `activity <type>`, `agent.tool_call <tool>`, …, tagged
+`type="worker"`), days of it if that is how long the run took. Follow a client span's link to
+reach the request that made the call; search by `user.id` for every decision one person made.
 
-By default the trace sampler is `const` with rate 1 (every trace is reported); for
-production volumes configure sampling under `[ballerinax.jaeger]` (`samplerType`,
-`samplerParam`, `reporterFlushInterval`, `reporterBufferSize`). Spans are exported in
-batches: a service keeps flushing as it runs, but a short-lived program should stay up a
-few seconds past its last operation or its final batch may never leave the process.
+The trace's top spans name a parent that is never recorded — the anchor the instance ID
+derives — so a UI shows them as roots. A refused decision joins the run's trace whenever the
+runtime found the task at all: the refusal names the owning run, whether the caller lacked a
+role, the payload was the wrong shape, the task had already closed, or it belongs to another
+integration. Only a task the runtime could not find stands in a trace of its own.
+
+A span the worker opened is lost if that worker stops before the step ends — a run that
+survives a restart shows a `workflow.closed` marker instead of one long `workflow` span,
+and the metrics still count every step.
+
+By default every trace is reported (the sampler is `parentbased_always_on`); for production
+volumes configure sampling under `[ballerina.otel]` (`tracesSampler`, `tracesSamplerArg`).
+The derived anchor counts as a sampled parent, so a `parentbased_*` sampler keeps every
+workflow span; `traceidratio` samples whole instances, since the trace ID is the instance's. Spans are exported
+in batches (`tracesMaxExportBatchSize`, `tracesExporterTimeoutMillis`): a service keeps
+flushing as it runs, but a short-lived program should stay up a few seconds past its last
+operation or its final batch may never leave the process.
 
 ## Log-based metrics and the audit stream
 

@@ -83,16 +83,16 @@ public record AgentStep(String event, String workflowType, String activityType, 
     }
 
     // The built-in sleep tool returned, after the full duration or early on a wake signal.
-    public static AgentStep slept(String workflowType, boolean interrupted, long durationMillis) {
+    public static AgentStep slept(String workflowType, boolean interrupted, long durationMillis, String errorType) {
         return new AgentStep(EVENT_SLEPT, workflowType, null, null, null, null, null,
-                             interrupted ? ACTION_INTERRUPTED : ACTION_COMPLETED, durationMillis, null);
+                             interrupted ? ACTION_INTERRUPTED : ACTION_COMPLETED, durationMillis, errorType);
     }
 
     // A person decided on a gated tool call before it ran; action is the decision.
     public static AgentStep toolReviewed(String workflowType, String toolName, String taskName, String action,
-                                         long durationMillis) {
+                                         long durationMillis, String errorType) {
         return new AgentStep(EVENT_TOOL_REVIEWED, workflowType, null, toolName, null, TASK_KIND_REVIEW, taskName,
-                             action, durationMillis, null);
+                             action, durationMillis, errorType);
     }
 
     public boolean failed() {

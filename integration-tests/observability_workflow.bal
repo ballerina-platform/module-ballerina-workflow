@@ -48,6 +48,28 @@ type ObservabilityEvents record {|
     future<boolean> obsApproval;
 |};
 
+# A child workflow whose work is an activity, so the attempt's span can be checked against the
+# trace of the run that started the tree rather than the child's own.
+#
+# + ctx - The workflow context
+# + input - The name to echo
+# + return - The echoed value, or an error
+@workflow:Workflow
+function observabilityChildFlow(workflow:Context ctx, ObservabilityInput input) returns string|error {
+    return check ctx->callActivity(observabilityEcho, {name: input.name});
+}
+
+# A parent that waits for that child, so one tree spans two runs.
+#
+# + ctx - The workflow context
+# + input - The name to echo
+# + return - The child's result, or an error
+@workflow:Workflow
+function observabilityParentFlow(workflow:Context ctx, ObservabilityInput input) returns string|error {
+    string childId = check ctx->runChildWorkflow(observabilityChildFlow, input = {name: input.name});
+    return check ctx->waitForChildWorkflow(childId);
+}
+
 @workflow:Workflow
 function observabilityFailingFlow(workflow:Context ctx) returns error? {
     return error("observability failure scenario");

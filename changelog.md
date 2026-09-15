@@ -12,9 +12,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   standard Ballerina observability pipeline (`observabilityIncluded = true`):
   - Tracing: a new exported `workflow.observe` submodule records client-side spans for
     `run`, `sendData`, `getWorkflowResult`, the three task decisions, `DurableAgent.run` and
-    `DurableAgent.sendData`, nesting into the caller's existing request trace. Spans are
-    suppressed inside workflow bodies (replay safety) and record structural identifiers —
-    and, on a decision, who made it.
+    `DurableAgent.sendData`. Spans are suppressed inside workflow bodies (replay safety) and
+    record structural identifiers — and, on a decision, who made it.
+  - **One trace per instance.** A trace's ID is derived from the instance ID, so calls that
+    never meet agree on it without a context to pass: the client spans above open in the
+    instance's trace rather than under their caller, and so does the run's execution,
+    recorded replay-safely by the worker — the run itself (`workflow <type>`), each activity
+    attempt (`activity <type>`), each data event received (`workflow.data_received <name>`)
+    and each durable-agent step (`agent.model_call`, `agent.tool_call <tool>`,
+    `agent.event_wait <event>`, `agent.sleep`, `agent.task_wait <task>`,
+    `agent.tool_review <tool>`). A task child or a child workflow joins the trace of the run
+    that started it: every task and child memo carries `rootWorkflowId`, the decision receipt
+    returns it, and a refused decision still names the owning run in its error detail once the
+    task's memo was read. An agent step that ends in an engine failure is recorded with the
+    failure's type. Every client span carries a link to the caller's own span, which is how
+    a tracing UI gets back to the request that made the call. All of it is opened through the
+    module's own `workflow` tracer, tagged `type = client|worker`.
   - Metrics, following the Ballerina integration observability standard: one
     `workflow_events_total` counter carries every lifecycle event (`started`, `closed`,
     `activity_executed`, `data_sent`, `task_decided`), recorded replay-safely; logical

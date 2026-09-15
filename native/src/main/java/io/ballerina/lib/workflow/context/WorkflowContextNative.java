@@ -440,6 +440,7 @@ public final class WorkflowContextNative {
         memo.put("title", title);
         memo.put("description", description);
         memo.put("parentWorkflowId", parentWorkflowId);
+        memo.put("rootWorkflowId", rootWorkflowId());
         memo.put("errorMessage", errorMessage != null ? errorMessage : "");
         memo.put("activityArgs", activityArgs);
         memo.put("userRoles", roles);
@@ -931,6 +932,7 @@ public final class WorkflowContextNative {
             memo.put("workflowKind", "HUMAN_TASK");
             memo.put("taskName", qualifiedTaskName);
             memo.put("parentWorkflowId", parentWorkflowId);
+            memo.put("rootWorkflowId", rootWorkflowId());
             memo.put("parentWorkflowType", workflowDefinitionName);
             memo.put("title", title);
             memo.put("description", description);
@@ -1542,12 +1544,19 @@ public final class WorkflowContextNative {
      * registry. REQUEST_CANCEL (not TERMINATE) ties the child's lifecycle to the parent while letting it end as
      * CANCELED, and the memo carries the parent linkage for the management/tree views.
      */
+    // The top of the run's tree: the trace a task or child belongs to, even when created under a child workflow.
+    static String rootWorkflowId() {
+        io.temporal.workflow.WorkflowInfo info = Workflow.getInfo();
+        return info.getRootWorkflowId().orElse(info.getWorkflowId());
+    }
+
     private static ChildWorkflowStub newChildStub(String functionName, String childId, String stepId) {
         String childType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + functionName;
 
         Map<String, Object> memo = new HashMap<>();
         memo.put("workflowKind", CHILD_WORKFLOW_KIND);
         memo.put("parentWorkflowId", Workflow.getInfo().getWorkflowId());
+        memo.put("rootWorkflowId", rootWorkflowId());
         memo.put("createdAt", Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString());
         if (stepId != null) {
             // Which call started this child, so two starts of the same workflow are distinguishable

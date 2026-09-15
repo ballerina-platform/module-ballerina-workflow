@@ -23,6 +23,8 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.JsonFormat;
 import io.ballerina.lib.workflow.ModuleUtils;
+import io.ballerina.lib.workflow.observability.TraceContextPropagator;
+import io.ballerina.lib.workflow.observability.WorkerSpans;
 import io.ballerina.lib.workflow.observability.WorkflowMetrics;
 import io.ballerina.lib.workflow.observability.WorkflowSampleLog;
 import io.ballerina.lib.workflow.runtime.WorkflowRuntime;
@@ -1143,9 +1145,8 @@ public final class ManagementNative {
                                                                                    "taskDecision", javaDecision);
 
             if (!delivered) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Failed to complete retry task: task '" + taskWorkflowId.getValue() +
-                                "' was no longer running when signal was delivered"));
+                return memo.refusal("Failed to complete retry task: task '" + taskWorkflowId.getValue() +
+                                            "' was no longer running when signal was delivered");
             }
             return memo.toReceipt();
         } catch (Exception e) {
@@ -1191,15 +1192,18 @@ public final class ManagementNative {
                                 + owningQueue + "', which is served by a different integration"));
             }
 
-            WorkflowExecutionStatus execStatus = execInfo.getStatus();
-            if (execStatus != WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Retry task '" + taskWorkflowId + "' is not running (status=" + convertStatus(execStatus) +
-                                ")"));
-            }
-
             Map<String, Payload> memoFields = execInfo.getMemo().getFieldsMap();
             DataConverter dc = client.getOptions().getDataConverter();
+            // Read before the status check, so a refused decision still joins the owning run's trace.
+            String owningRun = decodeMemoString(dc, memoFields, "parentWorkflowId", null);
+            String owningRoot = decodeMemoString(dc, memoFields, "rootWorkflowId", null);
+
+            WorkflowExecutionStatus execStatus = execInfo.getStatus();
+            if (execStatus != WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING) {
+                return TaskMemo.refusal(owningRun, owningRoot,
+                        "Retry task '" + taskWorkflowId + "' is not running (status=" + convertStatus(execStatus)
+                                + ")");
+            }
 
             // workflowKind check
             String workflowKind = decodeMemoString(dc, memoFields, "workflowKind", null);
@@ -1233,7 +1237,7 @@ public final class ManagementNative {
                 activityArgs = null; // the audit entry goes without the reviewed arguments
             }
             TaskMemo memo = new TaskMemo(decodeMemoString(dc, memoFields, "taskName", null),
-                                         decodeMemoString(dc, memoFields, "parentWorkflowId", null),
+                                         owningRun, owningRoot,
                                          allowedRoles.stream().sorted().toList(), activityArgs);
 
             if (callerRolesArray == null || allowedRoles.isEmpty()) {
@@ -1246,9 +1250,8 @@ public final class ManagementNative {
                 }
             }
 
-            return ErrorCreator.createError(StringUtils.fromString(
-                    "Unauthorized: caller does not have a required role to complete retry task '" + taskWorkflowId +
-                            "'. Required one of: " + allowedRoles));
+            return memo.refusal("Unauthorized: caller does not have a required role to complete retry task '"
+                                        + taskWorkflowId + "'. Required one of: " + allowedRoles);
 
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -1771,6 +1774,12 @@ public final class ManagementNative {
     // WORKFLOW LISTING AND STARTING
     // -------------------------------------------------------------------------
 
+    // Whether a registered type name (without the engine prefix) is a durable agent's.
+    public static boolean isAgentWorkflowType(BString workflowType) {
+        return WorkflowWorkerNative.isAgentWorkflowType(
+                WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + workflowType.getValue());
+    }
+
     /**
      * Starts a new workflow instance by its registered type name. Returns a {@code WorkflowHandle} record with
      * {@code workflowId} and {@code runId}.
@@ -1834,7 +1843,9 @@ public final class ManagementNative {
             }
             // The started event is counted at the worker's first execution, where every
             // start path converges.
-            WorkflowExecution execution = stub.start(javaInput);
+            Object startInput = javaInput;
+            WorkflowExecution execution = TraceContextPropagator.runWith(WorkerSpans.instanceContext(wfId),
+                                                                        () -> stub.start(startInput));
 
             BMap<BString, Object> handle = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                           "WorkflowHandle");

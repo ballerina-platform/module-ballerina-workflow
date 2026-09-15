@@ -72,6 +72,70 @@ Every span carries `workflow.operation.name` and `span.type = workflow` (mirrori
 attribute `gen_ai.agent.name` so agent traces correlate with `ai.observe` spans; decision
 spans reuse the OpenTelemetry `user.id` and `user.roles` attributes for who decided.
 
+### One trace per instance
+
+Client spans alone leave the story in pieces: the request that started a run is one trace,
+the request that sent it data is another, the decision a person made on it a third, and the
+days of execution in between — activities, an agent's steps, a human task waiting on a
+person — are in no trace at all. Nor can the pieces be joined by propagation: they are
+separate calls, sometimes days apart, in processes that never meet, and the earlier one is
+long finished when the next begins.
+
+**The instance ID is the join.** It is the one thing every call about a run shares, so it is
+what the trace is derived from: `traceId = SHA-256("ballerina-workflow/instance-trace:" +
+instanceId)[0..16]`, with the next eight bytes standing for an anchor span. Both sides
+compute it — the client spans above open in that trace instead of under their caller, and so
+do the worker's — so everything that names one instance is one trace, with no lookup and no
+context to pass. The derived ids are not secret and not meant to be: an instance ID is
+already on every span as a tag.
+
+The anchor span is never emitted, so a tracing UI shows the trace's top spans as roots. A
+span whose instance is not known cannot join a trace: only a decision on a task the runtime
+could not find stands in a trace of its own. Every other refusal carries `parentWorkflowId` and
+`rootWorkflowId` in its error detail, and the decision span reads them from there — the task's
+memo arrives with the description the validation already makes, so it is read before the checks
+rather than after them.
+
+**A client span links back to its caller.** The call still happened inside some request, and
+that request's own span is recorded as an OpenTelemetry link on the client span, so a tracing
+UI follows it back. The link is captured from the Ballerina observer context of the calling
+frame at the moment the call is made.
+
+**The context still travels with the run**, through a Temporal `ContextPropagator`, but it
+now carries the instance's anchor rather than the caller's span: the engine delivers it to
+every workflow task, every activity attempt and every child workflow — human tasks, review
+activities, child agents — and once the worker has opened the run's own span it propagates
+that instead, so the run's steps nest under the run rather than beside it. A run whose
+header never arrived falls back to the anchor it can derive: from `getRootWorkflowId()` for
+a child, so a task child belongs to the trace of the run that started it, and from its own
+id otherwise. The worker opens its spans through the OpenTelemetry API with an explicit
+parent rather than through header injection, which is the tracer provider's business and not
+every provider does it.
+
+**The worker records what happens, as spans under that context**, from the same replay-gated
+points that record the metrics, so no span is emitted twice:
+
+| Span | Opened / closed | Tags beyond the run's (`workflow.instance.id`, `workflow.run.id`, `workflow.type`, task kind/name for a task child) |
+|---|---|---|
+| `workflow <type>` | the run's first execution → its close on the same worker; after a restart the close is recorded as `workflow.closed <type>` on its own | `workflow.duration.seconds`; error tags on failure |
+| `activity <type>` | around each attempt, on the activity thread | `workflow.activity.type`, `workflow.activity.attempt`; error tags on failure |
+| `workflow.data_received <name>` | when a data event reaches the run | `workflow.data.name` |
+| `agent.model_call <activity>`, `agent.tool_call <tool>`, `agent.event_wait <event>`, `agent.sleep`, `agent.task_wait <task>`, `agent.tool_review <tool>` | around each agent step, on the workflow thread; a step that began on another worker gets a span at completion carrying its duration | `workflow.agent.step`, `workflow.agent.tool`, `workflow.data.name`, `workflow.task.name`, `workflow.task.action`, `workflow.step.duration.seconds`; a timed-out wait is an error span with `error.type = TIMEOUT` |
+
+Execution spans are opened through the module's own tracer, named `workflow`, with the identity
+tags and `type = worker`; the client spans use that tracer too, with `type = client`. Which
+service they are listed under is the application's — with an OTLP provider it is the process's
+`service.name` resource attribute — so one service holds both sides of an instance's story. A human task child's
+`workflow humantask-<def>.<task>` span is the wait for the person, and the decision that ends
+it joins the same trace: the decision's receipt names the run that owns the task and, when
+that run is itself a child, the root of the tree (`rootWorkflowId`, written into every task and
+child memo at creation), which is the instance its span derives from.
+
+Two limits follow from durable execution: a span this worker opened is lost if the worker
+stops before the step ends (the close is then a marker span, and the metrics still count
+the step), and the activity span does not become the parent of the Ballerina spans the
+activity's own code emits — those keep their existing shape.
+
 ### Metrics: one events counter, uniform labels
 
 The metrics follow the Ballerina integration observability standard (the model the file
@@ -190,7 +254,7 @@ wrapper turns the call into one `TaskDecisionSpan`, which on close writes three 
   caller), `identitySource`, `assignedRoles` (as declared on the task), `decidedAt`.
   Written at `INFO` for an accepted decision and `WARN` for a refused one, with the
   refusal's error attached;
-- the span above, so the decision sits in the caller's request trace;
+- the span above, in the trace of the run that owns the task;
 - one increment of `workflow_events_total{event="task_decided"}`.
 
 A **refused** decision — wrong role, task no longer running, task not found — is recorded

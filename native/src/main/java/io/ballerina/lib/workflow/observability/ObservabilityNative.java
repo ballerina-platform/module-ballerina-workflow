@@ -19,14 +19,15 @@
 package io.ballerina.lib.workflow.observability;
 
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
-import io.ballerina.runtime.api.creators.TypeCreator;
-import io.ballerina.runtime.api.creators.ValueCreator;
-import io.ballerina.runtime.api.types.PredefinedTypes;
+import io.ballerina.runtime.api.Environment;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
 import io.temporal.workflow.Workflow;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 // Natives backing the workflow.observe Ballerina submodule.
 public final class ObservabilityNative {
@@ -59,30 +60,20 @@ public final class ObservabilityNative {
                                            accepted, errorType.getValue());
     }
 
-    // Identity tags every span carries: module, caller side, engine endpoint, task queue, host.
-    public static BMap<BString, Object> spanIdentityTags() {
-        BMap<BString, Object> tags = ValueCreator.createMapValue(
-                TypeCreator.createMapType(PredefinedTypes.TYPE_STRING));
-        tags.put(StringUtils.fromString("module"), StringUtils.fromString("workflow"));
-        tags.put(StringUtils.fromString("type"), StringUtils.fromString("client"));
-        String url = WorkflowWorkerNative.getServerUrl();
-        if (url != null && !url.isEmpty()) {
-            tags.put(StringUtils.fromString("remote.url"), StringUtils.fromString(url));
-        }
-        String queue = WorkflowWorkerNative.getTaskQueue();
-        if (queue != null && !queue.isEmpty()) {
-            tags.put(StringUtils.fromString("task.queue"), StringUtils.fromString(queue));
-        }
-        tags.put(StringUtils.fromString("host"), StringUtils.fromString(hostName()));
-        return tags;
+    // Opens a client-side span recording; the span itself is built when it closes, in the instance's trace.
+    public static long beginClientSpan(Environment env) {
+        return ClientSpans.begin(env);
     }
 
-    private static String hostName() {
-        try {
-            return java.net.InetAddress.getLocalHost().getHostName();
-        } catch (Exception e) {
-            return "none";
+    // Records the span `beginClientSpan` opened. An empty errorType means the call succeeded.
+    public static void endClientSpan(long spanId, BString name, BMap<BString, Object> tags, BString instanceId,
+                                     BString errorType, BString errorMessage) {
+        Map<String, String> javaTags = new LinkedHashMap<>();
+        for (Map.Entry<BString, Object> tag : tags.entrySet()) {
+            javaTags.put(tag.getKey().getValue(), String.valueOf(tag.getValue()));
         }
+        ClientSpans.end(spanId, name.getValue(), javaTags, instanceId.getValue(), errorType.getValue(),
+                        errorMessage.getValue());
     }
 
     // Whether the current thread runs inside a workflow context; spans are suppressed there because bodies replay.

@@ -14,6 +14,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   a file that did not exist there. The two flags now mirror the HTTP plugin: `--export-openapi`
   populates `target/openapi/`, `--export-endpoints` populates `target/artifact/`.
 
+- **The exported management OpenAPI description is now a valid OpenAPI document.** Three
+  descriptions contained an unquoted comma inside a YAML flow mapping, so the text was
+  truncated and a nonsense key landed in the schema — one of them in the request body of
+  `POST /human-tasks/{taskId}/complete`, which made that operation fail validation outright.
+  Four schemas also carried `nullable: true` with no `type`, which constrains nothing. The
+  suite now parses the description with an OpenAPI parser and fails on any message.
+
 ## [0.9.0] - 2026-09-07
 
 ### Changed

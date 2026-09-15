@@ -385,7 +385,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     boundParameters = boundParameterNames(declValue);
                     collectQualifiedPrefixes(declValue, typeRefPrefixes);
                 }
-                default -> appendMetaField(meta, key, declValue.toSourceCode().strip());
+                default -> appendMetaField(meta, sf, declValue.toSourceCode().strip());
             }
         }
         if (functionRefSource == null) {
@@ -646,7 +646,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 // mapping they would make the injected registration ill-typed.
                 case "resultType" -> resultTypeSource = fieldValue.toSourceCode().strip();
                 case "taskInputType" -> taskInputTypeSource = fieldValue.toSourceCode().strip();
-                default -> appendMetaField(meta, key, fieldValue.toSourceCode().strip());
+                default -> appendMetaField(meta, sf, fieldValue.toSourceCode().strip());
             }
         }
         checkUnique(name, seenNames, agentName, nameLocation, context);
@@ -691,9 +691,9 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                         if (channel != null) {
                             callbackChannels.add(new CallbackChannelRef(channel, fieldValue.location()));
                         }
-                        appendMetaField(meta, key, fieldValue.toSourceCode().strip());
+                        appendMetaField(meta, sf, fieldValue.toSourceCode().strip());
                     }
-                    default -> appendMetaField(meta, key, fieldValue.toSourceCode().strip());
+                    default -> appendMetaField(meta, sf, fieldValue.toSourceCode().strip());
                 }
             }
             if (name == null || targetAgent == null) {
@@ -864,11 +864,32 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         }
     }
 
-    private static void appendMetaField(StringBuilder meta, String key, String valueSource) {
+    private static void appendMetaField(StringBuilder meta, SpecificFieldNode field, String valueSource) {
         if (!meta.isEmpty()) {
             meta.append(", ");
         }
-        meta.append(key).append(": ").append(valueSource);
+        meta.append(mappingKeyLiteral(field)).append(": ").append(valueSource);
+    }
+
+    /**
+     * The key of a mapping field, as a string literal to splice into generated source.
+     *
+     * <p>A literal, rather than the identifier: a declaration may name a field after a keyword —
+     * {@code 'wait} on a peer — and emitting that bare would generate {@code wait: false}, which
+     * parses as the wait action rather than a field. The metadata is read back as json, where a
+     * string key is the same field.
+     *
+     * <p>A key that was already written as a string literal is re-emitted exactly as the author
+     * wrote it. Its token text is a valid Ballerina literal, so it round-trips; unquoting it and
+     * escaping the result again would double the escapes in a key like {@code "a\"b"}.
+     */
+    private static String mappingKeyLiteral(SpecificFieldNode field) {
+        Node keyNode = field.fieldName();
+        if (keyNode instanceof BasicLiteralNode literal && literal.kind() == SyntaxKind.STRING_LITERAL) {
+            return literal.literalToken().text();
+        }
+        String name = mappingKeyName(field);
+        return "\"" + WorkflowSourceModifier.escapeBallerinaStringLiteral(name == null ? "" : name) + "\"";
     }
 
     /**

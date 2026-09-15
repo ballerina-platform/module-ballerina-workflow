@@ -42,6 +42,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 
 /**
  * Serves the management listings on servers without advanced visibility.
@@ -50,30 +51,33 @@ import java.util.concurrent.TimeUnit;
  * {@code ListWorkflowExecutions} — the query-language API every listing here is built on — but it
  * does implement the standard {@code ListOpenWorkflowExecutions} and
  * {@code ListClosedWorkflowExecutions}. This class prefers the query API and falls back to those
- * two the first time the server answers UNIMPLEMENTED, so the same listings work with no server
- * installed at all.
+ * two the first time the server answers UNIMPLEMENTED.
  *
- * <p>Two differences the fallback has to make up for, both measured against the embedded server:
- * its rows carry neither memo nor task queue, so every row is re-read with
- * {@code DescribeWorkflowExecution} (which does carry both) before the caller maps it; and there
- * is no query to filter by, so the caller's filters are applied here instead. Paging is not
- * available either — the fallback reads the whole window (bounded by {@link #MAX_FALLBACK_ROWS})
- * and returns it as one page.
+ * <p>Two differences the fallback makes up for: the standard listings take no query, so the
+ * caller's filters are applied here; and their rows carry neither memo nor task queue, so a row
+ * that survives the filters is re-read with {@code DescribeWorkflowExecution} before the caller
+ * maps it. Everything the row itself carries — type, status, workflow ID, times — is tested first,
+ * so a describe is only spent on a row that is going to be returned.
  *
  * @since 1.0.0
  */
-final class VisibilityCompat {
+public final class VisibilityCompat {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(VisibilityCompat.class);
 
-    // A dev server holds a session's worth of executions; this only guards against a runaway scan.
-    private static final int MAX_FALLBACK_ROWS = 1000;
-    private static final int FALLBACK_PAGE_SIZE = 100;
+    private static final int FETCH_PAGE_SIZE = 100;
 
-    // Latched on the first UNIMPLEMENTED: a server does not grow the API mid-run.
+    // What the current connection answered when the query API was last tried. Latched on
+    // UNIMPLEMENTED — a server does not grow the API mid-run — and cleared when a worker starts,
+    // since the next one may be talking to a different server.
     private static volatile boolean advancedVisibilityUnsupported;
 
     private VisibilityCompat() {
+    }
+
+    /** Forgets what was measured about the previous connection. Called when a worker initialises. */
+    public static void reset() {
+        advancedVisibilityUnsupported = false;
     }
 
     /**
@@ -87,31 +91,30 @@ final class VisibilityCompat {
 
     /**
      * The filters a listing expresses in its query, restated so the fallback can apply them itself.
-     * Every field is optional; a null (or empty) field means "do not filter on this".
+     * Every field is optional; an unset field means "do not filter on this".
+     *
+     * <p>Time bounds are held as the caller wrote them and parsed only if the fallback runs: the
+     * query path hands them to the server, whose datetime grammar is wider than {@code
+     * Instant.parse} (it takes Unix nanoseconds, for one), and this must not narrow it.
      */
     static final class Filter {
         private Set<WorkflowExecutionStatus> statuses;
-        private String exactType;
-        private String typePrefix;
+        private Predicate<String> typeTest;
         private String workflowIdPrefix;
         private String taskQueue;
-        private Instant startFrom;
-        private Instant startTo;
-        private Instant closeFrom;
-        private Instant closeTo;
+        private String startFrom;
+        private String startTo;
+        private String closeFrom;
+        private String closeTo;
 
         Filter statuses(Set<WorkflowExecutionStatus> value) {
             this.statuses = value;
             return this;
         }
 
-        Filter exactType(String value) {
-            this.exactType = value;
-            return this;
-        }
-
-        Filter typePrefix(String value) {
-            this.typePrefix = value;
+        /** The type test the call site already applies to the rows it keeps. */
+        Filter typeTest(Predicate<String> value) {
+            this.typeTest = value;
             return this;
         }
 
@@ -126,35 +129,35 @@ final class VisibilityCompat {
         }
 
         Filter startTime(Object from, Object to) {
-            this.startFrom = parseInstant(from);
-            this.startTo = parseInstant(to);
+            this.startFrom = asString(from);
+            this.startTo = asString(to);
             return this;
         }
 
         Filter closeTime(Object from, Object to) {
-            this.closeFrom = parseInstant(from);
-            this.closeTo = parseInstant(to);
+            this.closeFrom = asString(from);
+            this.closeTo = asString(to);
             return this;
         }
 
-        private boolean matches(WorkflowExecutionInfo info) {
+        // Everything the standard listing row carries, so a row that fails here costs no describe.
+        private boolean matchesRow(WorkflowExecutionInfo info) {
             if (statuses != null && !statuses.contains(info.getStatus())) {
                 return false;
             }
-            String type = info.getType().getName();
-            if (exactType != null && !exactType.equals(type)) {
-                return false;
-            }
-            if (typePrefix != null && !type.startsWith(typePrefix)) {
+            if (typeTest != null && !typeTest.test(info.getType().getName())) {
                 return false;
             }
             if (workflowIdPrefix != null && !info.getExecution().getWorkflowId().startsWith(workflowIdPrefix)) {
                 return false;
             }
-            if (taskQueue != null && !taskQueue.equals(info.getTaskQueue())) {
-                return false;
-            }
-            return inRange(info.getStartTime(), startFrom, startTo) && inRange(info.getCloseTime(), closeFrom, closeTo);
+            return inRange(info.getStartTime(), parse(startFrom), parse(startTo))
+                    && inRange(info.getCloseTime(), parse(closeFrom), parse(closeTo));
+        }
+
+        // The task queue is absent from a standard listing row, so this waits for the describe.
+        private boolean matchesDescribed(WorkflowExecutionInfo info) {
+            return taskQueue == null || taskQueue.equals(info.getTaskQueue());
         }
 
         // An unset close time (a running execution) is absent rather than zero: a close-time
@@ -180,6 +183,16 @@ final class VisibilityCompat {
             return statuses == null || statuses.stream()
                     .anyMatch(s -> s != WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING);
         }
+
+        private Instant windowStart() {
+            Instant from = parse(startFrom);
+            return from != null ? from : Instant.EPOCH;
+        }
+
+        private Instant windowEnd() {
+            Instant to = parse(startTo);
+            return to != null ? to : Instant.now().plusSeconds(3600);
+        }
     }
 
     /**
@@ -189,10 +202,10 @@ final class VisibilityCompat {
      * @param client          the workflow client
      * @param query           the visibility query, used only on the query API path
      * @param filter          the same filters in structured form, applied by the fallback
-     * @param pageSize        rows per page on the query API path
+     * @param pageSize        rows per page; a value below 1 asks for everything that matches
      * @param pageToken       the page to read, or {@link ByteString#EMPTY} for the first
      * @param deadlineSeconds per-RPC deadline
-     * @return the page; its token is empty on the fallback path, which answers in one page
+     * @return the page, and the token to read the next one with
      */
     static Page fetchPage(WorkflowClient client, String query, Filter filter, int pageSize,
                           ByteString pageToken, long deadlineSeconds) {
@@ -214,26 +227,15 @@ final class VisibilityCompat {
                 }
                 advancedVisibilityUnsupported = true;
                 LOGGER.info("This workflow server does not implement ListWorkflowExecutions; serving listings "
-                        + "from the standard open/closed listings instead. Filtering and paging are applied "
-                        + "in the client, and results are capped at {} rows.", MAX_FALLBACK_ROWS);
+                        + "from the standard open/closed listings instead, with filtering and paging applied "
+                        + "in the client.");
             }
         }
-        List<WorkflowExecutionInfo> matched = listWithoutQuery(client, filter, deadlineSeconds);
-        int from = offsetOf(pageToken);
-        if (from >= matched.size()) {
-            return new Page(List.of(), ByteString.EMPTY);
-        }
-        int to = pageSize > 0 ? Math.min(from + pageSize, matched.size()) : matched.size();
-        // A caller that pages must be told when rows remain, or a truncated listing reads as a
-        // complete one. There is no server cursor to hand back here, so the token is the offset
-        // into the same filtered listing — which means each page re-reads it. That is affordable
-        // only because this path serves a dev server holding a session's worth of executions.
-        ByteString next = to < matched.size() ? tokenFor(to) : ByteString.EMPTY;
-        return new Page(matched.subList(from, to), next);
+        return listWithoutQuery(client, filter, pageSize, offsetOf(pageToken), deadlineSeconds);
     }
 
-    // The fallback's own continuation token: a decimal offset. It is never mixed with the query
-    // API's opaque token — the path is chosen once per run and latched.
+    // The fallback's own continuation token: an offset into the same filtered listing. It is never
+    // mixed with the query API's opaque token — the path is chosen once per connection and latched.
     private static ByteString tokenFor(int offset) {
         return ByteString.copyFromUtf8(Integer.toString(offset));
     }
@@ -245,24 +247,44 @@ final class VisibilityCompat {
         try {
             return Math.max(0, Integer.parseInt(pageToken.toStringUtf8()));
         } catch (NumberFormatException e) {
-            // A token from the query API (a run that changed paths mid-flight) or a malformed one:
-            // start from the beginning rather than failing the listing.
+            // A token from the query API, or a malformed one: start from the beginning rather
+            // than failing the listing.
             return 0;
         }
     }
 
-    /** Whether the server has already answered UNIMPLEMENTED for the query API this run. */
-    static boolean advancedVisibilityUnsupported() {
-        return advancedVisibilityUnsupported;
+    private static Page listWithoutQuery(WorkflowClient client, Filter filter, int pageSize, int offset,
+                                         long deadlineSeconds) {
+        // Filtered on what the rows themselves carry, before a single describe is spent.
+        List<WorkflowExecutionInfo> candidates = new ArrayList<>();
+        for (WorkflowExecutionInfo row : fetchRows(client, filter, deadlineSeconds)) {
+            if (filter.matchesRow(row)) {
+                candidates.add(row);
+            }
+        }
+
+        List<WorkflowExecutionInfo> page = new ArrayList<>();
+        int cursor = offset;
+        while (cursor < candidates.size() && (pageSize < 1 || page.size() < pageSize)) {
+            WorkflowExecutionInfo described = describe(client, candidates.get(cursor), deadlineSeconds);
+            cursor++;
+            if (filter.matchesDescribed(described)) {
+                page.add(described);
+            }
+        }
+        // A caller that pages must be told when rows remain, or a truncated listing reads as a
+        // complete one. The token can outlive its rows — the last candidates may yet fail the
+        // describe-level filter — so a page can come back empty; that is the honest answer.
+        return new Page(page, cursor < candidates.size() ? tokenFor(cursor) : ByteString.EMPTY);
     }
 
-    private static List<WorkflowExecutionInfo> listWithoutQuery(WorkflowClient client, Filter filter,
-                                                                long deadlineSeconds) {
+    private static List<WorkflowExecutionInfo> fetchRows(WorkflowClient client, Filter filter,
+                                                         long deadlineSeconds) {
         // The standard listings require a start-time window; an unbounded one is the whole history
-        // the dev server holds.
+        // the server holds.
         StartTimeFilter window = StartTimeFilter.newBuilder()
-                .setEarliestTime(toTimestamp(filter.startFrom, Instant.EPOCH))
-                .setLatestTime(toTimestamp(filter.startTo, Instant.now().plusSeconds(3600)))
+                .setEarliestTime(toTimestamp(filter.windowStart()))
+                .setLatestTime(toTimestamp(filter.windowEnd()))
                 .build();
         String namespace = client.getOptions().getNamespace();
         List<WorkflowExecutionInfo> rows = new ArrayList<>();
@@ -274,13 +296,13 @@ final class VisibilityCompat {
                         .withDeadlineAfter(deadlineSeconds, TimeUnit.SECONDS)
                         .listOpenWorkflowExecutions(ListOpenWorkflowExecutionsRequest.newBuilder()
                                 .setNamespace(namespace)
-                                .setMaximumPageSize(FALLBACK_PAGE_SIZE)
+                                .setMaximumPageSize(FETCH_PAGE_SIZE)
                                 .setNextPageToken(token)
                                 .setStartTimeFilter(window)
                                 .build());
                 rows.addAll(response.getExecutionsList());
                 token = response.getNextPageToken();
-            } while (!token.isEmpty() && rows.size() < MAX_FALLBACK_ROWS);
+            } while (!token.isEmpty());
         }
         if (filter.wantsClosed()) {
             ByteString token = ByteString.EMPTY;
@@ -290,28 +312,19 @@ final class VisibilityCompat {
                         .withDeadlineAfter(deadlineSeconds, TimeUnit.SECONDS)
                         .listClosedWorkflowExecutions(ListClosedWorkflowExecutionsRequest.newBuilder()
                                 .setNamespace(namespace)
-                                .setMaximumPageSize(FALLBACK_PAGE_SIZE)
+                                .setMaximumPageSize(FETCH_PAGE_SIZE)
                                 .setNextPageToken(token)
                                 .setStartTimeFilter(window)
                                 .build());
                 rows.addAll(response.getExecutionsList());
                 token = response.getNextPageToken();
-            } while (!token.isEmpty() && rows.size() < MAX_FALLBACK_ROWS);
+            } while (!token.isEmpty());
         }
-
-        List<WorkflowExecutionInfo> matched = new ArrayList<>();
-        for (WorkflowExecutionInfo row : rows) {
-            WorkflowExecutionInfo enriched = describe(client, row, deadlineSeconds);
-            if (filter.matches(enriched)) {
-                matched.add(enriched);
-            }
-        }
-        return matched;
+        return rows;
     }
 
     // The standard listings return neither memo nor task queue, which every caller reads off the
-    // row; a describe per row restores them. One RPC per row is affordable only because this path
-    // exists for a dev server holding a session's worth of executions.
+    // row; a describe restores them.
     private static WorkflowExecutionInfo describe(WorkflowClient client, WorkflowExecutionInfo row,
                                                   long deadlineSeconds) {
         try {
@@ -341,23 +354,21 @@ final class VisibilityCompat {
         }
     }
 
-    private static Timestamp toTimestamp(Instant value, Instant fallback) {
-        Instant at = value != null ? value : fallback;
+    private static Timestamp toTimestamp(Instant at) {
         return Timestamp.newBuilder().setSeconds(at.getEpochSecond()).setNanos(at.getNano()).build();
     }
 
-    private static Instant parseInstant(Object value) {
-        String text = asString(value);
+    private static Instant parse(String text) {
         if (text == null) {
             return null;
         }
         try {
             return Instant.parse(text);
         } catch (RuntimeException e) {
-            // The query path has the server reject a malformed bound. Dropping it here instead
-            // would answer a filtered request with an unfiltered listing — more rows than were
-            // asked for, reported as success. The listing entry points turn this into a
-            // management error.
+            // Dropping the bound would answer a filtered request with an unfiltered listing — more
+            // rows than were asked for, reported as success. The listing entry points turn this
+            // into a management error. Only the fallback path reaches here, so the query API's
+            // wider grammar is left to the server.
             throw new IllegalArgumentException("Invalid timestamp '" + text + "': expected ISO-8601", e);
         }
     }

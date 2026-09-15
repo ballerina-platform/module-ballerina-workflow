@@ -511,6 +511,10 @@ public final class WorkflowWorkerNative {
         captureRuntime(env);
         suppressTemporalLogs();
 
+        // What the previous connection could serve says nothing about this one: one JVM can hold an
+        // in-memory runtime and later a real server.
+        io.ballerina.lib.workflow.runtime.nativeimpl.VisibilityCompat.reset();
+
         if (!initialized.compareAndSet(false, true)) {
             LOGGER.debug("Singleton worker already initialized");
             return null;
@@ -645,6 +649,10 @@ public final class WorkflowWorkerNative {
     public static Object initInMemoryWorker(Environment env) {
         captureRuntime(env);
         suppressTemporalLogs();
+
+        // What the previous connection could serve says nothing about this one: one JVM can hold an
+        // in-memory runtime and later a real server.
+        io.ballerina.lib.workflow.runtime.nativeimpl.VisibilityCompat.reset();
 
         if (!initialized.compareAndSet(false, true)) {
             LOGGER.debug("Singleton worker already initialized");

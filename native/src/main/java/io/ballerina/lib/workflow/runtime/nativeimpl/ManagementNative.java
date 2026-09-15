@@ -480,10 +480,12 @@ public final class ManagementNative {
             // scanning the namespace and discarding.
             clauses.add("WorkflowType STARTS_WITH '" + WorkflowWorkerNative.HUMANTASK_TYPE_PREFIX + "'");
             String query = String.join(" AND ", clauses);
-            // The same filters a server without the query API cannot read off the query. The type
-            // is left out: the loop below re-checks it anyway.
+            // The same filters a server without the query API cannot read off the query, including
+            // the type test the loop below applies — testing it there too keeps a describe from
+            // being spent on an execution this listing would discard.
             VisibilityCompat.Filter filter = new VisibilityCompat.Filter()
                     .statuses(taskStatusesOf(statusFilter))
+                    .typeTest(ManagementNative::isHumanTaskType)
                     .taskQueue(taskQueue)
                     .startTime(startTimeFrom, startTimeTo)
                     .closeTime(closeTimeFrom, closeTimeTo);
@@ -893,8 +895,9 @@ public final class ManagementNative {
     }
 
     // The structured form of addTaskStatusClause, for the path where the filter is applied in the
-    // client rather than by the server. A status this does not know narrows nothing, the same way
-    // the clause builder passes an unknown status through to the server.
+    // client rather than by the server. A status this does not know matches nothing: the clause
+    // builder passes it to the server, which rejects it, and answering such a request with every
+    // row would be worse than answering with none.
     private static Set<WorkflowExecutionStatus> taskStatusesOf(String status) {
         if (status == null) {
             return null;
@@ -906,7 +909,7 @@ public final class ManagementNative {
                                     WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_TIMED_OUT);
             case "CANCELED" -> Set.of(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_CANCELED);
             case "TERMINATED" -> Set.of(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_TERMINATED);
-            default -> null;
+            default -> Set.of();
         };
     }
 
@@ -923,7 +926,7 @@ public final class ManagementNative {
             case "CANCELED" -> Set.of(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_CANCELED);
             case "TERMINATED" -> Set.of(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_TERMINATED);
             case "TIMED_OUT" -> Set.of(WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_TIMED_OUT);
-            default -> null;
+            default -> Set.of();
         };
     }
 
@@ -1268,10 +1271,11 @@ public final class ManagementNative {
                     + "' OR WorkflowType = '" + WorkflowWorkerNative.LEGACY_RETRYTASK_WORKFLOW_TYPE
                     + "' OR WorkflowType STARTS_WITH '" + WorkflowWorkerNative.LEGACY_RETRYTASK_WORKFLOW_TYPE + "-')");
             String query = String.join(" AND ", clauses);
-            // As in listAllHumanTasks: the type stays with the loop's own check, which already
-            // covers the legacy retrytask forms this query spells out.
+            // As in listAllHumanTasks, with the loop's own type check — which covers the legacy
+            // retrytask forms this query spells out — handed over as the row-level test.
             VisibilityCompat.Filter filter = new VisibilityCompat.Filter()
                     .statuses(taskStatusesOf(statusFilter))
+                    .typeTest(ManagementNative::isReviewActivityType)
                     .taskQueue(taskQueue)
                     .startTime(startTimeFrom, startTimeTo)
                     .closeTime(closeTimeFrom, closeTimeTo);
@@ -1819,9 +1823,10 @@ public final class ManagementNative {
                     .startTime(startTimeFrom, startTimeTo)
                     .closeTime(closeTimeFrom, closeTimeTo);
             if (workflowType instanceof BString filterType) {
-                filter.exactType(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + filterType.getValue());
+                String prefixedType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + filterType.getValue();
+                filter.typeTest(prefixedType::equals);
             } else if (!(kind instanceof BString filterKind && !filterKind.getValue().isBlank())) {
-                filter.typePrefix(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX);
+                filter.typeTest(type -> type.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX));
             }
             if (workflowId instanceof BString filterId) {
                 filter.workflowIdPrefix(filterId.getValue());

@@ -26,6 +26,9 @@ import io.ballerina.projects.ProjectEnvironmentBuilder;
 import io.ballerina.projects.directory.BuildProject;
 import io.ballerina.projects.environment.Environment;
 import io.ballerina.projects.environment.EnvironmentBuilder;
+import io.swagger.v3.parser.OpenAPIV3Parser;
+import io.swagger.v3.parser.core.models.ParseOptions;
+import io.swagger.v3.parser.core.models.SwaggerParseResult;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
@@ -175,6 +178,75 @@ public class ManagementApiArtifactExportTest {
         JBallerinaBackend.from(compilation, JvmTarget.JAVA_21)
                 .emit(JBallerinaBackend.OutputType.EXEC, execJar);
         return target;
+    }
+
+    // The spec is written by hand, so nothing but a parse proves it is a valid OpenAPI
+    // document. This caught a description holding an unquoted comma inside a flow mapping:
+    // YAML read the tail as a second key, which silently truncated the text and put a
+    // nonsense entry into a schema that consumers would choke on.
+    @Test
+    public void testTheSpecIsAValidOpenApiDocument() throws IOException {
+        ParseOptions options = new ParseOptions();
+        options.setResolve(true);
+        options.setValidateInternalRefs(true);
+        SwaggerParseResult result = new OpenAPIV3Parser().readContents(embeddedSpec(), null, options);
+
+        Assert.assertNotNull(result.getOpenAPI(), "The spec must parse as an OpenAPI document: "
+                + result.getMessages());
+        Assert.assertEquals(result.getMessages(), List.of(),
+                "workflow-management-openapi.yaml is not a valid OpenAPI document");
+        Assert.assertEquals(result.getOpenAPI().getOpenapi(), "3.0.3", "The declared OpenAPI version");
+    }
+
+    // `nullable` is defined only as a modifier of a declared `type`; alone it says nothing, and
+    // a reader is entitled to treat the schema as unconstrained. Keep the two together.
+    @Test
+    public void testNullableIsAlwaysPairedWithAType() throws IOException {
+        String yaml = embeddedSpec();
+        List<String> orphans = new ArrayList<>();
+        String[] lines = yaml.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (!line.contains("nullable: true")) {
+                continue;
+            }
+            // Either the flow mapping on this line carries the type, or the enclosing block
+            // schema declares it on a neighbouring line at the same indentation.
+            boolean paired = line.contains("type:") || hasBlockSibling(lines, i, "type:");
+            if (!paired) {
+                orphans.add("line " + (i + 1) + ": " + line.trim());
+            }
+        }
+        Assert.assertEquals(orphans, List.of(), "`nullable` without a `type` says nothing");
+    }
+
+    /** Whether a line at {@code index}'s indentation has a sibling key within its block. */
+    private static boolean hasBlockSibling(String[] lines, int index, String key) {
+        int indent = indentOf(lines[index]);
+        for (int direction : new int[] {-1, 1}) {
+            for (int i = index + direction; i >= 0 && i < lines.length; i += direction) {
+                String line = lines[i];
+                if (line.isBlank()) {
+                    continue;
+                }
+                int at = indentOf(line);
+                if (at < indent) {
+                    break;
+                }
+                if (at == indent && line.trim().startsWith(key)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static int indentOf(String line) {
+        int i = 0;
+        while (i < line.length() && line.charAt(i) == ' ') {
+            i++;
+        }
+        return i;
     }
 
     // The spec is curated, so this is the drift guard: every resource of the management REST

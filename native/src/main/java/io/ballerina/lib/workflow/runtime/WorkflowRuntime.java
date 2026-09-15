@@ -112,7 +112,8 @@ public final class WorkflowRuntime {
      * @param processName the name of the process to start
      * @param input       the input data for the process
      * @return the workflow ID
-     * @throws RuntimeException if the process is not registered
+     * @throws IllegalArgumentException if the process is not registered
+     * @throws IllegalStateException if the runtime is not properly initialized
      */
     public String createInstance(String processName, Object input) {
         return createInstance(processName, input, null);
@@ -122,7 +123,7 @@ public final class WorkflowRuntime {
     public String createInstance(String processName, Object input, java.util.Map<String, String> traceContext) {
         // Verify the process is registered in WorkflowWorkerNative
         if (!WorkflowWorkerNative.getProcessRegistry().containsKey(processName)) {
-            throw new RuntimeException("Process not registered: " + processName);
+            throw new IllegalArgumentException("Process not registered: " + processName);
         }
 
         // Generate workflow ID using UUID v7
@@ -131,12 +132,12 @@ public final class WorkflowRuntime {
         // Get the singleton workflow client from WorkflowWorkerNative
         WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
         if (client == null) {
-            throw new RuntimeException("Workflow client not initialized. Ensure worker is initialized.");
+            throw new IllegalStateException("Workflow client not initialized. Ensure worker is initialized.");
         }
 
         String taskQueue = WorkflowWorkerNative.getTaskQueue();
         if (taskQueue == null) {
-            throw new RuntimeException("Task queue not configured.");
+            throw new IllegalStateException("Task queue not configured.");
         }
 
         try {
@@ -168,7 +169,7 @@ public final class WorkflowRuntime {
 
         } catch (Exception e) {
             LOGGER.error("Failed to start workflow {}: {}", processName, e.getMessage(), e);
-            throw new RuntimeException("Failed to start workflow: " + e.getMessage(), e);
+            throw new IllegalStateException("Failed to start workflow: " + e.getMessage(), e);
         }
     }
 
@@ -180,19 +181,20 @@ public final class WorkflowRuntime {
      * @param activityName the name of the activity to execute
      * @param args         the arguments to pass to the activity
      * @return the result of the activity
-     * @throws RuntimeException if the activity is not registered
+     * @throws IllegalArgumentException if the activity is not registered
+     * @throws UnsupportedOperationException always, once the registration check passes
      */
     public Object executeActivity(String activityName, Object[] args) {
         // Verify the activity is registered in WorkflowWorkerNative
         if (!WorkflowWorkerNative.getActivityRegistry().containsKey(activityName)) {
-            throw new RuntimeException("Activity not registered: " + activityName);
+            throw new IllegalArgumentException("Activity not registered: " + activityName);
         }
 
         // Activity execution is handled by Temporal through the BallerinaActivityAdapter
         // in WorkflowWorkerNative. This method should not be called directly.
         // The module-level callActivity() function in Ballerina uses WorkflowNative.callActivity()
         // which delegates to Temporal's activity stub.
-        throw new RuntimeException(
+        throw new UnsupportedOperationException(
                 "Direct activity execution not supported. Use module-level callActivity() function.");
     }
 
@@ -205,20 +207,21 @@ public final class WorkflowRuntime {
      * @param signalName the name of the signal to send
      * @param signalData the signal data (can be null)
      * @return true if the signal was sent successfully
-     * @throws RuntimeException if the workflow client is not initialized or signal fails
+     * @throws IllegalStateException if the workflow client is not initialized, or the signal fails
+     * @throws IllegalArgumentException if the workflow ID or signal name is missing
      */
     public boolean sendSignalToWorkflow(String workflowId, String signalName, Object signalData) {
         WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
         if (client == null) {
-            throw new RuntimeException("Workflow client not initialized. Ensure worker is initialized.");
+            throw new IllegalStateException("Workflow client not initialized. Ensure worker is initialized.");
         }
 
         if (workflowId == null || workflowId.isEmpty()) {
-            throw new RuntimeException("Workflow ID is required when sending signal by workflowId");
+            throw new IllegalArgumentException("Workflow ID is required when sending signal by workflowId");
         }
 
         if (signalName == null || signalName.isEmpty()) {
-            throw new RuntimeException("Signal name is required when sending signal by workflowId");
+            throw new IllegalArgumentException("Signal name is required when sending signal by workflowId");
         }
 
         try {
@@ -248,7 +251,7 @@ public final class WorkflowRuntime {
             WorkflowMetrics.recordDataSent(signalName, e);
             WorkflowSampleLog.dataSent(signalName, workflowId, true);
             LOGGER.error("Failed to send signal to workflow {}: {}", workflowId, e.getMessage(), e);
-            throw new RuntimeException("Failed to send signal: " + e.getMessage(), e);
+            throw new IllegalStateException("Failed to send signal: " + e.getMessage(), e);
         }
     }
 

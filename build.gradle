@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com) All Rights Reserved.
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -107,16 +107,32 @@ subprojects {
     }
 }
 
-task build {
-    dependsOn(':workflow-compiler-plugin:build')
-    dependsOn(':workflow-native:build')
-    dependsOn(':workflow-ballerina:build')
-    mustRunAfter(':workflow-ballerina:clearBirCache')
-    dependsOn(':workflow-compiler-plugin-tests:test')
-    // Examples are built against the locally built workflow module
-    dependsOn(':workflow-examples:build')
-    // Run examples with main() to verify runtime startup (bal run smoke test)
-    dependsOn(':workflow-examples:test')
+if (tasks.names.contains('build')) {
+    tasks.named('build') {
+        dependsOn(':workflow-compiler-plugin:build')
+        dependsOn(':workflow-native:build')
+        dependsOn(':workflow-ballerina:build')
+        mustRunAfter(':workflow-ballerina:clearBirCache')
+        dependsOn(':workflow-compiler-plugin-tests:test')
+        // Examples are built against the locally built workflow module
+        dependsOn(':workflow-examples:build')
+        // Run examples with main() to verify runtime startup (bal run smoke test)
+        dependsOn(':workflow-examples:test')
+
+    }
+} else {
+    tasks.register('build') {
+        dependsOn(':workflow-compiler-plugin:build')
+        dependsOn(':workflow-native:build')
+        dependsOn(':workflow-ballerina:build')
+        mustRunAfter(':workflow-ballerina:clearBirCache')
+        dependsOn(':workflow-compiler-plugin-tests:test')
+        // Examples are built against the locally built workflow module
+        dependsOn(':workflow-examples:build')
+        // Run examples with main() to verify runtime startup (bal run smoke test)
+        dependsOn(':workflow-examples:test')
+
+    }
 }
 
 task verifyExamples {
@@ -133,9 +149,16 @@ task verifyExamples {
 
 import java.net.InetSocketAddress
 import java.net.Socket
+import org.gradle.process.ExecOperations
+
+import javax.inject.Inject
+
+abstract class BallerinaExecHelper {
+    @Inject abstract ExecOperations getExecOperations()
+}
 
 def testServerProcess = null
-def testServerWorkDir = file("${project.buildDir}/test-server")
+def testServerWorkDir = layout.buildDirectory.dir("test-server").get().asFile
 def testServerStarted = false
 def testServerPort = 7233
 def usingExternalServer = false
@@ -143,7 +166,7 @@ def usingExternalServer = false
 // TLS proxy state (nginx Docker container for auth coverage tests)
 def tlsProxyStarted   = false
 def mtlsDockerDir     = file("${project.rootDir}/docker/temporal-mtls")
-def mtlsCertsDir      = file("${project.buildDir}/test-certs")
+def mtlsCertsDir = layout.buildDirectory.dir("test-certs").get().asFile
 
 // Helper: check if a server is running on a given port
 def isServerRunning = { String host, int port ->
@@ -273,6 +296,7 @@ gradle.buildFinished { result ->
 
 // Generate self-signed certificates for the mTLS/TLS proxy
 task generateMtlsTestCerts {
+    def execHelper = project.objects.newInstance(BallerinaExecHelper)
     description = 'Generates self-signed CA, server, and client certificates for auth coverage tests'
     group = 'verification'
     outputs.dir mtlsCertsDir
@@ -293,7 +317,7 @@ task generateMtlsTestCerts {
         }
         mtlsCertsDir.mkdirs()
         def script = file("${mtlsDockerDir}/generate-certs.sh")
-        exec {
+        execHelper.execOperations.exec {
             commandLine 'bash', script.absolutePath, mtlsCertsDir.absolutePath
         }
     }
@@ -482,7 +506,7 @@ task mergeCoverageReports {
     dependsOn ':workflow-compiler-plugin-tests:test'
 
     doLast {
-        def coverageDir = file("${project.buildDir}/coverage")
+        def coverageDir = layout.buildDirectory.dir("coverage").get().asFile
         coverageDir.mkdirs()
 
         // ── Module tests (Ballerina unit tests) ──────────────────────────────

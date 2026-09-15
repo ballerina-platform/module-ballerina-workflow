@@ -17,6 +17,13 @@
  */
 
 import org.apache.tools.ant.taskdefs.condition.Os
+import org.gradle.process.ExecOperations
+
+import javax.inject.Inject
+
+abstract class BallerinaExecHelper {
+    @Inject abstract ExecOperations getExecOperations()
+}
 
 plugins {
     id 'io.ballerina.plugin'
@@ -55,13 +62,14 @@ task updateTomlFiles {
 }
 
 task commitTomlFiles {
+    def execHelper = project.objects.newInstance(BallerinaExecHelper)
     doLast {
         // Only auto-commit regenerated toml files when explicitly requested
         // (e.g. CI/release runs pass -PcommitToml). Local builds stay commit-free.
         if (!project.hasProperty('commitToml')) {
             return
         }
-        project.exec {
+        execHelper.execOperations.exec {
             ignoreExitValue true
             if (Os.isFamily(Os.FAMILY_WINDOWS)) {
                 commandLine 'cmd', '/c', "git commit -m \"[Automated] Update the native jar versions\" Ballerina.toml Dependencies.toml CompilerPlugin.toml"
@@ -109,13 +117,14 @@ publishing {
 // offline builds read) before the package is built. Their transitive dependencies are
 // already staged via the ballerinaStdLibs configuration.
 task pullExternalDependencies {
+    def execHelper = project.objects.newInstance(BallerinaExecHelper)
     dependsOn copyStdlibs
     doLast {
         def balHome = "${project.projectDir}/build/jballerina-tools-${ballerinaLangVersion}"
         def balExec = Os.isFamily(Os.FAMILY_WINDOWS) ? "${balHome}/bin/bal.bat" : "${balHome}/bin/bal"
         ["ballerina/ai:${ballerinaAiVersion}", "ballerinax/prometheus:${prometheusVersion}"].each { pkg ->
             def pullOutput = new ByteArrayOutputStream()
-            def result = project.exec {
+            def result = execHelper.execOperations.exec {
                 ignoreExitValue = true
                 standardOutput = pullOutput
                 errorOutput = pullOutput

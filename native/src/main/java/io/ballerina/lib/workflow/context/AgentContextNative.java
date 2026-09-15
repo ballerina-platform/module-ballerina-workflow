@@ -622,7 +622,9 @@ public final class AgentContextNative {
             AgentStepTelemetry.record(AgentStep.slept(Workflow.getInfo().getWorkflowType(), woken,
                                                       Workflow.currentTimeMillis() - startedAt), span);
             return !woken;
-        } catch (io.temporal.worker.NonDeterministicException | io.temporal.failure.TemporalFailure e) {
+        } catch (io.temporal.worker.NonDeterministicException e) {
+            throw e;
+        } catch (io.temporal.failure.TemporalFailure e) {
             throw e;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString("Agent sleep failed: " + e.getMessage()));
@@ -992,7 +994,9 @@ public final class AgentContextNative {
                 return bStr;
             }
             return StringUtils.fromString(String.valueOf(ballerina));
-        } catch (NonDeterministicException | TemporalFailure e) {
+        } catch (NonDeterministicException e) {
+            throw e;
+        } catch (TemporalFailure e) {
             throw e;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -1143,7 +1147,9 @@ public final class AgentContextNative {
                 return data;
             }
             return TypesUtil.convertJavaToBallerinaType(data);
-        } catch (NonDeterministicException | TemporalFailure e) {
+        } catch (NonDeterministicException e) {
+            throw e;
+        } catch (TemporalFailure e) {
             throw e;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -1161,7 +1167,7 @@ public final class AgentContextNative {
      * one-shot promise; MULTI_EVENT takes from the FIFO channel so repeated waits observe successive signals.
      * Enforces the max-event-waits cap (hard failure) and the per-wait timeout (returns {@link TimedOut}).
      */
-    private static Object awaitSignal(AgentContextInfo info, String eventName) throws Exception {
+    private static Object awaitSignal(AgentContextInfo info, String eventName) {
         Span span = AgentStepTelemetry.begin("agent.event_wait " + eventName);
         long startedAt = Workflow.currentTimeMillis();
         Object data = awaitSignalUnrecorded(info, eventName);
@@ -1172,7 +1178,7 @@ public final class AgentContextNative {
         return data;
     }
 
-    private static Object awaitSignalUnrecorded(AgentContextInfo info, String eventName) throws Exception {
+    private static Object awaitSignalUnrecorded(AgentContextInfo info, String eventName) {
         info.eventWaitCount++;
         if (info.eventWaitCount > info.maxEventWaits) {
             // Returned as a Ballerina error (not thrown): a Java failure crossing the
@@ -1483,7 +1489,9 @@ public final class AgentContextNative {
                 String msg = feedback instanceof String fb && !fb.isBlank()
                         ? errorMsg + " (reviewer: " + fb + ")" : errorMsg;
                 return ActivityOutcome.failed(ErrorCreator.createError(StringUtils.fromString(msg)), failure);
-            } catch (NonDeterministicException | TemporalFailure e) {
+            } catch (NonDeterministicException e) {
+                throw e;
+            } catch (TemporalFailure e) {
                 throw e;
             } catch (Exception e) {
                 return ActivityOutcome.failed(ErrorCreator.createError(

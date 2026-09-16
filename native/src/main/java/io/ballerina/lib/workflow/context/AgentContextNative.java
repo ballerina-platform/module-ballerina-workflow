@@ -479,9 +479,12 @@ public final class AgentContextNative {
             AgentStepTelemetry.record(AgentStep.toolReviewed(workflowType, name, reviewTaskName,
                     String.valueOf(decision.get("action")), Workflow.currentTimeMillis() - startedAt, null), span);
             return StringUtils.fromString(TypesUtil.toJsonString(decision));
-        } catch (io.temporal.worker.NonDeterministicException | io.temporal.failure.TemporalFailure e) {
+        } catch (io.temporal.worker.NonDeterministicException e) {
             // Cancellation and other engine failures must propagate; swallowing them here would
             // strand a workflow parked on this review.
+            AgentStepTelemetry.abandon(span, e);
+            throw e;
+        } catch (io.temporal.failure.TemporalFailure e) {
             AgentStepTelemetry.abandon(span, e);
             throw e;
         } catch (Exception e) {

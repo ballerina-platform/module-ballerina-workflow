@@ -84,6 +84,16 @@ import java.util.Set;
 public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnalysisContext> {
 
     private static final String DURABLE_AGENT_CLASS = "DurableAgent";
+    private static final String NAME_FIELD = "name";
+    private static final String APPROVAL_POLICY_FIELD = "approvalPolicy";
+    private static final String RETRY_POLICY_FIELD = "retryPolicy";
+    private static final String REQUIRES_APPROVAL_FIELD = "requiresApproval";
+    private static final String USER_ROLES_FIELD = "userRoles";
+    private static final String USERS_FIELD = "users";
+    private static final String LEGACY_ROLES_FIELD = "roles";
+    private static final String MAX_RETRIES_FIELD = "maxRetries";
+    private static final String WAIT_FIELD = "wait";
+    private static final String CALLBACK_CHANNEL_FIELD = "callbackChannel";
 
     private final Map<String, Object> userData;
 
@@ -227,6 +237,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         String systemPromptSource = null;
         String maxIterSource = null;
         String eventTimeoutSource = null;
+        String maxEventWaitsSource = null;
         String inputTypeSource = null;
         String resultTypeSource = null;
         List<String> typeRefPrefixes = new ArrayList<>();
@@ -253,6 +264,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 case "systemPrompt" -> systemPromptSource = value.toSourceCode().strip();
                 case "maxIter" -> maxIterSource = value.toSourceCode().strip();
                 case "eventTimeout" -> eventTimeoutSource = value.toSourceCode().strip();
+                case "maxEventWaits" -> maxEventWaitsSource = value.toSourceCode().strip();
                 case "inputType" -> {
                     inputTypeSource = value.toSourceCode().strip();
                     collectQualifiedPrefixes(value, typeRefPrefixes);
@@ -274,7 +286,8 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         }
 
         return new DurableAgentDeclInfo(agentName, modelSource, systemPromptSource,
-                maxIterSource, eventTimeoutSource, inputTypeSource, resultTypeSource, typeRefPrefixes,
+                maxIterSource, eventTimeoutSource, maxEventWaitsSource, inputTypeSource, resultTypeSource,
+                typeRefPrefixes,
                 activities, aiToolRefs, events, humanTasks, peers);
     }
 
@@ -355,7 +368,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     functionRefSource = declValue.toSourceCode().strip();
                     activityRefNode = declValue;
                 }
-                case "name" -> {
+                case NAME_FIELD -> {
                     explicitName = stringLiteralValue(declValue);
                     nameLocation = declValue.location();
                 }
@@ -369,12 +382,12 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     boundParameters = boundParameterNames(declValue);
                     collectQualifiedPrefixes(declValue, typeRefPrefixes);
                 }
-                case "approvalPolicy", "retryPolicy" -> {
+                case APPROVAL_POLICY_FIELD, RETRY_POLICY_FIELD -> {
                     checkReviewDefinition(declValue, context);
                     collectQualifiedPrefixes(declValue, typeRefPrefixes);
                     appendMetaField(meta, sf, declValue.toSourceCode().strip());
                 }
-                case "requiresApproval", "userRoles" ->
+                case REQUIRES_APPROVAL_FIELD, USER_ROLES_FIELD ->
                         reportRemovedField(context, sf, key, "ActivityDecl", "declare 'approvalPolicy'");
                 default -> appendMetaField(meta, sf, declValue.toSourceCode().strip());
             }
@@ -441,14 +454,14 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                             toolRef = fieldValue.toSourceCode().strip();
                             toolRefNode = fieldValue;
                         }
-                        case "approvalPolicy" -> {
+                        case APPROVAL_POLICY_FIELD -> {
                             checkReviewDefinition(fieldValue, context);
                             // Emitted verbatim into the generated registration, so any module
                             // prefix inside must travel with it.
                             collectQualifiedPrefixes(fieldValue, typeRefPrefixes);
                             approvalSource = fieldValue.toSourceCode().strip();
                         }
-                        case "requiresApproval", "userRoles" -> reportRemovedField(context, specificField,
+                        case REQUIRES_APPROVAL_FIELD, USER_ROLES_FIELD -> reportRemovedField(context, specificField,
                                 fieldName, "ToolDecl", "declare 'approvalPolicy'");
                         default -> {
                         }
@@ -505,7 +518,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 if (!(eventField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
                     continue;
                 }
-                if ("name".equals(mappingKeyName(sf))) {
+                if (NAME_FIELD.equals(mappingKeyName(sf))) {
                     ExpressionNode fieldValue = sf.valueExpr().get();
                     name = stringLiteralValue(fieldValue);
                     nameLocation = fieldValue.location();
@@ -596,7 +609,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 if (!(taskField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
                     continue;
                 }
-                if ("name".equals(mappingKeyName(sf))) {
+                if (NAME_FIELD.equals(mappingKeyName(sf))) {
                     ExpressionNode fieldValue = sf.valueExpr().get();
                     name = stringLiteralValue(fieldValue);
                     nameLocation = fieldValue.location();
@@ -637,7 +650,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             }
             ExpressionNode fieldValue = sf.valueExpr().get();
             switch (key) {
-                case "name" -> {
+                case NAME_FIELD -> {
                     // Array form only: already read by the caller.
                 }
                 // The typedescs travel separately (they are not json): folded into the meta
@@ -682,12 +695,12 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                         targetAgent = simpleName(fieldValue.toSourceCode().strip());
                         nameLocation = fieldValue.location();
                     }
-                    case "name" -> reportRemovedField(context, sf, key, "PeerDecl",
+                    case NAME_FIELD -> reportRemovedField(context, sf, key, "PeerDecl",
                             "the peer is named by its 'agent' variable");
-                    case "wait", "callbackChannel" -> reportRemovedField(context, sf, key, "PeerDecl",
+                    case WAIT_FIELD, CALLBACK_CHANNEL_FIELD -> reportRemovedField(context, sf, key, "PeerDecl",
                             "a one-way peer event returns at once and a duplex one waits; the reply "
                                     + "address travels with each delegation");
-                    case "requiresApproval", "userRoles" -> reportRemovedField(context, sf, key, "PeerDecl",
+                    case REQUIRES_APPROVAL_FIELD, USER_ROLES_FIELD -> reportRemovedField(context, sf, key, "PeerDecl",
                             "gate the peer's own activities and tools inside the peer");
                     default -> appendMetaField(meta, sf, fieldValue.toSourceCode().strip());
                 }
@@ -721,8 +734,9 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             String key = mappingKeyName(sf);
             boolean nil = sf.valueExpr().isPresent() && sf.valueExpr().get().kind() == SyntaxKind.NIL_LITERAL;
             // `roles` is the pre-unification spelling the deprecated array form still carries.
-            audience |= ("userRoles".equals(key) && !nil) || "users".equals(key) || "roles".equals(key);
-            retries |= "maxRetries".equals(key);
+            audience |= (USER_ROLES_FIELD.equals(key) && !nil) || USERS_FIELD.equals(key)
+                    || LEGACY_ROLES_FIELD.equals(key);
+            retries |= MAX_RETRIES_FIELD.equals(key);
         }
         if (!audience && !retries) {
             reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_164, value.location());

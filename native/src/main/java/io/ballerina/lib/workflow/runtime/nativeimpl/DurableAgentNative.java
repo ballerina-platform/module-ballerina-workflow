@@ -72,6 +72,11 @@ import java.util.concurrent.TimeUnit;
 public final class DurableAgentNative {
 
     private static final String AGENT_NAME_FIELD = "agentName";
+    private static final String SPEC_NAME_FIELD = "name";
+    private static final String SCHEMA_TYPE = "type";
+    private static final String SCHEMA_PROPERTIES = "properties";
+    private static final String SCHEMA_REQUIRED = "required";
+    private static final String SCHEMA_DESCRIPTION = "description";
     private static final String AGENT_BUSY_ERROR = "AgentBusyError";
     private static final String RUN_SPEC_RECORD = "DurableAgentRunSpec";
     private static final String ACTIVITY_SPEC_RECORD = "DurableAgentActivitySpec";
@@ -98,6 +103,7 @@ public final class DurableAgentNative {
         private final BTypedesc resultType;
         // The declared per-wait event timeout (a time:Duration value), or null: wait forever.
         private final Object eventTimeout;
+        private final long maxEventWaits;
         private final Map<String, ActivityDecl> activities = new LinkedHashMap<>();
         private final Map<String, ToolDeclEntry> tools = new LinkedHashMap<>();
         private final Map<String, EventDecl> events = new LinkedHashMap<>();
@@ -120,7 +126,7 @@ public final class DurableAgentNative {
         }
 
         AgentDecl(String agentName, BObject model, Object systemPrompt, long maxIter, BTypedesc inputType,
-                  BTypedesc resultType, Object eventTimeout) {
+                  BTypedesc resultType, Object eventTimeout, long maxEventWaits) {
             this.agentName = agentName;
             this.model = model;
             this.systemPrompt = systemPrompt;
@@ -128,10 +134,15 @@ public final class DurableAgentNative {
             this.inputType = inputType;
             this.resultType = resultType;
             this.eventTimeout = eventTimeout;
+            this.maxEventWaits = maxEventWaits;
         }
 
         public Object eventTimeout() {
             return eventTimeout;
+        }
+
+        public long maxEventWaits() {
+            return maxEventWaits;
         }
 
         public String agentName() {
@@ -250,13 +261,13 @@ public final class DurableAgentNative {
      */
     public static Object registerDurableAgentDecl(BString agentName, BObject model, Object systemPrompt,
                                                   long maxIter, Object inputType, Object resultType,
-                                                  Object eventTimeout) {
+                                                  Object eventTimeout, long maxEventWaits) {
         String name = agentName.getValue();
         AgentDecl existing = AGENT_DECL_REGISTRY.putIfAbsent(name,
                 new AgentDecl(name, model, systemPrompt, maxIter,
                         inputType instanceof BTypedesc typedesc ? typedesc : null,
                         resultType instanceof BTypedesc resultTypedesc ? resultTypedesc : null,
-                        eventTimeout));
+                        eventTimeout, maxEventWaits));
         if (existing != null) {
             return ErrorCreator.createError(StringUtils.fromString(
                     "A durable agent named '" + name + "' is already registered"));
@@ -514,7 +525,7 @@ public final class DurableAgentNative {
             BArray events = ValueCreator.createArrayValue(TypeCreator.createArrayType(eventProbe.getType()));
             for (EventDecl event : decl.events().values()) {
                 Map<String, Object> fields = new HashMap<>();
-                fields.put("name", StringUtils.fromString(event.name()));
+                fields.put(SPEC_NAME_FIELD, StringUtils.fromString(event.name()));
                 fields.put("request", event.request());
                 fields.put("response", event.response());
                 fields.put("cardinality", StringUtils.fromString(event.cardinality()));
@@ -527,7 +538,7 @@ public final class DurableAgentNative {
             BArray humanTasks = ValueCreator.createArrayValue(TypeCreator.createArrayType(taskProbe.getType()));
             for (Map.Entry<String, Object> task : decl.humanTasks().entrySet()) {
                 Map<String, Object> fields = new HashMap<>();
-                fields.put("name", StringUtils.fromString(task.getKey()));
+                fields.put(SPEC_NAME_FIELD, StringUtils.fromString(task.getKey()));
                 if (task.getValue() instanceof HumanTaskDeclEntry entry) {
                     fields.put("meta", entry.meta());
                     fields.put("resultType", entry.resultType());
@@ -546,7 +557,7 @@ public final class DurableAgentNative {
             BArray peers = ValueCreator.createArrayValue(TypeCreator.createArrayType(peerProbe.getType()));
             for (PeerDecl peer : decl.peers().values()) {
                 Map<String, Object> fields = new HashMap<>();
-                fields.put("name", StringUtils.fromString(peer.name()));
+                fields.put(SPEC_NAME_FIELD, StringUtils.fromString(peer.name()));
                 fields.put("targetAgent", StringUtils.fromString(peer.targetAgent()));
                 fields.put("meta", peer.meta());
                 peers.append(ValueCreator.createRecordValue(
@@ -559,6 +570,7 @@ public final class DurableAgentNative {
             if (decl.eventTimeout() != null) {
                 spec.put("eventTimeout", decl.eventTimeout());
             }
+            spec.put("maxEventWaits", decl.maxEventWaits());
             spec.put("model", decl.model());
             if (decl.resultType() != null) {
                 spec.put("resultType", decl.resultType());
@@ -603,9 +615,9 @@ public final class DurableAgentNative {
         }
         String workflowType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + agentName;
         Map<String, Object> runInput = new HashMap<>();
-        runInput.put("agentName", agentName);
-        runInput.put("query", query.getValue());
-        runInput.put("input", validatedInput == null ? null
+        runInput.put(RUN_AGENT_NAME, agentName);
+        runInput.put(RUN_QUERY, query.getValue());
+        runInput.put(RUN_INPUT, validatedInput == null ? null
                 : TypesUtil.convertBallerinaToJavaType(validatedInput));
 
         if (isInsideWorkflow()) {
@@ -663,11 +675,6 @@ public final class DurableAgentNative {
         }
     }
 
-    /** Field of the management-start envelope carrying the agent's user turn. */
-    private static final String START_QUERY_FIELD = "query";
-    /** Field of the management-start envelope carrying the structured payload. */
-    private static final String START_INPUT_FIELD = "input";
-
     /**
      * Builds the runner envelope for a management-API start of a durable agent from the posted
      * {@code {query, input}} envelope. Every agent is started the same way — the query is the
@@ -696,7 +703,7 @@ public final class DurableAgentNative {
         if (unknownField != null) {
             return unknownField;
         }
-        Object queryValue = envelope == null ? null : envelope.get(StringUtils.fromString(START_QUERY_FIELD));
+        Object queryValue = envelope == null ? null : envelope.get(StringUtils.fromString(RUN_QUERY));
         // The published schema lists 'query' as required, so a start that omits it is
         // malformed rather than a start on an empty turn — an agent that reasons from its
         // events alone still says so explicitly, with '"query": ""'.
@@ -715,7 +722,7 @@ public final class DurableAgentNative {
         // A required query means the envelope itself is present by this point, and the field
         // check above means a present 'input' belongs to an agent that declares a payload. A
         // nil value is how JSON spells "no payload", so it reads the same as omitting the field.
-        Object posted = envelope.get(StringUtils.fromString(START_INPUT_FIELD));
+        Object posted = envelope.get(StringUtils.fromString(RUN_INPUT));
         Object payload = null;
         if (posted != null) {
             Type describing = io.ballerina.runtime.api.utils.TypeUtils.getImpliedType(
@@ -731,9 +738,9 @@ public final class DurableAgentNative {
             payload = TypesUtil.convertBallerinaToJavaType(converted);
         }
         Map<String, Object> runInput = new HashMap<>();
-        runInput.put("agentName", agentName);
-        runInput.put("query", query);
-        runInput.put("input", payload);
+        runInput.put(RUN_AGENT_NAME, agentName);
+        runInput.put(RUN_QUERY, query);
+        runInput.put(RUN_INPUT, payload);
         return runInput;
     }
 
@@ -757,10 +764,10 @@ public final class DurableAgentNative {
         List<String> unknown = new ArrayList<>();
         for (BString key : envelope.getKeys()) {
             String field = key.getValue();
-            if (START_QUERY_FIELD.equals(field) || (takesPayload && START_INPUT_FIELD.equals(field))) {
+            if (RUN_QUERY.equals(field) || (takesPayload && RUN_INPUT.equals(field))) {
                 continue;
             }
-            if (START_INPUT_FIELD.equals(field)) {
+            if (RUN_INPUT.equals(field)) {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Durable agent '" + agentName + "' takes no input payload (inputType is ()): "
                                 + "start it with the 'query' field alone"));
@@ -793,27 +800,27 @@ public final class DurableAgentNative {
             return null;
         }
         Map<String, Object> query = new LinkedHashMap<>();
-        query.put("type", "string");
-        query.put("description", "The user turn the agent reasons over");
+        query.put(SCHEMA_TYPE, "string");
+        query.put(SCHEMA_DESCRIPTION, "The user turn the agent reasons over");
 
         Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put(START_QUERY_FIELD, query);
+        properties.put(RUN_QUERY, query);
         // Only the query is required. Omitting the payload runs the agent on the query alone,
         // exactly as `run(query)` does, so listing it as required would advertise a stricter
         // contract than either surface applies.
         List<Object> required = new ArrayList<>();
-        required.add(START_QUERY_FIELD);
+        required.add(RUN_QUERY);
 
         BTypedesc inputType = decl.inputType();
         if (inputType != null) {
             Type describing = io.ballerina.runtime.api.utils.TypeUtils.getImpliedType(
                     inputType.getDescribingType());
-            properties.put(START_INPUT_FIELD, TypesUtil.toJsonSchemaValue(describing));
+            properties.put(RUN_INPUT, TypesUtil.toJsonSchemaValue(describing));
         }
         Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("type", "object");
-        schema.put("properties", properties);
-        schema.put("required", required);
+        schema.put(SCHEMA_TYPE, "object");
+        schema.put(SCHEMA_PROPERTIES, properties);
+        schema.put(SCHEMA_REQUIRED, required);
         // The envelope is closed: the runtime rejects any other field, so the schema must not
         // leave callers thinking one would be carried.
         schema.put("additionalProperties", Boolean.FALSE);
@@ -1094,8 +1101,8 @@ public final class DurableAgentNative {
             }
             String token = "evt-" + Workflow.randomUUID();
             Map<String, Object> envelope = new HashMap<>();
-            envelope.put("token", token);
-            envelope.put("eventName", event);
+            envelope.put(WorkflowWorkerNative.EVENT_TOKEN_KEY, token);
+            envelope.put(WorkflowWorkerNative.EVENT_NAME_KEY, event);
             envelope.put("data", TypesUtil.convertBallerinaToJavaType(converted));
             envelope.put(RUN_REPLY_TO, Workflow.getInfo().getWorkflowId());
             Workflow.newUntypedExternalWorkflowStub(childId)
@@ -1143,8 +1150,8 @@ public final class DurableAgentNative {
         try {
             WorkflowWorkerNative.awaitWhileSuspended();
             Map<String, Object> envelope = new HashMap<>();
-            envelope.put("token", "evt-" + Workflow.randomUUID());
-            envelope.put("eventName", event);
+            envelope.put(WorkflowWorkerNative.EVENT_TOKEN_KEY, "evt-" + Workflow.randomUUID());
+            envelope.put(WorkflowWorkerNative.EVENT_NAME_KEY, event);
             envelope.put("data", TypesUtil.convertBallerinaToJavaType(message));
             envelope.put(RUN_REPLY_TO, Workflow.getInfo().getWorkflowId());
             Workflow.newUntypedExternalWorkflowStub(instance)
@@ -1221,10 +1228,10 @@ public final class DurableAgentNative {
                 WorkflowWorkerNative.awaitWhileSuspended();
                 String token = "evt-" + Workflow.randomUUID();
                 Map<String, Object> envelope = new HashMap<>();
-                envelope.put("token", token);
-                envelope.put("eventName", event);
+                envelope.put(WorkflowWorkerNative.EVENT_TOKEN_KEY, token);
+                envelope.put(WorkflowWorkerNative.EVENT_NAME_KEY, event);
                 envelope.put("data", javaData);
-                envelope.put("replyTo", Workflow.getInfo().getWorkflowId());
+                envelope.put(WorkflowWorkerNative.EVENT_REPLY_TO_KEY, Workflow.getInfo().getWorkflowId());
                 Workflow.newUntypedExternalWorkflowStub(instance)
                         .signal(WorkflowWorkerNative.AGENT_EVENT_SIGNAL_NAME, envelope);
                 return StringUtils.fromString(token);

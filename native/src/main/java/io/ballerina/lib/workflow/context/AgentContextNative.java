@@ -131,6 +131,17 @@ public final class AgentContextNative {
     private static final String EVENT_TOOL_PREFIX = "awaitEvent_";
     private static final String END_CONVERSATION_TOOL = "endConversation";
     // Argument names of the peer tools.
+    private static final String SCHEMA_TYPE = "type";
+    private static final String SCHEMA_PROPERTIES = "properties";
+    private static final String SCHEMA_REQUIRED = "required";
+    private static final String SCHEMA_DESCRIPTION = "description";
+    private static final String SCHEMA_ITEMS = "items";
+    private static final String TYPE_OBJECT = "object";
+    private static final String TYPE_STRING = "string";
+    private static final String TYPE_BOOLEAN = "boolean";
+    private static final String TYPE_INTEGER = "integer";
+    private static final String TYPE_ARRAY = "array";
+    private static final String RESULT_FIELD = "result";
     private static final String PEER_QUERY_ARG = "query";
     private static final String PEER_WAIT_ARG = "wait";
     private static final String PEER_REPLY_EVENT_ARG = "replyEvent";
@@ -529,24 +540,24 @@ public final class AgentContextNative {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             Map<String, Object> schema = new LinkedHashMap<>();
-            schema.put("type", "object");
+            schema.put(SCHEMA_TYPE, TYPE_OBJECT);
             Map<String, Object> properties = new LinkedHashMap<>();
             Map<String, Object> query = new LinkedHashMap<>();
-            query.put("type", "string");
-            query.put("description", "The task or question to delegate to the peer agent");
+            query.put(SCHEMA_TYPE, TYPE_STRING);
+            query.put(SCHEMA_DESCRIPTION, "The task or question to delegate to the peer agent");
             properties.put(PEER_QUERY_ARG, query);
             Map<String, Object> wait = new LinkedHashMap<>();
-            wait.put("type", "boolean");
-            wait.put("description", "Wait for the peer's final answer (default). When false the call returns a "
+            wait.put(SCHEMA_TYPE, TYPE_BOOLEAN);
+            wait.put(SCHEMA_DESCRIPTION, "Wait for the peer's final answer (default). When false the call returns a "
                     + "correlation id at once; fetch the answer later with " + COLLECT_PEER_TOOL + ".");
             properties.put(PEER_WAIT_ARG, wait);
             Map<String, Object> replyEvent = new LinkedHashMap<>();
-            replyEvent.put("type", "string");
-            replyEvent.put("description", "One of this agent's own events the peer may answer on, instead of "
+            replyEvent.put(SCHEMA_TYPE, TYPE_STRING);
+            replyEvent.put(SCHEMA_DESCRIPTION, "One of this agent's own events the peer may answer on, instead of "
                     + "returning its answer here.");
             properties.put(PEER_REPLY_EVENT_ARG, replyEvent);
-            schema.put("properties", properties);
-            schema.put("required", java.util.List.of(PEER_QUERY_ARG));
+            schema.put(SCHEMA_PROPERTIES, properties);
+            schema.put(SCHEMA_REQUIRED, java.util.List.of(PEER_QUERY_ARG));
             if (RESERVED_TOOL_NAMES.contains(name.getValue())) {
                 return reservedToolNameError(name.getValue());
             }
@@ -606,14 +617,14 @@ public final class AgentContextNative {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             info.replyTo = replyTo;
             Map<String, Object> schema = new LinkedHashMap<>();
-            schema.put("type", "object");
+            schema.put(SCHEMA_TYPE, TYPE_OBJECT);
             Map<String, Object> properties = new LinkedHashMap<>();
             Map<String, Object> message = new LinkedHashMap<>();
-            message.put("type", "string");
-            message.put("description", "The answer to send back to the agent that delegated this task");
+            message.put(SCHEMA_TYPE, TYPE_STRING);
+            message.put(SCHEMA_DESCRIPTION, "The answer to send back to the agent that delegated this task");
             properties.put(REPLY_MESSAGE_ARG, message);
-            schema.put("properties", properties);
-            schema.put("required", java.util.List.of(REPLY_MESSAGE_ARG));
+            schema.put(SCHEMA_PROPERTIES, properties);
+            schema.put(SCHEMA_REQUIRED, java.util.List.of(REPLY_MESSAGE_ARG));
             info.tools.add(new ToolMeta(REPLY_TO_CALLER_TOOL,
                     "Sends an answer to the agent that delegated this task. Use it when your caller asked to be "
                             + "answered on one of its events rather than through your final response.",
@@ -743,14 +754,14 @@ public final class AgentContextNative {
             // ones that narrow who may act on this creation: an approval ladder names the next
             // decider, a resubmission excludes the last one.
             Map<String, Object> schema = new LinkedHashMap<>();
-            schema.put("type", "object");
+            schema.put(SCHEMA_TYPE, TYPE_OBJECT);
             schema.put("additionalProperties", Boolean.TRUE);
             Map<String, Object> properties = new LinkedHashMap<>();
             properties.put(TaskKeys.USERS, namesProperty(
                     "User ids that may complete this task, in addition to the declared audience"));
             properties.put(TaskKeys.EXCLUDED_USERS, namesProperty(
                     "User ids that may not complete this task, such as someone who already decided"));
-            schema.put("properties", properties);
+            schema.put(SCHEMA_PROPERTIES, properties);
             if (RESERVED_TOOL_NAMES.contains(name)) {
                 return reservedToolNameError(name);
             }
@@ -785,8 +796,8 @@ public final class AgentContextNative {
         if (info.eventNames != null) {
             for (String eventName : info.eventNames) {
                 Map<String, Object> schema = new LinkedHashMap<>();
-                schema.put("type", "object");
-                schema.put("properties", new LinkedHashMap<>());
+                schema.put(SCHEMA_TYPE, TYPE_OBJECT);
+                schema.put(SCHEMA_PROPERTIES, new LinkedHashMap<>());
                 defs.add(toolDef(EVENT_TOOL_PREFIX + eventName,
                         "Suspends until the external data event '" + eventName + "' arrives and returns its data. "
                                 + "Use this when you need to wait for '" + eventName + "'.",
@@ -797,13 +808,13 @@ public final class AgentContextNative {
             // Under MULTI_EVENT the loop keeps the conversation open automatically after
             // each answer; ending is an explicit act via this tool (or the event timeout).
             Map<String, Object> schema = new LinkedHashMap<>();
-            schema.put("type", "object");
+            schema.put(SCHEMA_TYPE, TYPE_OBJECT);
             Map<String, Object> properties = new LinkedHashMap<>();
             Map<String, Object> farewell = new LinkedHashMap<>();
-            farewell.put("type", "string");
-            farewell.put("description", "Optional farewell message shown to the user");
+            farewell.put(SCHEMA_TYPE, TYPE_STRING);
+            farewell.put(SCHEMA_DESCRIPTION, "Optional farewell message shown to the user");
             properties.put("farewell", farewell);
-            schema.put("properties", properties);
+            schema.put(SCHEMA_PROPERTIES, properties);
             defs.add(toolDef(END_CONVERSATION_TOOL,
                     "Permanently ends this conversation. Call this ONLY when the user says goodbye or asks to "
                             + "end the conversation.",
@@ -812,14 +823,14 @@ public final class AgentContextNative {
         // An agent with peers can delegate without waiting; this fetches such a result later.
         if (info.tools.stream().anyMatch(tool -> tool.kind().startsWith(KIND_PEER_AGENT_PREFIX))) {
             Map<String, Object> collectSchema = new LinkedHashMap<>();
-            collectSchema.put("type", "object");
+            collectSchema.put(SCHEMA_TYPE, TYPE_OBJECT);
             Map<String, Object> collectProperties = new LinkedHashMap<>();
             Map<String, Object> correlationId = new LinkedHashMap<>();
-            correlationId.put("type", "string");
-            correlationId.put("description", "The correlation id a non-waiting peer delegation returned");
+            correlationId.put(SCHEMA_TYPE, TYPE_STRING);
+            correlationId.put(SCHEMA_DESCRIPTION, "The correlation id a non-waiting peer delegation returned");
             collectProperties.put(COLLECT_ID_ARG, correlationId);
-            collectSchema.put("properties", collectProperties);
-            collectSchema.put("required", java.util.List.of(COLLECT_ID_ARG));
+            collectSchema.put(SCHEMA_PROPERTIES, collectProperties);
+            collectSchema.put(SCHEMA_REQUIRED, java.util.List.of(COLLECT_ID_ARG));
             defs.add(toolDef(COLLECT_PEER_TOOL,
                     "Returns the final answer of a peer delegation started without waiting, or tells you it is "
                             + "still running. Call it when you need that answer.",
@@ -828,15 +839,15 @@ public final class AgentContextNative {
         // Durable sleep is always available: the timer is a workflow-side operation
         // (never an activity), so the agent survives restarts while sleeping.
         Map<String, Object> sleepSchema = new LinkedHashMap<>();
-        sleepSchema.put("type", "object");
+        sleepSchema.put(SCHEMA_TYPE, TYPE_OBJECT);
         Map<String, Object> sleepProperties = new LinkedHashMap<>();
         Map<String, Object> secondsProperty = new LinkedHashMap<>();
-        secondsProperty.put("type", "integer");
-        secondsProperty.put("description", "How long to sleep, in seconds");
+        secondsProperty.put(SCHEMA_TYPE, TYPE_INTEGER);
+        secondsProperty.put(SCHEMA_DESCRIPTION, "How long to sleep, in seconds");
         secondsProperty.put("minimum", 1);
         sleepProperties.put("seconds", secondsProperty);
-        sleepSchema.put("properties", sleepProperties);
-        sleepSchema.put("required", java.util.List.of("seconds"));
+        sleepSchema.put(SCHEMA_PROPERTIES, sleepProperties);
+        sleepSchema.put(SCHEMA_REQUIRED, java.util.List.of("seconds"));
         defs.add(toolDef(SLEEP_TOOL,
                 "Pauses this agent durably for the given number of seconds. The agent survives worker "
                         + "restarts while sleeping and resumes exactly where it left off; a wake signal "
@@ -845,8 +856,8 @@ public final class AgentContextNative {
         // Workflow-context reads a plain workflow gets from ctx: the agent loop answers these
         // deterministically on the workflow thread, so no activity (and no worker slot) is spent.
         Map<String, Object> emptySchema = new LinkedHashMap<>();
-        emptySchema.put("type", "object");
-        emptySchema.put("properties", new LinkedHashMap<>());
+        emptySchema.put(SCHEMA_TYPE, TYPE_OBJECT);
+        emptySchema.put(SCHEMA_PROPERTIES, new LinkedHashMap<>());
         defs.add(toolDef(WORKFLOW_ID_TOOL,
                 "Returns this run's workflow instance ID - the durable reference identifier of this "
                         + "agent execution. Use it whenever the user or an external system needs a "
@@ -869,7 +880,7 @@ public final class AgentContextNative {
                                                String kind, boolean gated) {
         Map<String, Object> def = new LinkedHashMap<>();
         def.put("name", name);
-        def.put("description", description);
+        def.put(SCHEMA_DESCRIPTION, description);
         def.put("parameters", schema);
         def.put("kind", kind);
         def.put(TOOL_DEF_GATED, gated);
@@ -986,7 +997,7 @@ public final class AgentContextNative {
         // environments may not support memo upserts; the in-JVM store remains the fallback.
         try {
             Map<String, Object> memo = new HashMap<>();
-            memo.put("workflowKind", "AGENT");
+            memo.put(TaskKeys.KIND, "AGENT");
             memo.put("agentResponse", response.getValue());
             Workflow.upsertMemo(memo);
         } catch (Exception e) {
@@ -1376,7 +1387,7 @@ public final class AgentContextNative {
         BMap<BString, Object> envelope = ValueCreator.createMapValue(
                 io.ballerina.runtime.api.creators.TypeCreator.createMapType(
                         io.ballerina.runtime.api.types.PredefinedTypes.TYPE_ANYDATA));
-        envelope.put(StringUtils.fromString("result"), result);
+        envelope.put(StringUtils.fromString(RESULT_FIELD), result);
         Map<String, Object> completion = WorkflowContextNative.lastHumanTaskCompletion(qualifiedName);
         if (completion != null) {
             envelope.put(StringUtils.fromString(TaskKeys.COMPLETED_BY), asText(completion.get(TaskKeys.COMPLETED_BY)));
@@ -1387,11 +1398,11 @@ public final class AgentContextNative {
 
     private static Map<String, Object> namesProperty(String description) {
         Map<String, Object> items = new LinkedHashMap<>();
-        items.put("type", "string");
+        items.put(SCHEMA_TYPE, TYPE_STRING);
         Map<String, Object> property = new LinkedHashMap<>();
-        property.put("type", "array");
-        property.put("items", items);
-        property.put("description", description);
+        property.put(SCHEMA_TYPE, TYPE_ARRAY);
+        property.put(SCHEMA_ITEMS, items);
+        property.put(SCHEMA_DESCRIPTION, description);
         return property;
     }
 
@@ -1609,7 +1620,7 @@ public final class AgentContextNative {
                 // honoured here as it is on a workflow's own callActivity — its roles used to
                 // be dropped on this path, so an agent tool's review was answerable by anyone.
                 Map<String, Object> decision = WorkflowContextNative.startReviewActivity(
-                        "ON_FAILURE", ActivityNaming.reviewTaskNameFor(workflowType, activityName),
+                        TaskKeys.TRIGGER_ON_FAILURE, ActivityNaming.reviewTaskNameFor(workflowType, activityName),
                         fullActivityName, currentArgs, errorMsg, reviewPolicy.userRoles(),
                         reviewPolicy.timeoutMillis(), stepId,
                         reviewPolicy.title(), reviewPolicy.description());
@@ -1621,7 +1632,7 @@ public final class AgentContextNative {
                     currentArgs = (Map<String, Object>) in;
                     continue;
                 }
-                Object feedback = decision.get("feedback");
+                Object feedback = decision.get(TaskKeys.FEEDBACK);
                 String msg = feedback instanceof String fb && !fb.isBlank()
                         ? errorMsg + " (reviewer: " + fb + ")" : errorMsg;
                 return ActivityOutcome.failed(ErrorCreator.createError(StringUtils.fromString(msg)), failure);
@@ -1686,7 +1697,7 @@ public final class AgentContextNative {
             return (Map<String, Object>) map;
         }
         Map<String, Object> fallback = new LinkedHashMap<>();
-        fallback.put("type", "object");
+        fallback.put(SCHEMA_TYPE, TYPE_OBJECT);
         return fallback;
     }
 }

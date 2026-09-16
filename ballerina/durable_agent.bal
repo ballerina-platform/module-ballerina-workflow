@@ -133,6 +133,9 @@ public type PeerDecl record {
 #                  Omit to wait indefinitely — a conversation stays open as long as it
 #                  takes, and `maxEventWaits` remains the runaway backstop. On a timeout
 #                  the model is told so it can wrap up gracefully
+# + maxEventWaits - Cap on event waits per run — chat turns and events together. The
+#                   backstop for a conversation nobody closes; raise it for a chat-like
+#                   agent whose turns are many and short
 # + inputType - The type of the structured JSON payload the agent's `run` (and the
 #               management API start) accepts alongside the query. `json` (the
 #               default) accepts any JSON payload unvalidated; a narrower type —
@@ -155,6 +158,7 @@ public type DurableAgentConfig record {|
     PeerDecl[] peers = [];
     int maxIter = 16;
     Duration? eventTimeout = ();
+    int maxEventWaits = MAX_EVENT_WAITS;
 |};
 
 # Returned by the non-blocking `getResult`/`getDataResult` reads when the agent
@@ -347,6 +351,7 @@ type DurableAgentRunSpec record {|
     json systemPrompt;
     int maxIter;
     json eventTimeout = ();
+    int maxEventWaits = MAX_EVENT_WAITS;
     ai:ModelProvider model;
     typedesc<anydata>? resultType = ();
     DurableAgentActivitySpec[] activities = [];

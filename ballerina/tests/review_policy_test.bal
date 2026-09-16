@@ -55,6 +55,14 @@ function workflowWithNobodyToReview(Context ctx, string orderId) returns string|
     return result;
 }
 
+// Retries before a review nobody can answer: the review was declared, so it is refused, not skipped.
+@Workflow
+function workflowWithRetriesThenNobody(Context ctx, string orderId) returns string|error {
+    string result = check ctx->callActivity(failingActivityForRetry, {"orderId": orderId},
+            retryPolicy = {maxRetries: 1, retryDelay: 0.1, userRoles: ()});
+    return result;
+}
+
 // The workflow learns who completed its task, so a later task can exclude or prefer them.
 @Workflow
 function workflowThatRemembersTheCompleter(Context ctx, string orderId) returns string|error {
@@ -132,6 +140,19 @@ function testReviewDefinitionMustNameAnAudience() returns error? {
     string workflowId = check run(workflowWithNobodyToReview, "ORD-NB-001");
     anydata|error result = getWorkflowResult(workflowId, 20);
     test:assertTrue(result is error, "a review nobody can answer is refused");
+    if result is error {
+        test:assertTrue(result.message().includes("must name 'userRoles' or 'users'"), result.message());
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testRetriesThenNobodyIsRefused() returns error? {
+    map<function> activities = {"failingActivityForRetry": failingActivityForRetry};
+    _ = check registerWorkflowForTest(workflowWithRetriesThenNobody, "workflowWithRetriesThenNobody", activities);
+
+    string workflowId = check run(workflowWithRetriesThenNobody, "ORD-RN-001");
+    anydata|error result = getWorkflowResult(workflowId, 20);
+    test:assertTrue(result is error, "a retry policy naming nobody to review is refused, not run as AutoRetry");
     if result is error {
         test:assertTrue(result.message().includes("must name 'userRoles' or 'users'"), result.message());
     }

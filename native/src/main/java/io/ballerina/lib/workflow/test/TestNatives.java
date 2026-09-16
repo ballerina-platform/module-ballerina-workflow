@@ -18,6 +18,7 @@
 
 package io.ballerina.lib.workflow.test;
 
+import io.ballerina.lib.workflow.TaskKeys;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.utils.StringUtils;
@@ -103,10 +104,10 @@ public final class TestNatives {
                         io.ballerina.runtime.api.utils.StringUtils.fromString("Workflow client not initialized"));
             }
             java.util.Map<String, Object> memo = new java.util.HashMap<>();
-            memo.put("workflowKind", "HUMAN_TASK");
-            memo.put("taskName", taskName.getValue());
-            memo.put("parentWorkflowId", "test-foreign-parent");
-            memo.put("userRoles", userRoles.getStringArray());
+            memo.put(TaskKeys.KIND, "HUMAN_TASK");
+            memo.put(TaskKeys.TASK_NAME, taskName.getValue());
+            memo.put(TaskKeys.PARENT_WORKFLOW_ID, "test-foreign-parent");
+            memo.put(TaskKeys.USER_ROLES, userRoles.getStringArray());
             io.temporal.client.WorkflowOptions options = io.temporal.client.WorkflowOptions.newBuilder()
                     .setWorkflowId(workflowId.getValue())
                     .setTaskQueue(taskQueue.getValue())

@@ -31,6 +31,7 @@ import java.util.List;
  * @param systemPromptSource source text of the {@code systemPrompt} config expression
  * @param maxIterSource      source text of the {@code maxIter} config expression, or null for default
  * @param eventTimeoutSource source text of the {@code eventTimeout} config expression, or null: no per-wait timeout
+ * @param maxEventWaitsSource source text of the {@code maxEventWaits} config expression, or null for default
  * @param inputTypeSource    source text of the {@code inputType} config expression, or null for default
  * @param resultTypeSource   source text of the {@code resultType} config expression, or null for default
  * @param typeRefPrefixes    module prefixes of qualified references inside the input/result type
@@ -48,6 +49,7 @@ public record DurableAgentDeclInfo(String agentName,
                                    String systemPromptSource,
                                    String maxIterSource,
                                    String eventTimeoutSource,
+                                   String maxEventWaitsSource,
                                    String inputTypeSource,
                                    String resultTypeSource,
                                    List<String> typeRefPrefixes,

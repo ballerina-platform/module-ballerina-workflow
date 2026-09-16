@@ -326,10 +326,10 @@ public final class WorkflowNative {
                 if (entry instanceof Map<?, ?> pendingEntry) {
                     BMap<BString, Object> record = ValueCreator.createRecordValue(
                             ModuleUtils.getModule(), "PendingAgentEvent");
-                    record.put(StringUtils.fromString("token"), StringUtils.fromString(
-                            String.valueOf(pendingEntry.get("token"))));
-                    record.put(StringUtils.fromString("eventName"), StringUtils.fromString(
-                            String.valueOf(pendingEntry.get("eventName"))));
+                    record.put(StringUtils.fromString(WorkflowWorkerNative.EVENT_TOKEN_KEY), StringUtils.fromString(
+                            String.valueOf(pendingEntry.get(WorkflowWorkerNative.EVENT_TOKEN_KEY))));
+                    record.put(StringUtils.fromString(WorkflowWorkerNative.EVENT_NAME_KEY), StringUtils.fromString(
+                            String.valueOf(pendingEntry.get(WorkflowWorkerNative.EVENT_NAME_KEY))));
                     result.append(record);
                 }
             }
@@ -514,7 +514,7 @@ public final class WorkflowNative {
 
             String status = (String) info.get("status");
             Object result = info.get("result");
-            String errorMessage = (String) info.get("errorMessage");
+            String errorMessage = (String) info.get(TaskKeys.ERROR_MESSAGE);
 
             if ("FAILED".equals(status) || "CANCELED".equals(status) || "TIMED_OUT".equals(status)) {
                 return ErrorCreator.createError(StringUtils.fromString(ERR_GET_RESULT + errorMessage));
@@ -688,9 +688,9 @@ public final class WorkflowNative {
         }
 
         if (errorMessage != null) {
-            record.put(StringUtils.fromString("errorMessage"), StringUtils.fromString(errorMessage));
+            record.put(StringUtils.fromString(TaskKeys.ERROR_MESSAGE), StringUtils.fromString(errorMessage));
         } else {
-            record.put(StringUtils.fromString("errorMessage"), null);
+            record.put(StringUtils.fromString(TaskKeys.ERROR_MESSAGE), null);
         }
 
         BArray activityInvocations;
@@ -734,7 +734,7 @@ public final class WorkflowNative {
                                               WorkflowExecutionInfo describedInfo) {
         try {
             io.temporal.api.common.v1.Payload kindPayload =
-                    describedInfo.getMemo().getFieldsMap().get("workflowKind");
+                    describedInfo.getMemo().getFieldsMap().get(TaskKeys.KIND);
             if (kindPayload != null && !kindPayload.getData().isEmpty()) {
                 String kind = client.getOptions().getDataConverter()
                         .fromPayload(kindPayload, String.class, String.class);
@@ -938,11 +938,11 @@ public final class WorkflowNative {
                                                                   String errorMessage, int attempt) {
         BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                       "ActivityInvocation");
-        record.put(StringUtils.fromString("activityName"), StringUtils.fromString(activityName));
+        record.put(StringUtils.fromString(TaskKeys.ACTIVITY_NAME), StringUtils.fromString(activityName));
         record.put(StringUtils.fromString("input"), ValueCreator.createArrayValue(new BString[0]));
         record.put(StringUtils.fromString("output"), null);
         record.put(StringUtils.fromString("status"), StringUtils.fromString(status));
-        record.put(StringUtils.fromString("errorMessage"),
+        record.put(StringUtils.fromString(TaskKeys.ERROR_MESSAGE),
                    errorMessage != null ? StringUtils.fromString(errorMessage) : null);
         record.put(StringUtils.fromString("attempt"), (long) attempt);
         return record;
@@ -999,11 +999,11 @@ public final class WorkflowNative {
             Map<String, Object> payload = new HashMap<>();
             payload.put("result", javaResult);
             // Embed audit fields so executeBuiltinHumanTask can store them in workflow history
-            payload.put("completedBy", userId instanceof BString bs ? bs.getValue() : "unknown");
-            payload.put("completedAt", java.time.Instant.now().toString());
+            payload.put(TaskKeys.COMPLETED_BY, userId instanceof BString bs ? bs.getValue() : "unknown");
+            payload.put(TaskKeys.COMPLETED_AT, java.time.Instant.now().toString());
 
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(taskWorkflowId.getValue(),
-                                                                                   "taskCompletion", payload);
+                    WorkflowWorkerNative.TASK_COMPLETION_SIGNAL_NAME, payload);
             if (!delivered) {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Failed to complete human task: task '" + taskWorkflowId.getValue() +
@@ -1053,11 +1053,11 @@ public final class WorkflowNative {
             if (details != null) {
                 payload.put("details", TypesUtil.convertBallerinaToJavaType(details));
             }
-            payload.put("completedBy", userId instanceof BString bs ? bs.getValue() : "unknown");
-            payload.put("completedAt", java.time.Instant.now().toString());
+            payload.put(TaskKeys.COMPLETED_BY, userId instanceof BString bs ? bs.getValue() : "unknown");
+            payload.put(TaskKeys.COMPLETED_AT, java.time.Instant.now().toString());
 
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(taskWorkflowId.getValue(),
-                                                                                   "taskCompletion", payload);
+                    WorkflowWorkerNative.TASK_COMPLETION_SIGNAL_NAME, payload);
             if (!delivered) {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Failed to fail human task: task '" + taskWorkflowId.getValue() +
@@ -1129,7 +1129,7 @@ public final class WorkflowNative {
             // 1. workflowKind check — always enforced
             String workflowKind = null;
             try {
-                io.temporal.api.common.v1.Payload kindPl = memoFields.get("workflowKind");
+                io.temporal.api.common.v1.Payload kindPl = memoFields.get(TaskKeys.KIND);
                 if (kindPl != null) {
                     workflowKind = dc.fromPayload(kindPl, String.class, String.class);
                 }
@@ -1166,8 +1166,8 @@ public final class WorkflowNative {
                 assignment = new TaskAssignment(List.of(), List.of(), List.of(), List.of());
             }
             // The decision's audit entry names the task, its parent, and who was allowed to decide it.
-            TaskMemo memo = new TaskMemo(decodeMemoText(dc, memoFields, "taskName"),
-                                         decodeMemoText(dc, memoFields, "parentWorkflowId"),
+            TaskMemo memo = new TaskMemo(decodeMemoText(dc, memoFields, TaskKeys.TASK_NAME),
+                                         decodeMemoText(dc, memoFields, TaskKeys.PARENT_WORKFLOW_ID),
                                          assignment.userRoles().stream().sorted().toList(),
                                          decodeMemoValue(dc, memoFields, TaskKeys.TASK_INPUT));
             String denial = assignment.denial(TaskAssignment.roles(callerRolesArray),
@@ -1220,7 +1220,7 @@ public final class WorkflowNative {
                                                     Object result) {
         String qualifiedTaskName;
         try {
-            io.temporal.api.common.v1.Payload namePl = memoFields.get("taskName");
+            io.temporal.api.common.v1.Payload namePl = memoFields.get(TaskKeys.TASK_NAME);
             if (namePl == null) {
                 return null;
             }

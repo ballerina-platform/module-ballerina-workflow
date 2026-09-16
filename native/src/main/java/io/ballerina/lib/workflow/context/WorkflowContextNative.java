@@ -140,7 +140,7 @@ public final class WorkflowContextNative {
             // RetryBeforeReview names both. A mapping naming neither is a mistake, not AutoRetry.
             ReviewDeclaration review = readHumanReview(retryPolicy);
             boolean retries = retriesBeforeReview(retryPolicy);
-            if (review == null && retryPolicy instanceof BMap<?, ?> && !retries) {
+            if (review == null && retryPolicy instanceof BMap<?, ?> policy && (!retries || declaresAudience(policy))) {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "retryPolicy of '" + simpleActivityName + "' must name 'userRoles' or 'users'"));
             }
@@ -273,6 +273,12 @@ public final class WorkflowContextNative {
     }
 
     // RetryBeforeReview carries AutoRetry's fields beside the review's; maxRetries always has a value.
+    // A mapping that spells out userRoles or users declared a review; naming nobody there is not AutoRetry.
+    private static boolean declaresAudience(BMap<?, ?> policy) {
+        return policy.containsKey(StringUtils.fromString(TaskKeys.USER_ROLES))
+                || policy.containsKey(StringUtils.fromString(TaskKeys.USERS));
+    }
+
     static boolean retriesBeforeReview(Object retryPolicy) {
         return retryPolicy instanceof BMap<?, ?> policy
                 && policy.containsKey(StringUtils.fromString(MAX_RETRIES_FIELD));
@@ -402,7 +408,7 @@ public final class WorkflowContextNative {
         String taskName = String.valueOf(decision.getOrDefault(TaskKeys.TASK_NAME, activityName));
         String taskId = String.valueOf(decision.getOrDefault(TaskKeys.TASK_ID, "unknown"));
         BMap<BString, Object> detail = io.ballerina.runtime.api.creators.ValueCreator.createMapValue();
-        detail.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+        detail.put(StringUtils.fromString(TaskKeys.TASK_NAME), StringUtils.fromString(taskName));
         detail.put(StringUtils.fromString("taskWorkflowId"), StringUtils.fromString(taskId));
         detail.put(StringUtils.fromString(TaskKeys.ACTIVITY_NAME), StringUtils.fromString(activityName));
         detail.put(StringUtils.fromString(TaskKeys.TRIGGER), StringUtils.fromString(trigger));
@@ -687,7 +693,7 @@ public final class WorkflowContextNative {
         io.temporal.common.RetryOptions.Builder builder = io.temporal.common.RetryOptions.newBuilder();
 
         // maxRetries → maximumAttempts (maxRetries=0 means 1 total attempt, no retries)
-        Object maxRetriesVal = autoRetryMap.get(StringUtils.fromString("maxRetries"));
+        Object maxRetriesVal = autoRetryMap.get(StringUtils.fromString(MAX_RETRIES_FIELD));
         int maxRetries = 3; // AutoRetry default
         if (maxRetriesVal instanceof Long longVal) {
             maxRetries = Math.toIntExact(longVal);
@@ -1271,10 +1277,10 @@ public final class WorkflowContextNative {
         String timedOutAt = parts.length > 3 ? parts[3] : "unknown";
 
         BMap<BString, Object> detail = io.ballerina.runtime.api.creators.ValueCreator.createMapValue();
-        detail.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+        detail.put(StringUtils.fromString(TaskKeys.TASK_NAME), StringUtils.fromString(taskName));
         detail.put(StringUtils.fromString("taskWorkflowId"), StringUtils.fromString(taskWorkflowId));
-        detail.put(StringUtils.fromString("timedOutAfter"), StringUtils.fromString(timedOutAfter));
-        detail.put(StringUtils.fromString("timedOutAt"), StringUtils.fromString(timedOutAt));
+        detail.put(StringUtils.fromString(TaskKeys.TIMED_OUT_AFTER), StringUtils.fromString(timedOutAfter));
+        detail.put(StringUtils.fromString(TaskKeys.TIMED_OUT_AT), StringUtils.fromString(timedOutAt));
 
         try {
             return ErrorCreator.createError(ModuleUtils.getModule(), "HumanTaskTimeoutError", StringUtils.fromString(
@@ -1311,7 +1317,7 @@ public final class WorkflowContextNative {
         }
 
         BMap<BString, Object> detail = io.ballerina.runtime.api.creators.ValueCreator.createMapValue();
-        detail.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+        detail.put(StringUtils.fromString(TaskKeys.TASK_NAME), StringUtils.fromString(taskName));
         detail.put(StringUtils.fromString("taskWorkflowId"), StringUtils.fromString(taskWorkflowId));
         detail.put(StringUtils.fromString("reason"), StringUtils.fromString(reason == null ? "" : reason));
         detail.put(StringUtils.fromString("details"),
@@ -1671,9 +1677,9 @@ public final class WorkflowContextNative {
         String childType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + functionName;
 
         Map<String, Object> memo = new HashMap<>();
-        memo.put("workflowKind", CHILD_WORKFLOW_KIND);
-        memo.put("parentWorkflowId", Workflow.getInfo().getWorkflowId());
-        memo.put("createdAt", Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString());
+        memo.put(TaskKeys.KIND, CHILD_WORKFLOW_KIND);
+        memo.put(TaskKeys.PARENT_WORKFLOW_ID, Workflow.getInfo().getWorkflowId());
+        memo.put(TaskKeys.CREATED_AT, Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString());
         if (stepId != null) {
             // Which call started this child, so two starts of the same workflow are distinguishable
             // in the parent's diagram.

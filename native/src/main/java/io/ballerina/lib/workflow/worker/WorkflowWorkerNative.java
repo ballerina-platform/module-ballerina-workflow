@@ -160,6 +160,10 @@ public final class WorkflowWorkerNative {
      * to the workflow that sent it. Envelope: {token, response} or {token, error}.
      */
     public static final String AGENT_EVENT_REPLY_SIGNAL_NAME = "__agent_event_reply";
+    // Keys of the envelope an agent event travels in, and of the pending-event rows a query reports.
+    public static final String EVENT_TOKEN_KEY = "token";
+    public static final String EVENT_NAME_KEY = "eventName";
+    public static final String EVENT_REPLY_TO_KEY = "replyTo";
     // Signals the task decision paths send to a task child; not data events, though the names carry no prefix.
     public static final String TASK_COMPLETION_SIGNAL_NAME = "taskCompletion";
     public static final String TASK_DECISION_SIGNAL_NAME = "taskDecision";
@@ -2050,7 +2054,7 @@ public final class WorkflowWorkerNative {
                             try {
                                 Object envelope = encodedArgs.get(0, Object.class);
                                 if (envelope instanceof Map<?, ?> replyMap) {
-                                    Object token = replyMap.get("token");
+                                    Object token = replyMap.get(EVENT_TOKEN_KEY);
                                     if (token != null) {
                                         io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative
                                                 .recordAgentEventReply(String.valueOf(token), replyMap);
@@ -2084,13 +2088,13 @@ public final class WorkflowWorkerNative {
                             if (!(envelope instanceof Map<?, ?> eventMap)) {
                                 return;
                             }
-                            String token = String.valueOf(eventMap.get("token"));
-                            String eventName = String.valueOf(eventMap.get("eventName"));
-                            String replyTo = String.valueOf(eventMap.get("replyTo"));
+                            String token = String.valueOf(eventMap.get(EVENT_TOKEN_KEY));
+                            String eventName = String.valueOf(eventMap.get(EVENT_NAME_KEY));
+                            String replyTo = String.valueOf(eventMap.get(EVENT_REPLY_TO_KEY));
                             Object payload = eventMap.get("data");
                             io.temporal.workflow.Async.procedure(() -> {
                                 Map<String, Object> reply = new HashMap<>();
-                                reply.put("token", token);
+                                reply.put(EVENT_TOKEN_KEY, token);
                                 AgentContextNative.AgentContextInfo info = this.agentContextInfo;
                                 if (info != null && info.isClosing()) {
                                     String failure = info.closingFailure();
@@ -2283,7 +2287,7 @@ public final class WorkflowWorkerNative {
                         if (PENDING_AGENT_EVENTS_QUERY.equals(queryName)) {
                             List<Map<String, String>> pending = new ArrayList<>();
                             this.pendingAgentDataEvents.forEach((id, event) ->
-                                    pending.add(Map.of("token", id, "eventName", event)));
+                                    pending.add(Map.of(EVENT_TOKEN_KEY, id, EVENT_NAME_KEY, event)));
                             return pending;
                         }
 
@@ -2762,9 +2766,9 @@ public final class WorkflowWorkerNative {
                         "Invalid humantask input: " + e.getMessage(), "HUMANTASK_INPUT_ERROR");
             }
 
-            String taskName = String.valueOf(input.getOrDefault("taskName", "unknown"));
+            String taskName = String.valueOf(input.getOrDefault(TaskKeys.TASK_NAME, "unknown"));
             // timeoutMillis: null or absent → wait indefinitely
-            Object timeoutRaw = input.get("timeoutMillis");
+            Object timeoutRaw = input.get(TaskKeys.TIMEOUT_MILLIS);
             Long timeoutMillis = (timeoutRaw instanceof Number n) ? n.longValue() : null;
             String thisWorkflowId = Workflow.getInfo().getWorkflowId();
 
@@ -2773,7 +2777,7 @@ public final class WorkflowWorkerNative {
             // in signalWrapper, so getSignalFuture("taskCompletion") is already
             // replay-safe — it returns a completed promise during history replay.
             io.temporal.workflow.CompletablePromise<SignalAwaitWrapper.SignalData> signalFuture =
-                    signalWrapper.getSignalFuture("taskCompletion");
+                    signalWrapper.getSignalFuture(TASK_COMPLETION_SIGNAL_NAME);
 
             boolean signalArrived;
             if (timeoutMillis != null) {
@@ -2800,7 +2804,7 @@ public final class WorkflowWorkerNative {
                 // reason `kind` and `userRoles` ride the memo. Written before the rejection
                 // check so a rejected task also says who rejected it.
                 if (signalData.data() instanceof Map<?, ?> actorMap
-                        && actorMap.get("completedBy") instanceof String actor && !actor.isBlank()) {
+                        && actorMap.get(TaskKeys.COMPLETED_BY) instanceof String actor && !actor.isBlank()) {
                     Map<String, Object> completion = new HashMap<>();
                     completion.put(COMPLETED_BY_MEMO_KEY, actor);
                     completion.put(COMPLETED_AT_MEMO_KEY, java.time.Instant
@@ -2825,7 +2829,7 @@ public final class WorkflowWorkerNative {
                     Map<String, Object> rejection = new HashMap<>();
                     rejection.put("reason", reasonText);
                     rejection.put("details", payloadMap.get("details"));
-                    rejection.put("rejectedBy", payloadMap.get("completedBy"));
+                    rejection.put("rejectedBy", payloadMap.get(TaskKeys.COMPLETED_BY));
                     throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
                             reasonText, HUMANTASK_REJECTED_FAILURE_TYPE, rejection);
                 }
@@ -2872,7 +2876,7 @@ public final class WorkflowWorkerNative {
             String thisWorkflowId = Workflow.getInfo().getWorkflowId();
 
             io.temporal.workflow.CompletablePromise<SignalAwaitWrapper.SignalData> signalFuture =
-                    signalWrapper.getSignalFuture("taskDecision");
+                    signalWrapper.getSignalFuture(TASK_DECISION_SIGNAL_NAME);
             boolean decided;
             if (timeoutMillis != null) {
                 decided = Workflow.await(java.time.Duration.ofMillis(timeoutMillis), signalFuture::isCompleted);
@@ -3230,7 +3234,7 @@ public final class WorkflowWorkerNative {
             info.put("workflowType", workflowType);
             info.put("status", status);
             info.put("result", result);
-            info.put("errorMessage", errorMessage);
+            info.put(TaskKeys.ERROR_MESSAGE, errorMessage);
             return info;
         }
 
@@ -3305,7 +3309,7 @@ public final class WorkflowWorkerNative {
             // the bare ids new executions issue.
             try {
                 io.temporal.api.common.v1.Payload kindPayload =
-                        execInfo.getMemo().getFieldsMap().get("workflowKind");
+                        execInfo.getMemo().getFieldsMap().get(TaskKeys.KIND);
                 if (kindPayload != null && !kindPayload.getData().isEmpty()) {
                     String kind = client.getOptions().getDataConverter()
                             .fromPayload(kindPayload, String.class, String.class);

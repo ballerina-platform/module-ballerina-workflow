@@ -633,22 +633,22 @@ public final class ManagementNative {
 
             // Only human task workflows may be served here — a review activity or user workflow
             // ID must not leak through this endpoint (ballerina-library#8894).
-            String workflowKind = decodeMemoString(dc, memoFields, "workflowKind", null);
+            String workflowKind = decodeMemoString(dc, memoFields, TaskKeys.KIND, null);
             if (!"HUMAN_TASK".equals(workflowKind)) {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Human task not found: '" + taskIdStr + "' is not a human task workflow"));
             }
 
-            String taskName = decodeMemoString(dc, memoFields, "taskName", "");
-            String parentId = decodeMemoString(dc, memoFields, "parentWorkflowId", "");
-            String title = decodeMemoString(dc, memoFields, "title", taskName);
-            String description = decodeMemoString(dc, memoFields, "description", "");
-            String createdAt = decodeMemoString(dc, memoFields, "createdAt", "");
-            String formSchema = decodeMemoString(dc, memoFields, "formSchema", null);
+            String taskName = decodeMemoString(dc, memoFields, TaskKeys.TASK_NAME, "");
+            String parentId = decodeMemoString(dc, memoFields, TaskKeys.PARENT_WORKFLOW_ID, "");
+            String title = decodeMemoString(dc, memoFields, TaskKeys.TITLE, taskName);
+            String description = decodeMemoString(dc, memoFields, TaskKeys.DESCRIPTION, "");
+            String createdAt = decodeMemoString(dc, memoFields, TaskKeys.CREATED_AT, "");
+            String formSchema = decodeMemoString(dc, memoFields, TaskKeys.FORM_SCHEMA, null);
 
             String[] userRolesArr = new String[0];
             try {
-                Payload rolesPl = memoFields.get("userRoles");
+                Payload rolesPl = memoFields.get(TaskKeys.USER_ROLES);
                 if (rolesPl != null) {
                     userRolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
                 }
@@ -658,7 +658,7 @@ public final class ManagementNative {
 
             Object taskInputRaw = null;
             try {
-                Payload taskInputPl = memoFields.get("taskInput");
+                Payload taskInputPl = memoFields.get(TaskKeys.TASK_INPUT);
                 if (taskInputPl != null) {
                     taskInputRaw = dc.fromPayload(taskInputPl, Object.class, Object.class);
                 }
@@ -678,44 +678,47 @@ public final class ManagementNative {
 
             BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                           "HumanTaskInfo");
-            record.put(StringUtils.fromString("taskId"), StringUtils.fromString(taskIdStr));
-            record.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+            record.put(StringUtils.fromString(TaskKeys.TASK_ID), StringUtils.fromString(taskIdStr));
+            record.put(StringUtils.fromString(TaskKeys.TASK_NAME), StringUtils.fromString(taskName));
             record.put(StringUtils.fromString("namespace"),
                        StringUtils.fromString(client.getOptions().getNamespace()));
             record.put(StringUtils.fromString("taskQueue"),
                        StringUtils.fromString(response.getExecutionConfig().getTaskQueue().getName()));
-            record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentId));
+            record.put(StringUtils.fromString(TaskKeys.PARENT_WORKFLOW_ID), StringUtils.fromString(parentId));
             record.put(StringUtils.fromString("status"), StringUtils.fromString(statusStr));
             record.put(StringUtils.fromString("startTime"), StringUtils.fromString(startTime));
             record.put(StringUtils.fromString("closeTime"),
                        closeTime != null ? StringUtils.fromString(closeTime) : null);
-            record.put(StringUtils.fromString("title"), StringUtils.fromString(title));
-            record.put(StringUtils.fromString("description"), StringUtils.fromString(description));
+            record.put(StringUtils.fromString(TaskKeys.TITLE), StringUtils.fromString(title));
+            record.put(StringUtils.fromString(TaskKeys.DESCRIPTION), StringUtils.fromString(description));
 
             BArray roles = ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING));
             for (String role : userRolesArr) {
                 roles.append(StringUtils.fromString(role));
             }
-            record.put(StringUtils.fromString("userRoles"), roles);
+            record.put(StringUtils.fromString(TaskKeys.USER_ROLES), roles);
 
             Object bTaskInput = taskInputRaw != null ? TypesUtil.convertJavaToBallerinaType(taskInputRaw) : null;
-            record.put(StringUtils.fromString("taskInput"), bTaskInput);
-            record.put(StringUtils.fromString("createdAt"), StringUtils.fromString(createdAt));
-            record.put(StringUtils.fromString("formSchema"),
+            record.put(StringUtils.fromString(TaskKeys.TASK_INPUT), bTaskInput);
+            record.put(StringUtils.fromString(TaskKeys.CREATED_AT), StringUtils.fromString(createdAt));
+            record.put(StringUtils.fromString(TaskKeys.FORM_SCHEMA),
                        formSchema != null ? StringUtils.fromString(formSchema) : null);
 
             // The decider rides the memo once the child records it; history covers older tasks.
             String completedBy = decodeMemoString(dc, memoFields, WorkflowWorkerNative.COMPLETED_BY_MEMO_KEY, null);
             String completedAt = decodeMemoString(dc, memoFields, WorkflowWorkerNative.COMPLETED_AT_MEMO_KEY, null);
             if (completedBy == null) {
-                completedBy = readSignalField(client, taskIdStr, "taskCompletion", "completedBy");
-                completedAt = readSignalField(client, taskIdStr, "taskCompletion", "completedAt");
+                completedBy = readSignalField(client, taskIdStr, WorkflowWorkerNative.TASK_COMPLETION_SIGNAL_NAME,
+                        TaskKeys.COMPLETED_BY);
+                completedAt = readSignalField(client, taskIdStr, WorkflowWorkerNative.TASK_COMPLETION_SIGNAL_NAME,
+                        TaskKeys.COMPLETED_AT);
             }
-            Object resultRaw = readSignalPayloadField(client, taskIdStr, "taskCompletion", "result");
+            Object resultRaw = readSignalPayloadField(client, taskIdStr,
+                    WorkflowWorkerNative.TASK_COMPLETION_SIGNAL_NAME, "result");
 
-            record.put(StringUtils.fromString("completedBy"),
+            record.put(StringUtils.fromString(TaskKeys.COMPLETED_BY),
                        completedBy != null ? StringUtils.fromString(completedBy) : null);
-            record.put(StringUtils.fromString("completedAt"),
+            record.put(StringUtils.fromString(TaskKeys.COMPLETED_AT),
                        completedAt != null ? StringUtils.fromString(completedAt) : null);
             record.put(StringUtils.fromString("result"),
                        resultRaw != null ? TypesUtil.convertJavaToBallerinaType(resultRaw) : null);
@@ -773,7 +776,8 @@ public final class ManagementNative {
                         String childId = attrs.getWorkflowId();
                         if (isHumanTaskType(attrs.getWorkflowType().getName())) {
                             // Task name is stored in memo (not in the instance ID anymore)
-                            String taskName = decodeMemoString(dc, attrs.getMemo().getFieldsMap(), "taskName", childId);
+                            String taskName = decodeMemoString(dc, attrs.getMemo().getFieldsMap(),
+                                    TaskKeys.TASK_NAME, childId);
                             childIdToTaskName.put(childId, taskName);
                             byTaskName.computeIfAbsent(taskName, k -> new ArrayList<>()).add(childId);
                         }
@@ -804,7 +808,7 @@ public final class ManagementNative {
             for (Map.Entry<String, List<String>> entry : byTaskName.entrySet()) {
                 BMap<BString, Object> group = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                              "HumanTaskGroup");
-                group.put(StringUtils.fromString("taskName"), StringUtils.fromString(entry.getKey()));
+                group.put(StringUtils.fromString(TaskKeys.TASK_NAME), StringUtils.fromString(entry.getKey()));
 
                 BArray ids = ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING));
                 for (String id : entry.getValue()) {
@@ -857,12 +861,12 @@ public final class ManagementNative {
         Map<String, Payload> memoFields = wfInfo.getMemo().getFieldsMap();
         DataConverter dc = client.getOptions().getDataConverter();
 
-        String taskName = decodeMemoString(dc, memoFields, "taskName", "");
+        String taskName = decodeMemoString(dc, memoFields, TaskKeys.TASK_NAME, "");
         // A work queue reads titles, not type names — the title is optional at creation, so it
         // falls back to the task name rather than arriving empty.
-        String title = decodeMemoString(dc, memoFields, "title", taskName);
-        String parentId = decodeMemoString(dc, memoFields, "parentWorkflowId", "");
-        String parentWorkflowType = decodeMemoString(dc, memoFields, "parentWorkflowType", null);
+        String title = decodeMemoString(dc, memoFields, TaskKeys.TITLE, taskName);
+        String parentId = decodeMemoString(dc, memoFields, TaskKeys.PARENT_WORKFLOW_ID, "");
+        String parentWorkflowType = decodeMemoString(dc, memoFields, TaskKeys.PARENT_WORKFLOW_TYPE, null);
         // The task workflow upserts these when it is decided, so a listing can say who acted
         // without reading each task's history to find the completion signal. Absent for tasks
         // still pending, and for tasks decided before the memo carried it.
@@ -873,7 +877,7 @@ public final class ManagementNative {
 
         String[] userRolesArr = new String[0];
         try {
-            Payload rolesPl = memoFields.get("userRoles");
+            Payload rolesPl = memoFields.get(TaskKeys.USER_ROLES);
             if (rolesPl != null) {
                 userRolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
             }
@@ -883,20 +887,20 @@ public final class ManagementNative {
 
         BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                       "HumanTaskSummary");
-        record.put(StringUtils.fromString("taskId"), StringUtils.fromString(wfId));
-        record.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
-        record.put(StringUtils.fromString("title"), StringUtils.fromString(title));
-        record.put(StringUtils.fromString("completedBy"),
+        record.put(StringUtils.fromString(TaskKeys.TASK_ID), StringUtils.fromString(wfId));
+        record.put(StringUtils.fromString(TaskKeys.TASK_NAME), StringUtils.fromString(taskName));
+        record.put(StringUtils.fromString(TaskKeys.TITLE), StringUtils.fromString(title));
+        record.put(StringUtils.fromString(TaskKeys.COMPLETED_BY),
                    completedBy != null ? StringUtils.fromString(completedBy) : null);
-        record.put(StringUtils.fromString("completedAt"),
+        record.put(StringUtils.fromString(TaskKeys.COMPLETED_AT),
                    completedAt != null ? StringUtils.fromString(completedAt) : null);
         // Identify the owning integration: callers in a shared namespace (project) route
         // follow-up operations to the integration serving this task queue.
         record.put(StringUtils.fromString("namespace"),
                    StringUtils.fromString(client.getOptions().getNamespace()));
         record.put(StringUtils.fromString("taskQueue"), StringUtils.fromString(wfInfo.getTaskQueue()));
-        record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentId));
-        record.put(StringUtils.fromString("parentWorkflowType"),
+        record.put(StringUtils.fromString(TaskKeys.PARENT_WORKFLOW_ID), StringUtils.fromString(parentId));
+        record.put(StringUtils.fromString(TaskKeys.PARENT_WORKFLOW_TYPE),
                    parentWorkflowType != null ? StringUtils.fromString(parentWorkflowType) : null);
         record.put(StringUtils.fromString("status"),
                    StringUtils.fromString(taskStatusFromTemporal(wfInfo.getStatus())));
@@ -917,7 +921,7 @@ public final class ManagementNative {
         for (String role : userRolesArr) {
             roles.append(StringUtils.fromString(role));
         }
-        record.put(StringUtils.fromString("userRoles"), roles);
+        record.put(StringUtils.fromString(TaskKeys.USER_ROLES), roles);
         // canComplete defaults to false; the Ballerina service layer recomputes it per caller
         record.put(StringUtils.fromString("canComplete"), false);
         return record;
@@ -1134,16 +1138,16 @@ public final class ManagementNative {
             if (inputVal != null) {
                 javaDecision.put("input", TypesUtil.convertBallerinaToJavaType(inputVal));
             }
-            Object feedbackVal = decision.get(StringUtils.fromString("feedback"));
+            Object feedbackVal = decision.get(StringUtils.fromString(TaskKeys.FEEDBACK));
             if (feedbackVal instanceof BString fb) {
-                javaDecision.put("feedback", fb.getValue());
+                javaDecision.put(TaskKeys.FEEDBACK, fb.getValue());
             }
             // Embed audit fields so the history scan in getReviewActivityInfo can retrieve them
-            javaDecision.put("decidedBy", userId instanceof BString bs ? bs.getValue() : "unknown");
-            javaDecision.put("decidedAt", Instant.now().toString());
+            javaDecision.put(TaskKeys.DECIDED_BY, userId instanceof BString bs ? bs.getValue() : "unknown");
+            javaDecision.put(TaskKeys.DECIDED_AT, Instant.now().toString());
 
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(taskWorkflowId.getValue(),
-                                                                                   "taskDecision", javaDecision);
+                    WorkflowWorkerNative.TASK_DECISION_SIGNAL_NAME, javaDecision);
 
             if (!delivered) {
                 return ErrorCreator.createError(StringUtils.fromString(
@@ -1205,7 +1209,7 @@ public final class ManagementNative {
             DataConverter dc = client.getOptions().getDataConverter();
 
             // workflowKind check
-            String workflowKind = decodeMemoString(dc, memoFields, "workflowKind", null);
+            String workflowKind = decodeMemoString(dc, memoFields, TaskKeys.KIND, null);
             if (!isReviewActivityKind(workflowKind)) {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Invalid task: '" + taskWorkflowId + "' is not a review activity workflow (workflowKind=" +
@@ -1232,8 +1236,8 @@ public final class ManagementNative {
             } catch (Exception e) {
                 taskInput = null; // the audit entry goes without the reviewed arguments
             }
-            TaskMemo memo = new TaskMemo(decodeMemoString(dc, memoFields, "taskName", null),
-                                         decodeMemoString(dc, memoFields, "parentWorkflowId", null),
+            TaskMemo memo = new TaskMemo(decodeMemoString(dc, memoFields, TaskKeys.TASK_NAME, null),
+                                         decodeMemoString(dc, memoFields, TaskKeys.PARENT_WORKFLOW_ID, null),
                                          assignment.userRoles().stream().sorted().toList(), taskInput);
             String denial = assignment.denial(TaskAssignment.roles(callerRolesArray),
                     userId instanceof BString bs ? bs.getValue() : null, "review '" + taskWorkflowId + "'");
@@ -1290,7 +1294,8 @@ public final class ManagementNative {
                         var attrs = event.getStartChildWorkflowExecutionInitiatedEventAttributes();
                         String childId = attrs.getWorkflowId();
                         if (isReviewActivityType(attrs.getWorkflowType().getName())) {
-                            String taskName = decodeMemoString(dc, attrs.getMemo().getFieldsMap(), "taskName", childId);
+                            String taskName = decodeMemoString(dc, attrs.getMemo().getFieldsMap(),
+                                    TaskKeys.TASK_NAME, childId);
                             childIdToTaskName.put(childId, taskName);
                             byTaskName.computeIfAbsent(taskName, k -> new ArrayList<>()).add(childId);
                         }
@@ -1427,28 +1432,28 @@ public final class ManagementNative {
 
             // Only review activity workflows may be served here — a human task or user workflow
             // ID must not leak through this endpoint (ballerina-library#8894).
-            String workflowKind = decodeMemoString(dc, memoFields, "workflowKind", null);
+            String workflowKind = decodeMemoString(dc, memoFields, TaskKeys.KIND, null);
             if (!isReviewActivityKind(workflowKind)) {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Review activity not found: '" + taskIdStr + "' is not a review activity workflow"));
             }
 
-            String activityName = decodeMemoString(dc, memoFields, "activityName", "");
-            String taskName = decodeMemoString(dc, memoFields, "taskName", "");
-            String parentId = decodeMemoString(dc, memoFields, "parentWorkflowId", "");
-            String errorMessage = decodeMemoString(dc, memoFields, "errorMessage", "");
-            String createdAt = decodeMemoString(dc, memoFields, "createdAt", "");
+            String activityName = decodeMemoString(dc, memoFields, TaskKeys.ACTIVITY_NAME, "");
+            String taskName = decodeMemoString(dc, memoFields, TaskKeys.TASK_NAME, "");
+            String parentId = decodeMemoString(dc, memoFields, TaskKeys.PARENT_WORKFLOW_ID, "");
+            String errorMessage = decodeMemoString(dc, memoFields, TaskKeys.ERROR_MESSAGE, "");
+            String createdAt = decodeMemoString(dc, memoFields, TaskKeys.CREATED_AT, "");
             // Older review activities (created before the trigger field) are all failure-driven.
-            String trigger = decodeMemoString(dc, memoFields, "trigger", "ON_FAILURE");
-            String title = decodeMemoString(dc, memoFields, "title",
-                    ("ON_FAILURE".equals(trigger) ? "Review failed activity: " : "Approval required: ")
+            String trigger = decodeMemoString(dc, memoFields, TaskKeys.TRIGGER, TaskKeys.TRIGGER_ON_FAILURE);
+            String title = decodeMemoString(dc, memoFields, TaskKeys.TITLE,
+                    (TaskKeys.TRIGGER_ON_FAILURE.equals(trigger) ? "Review failed activity: " : "Approval required: ")
                             + activityName.substring(activityName.lastIndexOf('.') + 1));
-            String description = decodeMemoString(dc, memoFields, "description", "");
-            String formSchema = decodeMemoString(dc, memoFields, "formSchema", null);
+            String description = decodeMemoString(dc, memoFields, TaskKeys.DESCRIPTION, "");
+            String formSchema = decodeMemoString(dc, memoFields, TaskKeys.FORM_SCHEMA, null);
 
             String[] userRolesArr = new String[0];
             try {
-                Payload rolesPl = memoFields.get("userRoles");
+                Payload rolesPl = memoFields.get(TaskKeys.USER_ROLES);
                 if (rolesPl != null) {
                     userRolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
                 }
@@ -1479,34 +1484,34 @@ public final class ManagementNative {
 
             BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                           "ReviewActivityInfo");
-            record.put(StringUtils.fromString("taskId"), StringUtils.fromString(taskIdStr));
-            record.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+            record.put(StringUtils.fromString(TaskKeys.TASK_ID), StringUtils.fromString(taskIdStr));
+            record.put(StringUtils.fromString(TaskKeys.TASK_NAME), StringUtils.fromString(taskName));
             record.put(StringUtils.fromString("namespace"),
                        StringUtils.fromString(client.getOptions().getNamespace()));
             record.put(StringUtils.fromString("taskQueue"),
                        StringUtils.fromString(response.getExecutionConfig().getTaskQueue().getName()));
-            record.put(StringUtils.fromString("activityName"), StringUtils.fromString(activityName));
-            record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentId));
-            record.put(StringUtils.fromString("trigger"), StringUtils.fromString(trigger));
-            record.put(StringUtils.fromString("title"), StringUtils.fromString(title));
-            record.put(StringUtils.fromString("description"), StringUtils.fromString(description));
+            record.put(StringUtils.fromString(TaskKeys.ACTIVITY_NAME), StringUtils.fromString(activityName));
+            record.put(StringUtils.fromString(TaskKeys.PARENT_WORKFLOW_ID), StringUtils.fromString(parentId));
+            record.put(StringUtils.fromString(TaskKeys.TRIGGER), StringUtils.fromString(trigger));
+            record.put(StringUtils.fromString(TaskKeys.TITLE), StringUtils.fromString(title));
+            record.put(StringUtils.fromString(TaskKeys.DESCRIPTION), StringUtils.fromString(description));
             record.put(StringUtils.fromString("status"), StringUtils.fromString(statusStr));
             record.put(StringUtils.fromString("startTime"), StringUtils.fromString(startTime));
             record.put(StringUtils.fromString("closeTime"),
                        closeTime != null ? StringUtils.fromString(closeTime) : null);
-            record.put(StringUtils.fromString("formSchema"),
+            record.put(StringUtils.fromString(TaskKeys.FORM_SCHEMA),
                        formSchema != null ? StringUtils.fromString(formSchema) : null);
 
             BArray roles = ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING));
             for (String role : userRolesArr) {
                 roles.append(StringUtils.fromString(role));
             }
-            record.put(StringUtils.fromString("userRoles"), roles);
-            record.put(StringUtils.fromString("errorMessage"), StringUtils.fromString(errorMessage));
+            record.put(StringUtils.fromString(TaskKeys.USER_ROLES), roles);
+            record.put(StringUtils.fromString(TaskKeys.ERROR_MESSAGE), StringUtils.fromString(errorMessage));
 
             Object bArgs = activityArgsRaw != null ? TypesUtil.convertJavaToBallerinaType(activityArgsRaw) : null;
-            record.put(StringUtils.fromString("activityArgs"), bArgs);
-            record.put(StringUtils.fromString("createdAt"), StringUtils.fromString(createdAt));
+            record.put(StringUtils.fromString(TaskKeys.LEGACY_ACTIVITY_ARGS), bArgs);
+            record.put(StringUtils.fromString(TaskKeys.CREATED_AT), StringUtils.fromString(createdAt));
 
             // Audit fields from the taskDecision signal stored in workflow history. These
             // are read unconditionally: the signal carries decidedBy/decidedAt and is sent
@@ -1519,12 +1524,14 @@ public final class ManagementNative {
             String decidedBy = decodeMemoString(dc, memoFields, WorkflowWorkerNative.COMPLETED_BY_MEMO_KEY, null);
             String decidedAt = decodeMemoString(dc, memoFields, WorkflowWorkerNative.COMPLETED_AT_MEMO_KEY, null);
             if (decidedBy == null) {
-                decidedBy = readSignalField(client, taskIdStr, "taskDecision", "decidedBy");
-                decidedAt = readSignalField(client, taskIdStr, "taskDecision", "decidedAt");
+                decidedBy = readSignalField(client, taskIdStr, WorkflowWorkerNative.TASK_DECISION_SIGNAL_NAME,
+                        TaskKeys.DECIDED_BY);
+                decidedAt = readSignalField(client, taskIdStr, WorkflowWorkerNative.TASK_DECISION_SIGNAL_NAME,
+                        TaskKeys.DECIDED_AT);
             }
-            record.put(StringUtils.fromString("decidedBy"),
+            record.put(StringUtils.fromString(TaskKeys.DECIDED_BY),
                        decidedBy != null ? StringUtils.fromString(decidedBy) : null);
-            record.put(StringUtils.fromString("decidedAt"),
+            record.put(StringUtils.fromString(TaskKeys.DECIDED_AT),
                        decidedAt != null ? StringUtils.fromString(decidedAt) : null);
 
             return record;
@@ -1566,14 +1573,14 @@ public final class ManagementNative {
 
             // Same guard as the info path: a human task or user workflow ID must not be
             // decided through a review activity operation (ballerina-library#8894).
-            String workflowKind = decodeMemoString(dc, memoFields, "workflowKind", null);
+            String workflowKind = decodeMemoString(dc, memoFields, TaskKeys.KIND, null);
             if (!isReviewActivityKind(workflowKind)) {
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Review activity not found: '" + taskIdStr + "' is not a review activity workflow"));
             }
 
             String[] userRolesArr = new String[0];
-            Payload rolesPl = memoFields.get("userRoles");
+            Payload rolesPl = memoFields.get(TaskKeys.USER_ROLES);
             if (rolesPl != null) {
                 try {
                     userRolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
@@ -1594,11 +1601,12 @@ public final class ManagementNative {
             BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                           "ReviewActivityState");
             // Older review activities predate the trigger field and are all failure-driven.
-            record.put(StringUtils.fromString("trigger"),
-                       StringUtils.fromString(decodeMemoString(dc, memoFields, "trigger", "ON_FAILURE")));
+            record.put(StringUtils.fromString(TaskKeys.TRIGGER),
+                       StringUtils.fromString(decodeMemoString(dc, memoFields, TaskKeys.TRIGGER,
+                               TaskKeys.TRIGGER_ON_FAILURE)));
             record.put(StringUtils.fromString("status"),
                        StringUtils.fromString(taskStatusFromTemporal(execInfo.getStatus())));
-            record.put(StringUtils.fromString("userRoles"), roles);
+            record.put(StringUtils.fromString(TaskKeys.USER_ROLES), roles);
             return record;
         } catch (Exception e) {
             return ErrorCreator.createError(
@@ -1627,18 +1635,18 @@ public final class ManagementNative {
             // Fallback: minimal record with the info we already have
             BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                           "ReviewActivitySummary");
-            record.put(StringUtils.fromString("taskId"), StringUtils.fromString(taskId));
-            record.put(StringUtils.fromString("taskName"), StringUtils.fromString(fallbackTaskName));
-            record.put(StringUtils.fromString("activityName"), StringUtils.fromString(""));
-            record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(""));
-            record.put(StringUtils.fromString("trigger"), StringUtils.fromString("ON_FAILURE"));
-            record.put(StringUtils.fromString("title"),
+            record.put(StringUtils.fromString(TaskKeys.TASK_ID), StringUtils.fromString(taskId));
+            record.put(StringUtils.fromString(TaskKeys.TASK_NAME), StringUtils.fromString(fallbackTaskName));
+            record.put(StringUtils.fromString(TaskKeys.ACTIVITY_NAME), StringUtils.fromString(""));
+            record.put(StringUtils.fromString(TaskKeys.PARENT_WORKFLOW_ID), StringUtils.fromString(""));
+            record.put(StringUtils.fromString(TaskKeys.TRIGGER), StringUtils.fromString(TaskKeys.TRIGGER_ON_FAILURE));
+            record.put(StringUtils.fromString(TaskKeys.TITLE),
                        StringUtils.fromString("Review failed activity: "
                                + fallbackTaskName.substring(fallbackTaskName.lastIndexOf('.') + 1)));
             record.put(StringUtils.fromString("status"), StringUtils.fromString("UNKNOWN"));
             record.put(StringUtils.fromString("startTime"), StringUtils.fromString(""));
             record.put(StringUtils.fromString("closeTime"), null);
-            record.put(StringUtils.fromString("userRoles"),
+            record.put(StringUtils.fromString(TaskKeys.USER_ROLES),
                        ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING)));
             return record;
         }
@@ -1657,16 +1665,16 @@ public final class ManagementNative {
         Map<String, Payload> memoFields = wfInfo.getMemo().getFieldsMap();
         DataConverter dc = client.getOptions().getDataConverter();
 
-        String taskName = decodeMemoString(dc, memoFields, "taskName", "");
-        String activityName = decodeMemoString(dc, memoFields, "activityName", "");
-        String parentId = decodeMemoString(dc, memoFields, "parentWorkflowId", "");
-        String trigger = decodeMemoString(dc, memoFields, "trigger", "ON_FAILURE");
-        String title = decodeMemoString(dc, memoFields, "title",
-                ("ON_FAILURE".equals(trigger) ? "Review failed activity: " : "Approval required: ")
+        String taskName = decodeMemoString(dc, memoFields, TaskKeys.TASK_NAME, "");
+        String activityName = decodeMemoString(dc, memoFields, TaskKeys.ACTIVITY_NAME, "");
+        String parentId = decodeMemoString(dc, memoFields, TaskKeys.PARENT_WORKFLOW_ID, "");
+        String trigger = decodeMemoString(dc, memoFields, TaskKeys.TRIGGER, TaskKeys.TRIGGER_ON_FAILURE);
+        String title = decodeMemoString(dc, memoFields, TaskKeys.TITLE,
+                (TaskKeys.TRIGGER_ON_FAILURE.equals(trigger) ? "Review failed activity: " : "Approval required: ")
                         + activityName.substring(activityName.lastIndexOf('.') + 1));
         String[] userRolesArr = new String[0];
         try {
-            Payload rolesPl = memoFields.get("userRoles");
+            Payload rolesPl = memoFields.get(TaskKeys.USER_ROLES);
             if (rolesPl != null) {
                 userRolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
             }
@@ -1676,15 +1684,15 @@ public final class ManagementNative {
 
         BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                       "ReviewActivitySummary");
-        record.put(StringUtils.fromString("taskId"), StringUtils.fromString(wfId));
-        record.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+        record.put(StringUtils.fromString(TaskKeys.TASK_ID), StringUtils.fromString(wfId));
+        record.put(StringUtils.fromString(TaskKeys.TASK_NAME), StringUtils.fromString(taskName));
         record.put(StringUtils.fromString("namespace"),
                    StringUtils.fromString(client.getOptions().getNamespace()));
         record.put(StringUtils.fromString("taskQueue"), StringUtils.fromString(wfInfo.getTaskQueue()));
-        record.put(StringUtils.fromString("activityName"), StringUtils.fromString(activityName));
-        record.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentId));
-        record.put(StringUtils.fromString("trigger"), StringUtils.fromString(trigger));
-        record.put(StringUtils.fromString("title"), StringUtils.fromString(title));
+        record.put(StringUtils.fromString(TaskKeys.ACTIVITY_NAME), StringUtils.fromString(activityName));
+        record.put(StringUtils.fromString(TaskKeys.PARENT_WORKFLOW_ID), StringUtils.fromString(parentId));
+        record.put(StringUtils.fromString(TaskKeys.TRIGGER), StringUtils.fromString(trigger));
+        record.put(StringUtils.fromString(TaskKeys.TITLE), StringUtils.fromString(title));
         record.put(StringUtils.fromString("status"),
                    StringUtils.fromString(taskStatusFromTemporal(wfInfo.getStatus())));
 
@@ -1704,7 +1712,7 @@ public final class ManagementNative {
         for (String role : userRolesArr) {
             roles.append(StringUtils.fromString(role));
         }
-        record.put(StringUtils.fromString("userRoles"), roles);
+        record.put(StringUtils.fromString(TaskKeys.USER_ROLES), roles);
         return record;
     }
 
@@ -1805,7 +1813,7 @@ public final class ManagementNative {
             // asking the instance, never by parsing its id — the prefixes stay for human eyes only.
             String kind = WorkflowWorkerNative.isAgentWorkflowType(type) ? "AGENT" : "WORKFLOW";
             Map<String, Object> memo = new HashMap<>();
-            memo.put("workflowKind", kind);
+            memo.put(TaskKeys.KIND, kind);
             if (startedBy instanceof BString starter && !starter.getValue().isBlank()) {
                 memo.put("startedBy", starter.getValue());
             }
@@ -2013,7 +2021,7 @@ public final class ManagementNative {
                     // row is without a describe per row. Legacy rows without the memo fall back
                     // to the type prefixes their era still used.
                     String rowKind = decodeMemoString(client.getOptions().getDataConverter(),
-                                                      wfInfo.getMemo().getFieldsMap(), "workflowKind", null);
+                                                      wfInfo.getMemo().getFieldsMap(), TaskKeys.KIND, null);
                     if (rowKind == null) {
                         rowKind = isHumanTaskType(rawType) ? "HUMAN_TASK"
                                 : isReviewActivityType(rawType) ? "REVIEW_ACTIVITY"
@@ -2305,7 +2313,7 @@ public final class ManagementNative {
                         // shortTaskName(), which parses the "humantask-workflowDef.taskName" type.
                         String nodeName = isReviewActivityType(childType) ? decodeMemoString(dc, attrs
                                 .getMemo()
-                                .getFieldsMap(), "taskName", childType) : shortTaskName(childType);
+                                .getFieldsMap(), TaskKeys.TASK_NAME, childType) : shortTaskName(childType);
                         var node = newNode(eid, nodeName, nodeType, ts);
                         node.put("childWorkflowId", childId);
                         node.put("input", decodeFirstPayload(attrs.getInput(), dc));
@@ -2562,7 +2570,7 @@ public final class ManagementNative {
                 Object cwf = treeNode.get(StringUtils.fromString("childWorkflowId"));
                 if (cwf instanceof BString cws) {
                     metadata = ValueCreator.createMapValue();
-                    metadata.put(StringUtils.fromString("taskId"), cws);
+                    metadata.put(StringUtils.fromString(TaskKeys.TASK_ID), cws);
                 }
                 Object stepIdValue = treeNode.get(StringUtils.fromString("stepId"));
                 if (stepIdValue instanceof BString stepIdStr) {
@@ -3076,7 +3084,7 @@ public final class ManagementNative {
                         // taskName, a human task its short task name.
                         String childType = attrs.getWorkflowType().getName();
                         String childName = isReviewActivityType(childType)
-                                ? decodeMemoString(dc, attrs.getMemo().getFieldsMap(), "taskName", childType)
+                                ? decodeMemoString(dc, attrs.getMemo().getFieldsMap(), TaskKeys.TASK_NAME, childType)
                                 : shortTaskName(childType);
                         recordScheduled(pointNodeIds, pointNodeNames, schedulerOf,
                                         attrs.getWorkflowTaskCompletedEventId(), eid, childName);

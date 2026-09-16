@@ -100,10 +100,12 @@ public isolated function registerWorkflowDescriptor(string descriptorJson)
 #               query: `json` for any payload, a narrower type to validate its
 #               shape, or `()` for a query-only agent
 # + resultType - The agent's declared result type, or `()` for the final text response
+# + eventTimeout - Maximum wait per event wait, or `()` to wait indefinitely
+# + maxEventWaits - Cap on event waits per run
 # + return - `true` on success, or an error for a duplicate agent name
 public isolated function registerDurableAgentDecl(string agentName, ai:ModelProvider model,
         json systemPrompt, int maxIter, typedesc<json>? inputType = json,
-        typedesc<anydata>? resultType = (), json eventTimeout = ()) returns boolean|error = @java:Method {
+        typedesc<anydata>? resultType = (), json eventTimeout = (), int maxEventWaits = 50) returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
     name: "registerDurableAgentDecl"
 } external;

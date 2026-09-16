@@ -828,13 +828,13 @@ isolated function runDurableAgentObject(handle agentCtx, map<anydata> runInput)
 
     // Only a declared eventTimeout bounds the waits: an unbounded chat session is the
     // point of a durable agent, and a default here silently killed conversations that
-    // idled past it. maxEventWaits remains the runaway backstop.
+    // idled past it. The declared maxEventWaits remains the runaway backstop.
     Duration? eventTimeout = ();
     json declaredTimeout = spec.eventTimeout;
     if declaredTimeout != () {
         eventTimeout = check declaredTimeout.cloneWithType();
     }
-    check setAgentInteraction(agentCtx, multiEvent ? MULTI_EVENT : SINGLE_EVENT, eventTimeout, MAX_EVENT_WAITS);
+    check setAgentInteraction(agentCtx, multiEvent ? MULTI_EVENT : SINGLE_EVENT, eventTimeout, spec.maxEventWaits);
     setAgentModelProvider(agentCtx, spec.model);
     check registerAgentModelForContext(agentCtx);
     string toolDefsJson = check getAgentToolDefs(agentCtx);

@@ -959,30 +959,6 @@ public final class DurableAgentNative {
         if (duplicate != null) {
             return duplicate;
         }
-        // An async peer's reply self-injects into its callbackChannel: a channel this agent does
-        // not declare would swallow the reply silently, and wait = false with no channel has
-        // nowhere to reply at all. Both fail here — at module init, before any instance runs —
-        // rather than inside the runner workflow. Event channels register before peers (the
-        // generated registration order), so the declared set is complete by now.
-        if (meta instanceof BMap<?, ?> metaMap) {
-            Object waitValue = metaMap.get(StringUtils.fromString("wait"));
-            Object callbackValue = metaMap.get(StringUtils.fromString("callbackChannel"));
-            String callbackChannel = callbackValue instanceof BString channel ? channel.getValue() : null;
-            if (Boolean.FALSE.equals(waitValue) && (callbackChannel == null || callbackChannel.isBlank())) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Peer agent '" + peerName.getValue() + "' of durable agent '" + agentName.getValue()
-                                + "' declares wait = false but no callbackChannel to receive the reply"));
-            }
-            if (callbackChannel != null && !callbackChannel.isBlank()
-                    && !decl.events().containsKey(callbackChannel)) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Durable agent '" + agentName.getValue() + "' declares no data-event channel named '"
-                                + callbackChannel + "' for peer '" + peerName.getValue()
-                                + "'s callbackChannel"
-                                + (decl.events().isEmpty() ? ""
-                                        : "; declared channels: " + String.join(", ", decl.events().keySet()))));
-            }
-        }
         decl.peers().put(peerName.getValue(),
                 new PeerDecl(peerName.getValue(), targetAgent.getValue(), meta));
         return true;
@@ -996,16 +972,192 @@ public final class DurableAgentNative {
      * @param query       the delegated task or question
      * @return the child instance ID as a Ballerina string, or a BError
      */
-    public static Object runPeerAgent(BString targetAgent, BString query) {
+    public static Object runPeerAgent(BString targetAgent, BString query, Object replyTo) {
         String target = targetAgent.getValue();
         if (AGENT_DECL_REGISTRY.get(target) == null) {
             return unknownAgentError(target);
         }
         Map<String, Object> runInput = new HashMap<>();
-        runInput.put("agentName", target);
-        runInput.put("query", query.getValue());
-        runInput.put("input", null);
+        runInput.put(RUN_AGENT_NAME, target);
+        runInput.put(RUN_QUERY, query.getValue());
+        runInput.put(RUN_INPUT, null);
+        if (replyTo instanceof BMap<?, ?>) {
+            runInput.put(RUN_REPLY_TO, TypesUtil.convertBallerinaToJavaType(replyTo));
+        }
         return WorkflowContextNative.startDurableAgentChild(target, runInput);
+    }
+
+    // Run-input keys of the object-model runner.
+    private static final String RUN_AGENT_NAME = "agentName";
+    private static final String RUN_QUERY = "query";
+    private static final String RUN_INPUT = "input";
+    private static final String RUN_REPLY_TO = "replyTo";
+    // A reply address: the caller's instance and the event it listens on.
+    private static final String REPLY_INSTANCE_ID = "instanceId";
+    private static final String REPLY_EVENT_NAME = "eventName";
+    // Tool material for one peer event.
+    private static final String PEER_EVENT_NAME = "name";
+    private static final String PEER_EVENT_DUPLEX = "duplex";
+    private static final String PEER_EVENT_SCHEMA = "schema";
+
+    // Companion peer instances this run started implicitly, one per peer, reused for every event sent to it.
+    private static final WorkflowLocal<Map<String, String>> COMPANION_PEERS =
+            WorkflowLocal.withCachedInitial(HashMap::new);
+
+    /**
+     * The events of a peer that this agent may address, as tool material: each event's name, whether it
+     * answers (a declared response type), and the JSON schema of its request. An allow-list narrows the set
+     * and is checked against the peer's declaration.
+     *
+     * @param targetAgent   the peer agent's name
+     * @param allowedEvents a BArray of event names, or null for every declared event
+     * @return a JSON array string, or a BError
+     */
+    public static Object peerEventTools(BString targetAgent, Object allowedEvents) {
+        AgentDecl decl = AGENT_DECL_REGISTRY.get(targetAgent.getValue());
+        if (decl == null) {
+            return unknownAgentError(targetAgent.getValue());
+        }
+        java.util.Set<String> allowed = null;
+        if (allowedEvents instanceof BArray names) {
+            allowed = new java.util.LinkedHashSet<>();
+            for (int i = 0; i < names.size(); i++) {
+                allowed.add(String.valueOf(names.get(i)));
+            }
+            for (String name : allowed) {
+                if (!decl.events().containsKey(name)) {
+                    return ErrorCreator.createError(StringUtils.fromString(
+                            "Peer '" + targetAgent.getValue() + "' declares no event named '" + name + "'"
+                                    + (decl.events().isEmpty() ? ""
+                                            : "; declared events: " + String.join(", ", decl.events().keySet()))));
+                }
+            }
+        }
+        java.util.List<Object> tools = new java.util.ArrayList<>();
+        for (EventDecl event : decl.events().values()) {
+            if (allowed != null && !allowed.contains(event.name())) {
+                continue;
+            }
+            Map<String, Object> tool = new java.util.LinkedHashMap<>();
+            tool.put(PEER_EVENT_NAME, event.name());
+            tool.put(PEER_EVENT_DUPLEX, event.response() != null);
+            tool.put(PEER_EVENT_SCHEMA, TypesUtil.toJsonSchema(event.request().getDescribingType()));
+            tools.add(tool);
+        }
+        return StringUtils.fromString(TypesUtil.toJsonString(tools));
+    }
+
+    /**
+     * Sends an event to a peer's companion instance — started on first use, then reused — and, for a
+     * duplex event, waits durably for the peer's answer. A one-way event returns as soon as it is sent.
+     *
+     * @param targetAgent the peer agent's name
+     * @param eventName   one of the peer's declared events
+     * @param payload     the model's arguments, converted to the event's request type
+     * @return the peer's answer, an acknowledgement, or a BError
+     */
+    public static Object sendPeerEvent(BString targetAgent, BString eventName, BMap<BString, Object> payload) {
+        String target = targetAgent.getValue();
+        String event = eventName.getValue();
+        AgentDecl decl = AGENT_DECL_REGISTRY.get(target);
+        if (decl == null) {
+            return unknownAgentError(target);
+        }
+        EventDecl channel = decl.events().get(event);
+        if (channel == null) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Peer '" + target + "' declares no event named '" + event + "'"));
+        }
+        Object converted;
+        try {
+            converted = io.ballerina.runtime.api.utils.ValueUtils.convert(payload,
+                    io.ballerina.runtime.api.utils.TypeUtils.getImpliedType(channel.request().getDescribingType()));
+        } catch (Exception conversion) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "The arguments do not match event '" + event + "' of peer '" + target + "': "
+                            + conversion.getMessage()));
+        }
+        try {
+            WorkflowWorkerNative.awaitWhileSuspended();
+            String childId = COMPANION_PEERS.get().get(target);
+            if (childId == null) {
+                Map<String, Object> runInput = new HashMap<>();
+                runInput.put(RUN_AGENT_NAME, target);
+                runInput.put(RUN_QUERY, "");
+                runInput.put(RUN_INPUT, null);
+                Object started = WorkflowContextNative.startDurableAgentChild(target, runInput);
+                if (!(started instanceof BString id)) {
+                    return started;
+                }
+                childId = id.getValue();
+                COMPANION_PEERS.get().put(target, childId);
+            }
+            String token = "evt-" + Workflow.randomUUID();
+            Map<String, Object> envelope = new HashMap<>();
+            envelope.put("token", token);
+            envelope.put("eventName", event);
+            envelope.put("data", TypesUtil.convertBallerinaToJavaType(converted));
+            envelope.put(RUN_REPLY_TO, Workflow.getInfo().getWorkflowId());
+            Workflow.newUntypedExternalWorkflowStub(childId)
+                    .signal(WorkflowWorkerNative.AGENT_EVENT_SIGNAL_NAME, envelope);
+            if (!(channel.response() instanceof BTypedesc responseType)) {
+                return StringUtils.fromString("Sent '" + event + "' to peer '" + target + "' (instance " + childId
+                        + "); it answers on no channel, so there is nothing to wait for.");
+            }
+            return readEventReplyInWorkflow(childId, token, responseType, true);
+        } catch (io.temporal.worker.NonDeterministicException e) {
+            throw e;
+        } catch (io.temporal.failure.TemporalFailure e) {
+            throw e;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to send '" + event + "' to peer '" + target + "': " + e.getMessage()));
+        }
+    }
+
+    /**
+     * The result of a peer run started without waiting, if it has finished; a busy error while it runs.
+     *
+     * @param childId the correlation id the delegation returned
+     * @return the peer's result, an AgentBusyError, or a BError
+     */
+    public static Object collectPeerResult(BString childId) {
+        return WorkflowContextNative.readDurableAgentChildRaw(childId.getValue(), false);
+    }
+
+    /**
+     * Answers the caller that started this agent with a reply address: a one-way event on the caller's
+     * declared channel. Nothing is awaited.
+     *
+     * @param replyTo the address the run was started with ({@code instanceId}, {@code eventName})
+     * @param message what to send
+     * @return an acknowledgement, or a BError
+     */
+    public static Object replyToCaller(Object replyTo, Object message) {
+        if (!(replyTo instanceof BMap<?, ?> address)) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "This agent was not started with a reply address, so there is no caller to answer"));
+        }
+        String instance = String.valueOf(address.get(StringUtils.fromString(REPLY_INSTANCE_ID)));
+        String event = String.valueOf(address.get(StringUtils.fromString(REPLY_EVENT_NAME)));
+        try {
+            WorkflowWorkerNative.awaitWhileSuspended();
+            Map<String, Object> envelope = new HashMap<>();
+            envelope.put("token", "evt-" + Workflow.randomUUID());
+            envelope.put("eventName", event);
+            envelope.put("data", TypesUtil.convertBallerinaToJavaType(message));
+            envelope.put(RUN_REPLY_TO, Workflow.getInfo().getWorkflowId());
+            Workflow.newUntypedExternalWorkflowStub(instance)
+                    .signal(WorkflowWorkerNative.AGENT_EVENT_SIGNAL_NAME, envelope);
+            return StringUtils.fromString("Replied to the caller on '" + event + "'.");
+        } catch (io.temporal.worker.NonDeterministicException e) {
+            throw e;
+        } catch (io.temporal.failure.TemporalFailure e) {
+            throw e;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to reply to the caller on '" + event + "': " + e.getMessage()));
+        }
     }
 
     /**

@@ -150,7 +150,12 @@ function testObjectModelRunnerEndToEnd() returns error? {
     _ = check wfInternal:registerDurableAgentHumanTask("runnerCoverageAgent", "signoffCoverage",
         {userRoles: "manager", title: "Sign off", description: "Sign off the order",
             timeout: {minutes: 5}});
-    _ = check wfInternal:registerDurableAgentPeer("runnerCoverageAgent", "askDriver",
+    // A peer's events are read from its own declaration when the runner registers it, so the
+    // target must be a declared agent — the loop tests' driver object is not, until here.
+    boolean|error driver = wfInternal:registerDurableAgentDecl("agentTurnDriver", declTestModel,
+        {role: "driver", instructions: "unused"}, 8);
+    test:assertTrue(driver is boolean || driver.message().includes("already registered"));
+    _ = check wfInternal:registerDurableAgentPeer("runnerCoverageAgent", "agentTurnDriver",
         "agentTurnDriver", {description: "Delegates to the turn driver"});
     _ = check wfInternal:registerDurableAgentRunner("runnerCoverageAgent");
     runnerCoverageAgent.bindAgentName("runnerCoverageAgent");

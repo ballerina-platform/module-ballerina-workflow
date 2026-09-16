@@ -163,6 +163,12 @@ def testServerStarted = false
 def testServerPort = 7233
 def usingExternalServer = false
 
+// Temporal CLI provisioning: integration tests need a 'temporal' binary to start the dev
+// server.
+def temporalCliDir = layout.buildDirectory.dir("temporal-cli").get().asFile
+def temporalCliBinary = new File(temporalCliDir,
+        Os.isFamily(Os.FAMILY_WINDOWS) ? 'temporal.exe' : 'temporal')
+
 // TLS proxy state (nginx Docker container for auth coverage tests)
 def tlsProxyStarted   = false
 def mtlsDockerDir     = file("${project.rootDir}/docker/temporal-mtls")
@@ -195,7 +201,56 @@ def findTemporalCli = {
         }
     } catch (Exception ignored) {}
 
+    if (temporalCliBinary.exists()) {
+        return temporalCliBinary.absolutePath
+    }
+
     return null
+}
+
+// Downloads the pinned Temporal CLI into build/temporal-cli. A no-op when a binary is
+// already on PATH, so a developer's own installation always wins over the pinned one.
+task installTemporalCli {
+    description = 'Downloads the Temporal CLI into build/temporal-cli when none is on PATH'
+    group = 'build setup'
+    outputs.file temporalCliBinary
+    outputs.upToDateWhen { findTemporalCli() != null }
+
+    doLast {
+        def existing = findTemporalCli()
+        if (existing != null) {
+            logger.lifecycle("Temporal CLI already available at ${existing} - skipping download.")
+            return
+        }
+
+        def osName = System.getProperty('os.name', '').toLowerCase()
+        def platform = osName.contains('win') ? 'windows' : (osName.contains('mac') ? 'darwin' : 'linux')
+        def rawArch = System.getProperty('os.arch', '').toLowerCase()
+        def arch = (rawArch in ['aarch64', 'arm64']) ? 'arm64' : 'amd64'
+        // Every platform publishes a .tar.gz asset, so there is no zip branch to maintain.
+        def archiveName = "temporal_cli_${temporalCliVersion}_${platform}_${arch}.tar.gz"
+        def url = "https://github.com/temporalio/cli/releases/download/v${temporalCliVersion}/${archiveName}"
+
+        temporalCliDir.mkdirs()
+        def archive = new File(temporalCliDir, archiveName)
+        logger.lifecycle("Downloading Temporal CLI ${temporalCliVersion} (${platform}/${arch})...")
+        new URL(url).withInputStream { input ->
+            archive.withOutputStream { output -> output << input }
+        }
+
+        copy {
+            from tarTree(resources.gzip(archive))
+            into temporalCliDir
+            include 'temporal', 'temporal.exe'
+        }
+        archive.delete()
+
+        if (!temporalCliBinary.exists()) {
+            throw new GradleException("Temporal CLI archive did not contain a binary: ${url}")
+        }
+        temporalCliBinary.setExecutable(true)
+        logger.lifecycle("Temporal CLI installed at ${temporalCliBinary}")
+    }
 }
 
 // Helper: stop the test server
@@ -389,9 +444,17 @@ task stopTlsTestProxy {
     }
 }
 
+// Run the full auth-variant integration matrix (no-auth, mTLS, API key over TLS)
+task authVariantTests {
+    description = 'Runs the full auth-variant integration matrix (no-auth, mTLS, API key over TLS)'
+    group = 'verification'
+    dependsOn 'startTlsTestProxy'
+    dependsOn ':workflow-integration-tests:ballerinaAuthVariantTest'
+}
 
 // Start shared test server - used by integration tests
 task startSharedTestServer {
+    dependsOn installTemporalCli
 
     doLast {
         // Check if a Temporal server is already running (e.g., started manually for debugging)

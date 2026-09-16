@@ -763,6 +763,19 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
         return executeToResponse(management:COUNT_PENDING_HUMAN_TASKS, {taskQueue: taskQueue, all: all}, ctx);
     }
 
+    resource isolated function post tasks/[string taskId]/reassign(
+            http:RequestContext ctx, @http:Payload map<json> audience) returns http:Response {
+        map<json> params = audience.clone();
+        params["taskId"] = taskId;
+        return executeToResponse(management:REASSIGN_TASK, params, ctx);
+    }
+
+    resource isolated function post tasks/[string taskId]/deadline(
+            http:RequestContext ctx, @http:Payload map<json> body) returns http:Response {
+        return executeToResponse(management:EXTEND_TASK_DEADLINE,
+                {taskId: taskId, timeoutMillis: body["timeoutMillis"]}, ctx);
+    }
+
     resource isolated function get human\-tasks/[string taskId](
             http:RequestContext ctx) returns http:Response {
         return executeToResponse(management:GET_HUMAN_TASK, {taskId: taskId}, ctx);

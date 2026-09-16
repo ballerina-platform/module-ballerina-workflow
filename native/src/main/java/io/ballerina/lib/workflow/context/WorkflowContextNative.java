@@ -229,11 +229,14 @@ public final class WorkflowContextNative {
      * @param users         user ids permitted to answer
      * @param excludedUsers user ids that may not answer
      * @param excludedRoles roles that may not answer
+     * @param administratorRoles roles that administer the review
+     * @param administratorUsers user ids that administer the review
      * @param title         inbox summary, or null to derive it
      * @param description   context shown with the decision, or null to derive it
      * @param timeoutMillis how long to wait for a decision, or null to wait indefinitely
      */
     record ReviewDeclaration(String[] userRoles, String[] users, String[] excludedUsers, String[] excludedRoles,
+                             String[] administratorRoles, String[] administratorUsers,
                              String title, String description, Long timeoutMillis) {
 
         boolean namesNobody() {
@@ -242,7 +245,7 @@ public final class WorkflowContextNative {
 
         static ReviewDeclaration rolesOnly(String[] userRoles, String title, String description, Long timeoutMillis) {
             return new ReviewDeclaration(userRoles != null ? userRoles : new String[0], new String[0],
-                    new String[0], new String[0], title, description, timeoutMillis);
+                    new String[0], new String[0], new String[0], new String[0], title, description, timeoutMillis);
         }
     }
 
@@ -264,6 +267,8 @@ public final class WorkflowContextNative {
                 rolesOf(users),
                 rolesOf(policy.get(StringUtils.fromString(TaskKeys.EXCLUDED_USERS))),
                 rolesOf(policy.get(StringUtils.fromString(TaskKeys.EXCLUDED_ROLES))),
+                rolesOf(policy.get(StringUtils.fromString(TaskKeys.ADMINISTRATOR_ROLES))),
+                rolesOf(policy.get(StringUtils.fromString(TaskKeys.ADMINISTRATOR_USERS))),
                 stringFieldOf(policy, TaskKeys.TITLE),
                 stringFieldOf(policy, TaskKeys.DESCRIPTION),
                 timeout instanceof BMap<?, ?> duration
@@ -532,6 +537,8 @@ public final class WorkflowContextNative {
                 .stepId(stepId).title(title).description(description)
                 .userRoles(List.of(decl.userRoles())).users(List.of(decl.users()))
                 .excludedUsers(List.of(decl.excludedUsers())).excludedRoles(List.of(decl.excludedRoles()))
+                .administratorRoles(List.of(decl.administratorRoles()))
+                .administratorUsers(List.of(decl.administratorUsers()))
                 .taskInput(activityArgs)
                 .formSchema(deriveReviewInputSchema(activityType, activityArgs))
                 .timeoutMillis(decl.timeoutMillis())
@@ -905,6 +912,8 @@ public final class WorkflowContextNative {
                 definition.get(StringUtils.fromString(TaskKeys.USERS)),
                 definition.get(StringUtils.fromString(TaskKeys.EXCLUDED_USERS)),
                 definition.get(StringUtils.fromString(TaskKeys.EXCLUDED_ROLES)),
+                definition.get(StringUtils.fromString(TaskKeys.ADMINISTRATOR_ROLES)),
+                definition.get(StringUtils.fromString(TaskKeys.ADMINISTRATOR_USERS)),
                 taskInput,
                 definition.get(StringUtils.fromString(TaskKeys.TITLE)),
                 definition.get(StringUtils.fromString(TaskKeys.DESCRIPTION)),
@@ -959,6 +968,7 @@ public final class WorkflowContextNative {
     @SuppressWarnings("unchecked")
     public static Object awaitHumanTaskExploded(BObject self, BString taskNameBStr, Object userRolesObj,
                                         Object usersObj, Object excludedUsersObj, Object excludedRolesObj,
+                                        Object administratorRolesObj, Object administratorUsersObj,
                                         BMap<BString, Object> taskInputObj, Object titleObj, Object descriptionObj,
                                         Object timeoutObj, BTypedesc typedesc, Object stepId) {
         // Named outside the try so a failure can report which task it belongs to.
@@ -1033,6 +1043,8 @@ public final class WorkflowContextNative {
                     .title(title).description(description).userRoles(userRoles).users(users)
                     .excludedUsers(List.of(rolesOf(excludedUsersObj)))
                     .excludedRoles(List.of(rolesOf(excludedRolesObj)))
+                    .administratorRoles(List.of(rolesOf(administratorRolesObj)))
+                    .administratorUsers(List.of(rolesOf(administratorUsersObj)))
                     .taskInput(TypesUtil.convertBallerinaToJavaType(taskInput))
                     .formSchema(TypesUtil.toJsonSchema(typedesc.getDescribingType()))
                     .timeoutMillis(timeoutMillis)
@@ -1183,6 +1195,7 @@ public final class WorkflowContextNative {
         completion.put(TaskKeys.TASK_NAME, taskName);
         if (rawResult instanceof Map<?, ?> envelope) {
             completion.put(TaskKeys.COMPLETED_BY, envelope.get(TaskKeys.COMPLETED_BY));
+            completion.put(TaskKeys.COMPLETED_AS, envelope.get(TaskKeys.COMPLETED_AS));
             completion.put(TaskKeys.COMPLETED_AT, envelope.get(TaskKeys.COMPLETED_AT));
             completion.put(TaskKeys.IDENTITY_SOURCE, envelope.get(TaskKeys.IDENTITY_SOURCE));
         }
@@ -1204,6 +1217,7 @@ public final class WorkflowContextNative {
         record.put(TaskKeys.ACTION, decision.get(TaskKeys.ACTION));
         record.put(TaskKeys.FEEDBACK, decision.get(TaskKeys.FEEDBACK));
         record.put(TaskKeys.DECIDED_BY, decision.get(TaskKeys.DECIDED_BY));
+        record.put(TaskKeys.COMPLETED_AS, decision.get(TaskKeys.COMPLETED_AS));
         record.put(TaskKeys.DECIDED_AT, decision.get(TaskKeys.DECIDED_AT));
         remember(REVIEW_DECISIONS.get(), taskName, record);
     }
@@ -1228,6 +1242,8 @@ public final class WorkflowContextNative {
         putText(record, TaskKeys.TASK_ID, completion.get(TaskKeys.TASK_ID));
         putText(record, TaskKeys.TASK_NAME, completion.get(TaskKeys.TASK_NAME));
         putText(record, TaskKeys.COMPLETED_BY, completion.get(TaskKeys.COMPLETED_BY));
+        putText(record, TaskKeys.COMPLETED_AS,
+                completedAsOf(completion));
         putText(record, TaskKeys.COMPLETED_AT, completion.get(TaskKeys.COMPLETED_AT));
         putText(record, TaskKeys.IDENTITY_SOURCE, completion.get(TaskKeys.IDENTITY_SOURCE));
         return record;
@@ -1246,8 +1262,15 @@ public final class WorkflowContextNative {
         putText(record, TaskKeys.ACTION, decision.getOrDefault(TaskKeys.ACTION, TaskKeys.ACTION_REJECT));
         putText(record, TaskKeys.FEEDBACK, decision.get(TaskKeys.FEEDBACK));
         putText(record, TaskKeys.DECIDED_BY, decision.get(TaskKeys.DECIDED_BY));
+        putText(record, TaskKeys.COMPLETED_AS,
+                completedAsOf(decision));
         putText(record, TaskKeys.DECIDED_AT, decision.get(TaskKeys.DECIDED_AT));
         return record;
+    }
+
+    private static String completedAsOf(Map<String, Object> entry) {
+        Object value = entry.get(TaskKeys.COMPLETED_AS);
+        return value == null ? TaskKeys.COMPLETED_AS_AUDIENCE : String.valueOf(value);
     }
 
     private static void putText(BMap<BString, Object> record, String key, Object value) {

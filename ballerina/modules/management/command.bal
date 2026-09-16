@@ -75,6 +75,10 @@ public enum Operation {
     COMPLETE_HUMAN_TASK = "humanTasks.complete",
     # Fail a human task.
     FAIL_HUMAN_TASK = "humanTasks.fail",
+    # Reassign a live task or review: an administrator replaces its audience.
+    REASSIGN_TASK = "tasks.reassign",
+    # Move or clear a live task's or review's deadline: an administrator's act.
+    EXTEND_TASK_DEADLINE = "tasks.extendDeadline",
     # List review activities visible to the caller.
     LIST_REVIEW_ACTIVITIES = "reviewActivities.list",
     # Get one review activity.
@@ -144,6 +148,8 @@ public type Command record {|
 // - `GET_HUMAN_TASK` — `taskId` (required).
 // - `COMPLETE_HUMAN_TASK` — `taskId` (required), `result`.
 // - `FAIL_HUMAN_TASK` — `taskId` and `reason` (required), `details`.
+// - `REASSIGN_TASK` — `taskId` (required), any of `userRoles`, `users`, `excludedUsers`, `excludedRoles`.
+// - `EXTEND_TASK_DEADLINE` — `taskId` (required), `timeoutMillis` (absent or null clears the deadline).
 // - `LIST_REVIEW_ACTIVITIES` — `status`, `parentWorkflowId`, `taskName`, `limit`,
 //   `pageToken`, the four time bounds, `taskQueue`.
 // - `GET_REVIEW_ACTIVITY` — `taskId` (required).
@@ -317,6 +323,21 @@ public isolated function executeCommand(Command command) returns json|Error {
             }
             map<json>? details = params["details"] is map<json> ? <map<json>>params["details"] : ();
             return opFailHumanTask(taskId, params["reason"], details, callerRoles, userId, identitySource);
+        }
+        REASSIGN_TASK => {
+            string|Error taskId = requiredParam(params, "taskId");
+            if taskId is Error {
+                return taskId;
+            }
+            return opReassignTask(taskId, params, callerRoles, userId);
+        }
+        EXTEND_TASK_DEADLINE => {
+            string|Error taskId = requiredParam(params, "taskId");
+            if taskId is Error {
+                return taskId;
+            }
+            json millis = params["timeoutMillis"];
+            return opExtendTaskDeadline(taskId, millis is int ? millis : (), callerRoles, userId);
         }
         LIST_REVIEW_ACTIVITIES => {
             return opListReviewActivities(strParam(params, "status"),

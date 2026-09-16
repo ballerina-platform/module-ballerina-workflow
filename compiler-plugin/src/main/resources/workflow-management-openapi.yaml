@@ -370,6 +370,49 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/HumanTaskPage"}
         default: {$ref: "#/components/responses/Error"}
+  /tasks/{taskId}/reassign:
+    post:
+      tags: [administration]
+      summary: Replace a live task's audience (administrators only)
+      operationId: reassignTask
+      parameters:
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/TaskAudience"}
+      responses:
+        "200":
+          description: The act was recorded
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TaskAdministration"}
+        "403": {description: The caller does not administer the task}
+        "404": {description: No such task}
+  /tasks/{taskId}/deadline:
+    post:
+      tags: [administration]
+      summary: Move or clear a live task's deadline (administrators only)
+      operationId: extendTaskDeadline
+      parameters:
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                timeoutMillis: {type: integer, nullable: true, description: "Milliseconds from now; null clears the deadline"}
+      responses:
+        "200":
+          description: The act was recorded
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TaskAdministration"}
+        "403": {description: The caller does not administer the task}
+        "404": {description: No such task}
   /human-tasks/pending-count:
     get:
       tags: [human-tasks]
@@ -724,9 +767,27 @@ components:
         users: {type: array, items: {type: string}}
         excludedUsers: {type: array, items: {type: string}}
         excludedRoles: {type: array, items: {type: string}}
+        administratorRoles: {type: array, items: {type: string}}
+        administratorUsers: {type: array, items: {type: string}}
         completedBy: {type: string, nullable: true}
         completedAt: {type: string, format: date-time, nullable: true}
+        completedAs: {type: string, nullable: true, enum: [audience, administrator]}
         canComplete: {type: boolean}
+        canAdminister: {type: boolean}
+    TaskAudience:
+      type: object
+      properties:
+        userRoles: {type: array, items: {type: string}}
+        users: {type: array, items: {type: string}}
+        excludedUsers: {type: array, items: {type: string}}
+        excludedRoles: {type: array, items: {type: string}}
+    TaskAdministration:
+      type: object
+      properties:
+        success: {type: boolean}
+        action: {type: string, enum: [reassign, extendDeadline]}
+        administeredBy: {type: string}
+        administeredAt: {type: string, format: date-time}
     HumanTaskSummary:
       allOf:
         - {$ref: "#/components/schemas/TaskSummary"}

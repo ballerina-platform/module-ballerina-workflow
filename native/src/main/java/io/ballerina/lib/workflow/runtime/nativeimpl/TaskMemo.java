@@ -31,7 +31,14 @@ import io.ballerina.runtime.api.values.BString;
 import java.util.List;
 
 // What the runtime read from a task's memo while validating a decision; returned to Ballerina as the receipt.
-record TaskMemo(String taskName, String parentWorkflowId, List<String> assignedRoles, Object taskInput) {
+record TaskMemo(String taskName, String parentWorkflowId, List<String> assignedRoles, Object taskInput,
+                TaskAssignment.Access access) {
+
+    String completedAs() {
+        return access == TaskAssignment.Access.ADMINISTRATOR
+                ? TaskKeys.COMPLETED_AS_ADMINISTRATOR : TaskKeys.COMPLETED_AS_AUDIENCE;
+    }
+
 
     // The receipt map<anydata>: taskName, parentWorkflowId, taskInput (when known) and assignedRoles as string[].
     BMap<BString, Object> toReceipt() {

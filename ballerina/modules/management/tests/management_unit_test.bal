@@ -59,9 +59,9 @@ function testDecodeCursorTokenTaskIdWithTilde() {
 
 // ── eligible ──────────────────────────────────────────────────────────────────
 
-const Assignment ROLE_TASK = {userRoles: ["approver"], users: [], excludedUsers: [], excludedRoles: []};
-const Assignment USERS_TASK = {userRoles: [], users: ["alice"], excludedUsers: [], excludedRoles: []};
-const Assignment LADDER_TASK = {userRoles: ["approver"], users: [], excludedUsers: ["alice"], excludedRoles: ["auditor"]};
+final Assignment ROLE_TASK = {userRoles: ["approver"], users: [], excludedUsers: [], excludedRoles: []};
+final Assignment USERS_TASK = {userRoles: [], users: ["alice"], excludedUsers: [], excludedRoles: []};
+final Assignment LADDER_TASK = {userRoles: ["approver"], users: [], excludedUsers: ["alice"], excludedRoles: ["auditor"]};
 
 @test:Config {groups: ["unit"]}
 function testEligibleByRole() {
@@ -84,6 +84,20 @@ function testEligibleHonoursExclusions() {
     test:assertFalse(eligible(LADDER_TASK, ["approver", "auditor"], "bob"), "excluded role");
     test:assertFalse(eligible(LADDER_TASK, ["approver"], ()), "exclusions by user need a user id");
     test:assertTrue(eligible(LADDER_TASK, ["approver"], "bob"));
+}
+
+final Assignment ADMINISTERED_TASK = {userRoles: ["approver"], users: [], excludedUsers: ["alice"], excludedRoles: [],
+    administratorRoles: ["ops"], administratorUsers: ["dana"]};
+
+@test:Config {groups: ["unit"]}
+function testAccessTellsAudienceFromAdministrators() {
+    test:assertEquals(accessOf(ADMINISTERED_TASK, ["approver"], "bob"), AUDIENCE);
+    test:assertEquals(accessOf(ADMINISTERED_TASK, ["ops"], "carol"), ADMINISTRATOR);
+    test:assertEquals(accessOf(ADMINISTERED_TASK, ["viewer"], "dana"), ADMINISTRATOR);
+    test:assertEquals(accessOf(ADMINISTERED_TASK, ["viewer"], "erin"), NONE, "a viewer sees nothing");
+    test:assertEquals(accessOf(ADMINISTERED_TASK, ["approver", "ops"], "alice"), ADMINISTRATOR,
+            "an excluded administrator still administers");
+    test:assertEquals(accessOf(ADMINISTERED_TASK, (), ()), NONE);
 }
 
 @test:Config {groups: ["unit"]}

@@ -1366,7 +1366,7 @@ public final class AgentContextNative {
         Object result;
         try {
             result = WorkflowContextNative.awaitHumanTaskExploded(null, taskName, meta.userRoles(), users,
-                    excludedUsers, meta.excludedRoles(), payloadMap,
+                    excludedUsers, meta.excludedRoles(), null, null, payloadMap,
                     StringUtils.fromString(meta.title()), StringUtils.fromString(meta.description()),
                     meta.timeout(), meta.resultType(),
                     StringUtils.fromString(AGENT_TASK_SITE_PREFIX + taskName.getValue()));

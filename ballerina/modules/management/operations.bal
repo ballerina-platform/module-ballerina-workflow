@@ -253,10 +253,11 @@ isolated function opListHumanTasks(string? status, string? parentWorkflowId, str
     // so every listed task is one they can complete.
     HumanTaskSummary[] enriched = [];
     foreach HumanTaskSummary t in preFiltered {
-        if !eligible(t, callerRoles, userId) {
+        if !visible(t, callerRoles, userId) {
             continue;
         }
         t.canComplete = true;
+        t.canAdminister = administers(t, callerRoles, userId);
         enriched.push(t);
     }
     return paginateHumanTasks(enriched, clampLimit('limit, maxPageSize), pageToken).toJson();
@@ -291,12 +292,13 @@ isolated function opListWorkItems(string? kinds, string? status, string? parentW
             if parentWorkflowType is string && t.parentWorkflowType != parentWorkflowType {
                 continue;
             }
-            boolean mine = eligible(t, callerRoles, userId);
+            boolean mine = visible(t, callerRoles, userId);
             if !all && !mine {
                 continue;
             }
             WorkItemSummary item = workItemOf(t, ());
             item.canComplete = mine;
+            item.canAdminister = administers(t, callerRoles, userId);
             merged.push(item);
         }
     }
@@ -323,6 +325,7 @@ isolated function opListWorkItems(string? kinds, string? status, string? parentW
             WorkItemSummary item = workItemOf(t, t.trigger);
             item.parentWorkflowType = reviewParentType;
             item.canComplete = mine;
+            item.canAdminister = administers(t, callerRoles, userId);
             merged.push(item);
         }
     }
@@ -362,8 +365,11 @@ isolated function workItemOf(HumanTaskSummary|ReviewActivitySummary t, string? t
     users: t.users,
     excludedUsers: t.excludedUsers,
     excludedRoles: t.excludedRoles,
+    administratorRoles: t.administratorRoles,
+    administratorUsers: t.administratorUsers,
     completedBy: t.completedBy,
     completedAt: t.completedAt,
+    completedAs: t.completedAs,
     canComplete: true
 };
 
@@ -406,7 +412,7 @@ isolated function opPendingHumanTaskCount(string? taskQueue, [string, string...]
     }
     int visibleCount = 0;
     foreach HumanTaskSummary t in pending {
-        if all || eligible(t, callerRoles, userId) {
+        if all || visible(t, callerRoles, userId) {
             visibleCount += 1;
         }
     }
@@ -419,9 +425,11 @@ isolated function opGetHumanTask(string taskId, [string, string...]? callerRoles
     if info is error {
         return notFoundOrExecutionError(info, "Human task not found: " + taskId);
     }
-    if !eligible(info, callerRoles, userId) {
+    if !visible(info, callerRoles, userId) {
         return accessDenied("Unauthorized: caller is not allowed to access this task");
     }
+    info.canComplete = true;
+    info.canAdminister = administers(info, callerRoles, userId);
     return info.toJson();
 }
 
@@ -451,6 +459,49 @@ isolated function opFailHumanTask(string taskId, json? reason, map<json>? detail
         return classifyRuntimeError(err);
     }
     return buildCompletionResponse(userId).toJson();
+}
+
+// ── Administration ────────────────────────────────────────────────────────────
+// Both acts go to the runtime, which admits only an administrator of the task and records the act
+// in the task's history.
+
+isolated function opReassignTask(string taskId, map<json> params, [string, string...]? callerRoles,
+        string? userId) returns json|Error {
+    if callerRoles is () && userId is () {
+        return accessDenied("Unauthorized: caller identity is required");
+    }
+    TaskAudience|error audience = params.cloneWithType();
+    if audience is error {
+        return invalidRequest("The audience must be lists of strings under userRoles, users, excludedUsers "
+                + "or excludedRoles");
+    }
+    if audience.length() == 0 {
+        return invalidRequest("Name at least one audience list to replace");
+    }
+    error? err = reassignTask(taskId, audience, callerRoles, userId);
+    if err is error {
+        return classifyRuntimeError(err);
+    }
+    return buildAdministrationResponse("reassign", userId).toJson();
+}
+
+isolated function opExtendTaskDeadline(string taskId, int? timeoutMillis, [string, string...]? callerRoles,
+        string? userId) returns json|Error {
+    if callerRoles is () && userId is () {
+        return accessDenied("Unauthorized: caller identity is required");
+    }
+    if timeoutMillis is int && timeoutMillis <= 0 {
+        return invalidRequest("timeoutMillis must be positive, or absent to clear the deadline");
+    }
+    error? err = extendTaskDeadline(taskId, timeoutMillis, callerRoles, userId);
+    if err is error {
+        return classifyRuntimeError(err);
+    }
+    return buildAdministrationResponse("extendDeadline", userId).toJson();
+}
+
+isolated function buildAdministrationResponse(string action, string? userId) returns TaskAdministration {
+    return {success: true, action, administeredBy: userId ?: "unknown", administeredAt: time:utcToString(time:utcNow())};
 }
 
 // ── Review activities ─────────────────────────────────────────────────────────
@@ -982,7 +1033,39 @@ type Assignment record {
     string[] users;
     string[] excludedUsers;
     string[] excludedRoles;
+    string[] administratorRoles = [];
+    string[] administratorUsers = [];
 };
+
+# What a caller may do with a task: nothing, act as its audience, or administer it.
+enum Access {
+    NONE,
+    AUDIENCE,
+    ADMINISTRATOR
+}
+
+# The one answer every read uses, mirroring the runtime's: the audience rule first, then administration.
+# A caller who administers a task sees it and may complete it; a caller with neither sees nothing.
+isolated function accessOf(Assignment task, [string, string...]? callerRoles, string? userId) returns Access {
+    if eligible(task, callerRoles, userId) {
+        return AUDIENCE;
+    }
+    return administers(task, callerRoles, userId) ? ADMINISTRATOR : NONE;
+}
+
+isolated function administers(Assignment task, [string, string...]? callerRoles, string? userId) returns boolean {
+    string[] roles = callerRoles ?: [];
+    foreach string role in roles {
+        if task.administratorRoles.indexOf(role) != () {
+            return true;
+        }
+    }
+    return userId is string && task.administratorUsers.indexOf(userId) != ();
+}
+
+isolated function visible(Assignment task, [string, string...]? callerRoles, string? userId) returns boolean {
+    return accessOf(task, callerRoles, userId) != NONE;
+}
 
 # A review activity that names an audience is visible to the callers eligible for it — the
 # same rule as human tasks. One naming nobody is visible to any caller by default; when
@@ -995,7 +1078,7 @@ type Assignment record {
 isolated function canAccessReviewActivity(Assignment task, [string, string...]? callerRoles,
         string? userId) returns boolean {
     if task.userRoles.length() > 0 || task.users.length() > 0 {
-        return eligible(task, callerRoles, userId);
+        return visible(task, callerRoles, userId);
     }
     string? requiredRole = reviewActivityAccessRole;
     if requiredRole is string && requiredRole.trim().length() > 0 {

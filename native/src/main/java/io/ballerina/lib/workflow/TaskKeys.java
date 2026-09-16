@@ -36,6 +36,8 @@ public final class TaskKeys {
     public static final String USERS = "users";
     public static final String EXCLUDED_USERS = "excludedUsers";
     public static final String EXCLUDED_ROLES = "excludedRoles";
+    public static final String ADMINISTRATOR_ROLES = "administratorRoles";
+    public static final String ADMINISTRATOR_USERS = "administratorUsers";
     public static final String TASK_INPUT = "taskInput";
     public static final String FORM_SCHEMA = "formSchema";
     public static final String TIMEOUT_MILLIS = "timeoutMillis";
@@ -67,6 +69,9 @@ public final class TaskKeys {
     // Human task completion envelope
     public static final String COMPLETED_BY = "completedBy";
     public static final String COMPLETED_AT = "completedAt";
+    public static final String COMPLETED_AS = "completedAs";
+    public static final String COMPLETED_AS_AUDIENCE = "audience";
+    public static final String COMPLETED_AS_ADMINISTRATOR = "administrator";
     public static final String IDENTITY_SOURCE = "identitySource";
 
     private TaskKeys() {

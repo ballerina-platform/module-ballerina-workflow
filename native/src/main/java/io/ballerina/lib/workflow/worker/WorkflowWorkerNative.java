@@ -167,11 +167,18 @@ public final class WorkflowWorkerNative {
     // Signals the task decision paths send to a task child; not data events, though the names carry no prefix.
     public static final String TASK_COMPLETION_SIGNAL_NAME = "taskCompletion";
     public static final String TASK_DECISION_SIGNAL_NAME = "taskDecision";
+    // An administrator's act on a live task: reassign its audience, move its deadline, or fail it.
+    public static final String TASK_ADMINISTER_SIGNAL_NAME = "taskAdminister";
+    public static final String ADMINISTER_ACTION = "action";
+    public static final String ADMINISTER_REASSIGN = "reassign";
+    public static final String ADMINISTER_EXTEND_DEADLINE = "extendDeadline";
+    public static final String ADMINISTER_FAIL = "fail";
+    public static final String ADMINISTERED_BY = "administeredBy";
 
     // Whether a signal is framework plumbing (control, agent wiring, task decisions) rather than a user data event.
     public static boolean isFrameworkSignal(String signalName) {
         return signalName.startsWith("__") || TASK_COMPLETION_SIGNAL_NAME.equals(signalName)
-                || TASK_DECISION_SIGNAL_NAME.equals(signalName);
+                || TASK_DECISION_SIGNAL_NAME.equals(signalName) || TASK_ADMINISTER_SIGNAL_NAME.equals(signalName);
     }
 
     /**
@@ -2744,6 +2751,90 @@ public final class WorkflowWorkerNative {
         }
 
         /**
+         * How a task child's wait ended.
+         *
+         * @param arrived       the decision arrived — an administrator's fail counts
+         * @param timeoutMillis the deadline as last set, for the timeout message
+         * @param adminFailure  an administrator's fail, carried as the payload the fail operation would have sent
+         */
+        private record TaskWait(boolean arrived, Long timeoutMillis, Map<String, Object> adminFailure) { }
+
+        // Waits for the decision or the deadline, applying administrators' acts as they arrive: a reassignment
+        // rewrites the memo audience, a deadline change re-arms the timer, a fail ends the wait.
+        private TaskWait awaitDecisionOrAdministration(
+                io.temporal.workflow.CompletablePromise<SignalAwaitWrapper.SignalData> decision, Long timeoutMillis) {
+            Long deadlineAt = timeoutMillis == null ? null : Workflow.currentTimeMillis() + timeoutMillis;
+            while (true) {
+                io.temporal.workflow.CompletablePromise<SignalAwaitWrapper.SignalData> admin =
+                        signalWrapper.takeSignalFuture(TASK_ADMINISTER_SIGNAL_NAME);
+                boolean fired;
+                if (deadlineAt == null) {
+                    Workflow.await(() -> decision.isCompleted() || admin.isCompleted());
+                    fired = true;
+                } else {
+                    long remaining = deadlineAt - Workflow.currentTimeMillis();
+                    fired = remaining > 0 && Workflow.await(java.time.Duration.ofMillis(remaining),
+                            () -> decision.isCompleted() || admin.isCompleted());
+                }
+                if (decision.isCompleted()) {
+                    signalWrapper.cancelWaiter(TASK_ADMINISTER_SIGNAL_NAME, admin);
+                    return new TaskWait(true, timeoutMillis, null);
+                }
+                if (!fired) {
+                    signalWrapper.cancelWaiter(TASK_ADMINISTER_SIGNAL_NAME, admin);
+                    return new TaskWait(false, timeoutMillis, null);
+                }
+                if (!(admin.get().data() instanceof Map<?, ?> raw)) {
+                    continue;
+                }
+                @SuppressWarnings("unchecked")
+                Map<String, Object> act = (Map<String, Object>) raw;
+                String action = String.valueOf(act.get(ADMINISTER_ACTION));
+                switch (action) {
+                    case ADMINISTER_REASSIGN -> {
+                        Map<String, Object> audience = new HashMap<>();
+                        for (String key : List.of(TaskKeys.USER_ROLES, TaskKeys.USERS, TaskKeys.EXCLUDED_USERS,
+                                TaskKeys.EXCLUDED_ROLES)) {
+                            if (act.containsKey(key)) {
+                                audience.put(key, act.get(key));
+                            }
+                        }
+                        try {
+                            Workflow.upsertMemo(audience);
+                        } catch (Exception e) {
+                            LOGGER.warn("Could not reassign the task on its memo: {}", e.getMessage());
+                        }
+                    }
+                    case ADMINISTER_EXTEND_DEADLINE -> {
+                        Object millis = act.get(TaskKeys.TIMEOUT_MILLIS);
+                        timeoutMillis = millis instanceof Number n ? n.longValue() : null;
+                        deadlineAt = timeoutMillis == null ? null : Workflow.currentTimeMillis() + timeoutMillis;
+                        Map<String, Object> memo = new HashMap<>();
+                        memo.put(TaskKeys.TIMEOUT_MILLIS, timeoutMillis == null ? Long.valueOf(0L) : timeoutMillis);
+                        try {
+                            Workflow.upsertMemo(memo);
+                        } catch (Exception e) {
+                            LOGGER.warn("Could not record the new deadline on the task memo: {}", e.getMessage());
+                        }
+                    }
+                    case ADMINISTER_FAIL -> {
+                        Map<String, Object> failure = new HashMap<>();
+                        failure.put("__rejected", true);
+                        failure.put(TaskKeys.ACTION, TaskKeys.ACTION_REJECT);
+                        failure.put("reason", act.get("reason"));
+                        failure.put("details", act.get("details"));
+                        failure.put(TaskKeys.FEEDBACK, act.get("reason"));
+                        failure.put(TaskKeys.COMPLETED_BY, act.get(ADMINISTERED_BY));
+                        failure.put(TaskKeys.DECIDED_BY, act.get(ADMINISTERED_BY));
+                        failure.put(TaskKeys.COMPLETED_AS, TaskKeys.COMPLETED_AS_ADMINISTRATOR);
+                        return new TaskWait(true, timeoutMillis, failure);
+                    }
+                    default -> LOGGER.warn("Ignoring unknown administer action '{}'", action);
+                }
+            }
+        }
+
+        /**
          * Executes the built-in human task child workflow.
          *
          * <p>Waits for a {@code "taskCompletion"} signal or a durable timer (if a timeout is
@@ -2779,19 +2870,13 @@ public final class WorkflowWorkerNative {
             io.temporal.workflow.CompletablePromise<SignalAwaitWrapper.SignalData> signalFuture =
                     signalWrapper.getSignalFuture(TASK_COMPLETION_SIGNAL_NAME);
 
-            boolean signalArrived;
-            if (timeoutMillis != null) {
-                signalArrived = Workflow.await(
-                        java.time.Duration.ofMillis(timeoutMillis),
-                        signalFuture::isCompleted);
-            } else {
-                // No timeout — block indefinitely until the signal arrives
-                Workflow.await(signalFuture::isCompleted);
-                signalArrived = true;
-            }
-
-            if (signalArrived) {
-                SignalAwaitWrapper.SignalData signalData = signalFuture.get();
+            TaskWait wait = awaitDecisionOrAdministration(signalFuture, timeoutMillis);
+            timeoutMillis = wait.timeoutMillis();
+            if (wait.arrived()) {
+                // An administrator's fail arrives as the payload the fail operation would have sent.
+                Object data = wait.adminFailure() != null ? wait.adminFailure() : signalFuture.get().data();
+                SignalAwaitWrapper.SignalData signalData =
+                        new SignalAwaitWrapper.SignalData(TASK_COMPLETION_SIGNAL_NAME, null, data);
                 // A rejection (management `fail` operation) carries a top-level `__rejected` marker in
                 // the signal envelope — deliberately outside the user-facing `result` payload, so a
                 // legitimate completion result containing an `__rejected` field is never misread as a
@@ -2809,6 +2894,9 @@ public final class WorkflowWorkerNative {
                     completion.put(COMPLETED_BY_MEMO_KEY, actor);
                     completion.put(COMPLETED_AT_MEMO_KEY, java.time.Instant
                             .ofEpochMilli(Workflow.currentTimeMillis()).toString());
+                    if (actorMap.get(TaskKeys.COMPLETED_AS) instanceof String as) {
+                        completion.put(TaskKeys.COMPLETED_AS, as);
+                    }
                     try {
                         Workflow.upsertMemo(completion);
                     } catch (Exception e) {
@@ -2877,14 +2965,9 @@ public final class WorkflowWorkerNative {
 
             io.temporal.workflow.CompletablePromise<SignalAwaitWrapper.SignalData> signalFuture =
                     signalWrapper.getSignalFuture(TASK_DECISION_SIGNAL_NAME);
-            boolean decided;
-            if (timeoutMillis != null) {
-                decided = Workflow.await(java.time.Duration.ofMillis(timeoutMillis), signalFuture::isCompleted);
-            } else {
-                Workflow.await(signalFuture::isCompleted);
-                decided = true;
-            }
-            if (!decided) {
+            TaskWait wait = awaitDecisionOrAdministration(signalFuture, timeoutMillis);
+            timeoutMillis = wait.timeoutMillis();
+            if (!wait.arrived()) {
                 String timedOutAt = java.time.Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString();
                 String timedOutAfter = java.time.Duration.ofMillis(timeoutMillis).toString();
                 throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
@@ -2892,7 +2975,7 @@ public final class WorkflowWorkerNative {
                         REVIEW_TIMEOUT_FAILURE_TYPE);
             }
 
-            Object decision = signalFuture.get().data();
+            Object decision = wait.adminFailure() != null ? wait.adminFailure() : signalFuture.get().data();
             if (!(decision instanceof Map<?, ?> decisionMap)) {
                 Map<String, Object> failDecision = new HashMap<>();
                 failDecision.put(TaskKeys.ACTION, TaskKeys.ACTION_REJECT);
@@ -2904,6 +2987,9 @@ public final class WorkflowWorkerNative {
                 completion.put(COMPLETED_BY_MEMO_KEY, actor);
                 completion.put(COMPLETED_AT_MEMO_KEY,
                         java.time.Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString());
+                if (decisionMap.get(TaskKeys.COMPLETED_AS) instanceof String as) {
+                    completion.put(TaskKeys.COMPLETED_AS, as);
+                }
                 try {
                     Workflow.upsertMemo(completion);
                 } catch (Exception e) {

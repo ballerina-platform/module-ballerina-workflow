@@ -1102,6 +1102,7 @@ public final class ManagementNative {
             }
             // Embed audit fields so the history scan in getReviewActivityInfo can retrieve them
             javaDecision.put(TaskKeys.DECIDED_BY, userId instanceof BString bs ? bs.getValue() : "unknown");
+            javaDecision.put(TaskKeys.COMPLETED_AS, memo.completedAs());
             javaDecision.put(TaskKeys.DECIDED_AT, Instant.now().toString());
 
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(taskWorkflowId.getValue(),
@@ -1183,9 +1184,10 @@ public final class ManagementNative {
                             "Failed to decode task roles for '" + taskWorkflowId + "': " + e.getMessage()));
                 }
                 LOGGER.debug("Could not decode assignment from memo for '{}': {}", taskWorkflowId, e.getMessage());
-                assignment = new TaskAssignment(List.of(), List.of(), List.of(), List.of());
+                assignment = TaskAssignment.empty();
             }
-            // The decision's audit entry names the review, its parent, and who was allowed to decide it.
+            // The decision's audit entry names the review, its parent, who was allowed to decide it, and
+            // whether the caller decides as its audience or as an administrator.
             Object taskInput;
             try {
                 Payload inputPl = memoFields.getOrDefault(TaskKeys.TASK_INPUT,
@@ -1194,15 +1196,16 @@ public final class ManagementNative {
             } catch (Exception e) {
                 taskInput = null; // the audit entry goes without the reviewed arguments
             }
-            TaskMemo memo = new TaskMemo(decodeMemoString(dc, memoFields, TaskKeys.TASK_NAME, null),
-                                         decodeMemoString(dc, memoFields, TaskKeys.PARENT_WORKFLOW_ID, null),
-                                         assignment.userRoles().stream().sorted().toList(), taskInput);
-            String denial = assignment.denial(TaskAssignment.roles(callerRolesArray),
-                    userId instanceof BString bs ? bs.getValue() : null, "review '" + taskWorkflowId + "'");
-            if (denial != null) {
-                return ErrorCreator.createError(StringUtils.fromString(denial));
+            List<String> roles = TaskAssignment.roles(callerRolesArray);
+            String caller = userId instanceof BString bs ? bs.getValue() : null;
+            TaskAssignment.Access access = assignment.access(roles, caller);
+            if (access == TaskAssignment.Access.NONE) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        assignment.denial(roles, caller, "review '" + taskWorkflowId + "'")));
             }
-            return memo;
+            return new TaskMemo(decodeMemoString(dc, memoFields, TaskKeys.TASK_NAME, null),
+                                decodeMemoString(dc, memoFields, TaskKeys.PARENT_WORKFLOW_ID, null),
+                                assignment.userRoles().stream().sorted().toList(), taskInput, access);
 
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -2062,6 +2065,7 @@ public final class ManagementNative {
                     decodeMemoString(dc, memoFields, WorkflowWorkerNative.COMPLETED_BY_MEMO_KEY, null));
         putNullable(record, TaskKeys.COMPLETED_AT,
                     decodeMemoString(dc, memoFields, WorkflowWorkerNative.COMPLETED_AT_MEMO_KEY, null));
+        putNullable(record, TaskKeys.COMPLETED_AS, decodeMemoString(dc, memoFields, TaskKeys.COMPLETED_AS, null));
     }
 
     private static void putNullable(BMap<BString, Object> record, String key, String value) {

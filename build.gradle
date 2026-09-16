@@ -66,6 +66,12 @@ allprojects {
 def moduleVersion = project.version.replace("-SNAPSHOT", "")
 
 subprojects {
+    // The package declares [platform.java21], so the jars must stay Java 21 bytecode even when the
+    // build runs on a newer JDK (the lang version now selects the runner's JDK).
+    tasks.withType(JavaCompile).configureEach {
+        options.release = 21
+    }
+
     configurations {
         ballerinaStdLibs
         jbalTools

@@ -23,7 +23,6 @@ import io.ballerina.lib.workflow.compiler.descriptor.WorkflowDescriptorBuilder;
 import io.ballerina.lib.workflow.compiler.descriptor.WorkflowDescriptorStore;
 import io.ballerina.projects.DocumentId;
 import io.ballerina.projects.JBallerinaBackend;
-import io.ballerina.projects.JvmTarget;
 import io.ballerina.projects.Module;
 import io.ballerina.projects.ModuleId;
 import io.ballerina.projects.PackageCompilation;
@@ -104,7 +103,7 @@ public class WorkflowDescriptorTest {
                 "Compilation errors: " + compilation.diagnosticResult().diagnostics());
 
         Path execJar = Files.createTempDirectory("wf-descriptor-pack").resolve("packed.jar");
-        JBallerinaBackend backend = JBallerinaBackend.from(compilation, JvmTarget.JAVA_21);
+        JBallerinaBackend backend = JBallerinaBackend.from(compilation, TestUtils.getJvmTarget());
         backend.emit(JBallerinaBackend.OutputType.EXEC, execJar);
 
         String expected = buildDescriptor("descriptor_generation");

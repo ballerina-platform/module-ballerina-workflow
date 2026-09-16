@@ -147,6 +147,30 @@ isolated function opWakeWorkflow(string workflowId) returns json|Error {
     return {success: true};
 }
 
+isolated function opSendData(string workflowId, string dataName, json data) returns json|Error {
+    // Decided here rather than read back out of the runtime's message: the not-found message
+    // carries a caller-chosen workflow ID, so an instance named after this denial would be
+    // reported as one.
+    if isReservedEventName(dataName) {
+        return accessDenied("reserved event name: " + dataName);
+    }
+    string[]?|error declared = declaredEventNames(workflowId);
+    if declared is error {
+        return notFoundOrExecutionError(declared);
+    }
+    // A misspelt event name is otherwise delivered to nobody and acknowledged as a success, and
+    // the workflow waits on. A worker that knows the type can say so; one that does not cannot.
+    if declared is string[] && declared.indexOf(dataName) is () {
+        return invalidRequest(string `unknown event name '${dataName}': this workflow waits on ` +
+                declared.toString());
+    }
+    error? result = sendDataToWorkflow(workflowId, dataName, data);
+    if result is error {
+        return notFoundOrExecutionError(result);
+    }
+    return {success: true, dataName: dataName};
+}
+
 isolated function opTerminateWorkflow(string workflowId, string? runId, string? reason)
         returns json|Error {
     error? result = terminateWorkflow(workflowId, runId ?: "", reason);

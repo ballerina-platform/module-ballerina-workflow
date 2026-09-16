@@ -20,12 +20,14 @@ package io.ballerina.lib.workflow.compiler;
 
 import io.ballerina.projects.BuildOptions;
 import io.ballerina.projects.JBallerinaBackend;
-import io.ballerina.projects.JvmTarget;
 import io.ballerina.projects.PackageCompilation;
 import io.ballerina.projects.ProjectEnvironmentBuilder;
 import io.ballerina.projects.directory.BuildProject;
 import io.ballerina.projects.environment.Environment;
 import io.ballerina.projects.environment.EnvironmentBuilder;
+import io.swagger.v3.parser.OpenAPIV3Parser;
+import io.swagger.v3.parser.core.models.ParseOptions;
+import io.swagger.v3.parser.core.models.SwaggerParseResult;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
@@ -42,8 +44,10 @@ import java.util.regex.Pattern;
 
 /**
  * The management API's exported artifacts: the curated OpenAPI description must be written
- * out under {@code --export-openapi}, and — because it is curated rather than generated —
- * must not be allowed to drift from the service it describes.
+ * out under {@code --export-openapi} (into {@code target/openapi/}) and under
+ * {@code --export-endpoints} (into {@code target/artifact/}, where the endpoint metadata
+ * points), and — because it is curated rather than generated — must not be allowed to drift
+ * from the service it describes.
  */
 public class ManagementApiArtifactExportTest {
 
@@ -58,30 +62,58 @@ public class ManagementApiArtifactExportTest {
     public void testExportOpenApiWritesTheManagementSpec() throws IOException {
         // The fixture imports workflow.management.rest — the module that owns the service —
         // so this package genuinely can serve the API the exported spec describes.
-        Path specPath = emitWithOptions("management_rest_consumer", true, false, "wf-openapi-export");
+        Path target = emitWithOptions("management_rest_consumer", true, false, "wf-openapi-export");
 
+        Path specPath = openapiSpec(target);
         Assert.assertTrue(Files.exists(specPath),
                 "--export-openapi must write the management spec beside the package's own: " + specPath);
         String yaml = Files.readString(specPath, StandardCharsets.UTF_8);
         Assert.assertTrue(yaml.contains("Ballerina Workflow Management API"),
                 "The exported file is the curated management spec");
+        // The artifact directory belongs to --export-endpoints; the http plugin leaves it alone too.
+        Assert.assertFalse(Files.exists(artifactSpec(target)),
+                "--export-openapi alone must not populate target/artifact");
     }
 
     @Test
-    public void testExportEndpointsAloneStillWritesTheSpec() throws IOException {
-        // The endpoint metadata names the spec file as its artifact, so an endpoints-only
-        // build must write it too — metadata pointing at a file that was never written would
-        // hand every consumer of the export a dangling reference.
-        Path specPath = emitWithOptions("management_rest_consumer", false, true, "wf-endpoints-only");
+    public void testExportEndpointsWritesTheSpecBesideTheEndpointMetadata() throws IOException {
+        // endpoints.yaml resolves each schemaPath against target/artifact, so the spec has to
+        // be there — a copy in target/openapi alone hands every consumer a dangling reference.
+        Path target = emitWithOptions("management_rest_consumer", false, true, "wf-endpoints-only");
+
+        Path specPath = artifactSpec(target);
         Assert.assertTrue(Files.exists(specPath),
-                "--export-endpoints advertises the spec file in its metadata; the file must exist: "
-                        + specPath);
+                "--export-endpoints advertises the spec file in its metadata; it must sit beside "
+                        + "endpoints.yaml: " + specPath);
+        Assert.assertFalse(Files.exists(openapiSpec(target)),
+                "--export-endpoints alone must not populate target/openapi");
+
+        // endpoints.yaml proves the reflective registration landed, but only a lang that has the
+        // API (2201.13.6+) writes it; on an older pinned runtime the file is legitimately absent.
+        if (!langHasEndpointMetadataApi()) {
+            return;
+        }
+        Path endpoints = target.resolve(ManagementApiArtifactExporter.ARTIFACT_DIR).resolve("endpoints.yaml");
+        Assert.assertTrue(Files.exists(endpoints), "endpoints.yaml must be written: " + endpoints);
+        String yaml = Files.readString(endpoints, StandardCharsets.UTF_8);
+        Assert.assertTrue(yaml.contains("name: \"workflow-management\""), "endpoint registered:\n" + yaml);
+        Assert.assertTrue(yaml.contains("schemaPath: \"" + ManagementApiArtifactExporter.SPEC_FILE_NAME + "\""),
+                "the metadata names the file that was written:\n" + yaml);
+    }
+
+    @Test
+    public void testBothFlagsWriteTheSpecToBothDirectories() throws IOException {
+        Path target = emitWithOptions("management_rest_consumer", true, true, "wf-openapi-and-endpoints");
+        Assert.assertTrue(Files.exists(openapiSpec(target)), "target/openapi must have the spec");
+        Assert.assertTrue(Files.exists(artifactSpec(target)), "target/artifact must have the spec");
     }
 
     @Test
     public void testWithoutTheFlagNothingIsExported() throws IOException {
-        Path specPath = emitWithOptions("management_rest_consumer", false, false, "wf-openapi-noflag");
-        Assert.assertFalse(Files.exists(specPath),
+        Path target = emitWithOptions("management_rest_consumer", false, false, "wf-openapi-noflag");
+        Assert.assertFalse(Files.exists(openapiSpec(target)),
+                "The spec is an explicit opt-in; a plain build must not write it");
+        Assert.assertFalse(Files.exists(artifactSpec(target)),
                 "The spec is an explicit opt-in; a plain build must not write it");
     }
 
@@ -91,13 +123,35 @@ public class ManagementApiArtifactExportTest {
         // workflow.management.rest there is no service object and no listener, so the package
         // cannot serve /workflow under any configuration — exporting a description of it
         // would hand a gateway a route that can never answer.
-        Path specPath = emitWithOptions("descriptor_generation", true, false, "wf-openapi-noimport");
-        Assert.assertFalse(Files.exists(specPath),
+        Path target = emitWithOptions("descriptor_generation", true, true, "wf-openapi-noimport");
+        Assert.assertFalse(Files.exists(openapiSpec(target)),
                 "A package that does not import workflow.management.rest cannot serve the API; "
                         + "the spec must not be exported for it");
+        Assert.assertFalse(Files.exists(artifactSpec(target)),
+                "A package that does not import workflow.management.rest cannot serve the API; "
+                        + "its endpoint must not be exported for it");
     }
 
-    /** Builds the fixture, emits the executable (which runs the lifecycle task), and returns the spec path. */
+    private static boolean langHasEndpointMetadataApi() {
+        try {
+            Class.forName("io.ballerina.projects.plugins.EndpointMetaInfo");
+            return true;
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
+    }
+
+    private static Path openapiSpec(Path target) {
+        return target.resolve(ManagementApiArtifactExporter.OPENAPI_DIR)
+                .resolve(ManagementApiArtifactExporter.SPEC_FILE_NAME);
+    }
+
+    private static Path artifactSpec(Path target) {
+        return target.resolve(ManagementApiArtifactExporter.ARTIFACT_DIR)
+                .resolve(ManagementApiArtifactExporter.SPEC_FILE_NAME);
+    }
+
+    /** Builds the fixture, emits the executable (which runs the lifecycle task), and returns the target dir. */
     private static Path emitWithOptions(String fixture, boolean exportOpenApi, boolean exportEndpoints,
             String tempPrefix) throws IOException {
         BuildOptions options = BuildOptions.builder()
@@ -111,15 +165,87 @@ public class ManagementApiArtifactExportTest {
         Assert.assertEquals(compilation.diagnosticResult().errorCount(), 0,
                 "Compilation errors: " + compilation.diagnosticResult().diagnostics());
 
-        Path specPath = project.targetDir().resolve("openapi")
-                .resolve(ManagementApiArtifactExporter.SPEC_FILE_NAME);
-        Files.deleteIfExists(specPath);
+        // Each case starts from a clean slate: the fixtures share a target directory, so a
+        // file a previous case wrote must not be mistaken for this case's output.
+        Path target = project.targetDir();
+        Files.deleteIfExists(openapiSpec(target));
+        Files.deleteIfExists(artifactSpec(target));
+        Files.deleteIfExists(target.resolve(ManagementApiArtifactExporter.ARTIFACT_DIR).resolve("endpoints.yaml"));
 
         // The lifecycle's code-generation-completed tasks run when the backend emits.
         Path execJar = Files.createTempDirectory(tempPrefix).resolve("app.jar");
-        JBallerinaBackend.from(compilation, JvmTarget.JAVA_21)
+        JBallerinaBackend.from(compilation, TestUtils.getJvmTarget())
                 .emit(JBallerinaBackend.OutputType.EXEC, execJar);
-        return specPath;
+        return target;
+    }
+
+    // The spec is written by hand, so nothing but a parse proves it is a valid OpenAPI
+    // document. This caught a description holding an unquoted comma inside a flow mapping:
+    // YAML read the tail as a second key, which silently truncated the text and put a
+    // nonsense entry into a schema that consumers would choke on.
+    @Test
+    public void testTheSpecIsAValidOpenApiDocument() throws IOException {
+        ParseOptions options = new ParseOptions();
+        options.setResolve(true);
+        options.setValidateInternalRefs(true);
+        SwaggerParseResult result = new OpenAPIV3Parser().readContents(embeddedSpec(), null, options);
+
+        Assert.assertNotNull(result.getOpenAPI(), "The spec must parse as an OpenAPI document: "
+                + result.getMessages());
+        Assert.assertEquals(result.getMessages(), List.of(),
+                "workflow-management-openapi.yaml is not a valid OpenAPI document");
+        Assert.assertEquals(result.getOpenAPI().getOpenapi(), "3.0.3", "The declared OpenAPI version");
+    }
+
+    // `nullable` is defined only as a modifier of a declared `type`; alone it says nothing, and
+    // a reader is entitled to treat the schema as unconstrained. Keep the two together.
+    @Test
+    public void testNullableIsAlwaysPairedWithAType() throws IOException {
+        String yaml = embeddedSpec();
+        List<String> orphans = new ArrayList<>();
+        String[] lines = yaml.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (!line.contains("nullable: true")) {
+                continue;
+            }
+            // Either the flow mapping on this line carries the type, or the enclosing block
+            // schema declares it on a neighbouring line at the same indentation.
+            boolean paired = line.contains("type:") || hasBlockSibling(lines, i, "type:");
+            if (!paired) {
+                orphans.add("line " + (i + 1) + ": " + line.trim());
+            }
+        }
+        Assert.assertEquals(orphans, List.of(), "`nullable` without a `type` says nothing");
+    }
+
+    /** Whether a line at {@code index}'s indentation has a sibling key within its block. */
+    private static boolean hasBlockSibling(String[] lines, int index, String key) {
+        int indent = indentOf(lines[index]);
+        for (int direction : new int[] {-1, 1}) {
+            for (int i = index + direction; i >= 0 && i < lines.length; i += direction) {
+                String line = lines[i];
+                if (line.isBlank()) {
+                    continue;
+                }
+                int at = indentOf(line);
+                if (at < indent) {
+                    break;
+                }
+                if (at == indent && line.trim().startsWith(key)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static int indentOf(String line) {
+        int i = 0;
+        while (i < line.length() && line.charAt(i) == ' ') {
+            i++;
+        }
+        return i;
     }
 
     // The spec is curated, so this is the drift guard: every resource of the management REST

@@ -90,6 +90,39 @@ public isolated function wakeAgent(string workflowId) returns error? = @java:Met
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 
+# Whether a name is reserved for the framework's own control signals.
+#
+# + dataName - The event name a caller asked to deliver
+# + return - Whether the runtime reserves it
+isolated function isReservedEventName(string dataName) returns boolean = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
+# The event names declared by the workflow type of a running instance, or `()` when this worker
+# does not know that type — it may belong to another program, whose declarations are not ours to
+# vouch for.
+#
+# + workflowId - The instance to look up
+# + return - The declared event names, `()` when the type is unknown here, or an error when the
+#            instance cannot be read
+isolated function declaredEventNames(string workflowId) returns string[]?|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
+# Sends a named data event to a running workflow instance, addressing it by ID — the
+# management-side counterpart of `workflow:sendData`. The event is durable once accepted,
+# so an instance that has not reached its `wait` yet still receives it.
+#
+# + workflowId - The workflow instance to deliver to
+# + dataName - The event name the workflow waits on. Names reserved for framework control
+#              signals (`__`-prefixed, `taskCompletion`, `taskDecision`) are rejected
+# + data - The payload
+# + return - An error if the instance is not running or the signal cannot be delivered
+public isolated function sendDataToWorkflow(string workflowId, string dataName, anydata data)
+        returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
 # Requests a running workflow to pause. It stops at its next durable operation and holds there
 # until `resumeWorkflow`; while paused its status reads `SUSPENDED`.
 #

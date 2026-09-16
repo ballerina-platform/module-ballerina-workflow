@@ -572,6 +572,8 @@ isolated function commandCases() returns CommandCase[] => [
     {operation: SUSPEND_INSTANCE, params: {workflowId: "wf-1"}, required: ["workflowId"]},
     {operation: RESUME_INSTANCE, params: {workflowId: "wf-1"}, required: ["workflowId"]},
     {operation: WAKE_INSTANCE, params: {workflowId: "wf-1"}, required: ["workflowId"]},
+    {operation: SEND_DATA_TO_INSTANCE, params: {workflowId: "wf-1", dataName: "approval", data: {}},
+        required: ["workflowId", "dataName"]},
     {operation: TERMINATE_INSTANCE, params: {workflowId: "wf-1", reason: "cleanup"},
         required: ["workflowId"]},
     {operation: CANCEL_INSTANCE, params: {workflowId: "wf-1"}, required: ["workflowId"]},
@@ -601,7 +603,8 @@ isolated function commandCases() returns CommandCase[] => [
 // at run time; the coverage test below fails if the case table falls behind it.
 isolated function allOperations() returns Operation[] => [
     LIST_DEFINITIONS, GET_RUNTIME_INFO, LIST_INSTANCES, START_INSTANCE, GET_INSTANCE, SUSPEND_INSTANCE,
-    RESUME_INSTANCE, WAKE_INSTANCE, TERMINATE_INSTANCE, CANCEL_INSTANCE, GET_INSTANCE_HISTORY,
+    RESUME_INSTANCE, WAKE_INSTANCE, SEND_DATA_TO_INSTANCE, TERMINATE_INSTANCE, CANCEL_INSTANCE,
+    GET_INSTANCE_HISTORY,
     GET_INSTANCE_ACTIVITY_TREE, GET_INSTANCE_EXECUTION_GRAPH, LIST_HUMAN_TASKS,
     COUNT_PENDING_HUMAN_TASKS, GET_HUMAN_TASK, COMPLETE_HUMAN_TASK, FAIL_HUMAN_TASK,
     LIST_WORK_ITEMS, LIST_REVIEW_ACTIVITIES, GET_REVIEW_ACTIVITY, DECIDE_REVIEW_ACTIVITY,

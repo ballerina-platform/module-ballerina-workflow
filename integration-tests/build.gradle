@@ -390,6 +390,8 @@ task ballerinaAuthVariantTest {
     }
 }
 
+ballerinaAuthVariantTest.mustRunAfter ':startTlsTestProxy'
+
 build.dependsOn ":${packageName}-ballerina:build"
 build.dependsOn ":${packageName}-compiler-plugin:build"
 test.dependsOn ":${packageName}-ballerina:build"

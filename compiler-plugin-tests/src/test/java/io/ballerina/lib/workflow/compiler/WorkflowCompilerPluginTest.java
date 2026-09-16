@@ -1010,6 +1010,19 @@ public class WorkflowCompilerPluginTest {
                         + getDiagnosticMessages(diagnosticResult));
     }
 
+    @Test(groups = "valid")
+    public void testValidDurableAgentMetadataKeys() {
+        // Declaration metadata is re-emitted as source for the generated registration, so a key
+        // that is not a plain identifier has to survive the round trip: a peer's `'wait` (a
+        // keyword, which emitted bare parses as the wait action) and a string-literal key
+        // carrying escapes (which double if the key is unquoted and escaped again). Either one
+        // fails as a parse error in generated source the author never wrote.
+        DiagnosticResult diagnosticResult = getDiagnosticResult("valid_durable_agent_meta_keys");
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for declaration metadata keyed by a keyword or a string "
+                        + "literal. Errors: " + getDiagnosticMessages(diagnosticResult));
+    }
+
     @Test(groups = "invalid")
     public void testInvalidDurableAgentNotFinal() {
         DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_not_final");

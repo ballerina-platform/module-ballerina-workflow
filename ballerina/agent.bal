@@ -687,16 +687,16 @@ type AgentToolDef record {|
 # + requiresApproval - When `true`, the tool is gated: before the agent runs it,
 #              a review activity is created and the agent suspends durably until
 #              a human proceeds (optionally editing the arguments) or rejects
-# + retryPolicy - Failure behaviour: `NoAutomaticRetry` (report the failure to the model),
-#              `AutoRetry` (durable backoff retries), or a `ReviewTaskDefinition` (create a
-#              review activity on failure so a human decides to rerun or fail)
+# + retryPolicy - Failure behaviour: `NoRetry` (report the failure to the model), `AutoRetry`
+#              (durable backoff retries), a `ReviewTaskDefinition` (a review on failure so a
+#              human decides to rerun or fail), or `RetryBeforeReview`
 # + userRoles - Role(s) permitted to decide this tool's approval reviews. When
 #              absent, the agent-level `ApprovalConfig` roles apply
 # + return - An error if the tool cannot be registered, otherwise nil
 isolated function registerActivity(handle agentCtx, function activity, string? name = (),
         string? description = (), map<anydata|object {}>? bindings = (),
         boolean requiresApproval = false,
-        AutoRetry|ReviewTaskDefinition|NoAutomaticRetry retryPolicy = NoAutomaticRetry,
+        RetryPolicy retryPolicy = NoRetry,
         string|string[]? userRoles = ()) returns error? {
     return recordActivityTool(agentCtx, activity, name, description, bindings,
             requiresApproval, retryPolicy, userRoles);
@@ -846,7 +846,7 @@ isolated function buildAndRun(handle agentCtx, string query = "", *AgentRunConfi
 
 isolated function recordActivityTool(handle nativeContext, function tool, string? name,
         string? description, map<anydata|object {}>? bindings, boolean requiresApproval,
-        AutoRetry|ReviewTaskDefinition|NoAutomaticRetry retryPolicy, string|string[]? userRoles) returns error? = @java:Method {
+        RetryPolicy retryPolicy, string|string[]? userRoles) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "recordActivityTool"
 } external;
@@ -1046,15 +1046,12 @@ isolated function registerDeclaredTool(handle agentCtx, DurableAgentToolSpec too
             json parsed = check parametersJson.fromJsonString();
             parameters = check parsed.cloneWithType();
         }
-        json approvalJson = meta["requiresApproval"];
-        if approvalJson is boolean {
-            requiresApproval = approvalJson;
-        }
-        json rolesJson = meta["userRoles"];
-        if rolesJson is string {
-            userRoles = rolesJson;
-        } else if rolesJson is json[] {
-            userRoles = check rolesJson.cloneWithType();
+        // An approvalPolicy mapping gates the tool; its userRoles decide. Users and exclusions
+        // reach the review path in Phase 3.
+        json approvalJson = meta["approvalPolicy"];
+        if approvalJson is map<json> {
+            requiresApproval = true;
+            userRoles = check rolesOf(approvalJson["userRoles"]);
         }
     }
     boolean mcpTool = meta is map<json> && meta["isMcp"] == true;
@@ -1072,7 +1069,7 @@ isolated function registerDeclaredActivity(handle agentCtx, DurableAgentActivity
         returns error? {
     string? description = ();
     boolean requiresApproval = false;
-    AutoRetry|ReviewTaskDefinition|NoAutomaticRetry retryPolicy = NoAutomaticRetry;
+    RetryPolicy retryPolicy = NoRetry;
     string|string[]? userRoles = ();
     json meta = activitySpec.meta;
     if meta is map<json> {
@@ -1080,26 +1077,41 @@ isolated function registerDeclaredActivity(handle agentCtx, DurableAgentActivity
         if descriptionJson is string {
             description = descriptionJson;
         }
-        json approvalJson = meta["requiresApproval"];
-        if approvalJson is boolean {
-            requiresApproval = approvalJson;
+        json approvalJson = meta["approvalPolicy"];
+        if approvalJson is map<json> {
+            requiresApproval = true;
+            userRoles = check rolesOf(approvalJson["userRoles"]);
         }
         json retryJson = meta["retryPolicy"];
         if retryJson is map<json> {
-            // Both policies are records; `userRoles` is what only a review has.
-            retryPolicy = retryJson["userRoles"] !is ()
-                    ? check retryJson.cloneWithType(ReviewTaskDefinition)
-                    : check retryJson.cloneWithType(AutoRetry);
-        }
-        json rolesJson = meta["userRoles"];
-        if rolesJson is string {
-            userRoles = rolesJson;
-        } else if rolesJson is json[] {
-            userRoles = check rolesJson.cloneWithType();
+            retryPolicy = check retryPolicyOf(retryJson);
         }
     }
     check registerActivity(agentCtx, activitySpec.activity, activitySpec.toolName, description,
         activitySpec.bindings, requiresApproval, retryPolicy, userRoles);
+}
+
+// A review names an audience, AutoRetry names attempts, RetryBeforeReview names both.
+isolated function retryPolicyOf(map<json> retryJson) returns RetryPolicy|error {
+    boolean review = retryJson["userRoles"] !is () || retryJson["users"] !is ();
+    boolean retries = retryJson["maxRetries"] !is ();
+    if review && retries {
+        return check retryJson.cloneWithType(RetryBeforeReview);
+    }
+    if review {
+        return check retryJson.cloneWithType(ReviewTaskDefinition);
+    }
+    return check retryJson.cloneWithType(AutoRetry);
+}
+
+isolated function rolesOf(json roles) returns string|string[]?|error {
+    if roles is string {
+        return roles;
+    }
+    if roles is json[] {
+        return check roles.cloneWithType();
+    }
+    return ();
 }
 
 # Registers one declared peer agent on the runner's context, converting the
@@ -1111,30 +1123,15 @@ isolated function registerDeclaredActivity(handle agentCtx, DurableAgentActivity
 isolated function registerDeclaredPeer(handle agentCtx, DurableAgentPeerSpec peerSpec)
         returns error? {
     string? description = ();
-    boolean waitForReply = true;
-    string? callbackChannel = ();
-    boolean requiresApproval = false;
     json meta = peerSpec.meta;
     if meta is map<json> {
         json descriptionJson = meta["description"];
         if descriptionJson is string {
             description = descriptionJson;
         }
-        json waitJson = meta["wait"];
-        if waitJson is boolean {
-            waitForReply = waitJson;
-        }
-        json channelJson = meta["callbackChannel"];
-        if channelJson is string {
-            callbackChannel = channelJson;
-        }
-        json approvalJson = meta["requiresApproval"];
-        if approvalJson is boolean {
-            requiresApproval = approvalJson;
-        }
     }
-    check registerPeerAgent(agentCtx, peerSpec.name, peerSpec.targetAgent, description,
-        waitForReply, callbackChannel, requiresApproval);
+    // Per-event peer tools and allowedEvents land with the agent runtime rework (Phase 3).
+    check registerPeerAgent(agentCtx, peerSpec.name, peerSpec.targetAgent, description);
 }
 
 # Registers one declared human task capability on the runner's context.

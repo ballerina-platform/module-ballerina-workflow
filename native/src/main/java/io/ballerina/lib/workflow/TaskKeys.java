@@ -46,9 +46,16 @@ public final class TaskKeys {
     /** Pre-0.10 reviews recorded the reviewed arguments under this key; read-only compatibility. */
     public static final String LEGACY_ACTIVITY_ARGS = "activityArgs";
 
+    // Review triggers
+    public static final String TRIGGER_PRE_RUN = "PRE_RUN";
+    public static final String TRIGGER_ON_FAILURE = "ON_FAILURE";
+
     // Review decision envelope
     public static final String ACTION = "action";
     public static final String ACTION_REJECT = "reject";
+    public static final String ACTION_PROCEED = "proceed";
+    public static final String ACTION_PROCEED_WITH_INPUT = "proceed-with-input";
+    public static final String INPUT = "input";
     public static final String FEEDBACK = "feedback";
     public static final String TIMED_OUT = "timedOut";
     public static final String TIMED_OUT_AFTER = "timedOutAfter";

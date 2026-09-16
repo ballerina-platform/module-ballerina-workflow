@@ -344,11 +344,8 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             body.append("    _ = check ").append(WorkflowConstants.INTERNAL_MODULE_ALIAS)
                     .append(":" + WorkflowConstants.REGISTER_AGENT_TOOL_FUNCTION + "(").append(agentNameLiteral)
                     .append(", ").append(toolRef.refSource());
-            if (toolRef.approvalSource() != null) {
-                body.append(", requiresApproval = ").append(toolRef.approvalSource());
-            }
-            if (toolRef.rolesSource() != null) {
-                body.append(", userRoles = ").append(toolRef.rolesSource());
+            if (toolRef.approvalPolicySource() != null) {
+                body.append(", approvalPolicy = ").append(toolRef.approvalPolicySource());
             }
             body.append(");").append(System.lineSeparator());
         }
@@ -436,8 +433,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             }
             for (DurableAgentDeclInfo.ToolRef toolRef : decl.aiToolRefs()) {
                 addPrefixIfQualified(prefixes, toolRef.refSource());
-                addPrefixIfQualified(prefixes, toolRef.approvalSource());
-                addPrefixIfQualified(prefixes, toolRef.rolesSource());
+                addPrefixIfQualified(prefixes, toolRef.approvalPolicySource());
             }
             for (DurableAgentDeclInfo.EventDecl event : decl.events()) {
                 addPrefixIfQualified(prefixes, event.requestTypeSource());

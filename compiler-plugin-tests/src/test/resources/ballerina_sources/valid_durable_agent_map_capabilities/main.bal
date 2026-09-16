@@ -52,8 +52,7 @@ final workflow:DurableAgent mapAgent = check new ({
         review: {userRoles: ["finance", "ops"], resultType: OrderUpdate}
     },
     peers: [
-        {agent: helperAgent, name: "askHelper", description: "Delegates to the helper.",
-            'wait: false, callbackChannel: "chat"}
+        {agent: helperAgent, description: "Delegates to the helper."}
     ]
 });
 

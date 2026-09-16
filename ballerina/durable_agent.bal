@@ -72,53 +72,43 @@ public type EventConfig record {|
 #              `connection`), hidden from the model: only the remaining data
 #              parameters appear in the tool's schema. Client objects are bound
 #              by referencing their module-level `final` variable
-# + requiresApproval - When `true`, a `PRE_RUN` review activity gates every call
-# + userRoles - Role(s) permitted to decide reviews of this activity
+# + approvalPolicy - Whether a person approves each call before it runs, and who
 # + retryPolicy - Retry behaviour on failure, as for `ctx->callActivity`
-public type ActivityDecl record {|
+public type ActivityDecl record {
     function activity;
     string name?;
     string description?;
     map<anydata|object {}> bindings?;
-    boolean requiresApproval = false;
-    string|string[] userRoles?;
-    AutoRetry|ReviewTaskDefinition|NoAutomaticRetry retryPolicy = NoAutomaticRetry;
-|};
+    ApprovalPolicy approvalPolicy = NoApproval;
+    RetryPolicy retryPolicy = NoRetry;
+};
 
 # An AI tool capability of a durable agent, with optional gating config. For the
 # no-config case pass the `ai:ToolConfig`/`ai:BaseToolKit`/`@ai:AgentTool` function
 # directly.
 #
 # + tool - The tool: an `@ai:AgentTool` function, an `ai:ToolConfig`, or a toolkit
-# + requiresApproval - When `true`, a `PRE_RUN` review activity gates every call
-# + userRoles - Role(s) permitted to decide reviews of this tool
-public type ToolDecl record {|
+# + approvalPolicy - Whether a person approves each call before it runs, and who
+public type ToolDecl record {
     ai:BaseToolKit|ai:ToolConfig|ai:FunctionTool tool;
-    boolean requiresApproval = false;
-    string|string[] userRoles?;
-|};
+    ApprovalPolicy approvalPolicy = NoApproval;
+};
 
-# A peer durable agent advertised to this agent's model as a delegable tool.
-# The framework runs the peer as a Temporal child workflow.
+# A peer advertised to this agent's model as delegable tools: one to start the peer, and
+# one per event the peer declares. The peer runs as a Temporal child workflow; its
+# tool names take the peer's module-level variable name as prefix. A one-way event returns
+# an acknowledgement, a duplex event or the run entry waits durably for the answer.
 #
-# + agent - The peer `workflow:DurableAgent`
-# + name - Tool name advertised to the model (unique across all capabilities)
+# + agent - The peer `workflow:DurableAgent`, or a `@workflow:Workflow` function
+#           (started fire-and-forget: a workflow has no events to answer on)
 # + description - What the peer does, for the model
-# + 'wait - When `true` (default) the delegation blocks durably for the peer's
-#           result; when `false` the peer runs async and replies on `callbackChannel`
-# + callbackChannel - Declared event channel that receives the async peer's reply;
-#                     required when `wait = false`
-# + requiresApproval - When `true`, a `PRE_RUN` review activity gates the delegation
-# + userRoles - Role(s) permitted to decide reviews of this delegation
-public type PeerDecl record {|
-    DurableAgent agent;
-    string name;
+# + allowedEvents - The peer events to expose; omit for every declared event, `[]` for
+#                   the run entry only
+public type PeerDecl record {
+    DurableAgent|function agent;
     string description?;
-    boolean 'wait = true;
-    string callbackChannel?;
-    boolean requiresApproval = false;
-    string|string[] userRoles?;
-|};
+    string[] allowedEvents?;
+};
 
 # The complete, self-declarative configuration of a durable agent. Capability
 # kinds are separate fields so each renders as its own edge type in the diagram.

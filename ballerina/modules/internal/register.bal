@@ -161,12 +161,10 @@ public isolated function registerDurableAgentHumanTask(string agentName, string 
 #
 # + agentName - The agent's name (its module-level variable name)
 # + tool - The tool: an `@ai:AgentTool` function, an `ai:ToolConfig`, or a toolkit
-# + requiresApproval - When `true`, a `PRE_RUN` review activity gates every call
-# + userRoles - Role(s) permitted to decide reviews of this tool
+# + approvalPolicy - The tool's `ApprovalPolicy`: a review definition gates every call, nil does not
 # + return - `true` on success, or an error
 public isolated function registerDurableAgentTool(string agentName,
-        ai:BaseToolKit|ai:ToolConfig|ai:FunctionTool tool, boolean requiresApproval = false,
-        string|string[]? userRoles = ()) returns boolean|error {
+        ai:BaseToolKit|ai:ToolConfig|ai:FunctionTool tool, anydata approvalPolicy = ()) returns boolean|error {
     ai:ToolConfig[] configs;
     boolean isMcp = tool is ai:McpBaseToolKit;
     if tool is ai:BaseToolKit {
@@ -185,8 +183,7 @@ public isolated function registerDurableAgentTool(string agentName,
         json meta = {
             description: config.description,
             parameters: parameters is () ? () : parameters.toJsonString(),
-            requiresApproval,
-            userRoles,
+            approvalPolicy: approvalPolicy.toJson(),
             isMcp
         };
         boolean registered =

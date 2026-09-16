@@ -124,7 +124,8 @@ public final class WorkflowContextNative {
     @SuppressWarnings("unchecked")
     public static Object callActivity(BObject self, BFunctionPointer activityFunction, BMap<BString, Object> args,
                                       BTypedesc typedesc, Object stepId, BMap<BString, Object> options) {
-        Object retryPolicy = options.get(StringUtils.fromString("retryPolicy"));
+        Object retryPolicy = options.get(StringUtils.fromString(RETRY_POLICY_FIELD));
+        Object approvalPolicy = options.get(StringUtils.fromString(APPROVAL_POLICY_FIELD));
         try {
             WorkflowWorkerNative.awaitWhileSuspended();
             String simpleActivityName = activityFunction.getType().getName();
@@ -135,17 +136,15 @@ public final class WorkflowContextNative {
 
             Map<String, Object> namedArgs = convertArgsMapWithConnectionMarkers(args);
 
-            // Classify the retry policy. Both HumanReview and AutoRetry are records now,
-            // so the discriminator is `userRoles`: a review must say who may answer it,
-            // and AutoRetry is a closed record that has no such field.
+            // Three shapes share one union: a review names an audience, AutoRetry names attempts,
+            // RetryBeforeReview names both. A mapping naming neither is a mistake, not AutoRetry.
             ReviewDeclaration review = readHumanReview(retryPolicy);
-            boolean isManualRetry = review != null;
-            boolean isAutoRetry = false;
-            BMap<BString, Object> retryPolicyMap = null;
-            if (!isManualRetry && retryPolicy instanceof BMap<?, ?>) {
-                retryPolicyMap = (BMap<BString, Object>) retryPolicy;
-                isAutoRetry = true;
+            boolean retries = retriesBeforeReview(retryPolicy);
+            if (review == null && retryPolicy instanceof BMap<?, ?> && !retries) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "retryPolicy of '" + simpleActivityName + "' must name 'userRoles' or 'users'"));
             }
+            boolean isAutoRetry = retries;
 
             // Build the call config map forwarded to the activity adapter
             Map<String, Object> callConfig = new HashMap<>();
@@ -156,28 +155,35 @@ public final class WorkflowContextNative {
                 callConfig.put(STEP_ID_KEY, stepIdValue);
             }
 
-            if (isManualRetry) {
-                // Manual retry: run activity in a loop; on failure start a review-activity
-                // child workflow and wait for a human decision.
-                return executeWithManualRetry(fullActivityName, workflowType, simpleActivityName, namedArgs,
-                        callConfig, review, typedesc, stepIdValue);
+            ReviewDeclaration gate = readHumanReview(approvalPolicy);
+            if (gate != null) {
+                Object approved = awaitApproval(gate, workflowType, simpleActivityName, fullActivityName,
+                        namedArgs, stepIdValue);
+                if (approved instanceof BError denied) {
+                    return denied;
+                }
+                namedArgs = (Map<String, Object>) approved;
             }
 
-            // AutoRetry or NoRetry — single Temporal activity invocation
             io.temporal.activity.ActivityOptions.Builder optionsBuilder =
                     io.temporal.activity.ActivityOptions.newBuilder().setStartToCloseTimeout(
                             java.time.Duration.ofMinutes(5));
-
             if (!isAutoRetry) {
                 optionsBuilder.setRetryOptions(
                         io.temporal.common.RetryOptions.newBuilder().setMaximumAttempts(1).build());
             } else {
-                optionsBuilder.setRetryOptions(buildPerCallRetryOptions(retryPolicyMap));
+                optionsBuilder.setRetryOptions(buildPerCallRetryOptions((BMap<BString, Object>) retryPolicy));
             }
-
             if (stepIdValue != null) {
                 // Also visible in the Temporal UI, on servers that record user metadata.
                 optionsBuilder.setSummary(stepIdValue);
+            }
+
+            if (review != null) {
+                // Each attempt runs under the same options; a failure raises a review and the loop repeats
+                // on the reviewer's say-so.
+                return executeWithManualRetry(fullActivityName, workflowType, simpleActivityName, namedArgs,
+                        callConfig, review, typedesc, stepIdValue, optionsBuilder.build());
             }
 
             io.temporal.workflow.ActivityStub activityStub = Workflow.newUntypedActivityStub(optionsBuilder.build());
@@ -205,40 +211,61 @@ public final class WorkflowContextNative {
         }
     }
 
+    // Field names of the Ballerina policy records read here.
+    private static final String RETRY_POLICY_FIELD = "retryPolicy";
+    private static final String APPROVAL_POLICY_FIELD = "approvalPolicy";
+    private static final String TIMEOUT_FIELD = "timeout";
+    private static final String MAX_RETRIES_FIELD = "maxRetries";
+
     /**
-     * What a review policy declares. A null field means "derive it from the activity being
-     * reviewed".
+     * A review as declared: its audience, wording and deadline. Null wording means "derive it from
+     * the activity being reviewed"; the audience lists are never null.
      *
-     * @param userRoles     roles permitted to answer the review (empty means any role)
+     * @param userRoles     roles permitted to answer
+     * @param users         user ids permitted to answer
+     * @param excludedUsers user ids that may not answer
+     * @param excludedRoles roles that may not answer
      * @param title         inbox summary, or null to derive it
      * @param description   context shown with the decision, or null to derive it
      * @param timeoutMillis how long to wait for a decision, or null to wait indefinitely
      */
-    record ReviewDeclaration(String[] userRoles, String title, String description, Long timeoutMillis) {
+    record ReviewDeclaration(String[] userRoles, String[] users, String[] excludedUsers, String[] excludedRoles,
+                             String title, String description, Long timeoutMillis) {
+
+        static ReviewDeclaration rolesOnly(String[] userRoles, String title, String description, Long timeoutMillis) {
+            return new ReviewDeclaration(userRoles != null ? userRoles : new String[0], new String[0],
+                    new String[0], new String[0], title, description, timeoutMillis);
+        }
     }
 
-    /**
-     * Reads a review retry policy, or returns {@code null} when the value is not one. Both
-     * retry-policy records are mappings, so {@code userRoles} — which only a review has —
-     * tells them apart.
-     */
+    // A policy mapping is review-bearing when it names an audience; AutoRetry never does.
     @SuppressWarnings("unchecked")
     static ReviewDeclaration readHumanReview(Object retryPolicy) {
         if (!(retryPolicy instanceof BMap<?, ?> raw)) {
             return null;
         }
         BMap<BString, Object> policy = (BMap<BString, Object>) raw;
-        Object roles = policy.get(StringUtils.fromString("userRoles"));
-        if (roles == null) {
+        Object roles = policy.get(StringUtils.fromString(TaskKeys.USER_ROLES));
+        Object users = policy.get(StringUtils.fromString(TaskKeys.USERS));
+        if (roles == null && users == null) {
             return null;
         }
-        Object timeout = policy.get(StringUtils.fromString("timeout"));
+        Object timeout = policy.get(StringUtils.fromString(TIMEOUT_FIELD));
         return new ReviewDeclaration(
                 rolesOf(roles),
-                stringFieldOf(policy, "title"),
-                stringFieldOf(policy, "description"),
+                rolesOf(users),
+                rolesOf(policy.get(StringUtils.fromString(TaskKeys.EXCLUDED_USERS))),
+                rolesOf(policy.get(StringUtils.fromString(TaskKeys.EXCLUDED_ROLES))),
+                stringFieldOf(policy, TaskKeys.TITLE),
+                stringFieldOf(policy, TaskKeys.DESCRIPTION),
                 timeout instanceof BMap<?, ?> duration
                         ? computeTimeoutMillis((BMap<BString, Object>) duration) : null);
+    }
+
+    // RetryBeforeReview carries AutoRetry's fields beside the review's; maxRetries always has a value.
+    static boolean retriesBeforeReview(Object retryPolicy) {
+        return retryPolicy instanceof BMap<?, ?> policy
+                && policy.containsKey(StringUtils.fromString(MAX_RETRIES_FIELD));
     }
 
     /** One role or a list of them, as a plain array. */
@@ -282,16 +309,8 @@ public final class WorkflowContextNative {
     private static Object executeWithManualRetry(String fullActivityName, String workflowType,
                                                  String simpleActivityName,
                                                  Map<String, Object> initialArgs, Map<String, Object> callConfig,
-                                                 ReviewDeclaration review, BTypedesc typedesc, String stepId) {
-
-        io.temporal.activity.ActivityOptions.Builder manualRetryOptions =
-                io.temporal.activity.ActivityOptions.newBuilder().setStartToCloseTimeout(
-                        java.time.Duration.ofMinutes(5)).setRetryOptions(
-                        io.temporal.common.RetryOptions.newBuilder().setMaximumAttempts(1).build());
-        if (stepId != null) {
-            manualRetryOptions.setSummary(stepId);
-        }
-        io.temporal.activity.ActivityOptions activityOptions = manualRetryOptions.build();
+                                                 ReviewDeclaration review, BTypedesc typedesc, String stepId,
+                                                 io.temporal.activity.ActivityOptions activityOptions) {
         io.temporal.workflow.ActivityStub activityStub = Workflow.newUntypedActivityStub(activityOptions);
 
         Map<String, Object> currentArgs = initialArgs;
@@ -318,35 +337,96 @@ public final class WorkflowContextNative {
             Map<String, Object> decision = callBuiltinReviewActivity(workflowType, fullActivityName,
                     simpleActivityName, currentArgs, lastErrorMsg, review, stepId);
 
-            String action = decision.containsKey("action") ? String.valueOf(decision.get("action")) : "reject";
-
-            switch (action) {
-                case "proceed" -> {
-                    // Re-run with the same arguments
-                }
-                case "proceed-with-input" -> {
-                    // Merge the reviewer's edits over the existing arguments: keys present in the
-                    // edited input override, omitted keys keep their last-used values — so a form
-                    // that submits only the corrected fields does not drop the rest.
-                    Object newInput = decision.get("input");
-                    if (newInput instanceof Map<?, ?> inputMap) {
-                        Map<String, Object> merged = new HashMap<>(currentArgs);
-                        inputMap.forEach((key, value) -> merged.put(String.valueOf(key), value));
-                        currentArgs = merged;
-                    }
-                    // else: keep existing args (safety fallback)
-                }
-                default -> {
-                    // "reject" or any unknown action — surface the original error, appending the
-                    // reviewer's feedback when present.
-                    Object feedback = decision.get("feedback");
-                    String base = lastErrorMsg != null ? lastErrorMsg
-                            : "Activity failed and the review decision was 'reject'";
-                    String message = feedback instanceof String fb && !fb.isBlank()
-                            ? base + " (reviewer: " + fb + ")" : base;
-                    return ErrorCreator.createError(StringUtils.fromString(message));
-                }
+            String action = actionOf(decision);
+            if (TaskKeys.ACTION_PROCEED.equals(action)) {
+                continue;
             }
+            if (TaskKeys.ACTION_PROCEED_WITH_INPUT.equals(action)) {
+                currentArgs = mergedArgs(currentArgs, decision);
+                continue;
+            }
+            return reviewError(decision, fullActivityName, TaskKeys.TRIGGER_ON_FAILURE,
+                    lastErrorMsg != null ? lastErrorMsg : "Activity failed and the review decision was 'reject'");
+        }
+    }
+
+    // The approval gate: a PRE_RUN review; proceed yields the (possibly edited) arguments, else an error.
+    private static Object awaitApproval(ReviewDeclaration gate, String workflowType, String simpleActivityName,
+                                        String fullActivityName, Map<String, Object> args, String stepId) {
+        Map<String, Object> decision = startReviewActivity(TaskKeys.TRIGGER_PRE_RUN,
+                ActivityNaming.reviewTaskNameFor(workflowType, simpleActivityName), fullActivityName, args, "",
+                gate, stepId);
+        String action = actionOf(decision);
+        if (TaskKeys.ACTION_PROCEED.equals(action)) {
+            return args;
+        }
+        if (TaskKeys.ACTION_PROCEED_WITH_INPUT.equals(action)) {
+            return mergedArgs(args, decision);
+        }
+        return reviewError(decision, fullActivityName, TaskKeys.TRIGGER_PRE_RUN, null);
+    }
+
+    private static String actionOf(Map<String, Object> decision) {
+        Object action = decision.get(TaskKeys.ACTION);
+        return action == null ? TaskKeys.ACTION_REJECT : String.valueOf(action);
+    }
+
+    // The reviewer's edits override; omitted keys keep their values, so a partial form drops nothing.
+    private static Map<String, Object> mergedArgs(Map<String, Object> current, Map<String, Object> decision) {
+        if (!(decision.get(TaskKeys.INPUT) instanceof Map<?, ?> edits)) {
+            return current;
+        }
+        Map<String, Object> merged = new HashMap<>(current);
+        edits.forEach((key, value) -> merged.put(String.valueOf(key), value));
+        return merged;
+    }
+
+    /**
+     * The typed error for a review that did not proceed: timed out, rejected, or ended without a
+     * decision. For a failed activity the original failure travels as the cause and, for a rejection,
+     * keeps its message so existing callers still read it.
+     */
+    private static BError reviewError(Map<String, Object> decision, String activityName, String trigger,
+                                      String causeMessage) {
+        BError cause = causeMessage == null ? null : ErrorCreator.createError(StringUtils.fromString(causeMessage));
+        String taskName = String.valueOf(decision.getOrDefault(TaskKeys.TASK_NAME, activityName));
+        String taskId = String.valueOf(decision.getOrDefault(TaskKeys.TASK_ID, "unknown"));
+        BMap<BString, Object> detail = io.ballerina.runtime.api.creators.ValueCreator.createMapValue();
+        detail.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+        detail.put(StringUtils.fromString("taskWorkflowId"), StringUtils.fromString(taskId));
+        detail.put(StringUtils.fromString(TaskKeys.ACTIVITY_NAME), StringUtils.fromString(activityName));
+        detail.put(StringUtils.fromString(TaskKeys.TRIGGER), StringUtils.fromString(trigger));
+        Object feedback = decision.get(TaskKeys.FEEDBACK);
+        String note = feedback instanceof String fb && !fb.isBlank() ? fb : null;
+
+        if (Boolean.TRUE.equals(decision.get(TaskKeys.TIMED_OUT))) {
+            String after = String.valueOf(decision.getOrDefault(TaskKeys.TIMED_OUT_AFTER, "unknown"));
+            detail.put(StringUtils.fromString(TaskKeys.TIMED_OUT_AFTER), StringUtils.fromString(after));
+            detail.put(StringUtils.fromString(TaskKeys.TIMED_OUT_AT),
+                    StringUtils.fromString(String.valueOf(decision.getOrDefault(TaskKeys.TIMED_OUT_AT, "unknown"))));
+            return moduleError("ReviewTimeoutError",
+                    "Review of '" + activityName + "' timed out after " + after, cause, detail);
+        }
+        if (Boolean.TRUE.equals(decision.get(TaskKeys.FAILED))) {
+            return moduleError("ReviewFailedError", "Review of '" + activityName + "' ended without a decision"
+                    + (note != null ? ": " + note : ""), cause, null);
+        }
+        detail.put(StringUtils.fromString(TaskKeys.FEEDBACK), note == null ? null : StringUtils.fromString(note));
+        Object by = decision.get(TaskKeys.DECIDED_BY);
+        detail.put(StringUtils.fromString("rejectedBy"), by instanceof String s ? StringUtils.fromString(s) : null);
+        String message = causeMessage != null
+                ? causeMessage + (note != null ? " (reviewer: " + note + ")" : "")
+                : "Review of '" + activityName + "' was rejected" + (note != null ? ": " + note : "");
+        return moduleError("ReviewRejectedError", message, cause, detail);
+    }
+
+    private static BError moduleError(String type, String message, BError cause, BMap<BString, Object> detail) {
+        try {
+            return ErrorCreator.createError(ModuleUtils.getModule(), type, StringUtils.fromString(message), cause,
+                    detail);
+        } catch (Exception e) {
+            // Module types are absent in bare unit tests; keep the message and the cause.
+            return ErrorCreator.createError(StringUtils.fromString(type + ": " + message), cause);
         }
     }
 
@@ -378,19 +458,26 @@ public final class WorkflowContextNative {
                 userRoles, timeoutMillis, stepId, null, null);
     }
 
+    // Roles, wording and deadline only: the agent paths carry no assignment lists until Phase 3.
+    static Map<String, Object> startReviewActivity(String trigger, String qualifiedTaskName, String activityType,
+                                                   Map<String, Object> activityArgs, String errorMessage,
+                                                   String[] userRoles, Long timeoutMillis, String stepId,
+                                                   String titleOverride, String descriptionOverride) {
+        return startReviewActivity(trigger, qualifiedTaskName, activityType, activityArgs, errorMessage,
+                ReviewDeclaration.rolesOnly(userRoles, titleOverride, descriptionOverride, timeoutMillis), stepId);
+    }
+
     /**
-     * As above, with the wording a {@code HumanReview} declaration chose. A null title or
-     * description means the caller declared none, and the derived phrasing below stands.
+     * Starts a review child and blocks for its decision. Every decision map returned carries the
+     * review's {@code taskId} and {@code taskName} beside the action, so a caller can build a typed
+     * error from it; null wording in the declaration means the derived phrasing stands.
      *
-     * @param titleOverride       the declared inbox summary, or null to derive one
-     * @param descriptionOverride the declared context, or null to derive one
      * @return the decision map
      */
     @SuppressWarnings("unchecked")
     static Map<String, Object> startReviewActivity(String trigger, String qualifiedTaskName, String activityType,
                                                    Map<String, Object> activityArgs, String errorMessage,
-                                                   String[] userRoles, Long timeoutMillis, String stepId,
-                                                   String titleOverride, String descriptionOverride) {
+                                                   ReviewDeclaration decl, String stepId) {
         WorkflowWorkerNative.awaitWhileSuspended();
 
         String fullActivityName = qualifiedTaskName;
@@ -405,18 +492,16 @@ public final class WorkflowContextNative {
         String reviewTypeName = WorkflowWorkerNative.REVIEW_ACTIVITY_TYPE_PREFIX + qualifiedTaskName;
         WorkflowWorkerNative.ensureReviewActivityRegistered(reviewTypeName);
 
-        String[] roles = userRoles != null ? userRoles : new String[0];
-
         // Title and description distinguish the review trigger for task inboxes: a failed
         // activity awaiting a rerun decision reads differently from a pre-run approval gate.
         // Titles carry the short activity name — the workflow qualifier travels in taskName
         // and parentWorkflowType, and repeating it in the title says everything twice.
-        boolean onFailure = "ON_FAILURE".equals(trigger);
+        boolean onFailure = TaskKeys.TRIGGER_ON_FAILURE.equals(trigger);
         String shortActivityName = fullActivityName.substring(fullActivityName.lastIndexOf('.') + 1);
-        String title = titleOverride != null ? titleOverride : onFailure
+        String title = decl.title() != null ? decl.title() : onFailure
                 ? "Review failed activity: " + shortActivityName
                 : "Approval required: " + shortActivityName;
-        String description = descriptionOverride != null ? descriptionOverride : onFailure
+        String description = decl.description() != null ? decl.description() : onFailure
                 ? "Activity '" + fullActivityName + "' failed with: "
                         + (errorMessage != null && !errorMessage.isBlank() ? errorMessage : "an unknown error")
                         + ". Proceed to rerun it with the original input, proceed with edited input, "
@@ -429,9 +514,11 @@ public final class WorkflowContextNative {
                 .taskId(reviewId).taskName(qualifiedTaskName)
                 .parentWorkflowId(parentWorkflowId).parentWorkflowType(currentWorkflowDefinitionName())
                 .stepId(stepId).title(title).description(description)
-                .userRoles(List.of(roles)).taskInput(activityArgs)
+                .userRoles(List.of(decl.userRoles())).users(List.of(decl.users()))
+                .excludedUsers(List.of(decl.excludedUsers())).excludedRoles(List.of(decl.excludedRoles()))
+                .taskInput(activityArgs)
                 .formSchema(deriveReviewInputSchema(activityType, activityArgs))
-                .timeoutMillis(timeoutMillis)
+                .timeoutMillis(decl.timeoutMillis())
                 .createdAt(Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString())
                 .trigger(trigger).activityName(fullActivityName).errorMessage(errorMessage)
                 .build();
@@ -452,19 +539,19 @@ public final class WorkflowContextNative {
         io.temporal.workflow.ChildWorkflowStub childStub = Workflow.newUntypedChildWorkflowStub(
                 reviewTypeName, optsBuilder.build());
 
+        Map<String, Object> decision;
         try {
             Object rawResult = childStub.execute(Object.class, task.toInputs());
-            if (rawResult instanceof Map<?, ?> resultMap) {
-                Map<String, Object> decision = (Map<String, Object>) resultMap;
-                recordReviewDecision(reviewId, qualifiedTaskName, decision);
-                return decision;
-            }
+            decision = rawResult instanceof Map<?, ?> resultMap
+                    ? new HashMap<>((Map<String, Object>) resultMap) : new HashMap<>();
+            decision.putIfAbsent(TaskKeys.ACTION, TaskKeys.ACTION_REJECT);
         } catch (ChildWorkflowFailure e) {
-            return reviewFailureDecision(e);
+            decision = reviewFailureDecision(e);
         }
-        Map<String, Object> failDecision = new HashMap<>();
-        failDecision.put("action", "reject");
-        return failDecision;
+        decision.put(TaskKeys.TASK_ID, reviewId);
+        decision.put(TaskKeys.TASK_NAME, qualifiedTaskName);
+        recordReviewDecision(reviewId, qualifiedTaskName, decision);
+        return decision;
     }
 
     // The child ended without a decision: a timeout is reported as one, anything else as a plain reject.
@@ -501,10 +588,9 @@ public final class WorkflowContextNative {
                                                                  String stepId) {
         // A review's name is always derived from the activity it reviews; so are its title
         // and description when the declaration stated none.
-        return startReviewActivity("ON_FAILURE",
+        return startReviewActivity(TaskKeys.TRIGGER_ON_FAILURE,
                 ActivityNaming.reviewTaskNameFor(workflowType, simpleActivityName),
-                activityType, activityArgs, errorMessage,
-                review.userRoles(), review.timeoutMillis(), stepId, review.title(), review.description());
+                activityType, activityArgs, errorMessage, review, stepId);
     }
 
     /**
@@ -799,11 +885,14 @@ public final class WorkflowContextNative {
             return inputError;
         }
         return awaitHumanTaskExploded(self, taskNameBStr,
-                definition.get(StringUtils.fromString("userRoles")),
+                definition.get(StringUtils.fromString(TaskKeys.USER_ROLES)),
+                definition.get(StringUtils.fromString(TaskKeys.USERS)),
+                definition.get(StringUtils.fromString(TaskKeys.EXCLUDED_USERS)),
+                definition.get(StringUtils.fromString(TaskKeys.EXCLUDED_ROLES)),
                 taskInput,
-                definition.get(StringUtils.fromString("title")),
-                definition.get(StringUtils.fromString("description")),
-                definition.get(StringUtils.fromString("timeout")),
+                definition.get(StringUtils.fromString(TaskKeys.TITLE)),
+                definition.get(StringUtils.fromString(TaskKeys.DESCRIPTION)),
+                definition.get(StringUtils.fromString(TIMEOUT_FIELD)),
                 typedesc,
                 stepId);
     }
@@ -853,6 +942,7 @@ public final class WorkflowContextNative {
      */
     @SuppressWarnings("unchecked")
     public static Object awaitHumanTaskExploded(BObject self, BString taskNameBStr, Object userRolesObj,
+                                        Object usersObj, Object excludedUsersObj, Object excludedRolesObj,
                                         BMap<BString, Object> taskInputObj, Object titleObj, Object descriptionObj,
                                         Object timeoutObj, BTypedesc typedesc, Object stepId) {
         // Named outside the try so a failure can report which task it belongs to.
@@ -871,14 +961,10 @@ public final class WorkflowContextNative {
                         "HumanTask taskName '" + taskName + "' must not contain '.' or '|'", "HUMANTASK_CONFIG_ERROR");
             }
 
-            // userRoles: can be BString (single role) or BArray<BString> (multiple roles)
-            java.util.List<String> userRoles = new java.util.ArrayList<>();
-            if (userRolesObj instanceof io.ballerina.runtime.api.values.BArray rolesArray) {
-                for (int i = 0; i < rolesArray.size(); i++) {
-                    userRoles.add(rolesArray.get(i).toString());
-                }
-            } else if (userRolesObj instanceof BString roleStr) {
-                userRoles.add(roleStr.getValue());
+            List<String> userRoles = List.of(rolesOf(userRolesObj));
+            List<String> users = List.of(rolesOf(usersObj));
+            if (userRoles.isEmpty() && users.isEmpty()) {
+                return buildTaskFailedError("Human task '" + taskName + "' must name 'userRoles' or 'users'");
             }
 
             // title defaults to taskName when absent/null
@@ -928,7 +1014,9 @@ public final class WorkflowContextNative {
                     .taskId(taskWorkflowId).taskName(qualifiedTaskName)
                     .parentWorkflowId(parentWorkflowId).parentWorkflowType(workflowDefinitionName)
                     .stepId(stepId instanceof BString site ? site.getValue() : null)
-                    .title(title).description(description).userRoles(userRoles)
+                    .title(title).description(description).userRoles(userRoles).users(users)
+                    .excludedUsers(List.of(rolesOf(excludedUsersObj)))
+                    .excludedRoles(List.of(rolesOf(excludedRolesObj)))
                     .taskInput(TypesUtil.convertBallerinaToJavaType(taskInput))
                     .formSchema(TypesUtil.toJsonSchema(typedesc.getDescribingType()))
                     .timeoutMillis(timeoutMillis)
@@ -1082,8 +1170,15 @@ public final class WorkflowContextNative {
             completion.put(TaskKeys.COMPLETED_AT, envelope.get(TaskKeys.COMPLETED_AT));
             completion.put(TaskKeys.IDENTITY_SOURCE, envelope.get(TaskKeys.IDENTITY_SOURCE));
         }
-        HUMAN_TASK_COMPLETIONS.get().put(taskName, completion);
-        HUMAN_TASK_COMPLETIONS.get().put(LATEST, completion);
+        remember(HUMAN_TASK_COMPLETIONS.get(), taskName, completion);
+    }
+
+    // Filed under the qualified name, the bare name a workflow wrote, and as the latest.
+    private static void remember(Map<String, Map<String, Object>> store, String qualifiedName,
+                                 Map<String, Object> record) {
+        store.put(qualifiedName, record);
+        store.put(qualifiedName.substring(qualifiedName.lastIndexOf('.') + 1), record);
+        store.put(LATEST, record);
     }
 
     private static void recordReviewDecision(String taskId, String taskName, Map<String, Object> decision) {
@@ -1094,8 +1189,7 @@ public final class WorkflowContextNative {
         record.put(TaskKeys.FEEDBACK, decision.get(TaskKeys.FEEDBACK));
         record.put(TaskKeys.DECIDED_BY, decision.get(TaskKeys.DECIDED_BY));
         record.put(TaskKeys.DECIDED_AT, decision.get(TaskKeys.DECIDED_AT));
-        REVIEW_DECISIONS.get().put(taskName, record);
-        REVIEW_DECISIONS.get().put(LATEST, record);
+        remember(REVIEW_DECISIONS.get(), taskName, record);
     }
 
     // The most recent completion of the named task, or of any task when the name is null; null when none.
@@ -1105,6 +1199,43 @@ public final class WorkflowContextNative {
 
     public static Map<String, Object> lastReviewDecision(String taskName) {
         return REVIEW_DECISIONS.get().get(taskName == null ? LATEST : taskName);
+    }
+
+    // Context.lastHumanTaskCompletion(): the stored envelope as a HumanTaskCompletion record, or nil.
+    public static Object lastHumanTaskCompletionRecord(Object contextHandle, Object taskName) {
+        Map<String, Object> completion = lastHumanTaskCompletion(taskName instanceof BString n ? n.getValue() : null);
+        if (completion == null) {
+            return null;
+        }
+        BMap<BString, Object> record = io.ballerina.runtime.api.creators.ValueCreator.createRecordValue(
+                ModuleUtils.getModule(), "HumanTaskCompletion");
+        putText(record, TaskKeys.TASK_ID, completion.get(TaskKeys.TASK_ID));
+        putText(record, TaskKeys.TASK_NAME, completion.get(TaskKeys.TASK_NAME));
+        putText(record, TaskKeys.COMPLETED_BY, completion.get(TaskKeys.COMPLETED_BY));
+        putText(record, TaskKeys.COMPLETED_AT, completion.get(TaskKeys.COMPLETED_AT));
+        putText(record, TaskKeys.IDENTITY_SOURCE, completion.get(TaskKeys.IDENTITY_SOURCE));
+        return record;
+    }
+
+    // Context.lastReviewDecision(): the stored decision as a ReviewDecisionRecord, or nil.
+    public static Object lastReviewDecisionRecord(Object contextHandle, Object taskName) {
+        Map<String, Object> decision = lastReviewDecision(taskName instanceof BString n ? n.getValue() : null);
+        if (decision == null) {
+            return null;
+        }
+        BMap<BString, Object> record = io.ballerina.runtime.api.creators.ValueCreator.createRecordValue(
+                ModuleUtils.getModule(), "ReviewDecisionRecord");
+        putText(record, TaskKeys.TASK_ID, decision.get(TaskKeys.TASK_ID));
+        putText(record, TaskKeys.TASK_NAME, decision.get(TaskKeys.TASK_NAME));
+        putText(record, TaskKeys.ACTION, decision.getOrDefault(TaskKeys.ACTION, TaskKeys.ACTION_REJECT));
+        putText(record, TaskKeys.FEEDBACK, decision.get(TaskKeys.FEEDBACK));
+        putText(record, TaskKeys.DECIDED_BY, decision.get(TaskKeys.DECIDED_BY));
+        putText(record, TaskKeys.DECIDED_AT, decision.get(TaskKeys.DECIDED_AT));
+        return record;
+    }
+
+    private static void putText(BMap<BString, Object> record, String key, Object value) {
+        record.put(StringUtils.fromString(key), value == null ? null : StringUtils.fromString(String.valueOf(value)));
     }
 
     @SuppressWarnings("unchecked")

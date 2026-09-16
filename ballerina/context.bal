@@ -40,8 +40,9 @@ public client class Context {
     # + T - Expected return type (inferred from context)
     # + stepId - Identity of this step within the workflow, matching a node of the descriptor
     #            graph. A constant string; defaults to `<activity>#<ordinal>`
-    # + options - How the invocation behaves — today `retryPolicy`: `NoAutomaticRetry` (default),
-    #             `AutoRetry` backoff, or a `ReviewTaskDefinition` that raises a review on failure
+    # + options - How the invocation behaves: `approvalPolicy` gates the call behind a review;
+    #             `retryPolicy` is `NoRetry` (default), `AutoRetry`, a `ReviewTaskDefinition` that
+    #             raises a review on failure, or `RetryBeforeReview`
     # + return - The activity result as `T`, or an error
     remote isolated function callActivity(function activityFunction,
             map<anydata|object {}> args = {},
@@ -95,6 +96,26 @@ public client class Context {
     # + return - The workflow type
     public isolated function getWorkflowType() returns string|error {
         return getWorkflowTypeNative(self.nativeContext);
+    }
+
+    # Who acted on the most recent human task this workflow created — or on the most recent one
+    # with the given name. Lets a later task exclude or prefer that person. `()` before any task
+    # has completed.
+    #
+    # + taskName - A task name, or `()` for the latest task of any name
+    # + return - The completion, or `()`
+    public isolated function lastHumanTaskCompletion(string? taskName = ()) returns HumanTaskCompletion? {
+        return lastHumanTaskCompletionNative(self.nativeContext, taskName);
+    }
+
+    # The decision reached by the most recent review this workflow raised — a gated call or a
+    # failed activity — or by the most recent review of the given task name. `()` before any
+    # review has been decided.
+    #
+    # + taskName - A review task name, or `()` for the latest review of any name
+    # + return - The decision, or `()`
+    public isolated function lastReviewDecision(string? taskName = ()) returns ReviewDecisionRecord? {
+        return lastReviewDecisionNative(self.nativeContext, taskName);
     }
 
     # Waits for at least `minCount` data futures to complete. Results are a positional tuple
@@ -225,6 +246,18 @@ isolated function isReplayingNative(handle contextHandle) returns boolean = @jav
 isolated function getWorkflowIdNative(handle contextHandle) returns string|error = @java:Method {
     'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
     name: "getWorkflowId"
+} external;
+
+isolated function lastHumanTaskCompletionNative(handle contextHandle, string? taskName)
+        returns HumanTaskCompletion? = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
+    name: "lastHumanTaskCompletionRecord"
+} external;
+
+isolated function lastReviewDecisionNative(handle contextHandle, string? taskName)
+        returns ReviewDecisionRecord? = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
+    name: "lastReviewDecisionRecord"
 } external;
 
 isolated function getWorkflowTypeNative(handle contextHandle) returns string|error = @java:Method {

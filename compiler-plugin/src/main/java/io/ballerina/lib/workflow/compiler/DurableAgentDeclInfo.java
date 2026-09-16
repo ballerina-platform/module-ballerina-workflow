@@ -81,14 +81,12 @@ public record DurableAgentDeclInfo(String agentName,
                                String bindingsSource) { }
 
     /**
-     * A declared AI tool: the tool reference and the optional ToolDecl gating expressions,
-     * kept as separate sources so import-prefix collection can inspect each one.
+     * A declared AI tool: the tool reference and the optional ToolDecl gate.
      *
-     * @param refSource      the tool reference source (function/config/toolkit variable)
-     * @param approvalSource the {@code requiresApproval} expression source, or null
-     * @param rolesSource    the {@code userRoles} expression source, or null
+     * @param refSource            the tool reference source (function/config/toolkit variable)
+     * @param approvalPolicySource the {@code approvalPolicy} expression source, or null
      */
-    public record ToolRef(String refSource, String approvalSource, String rolesSource) { }
+    public record ToolRef(String refSource, String approvalPolicySource) { }
 
     /**
      * A declared event channel.
@@ -115,12 +113,12 @@ public record DurableAgentDeclInfo(String agentName,
                                 String taskInputTypeSource) { }
 
     /**
-     * A declared peer agent, advertised to the model as a delegable tool.
+     * A declared peer, advertised to the model as delegable tools.
      *
-     * @param name        the tool name advertised to the model
-     * @param targetAgent the peer's agent name (its module-level variable name)
-     * @param metaSource  source text of a json metadata mapping (description, wait,
-     *                    callbackChannel, gating), or null when there is none
+     * @param name        the tool-name prefix: the peer's module-level variable name
+     * @param targetAgent the peer's agent name (the same variable name)
+     * @param metaSource  source text of a json metadata mapping (description, allowedEvents), or
+     *                    null when there is none
      */
     public record PeerDecl(String name, String targetAgent, String metaSource) { }
 }

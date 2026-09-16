@@ -55,7 +55,7 @@ function testDurableAgentDeclRegistration() returns error? {
     _ = check wfInternal:registerDurableAgentDecl("declTestAgent", declTestModel,
         {role: "Test assistant", instructions: "Assist with tests."}, 8);
     _ = check wfInternal:registerDurableAgentActivity("declTestAgent", "declTestActivity",
-        declTestActivity, {requiresApproval: false});
+        declTestActivity, ());
     _ = check wfInternal:registerDurableAgentEvent("declTestAgent", "chat", string, string,
         "MULTI_EVENT");
     _ = check wfInternal:registerDurableAgentHumanTask("declTestAgent", "signoff",
@@ -144,14 +144,14 @@ function testObjectModelRunnerEndToEnd() returns error? {
     _ = check wfInternal:registerDurableAgentDecl("runnerCoverageAgent", declTestModel,
         {role: "", instructions: "You are an inventory assistant."}, 16);
     _ = check wfInternal:registerDurableAgentActivity("runnerCoverageAgent", "checkStock",
-        checkStock, {description: "Checks the stock of an item", requiresApproval: false});
+        checkStock, {description: "Checks the stock of an item"});
     _ = check wfInternal:registerDurableAgentEvent("runnerCoverageAgent", "status", string, string,
         "SINGLE_EVENT");
     _ = check wfInternal:registerDurableAgentHumanTask("runnerCoverageAgent", "signoffCoverage",
         {userRoles: "manager", title: "Sign off", description: "Sign off the order",
             timeout: {minutes: 5}});
     _ = check wfInternal:registerDurableAgentPeer("runnerCoverageAgent", "askDriver",
-        "agentTurnDriver", {description: "Delegates to the turn driver", "wait": true});
+        "agentTurnDriver", {description: "Delegates to the turn driver"});
     _ = check wfInternal:registerDurableAgentRunner("runnerCoverageAgent");
     runnerCoverageAgent.bindAgentName("runnerCoverageAgent");
 
@@ -328,36 +328,17 @@ function testSendDataValidatesAgainstTheTargetsDeclaration() returns error? {
 }
 
 @test:Config {}
-function testPeerCallbackChannelValidatedAtRegistration() returns error? {
-    // An async peer's reply self-injects into its callbackChannel, so the channel must be
-    // declared — otherwise the reply is swallowed silently. Both misdeclarations fail at
-    // module-init registration, before any instance runs.
-    _ = check wfInternal:registerDurableAgentDecl("cbAgent", declTestModel,
+function testPeerRegistersUnderItsAgentName() returns error? {
+    // A peer's tool name is its agent variable; the declaration carries only wording and
+    // the events it exposes. Nothing about waiting or reply channels is declared any more.
+    _ = check wfInternal:registerDurableAgentDecl("peerMetaAgent", declTestModel,
         {role: "", instructions: "Assist."}, 8);
-    _ = check wfInternal:registerDurableAgentEvent("cbAgent", "replies", string, string,
-        "MULTI_EVENT");
+    _ = check wfInternal:registerDurableAgentPeer("peerMetaAgent", "declTestAgent",
+        "declTestAgent", {description: "Asks the test agent", allowedEvents: ["chat"]});
 
-    boolean|error undeclared = wfInternal:registerDurableAgentPeer("cbAgent", "askOther",
-        "declTestAgent", {"wait": false, "callbackChannel": "answers"});
-    test:assertTrue(undeclared is error, "An undeclared callbackChannel must be rejected");
-    if undeclared is error {
-        test:assertTrue(undeclared.message().includes("no data-event channel named 'answers'")
-                && undeclared.message().includes("replies"),
-            "The rejection should name the channel and list the declared ones: "
-                + undeclared.message());
-    }
-
-    boolean|error noChannel = wfInternal:registerDurableAgentPeer("cbAgent", "askAnother",
-        "declTestAgent", {"wait": false});
-    test:assertTrue(noChannel is error, "wait = false without a callbackChannel must be rejected");
-    if noChannel is error {
-        test:assertTrue(noChannel.message().includes("no callbackChannel"),
-            "The rejection should explain what is missing: " + noChannel.message());
-    }
-
-    // A declared channel registers cleanly.
-    _ = check wfInternal:registerDurableAgentPeer("cbAgent", "askDeclared",
-        "declTestAgent", {"wait": false, "callbackChannel": "replies"});
+    boolean|error duplicate = wfInternal:registerDurableAgentPeer("peerMetaAgent", "declTestAgent",
+        "declTestAgent", ());
+    test:assertTrue(duplicate is error, "The same peer cannot be advertised twice on one agent");
 }
 
 @test:Config {}

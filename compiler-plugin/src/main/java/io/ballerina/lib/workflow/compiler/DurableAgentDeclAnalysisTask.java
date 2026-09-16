@@ -235,9 +235,6 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         List<DurableAgentDeclInfo.EventDecl> events = new ArrayList<>();
         List<DurableAgentDeclInfo.HumanTaskDecl> humanTasks = new ArrayList<>();
         List<DurableAgentDeclInfo.PeerDecl> peers = new ArrayList<>();
-        // Async peers' callbackChannel references, checked against the declared channels after
-        // the whole config is read (the peers field may precede the events field in source).
-        List<CallbackChannelRef> callbackChannels = new ArrayList<>();
 
         Set<String> seenNames = new HashSet<>();
 
@@ -269,23 +266,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 case "tools" -> extractTools(value, aiToolRefs, seenNames, agentName, context);
                 case "events" -> extractEvents(value, events, seenNames, agentName, context);
                 case "humanTasks" -> extractHumanTasks(value, humanTasks, seenNames, agentName, context);
-                case "peers" -> extractPeers(value, peers, seenNames, agentName, callbackChannels, context);
+                case "peers" -> extractPeers(value, peers, seenNames, agentName, context);
                 default -> {
                     // systemPrompt/model handled above; unknown fields are the type checker's concern
                 }
-            }
-        }
-
-        // An async peer's reply self-injects into its callbackChannel; a channel the agent does
-        // not declare would swallow the reply silently, so the reference must resolve here.
-        Set<String> channelNames = new HashSet<>();
-        for (DurableAgentDeclInfo.EventDecl event : events) {
-            channelNames.add(event.name());
-        }
-        for (CallbackChannelRef callback : callbackChannels) {
-            if (!channelNames.contains(callback.channel())) {
-                reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_152, callback.location(),
-                        agentName, callback.channel());
             }
         }
 
@@ -385,6 +369,12 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     boundParameters = boundParameterNames(declValue);
                     collectQualifiedPrefixes(declValue, typeRefPrefixes);
                 }
+                case "approvalPolicy", "retryPolicy" -> {
+                    checkReviewDefinition(declValue, context);
+                    appendMetaField(meta, sf, declValue.toSourceCode().strip());
+                }
+                case "requiresApproval", "userRoles" ->
+                        reportRemovedField(context, sf, key, "ActivityDecl", "declare 'approvalPolicy'");
                 default -> appendMetaField(meta, sf, declValue.toSourceCode().strip());
             }
         }
@@ -427,13 +417,12 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 String refSource = member.toSourceCode().strip();
                 checkUnique(simpleName(refSource), seenNames, agentName, member.location(), context);
                 checkToolAuthUnsupported(member, agentName, context);
-                aiToolRefs.add(new DurableAgentDeclInfo.ToolRef(refSource, null, null));
+                aiToolRefs.add(new DurableAgentDeclInfo.ToolRef(refSource, null));
             } else if (member instanceof MappingConstructorExpressionNode toolDecl) {
-                // A ToolDecl entry: {tool: <ref>, requiresApproval: ..., userRoles: ...}. The
-                // gating fields pass through to the registration call as named arguments.
+                // A ToolDecl entry: {tool: <ref>, approvalPolicy: ...}. The gate passes through to
+                // the registration call as a named argument.
                 String toolRef = null;
                 String approvalSource = null;
-                String rolesSource = null;
                 Node toolRefNode = null;
                 for (MappingFieldNode field : toolDecl.fields()) {
                     if (!(field instanceof SpecificFieldNode specificField)
@@ -444,14 +433,18 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     if (fieldName == null) {
                         continue;
                     }
-                    String valueSource = specificField.valueExpr().get().toSourceCode().strip();
+                    ExpressionNode fieldValue = specificField.valueExpr().get();
                     switch (fieldName) {
                         case "tool" -> {
-                            toolRef = valueSource;
-                            toolRefNode = specificField.valueExpr().get();
+                            toolRef = fieldValue.toSourceCode().strip();
+                            toolRefNode = fieldValue;
                         }
-                        case "requiresApproval" -> approvalSource = valueSource;
-                        case "userRoles" -> rolesSource = valueSource;
+                        case "approvalPolicy" -> {
+                            checkReviewDefinition(fieldValue, context);
+                            approvalSource = fieldValue.toSourceCode().strip();
+                        }
+                        case "requiresApproval", "userRoles" -> reportRemovedField(context, specificField,
+                                fieldName, "ToolDecl", "declare 'approvalPolicy'");
                         default -> {
                         }
                     }
@@ -461,7 +454,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 }
                 checkUnique(simpleName(toolRef), seenNames, agentName, member.location(), context);
                 checkToolAuthUnsupported(toolRefNode, agentName, context);
-                aiToolRefs.add(new DurableAgentDeclInfo.ToolRef(toolRef, approvalSource, rolesSource));
+                aiToolRefs.add(new DurableAgentDeclInfo.ToolRef(toolRef, approvalSource));
             }
             // ai:ToolConfig / toolkit constructor expressions carry their functions by value and
             // need no module-init registration; their names are not statically resolvable here.
@@ -650,13 +643,13 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             }
         }
         checkUnique(name, seenNames, agentName, nameLocation, context);
+        checkReviewDefinition(config, context);
         humanTasks.add(new DurableAgentDeclInfo.HumanTaskDecl(name,
                 meta.isEmpty() ? null : "{" + meta + "}", resultTypeSource, taskInputTypeSource));
     }
 
     private void extractPeers(ExpressionNode value, List<DurableAgentDeclInfo.PeerDecl> peers,
                               Set<String> seenNames, String agentName,
-                              List<CallbackChannelRef> callbackChannels,
                               SyntaxNodeAnalysisContext context) {
         if (!(value instanceof ListConstructorExpressionNode list)) {
             return;
@@ -665,7 +658,6 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             if (!(member instanceof MappingConstructorExpressionNode peerMapping)) {
                 continue;
             }
-            String name = null;
             String targetAgent = null;
             StringBuilder meta = new StringBuilder();
             Location nameLocation = peerMapping.location();
@@ -679,29 +671,55 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 }
                 ExpressionNode fieldValue = sf.valueExpr().get();
                 switch (key) {
-                    case "name" -> {
-                        name = stringLiteralValue(fieldValue);
+                    // The peer's identity — and its tool-name prefix — is its module-level variable
+                    // name, the same name its own declaration registers under.
+                    case "agent" -> {
+                        targetAgent = simpleName(fieldValue.toSourceCode().strip());
                         nameLocation = fieldValue.location();
                     }
-                    // The peer's identity is its module-level variable name — the same name
-                    // its own declaration registers under.
-                    case "agent" -> targetAgent = simpleName(fieldValue.toSourceCode().strip());
-                    case "callbackChannel" -> {
-                        String channel = stringLiteralValue(fieldValue);
-                        if (channel != null) {
-                            callbackChannels.add(new CallbackChannelRef(channel, fieldValue.location()));
-                        }
-                        appendMetaField(meta, sf, fieldValue.toSourceCode().strip());
-                    }
+                    case "name" -> reportRemovedField(context, sf, key, "PeerDecl",
+                            "the peer is named by its 'agent' variable");
+                    case "wait", "callbackChannel" -> reportRemovedField(context, sf, key, "PeerDecl",
+                            "a one-way peer event returns at once and a duplex one waits; the reply "
+                                    + "address travels with each delegation");
+                    case "requiresApproval", "userRoles" -> reportRemovedField(context, sf, key, "PeerDecl",
+                            "gate the peer's own activities and tools inside the peer");
                     default -> appendMetaField(meta, sf, fieldValue.toSourceCode().strip());
                 }
             }
-            if (name == null || targetAgent == null) {
+            if (targetAgent == null) {
                 continue;
             }
-            checkUnique(name, seenNames, agentName, nameLocation, context);
-            peers.add(new DurableAgentDeclInfo.PeerDecl(name, targetAgent,
+            checkUnique(targetAgent, seenNames, agentName, nameLocation, context);
+            peers.add(new DurableAgentDeclInfo.PeerDecl(targetAgent, targetAgent,
                     meta.isEmpty() ? null : "{" + meta + "}"));
+        }
+    }
+
+    // Fields removed in 0.10 fail the build: ignoring `requiresApproval: true` would drop a gate.
+    private void reportRemovedField(SyntaxNodeAnalysisContext context, SpecificFieldNode field, String key,
+                                    String record, String replacement) {
+        reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_163, field.location(), key, record, replacement);
+    }
+
+    // A review definition literal must name an audience; an AutoRetry literal (maxRetries) is exempt.
+    private void checkReviewDefinition(ExpressionNode value, SyntaxNodeAnalysisContext context) {
+        if (!(value instanceof MappingConstructorExpressionNode mapping)) {
+            return;
+        }
+        boolean audience = false;
+        boolean retries = false;
+        for (MappingFieldNode field : mapping.fields()) {
+            if (!(field instanceof SpecificFieldNode sf)) {
+                continue;
+            }
+            String key = mappingKeyName(sf);
+            boolean nil = sf.valueExpr().isPresent() && sf.valueExpr().get().kind() == SyntaxKind.NIL_LITERAL;
+            audience |= ("userRoles".equals(key) && !nil) || "users".equals(key);
+            retries |= "maxRetries".equals(key);
+        }
+        if (!audience && !retries) {
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_164, value.location());
         }
     }
 

@@ -139,7 +139,7 @@ final workflow:DurableAgent orderAgent = check new ({
     model: orderModel,
     activities: [
         checkInventory,
-        {activity: reserveStock, name: "reserve", requiresApproval: true}
+        {activity: reserveStock, name: "reserve", approvalPolicy: {userRoles: "manager"}}
     ],
     tools: [priceLookup],
     events: {

@@ -113,7 +113,7 @@ final ToolAgentMockModelProvider toolAgentMockModel = new;
 final workflow:DurableAgent quoteAgent = check new ({
     systemPrompt: {role: "", instructions: "You are a pricing assistant. Use agentQuoteTool."},
     model: toolAgentMockModel,
-    tools: [{tool: agentQuoteTool, requiresApproval: false}]
+    tools: [{tool: agentQuoteTool}]
 });
 
 isolated client class McpToolAgentMockModelProvider {

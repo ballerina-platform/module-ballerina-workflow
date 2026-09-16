@@ -19,7 +19,7 @@
 // ================================================================================
 // Covers the `tools` capability of the object-model declaration: every accepted
 // shape (`@ai:AgentTool` function, `ai:ToolConfig`, `ai:BaseToolKit`) and the
-// `ToolDecl` wrapper's gating fields (`requiresApproval`/`userRoles`), which the
+// `ToolDecl` wrapper's gate (`approvalPolicy`), which the
 // compiler plugin forwards as named arguments to `registerDurableAgentTool`.
 
 import ballerina/ai;
@@ -71,7 +71,7 @@ final ToolDeclMockModelProvider toolDeclModel = new;
 final DurableAgent toolDeclRunAgent = check new ({
     systemPrompt: {role: "", instructions: "You are a pricing assistant."},
     model: toolDeclModel,
-    tools: [{tool: quoteToolConfig, requiresApproval: false}]
+    tools: [{tool: quoteToolConfig}]
 });
 
 @test:Config {groups: ["unit"]}
@@ -98,14 +98,14 @@ function testRegisterDurableAgentToolShapes() returns error? {
     test:assertTrue(duplicateTool is error,
         "A toolkit re-exposing an already registered tool name should be rejected");
 
-    // ToolDecl gating fields pass through as named arguments (what the plugin emits for
-    // `{tool: x, requiresApproval: true, userRoles: "finance"}`).
+    // The ToolDecl gate passes through as a named argument (what the plugin emits for
+    // `{tool: x, approvalPolicy: {userRoles: "finance"}}`).
     _ = check wfInternal:registerDurableAgentTool("toolShapesAgent",
         {name: "gatedQuote", description: "Gated quote", caller: plainQuote},
-        requiresApproval = true, userRoles = "finance");
+        approvalPolicy = <ReviewTaskDefinition>{userRoles: "finance"});
     _ = check wfInternal:registerDurableAgentTool("toolShapesAgent",
         {name: "multiRoleQuote", description: "Multi-role quote", caller: plainQuote},
-        requiresApproval = true, userRoles = ["finance", "manager"]);
+        approvalPolicy = <ReviewTaskDefinition>{userRoles: ["finance", "manager"]});
 
     // A bare function without @ai:AgentTool cannot self-describe.
     boolean|error unannotated = wfInternal:registerDurableAgentTool("toolShapesAgent", plainQuote);
@@ -121,8 +121,7 @@ function testToolConfigDeclEndToEnd() returns error? {
     // Mirror the plugin-generated registration for `toolDeclRunAgent`.
     _ = check wfInternal:registerDurableAgentDecl("toolDeclRunAgent", toolDeclModel,
         {role: "", instructions: "You are a pricing assistant."}, 16);
-    _ = check wfInternal:registerDurableAgentTool("toolDeclRunAgent", quoteToolConfig,
-        requiresApproval = false);
+    _ = check wfInternal:registerDurableAgentTool("toolDeclRunAgent", quoteToolConfig);
     _ = check wfInternal:registerDurableAgentRunner("toolDeclRunAgent");
     toolDeclRunAgent.bindAgentName("toolDeclRunAgent");
 

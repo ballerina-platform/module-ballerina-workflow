@@ -431,7 +431,7 @@ public final class WorkflowContextNative {
                 .stepId(stepId).title(title).description(description)
                 .userRoles(List.of(roles)).taskInput(activityArgs)
                 .formSchema(deriveReviewInputSchema(activityType, activityArgs))
-                .timeoutMillis(timeoutMillis != null && timeoutMillis > 0 ? timeoutMillis : null)
+                .timeoutMillis(timeoutMillis)
                 .createdAt(Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString())
                 .trigger(trigger).activityName(fullActivityName).errorMessage(errorMessage)
                 .build();

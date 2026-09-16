@@ -19,6 +19,7 @@
 package io.ballerina.lib.workflow.worker;
 
 import io.ballerina.lib.workflow.ModuleUtils;
+import io.ballerina.lib.workflow.TaskKeys;
 import io.ballerina.lib.workflow.context.AgentContextNative;
 import io.ballerina.lib.workflow.context.SignalAwaitWrapper;
 import io.ballerina.lib.workflow.context.WorkflowContextNative;
@@ -108,6 +109,8 @@ public final class WorkflowWorkerNative {
      * in Temporal visibility, matching the management API's task status model (ballerina-library#8892).
      */
     public static final String HUMANTASK_REJECTED_FAILURE_TYPE = "HUMANTASK_REJECTED";
+    /** ApplicationFailure type tag for a review activity whose deadline passed before a human decided. */
+    public static final String REVIEW_TIMEOUT_FAILURE_TYPE = "REVIEW_TIMEOUT";
     /**
      * Internal signal that requests a running workflow to suspend. Handled by the dynamic signal handler in
      * {@link BallerinaWorkflowAdapter}: sets the per-execution suspended flag that {@link #awaitWhileSuspended()}
@@ -2843,52 +2846,67 @@ public final class WorkflowWorkerNative {
         }
 
         /**
-         * Executes the built-in review activity child workflow (the former manual retry task).
+         * Executes the built-in review activity child workflow.
          *
-         * <p>Waits indefinitely for a {@code "taskDecision"} signal from a human operator.
-         * The signal payload is a map with the following fields:
-         * <ul>
-         *   <li>{@code action} — {@code "proceed"}, {@code "proceed-with-input"}, or {@code "reject"}</li>
-         *   <li>{@code input} — (optional) new named arguments map for {@code "proceed-with-input"}</li>
-         *   <li>{@code feedback} — (optional) reviewer note surfaced with a rejection</li>
-         * </ul>
+         * <p>Waits for a {@code "taskDecision"} signal ({@code action}, optional {@code input} and
+         * {@code feedback}) or for the deadline in {@code timeoutMillis}. The decision map is returned to the
+         * parent as the child result; a timeout fails the child with
+         * {@link WorkflowWorkerNative#REVIEW_TIMEOUT_FAILURE_TYPE} and the same pipe-delimited detail a human
+         * task uses.
          *
-         * <p>The decision map is returned directly to the parent workflow via the child-workflow
-         * result channel; {@code callBuiltinReviewActivity} in
-         * {@link io.ballerina.lib.workflow.context.WorkflowContextNative} unpacks it.
-         *
-         * @param args Temporal-encoded input; index 0 is the input map set by callBuiltinReviewActivity
-         * @return the decision map ({@code {action, input?}})
+         * @param args Temporal-encoded input; index 0 is the input map set by startReviewActivity
+         * @return the decision map
          */
         @SuppressWarnings("unchecked")
         private Object executeBuiltinReviewActivity(EncodedValues args) {
-            // Input validation — failure is non-retryable to avoid infinite loops
+            Map<String, Object> input;
             try {
-                args.get(0, Map.class);
+                input = args.get(0, Map.class);
             } catch (Exception e) {
                 throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
                         "Invalid review activity input: " + e.getMessage(), "REVIEW_ACTIVITY_INPUT_ERROR");
             }
+            String taskName = String.valueOf(input.getOrDefault(TaskKeys.TASK_NAME, "unknown"));
+            Object timeoutRaw = input.get(TaskKeys.TIMEOUT_MILLIS);
+            Long timeoutMillis = (timeoutRaw instanceof Number n) ? n.longValue() : null;
+            String thisWorkflowId = Workflow.getInfo().getWorkflowId();
 
-            // Block indefinitely until the "taskDecision" signal arrives.
-            // The DynamicSignalHandler registered in the constructor records all signals
-            // in signalWrapper, so getSignalFuture("taskDecision") is replay-safe.
             io.temporal.workflow.CompletablePromise<SignalAwaitWrapper.SignalData> signalFuture =
                     signalWrapper.getSignalFuture("taskDecision");
-
-            Workflow.await(signalFuture::isCompleted);
-
-            SignalAwaitWrapper.SignalData signalData = signalFuture.get();
-            // Return the raw decision map — executeWithManualRetry in
-            // WorkflowContextNative processes action + optional input.
-            Object decision = signalData.data();
-            if (decision instanceof Map<?, ?>) {
-                return decision;
+            boolean decided;
+            if (timeoutMillis != null) {
+                decided = Workflow.await(java.time.Duration.ofMillis(timeoutMillis), signalFuture::isCompleted);
+            } else {
+                Workflow.await(signalFuture::isCompleted);
+                decided = true;
             }
-            // Fallback: treat any unexpected payload as "reject"
-            Map<String, Object> failDecision = new HashMap<>();
-            failDecision.put("action", "reject");
-            return failDecision;
+            if (!decided) {
+                String timedOutAt = java.time.Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString();
+                String timedOutAfter = java.time.Duration.ofMillis(timeoutMillis).toString();
+                throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
+                        taskName + "|" + thisWorkflowId + "|" + timedOutAfter + "|" + timedOutAt,
+                        REVIEW_TIMEOUT_FAILURE_TYPE);
+            }
+
+            Object decision = signalFuture.get().data();
+            if (!(decision instanceof Map<?, ?> decisionMap)) {
+                Map<String, Object> failDecision = new HashMap<>();
+                failDecision.put(TaskKeys.ACTION, TaskKeys.ACTION_REJECT);
+                return failDecision;
+            }
+            // Who decided, on the memo, so a listing does not read history for it — as human tasks do.
+            if (decisionMap.get(TaskKeys.DECIDED_BY) instanceof String actor && !actor.isBlank()) {
+                Map<String, Object> completion = new HashMap<>();
+                completion.put(COMPLETED_BY_MEMO_KEY, actor);
+                completion.put(COMPLETED_AT_MEMO_KEY,
+                        java.time.Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString());
+                try {
+                    Workflow.upsertMemo(completion);
+                } catch (Exception e) {
+                    LOGGER.warn("Could not record the decider on the review memo: {}", e.getMessage());
+                }
+            }
+            return decision;
         }
     }
 

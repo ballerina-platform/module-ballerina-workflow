@@ -19,6 +19,7 @@
 package io.ballerina.lib.workflow.context;
 
 import io.ballerina.lib.workflow.ModuleUtils;
+import io.ballerina.lib.workflow.TaskKeys;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.ActivityNaming;
 import io.ballerina.lib.workflow.worker.InstanceIdNaming;
@@ -50,7 +51,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -425,74 +425,72 @@ public final class WorkflowContextNative {
                         + "Proceed to run it with the proposed input, proceed with edited input, "
                         + "or reject to skip the call.";
 
-        // Memo — readable without fetching full history
-        Map<String, Object> memo = new HashMap<>();
-        memo.put("workflowKind", "REVIEW_ACTIVITY");
-        memo.put("trigger", trigger);
-        memo.put("activityName", fullActivityName);
-        if (stepId != null) {
-            // `stepId` is the step being reviewed; `reviewStepId` is the review's own node in
-            // the descriptor graph. Older instances carry the first alone.
-            memo.put(STEP_ID_KEY, stepId);
-            memo.put(REVIEW_STEP_ID_KEY, stepId + REVIEW_STEP_ID_SUFFIX);
-        }
-        memo.put("taskName", qualifiedTaskName);
-        memo.put("title", title);
-        memo.put("description", description);
-        memo.put("parentWorkflowId", parentWorkflowId);
-        memo.put("errorMessage", errorMessage != null ? errorMessage : "");
-        memo.put("activityArgs", activityArgs);
-        memo.put("userRoles", roles);
-        memo.put("createdAt", java.time.Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString());
-        memo.put("formSchema", deriveReviewInputSchema(activityType, activityArgs));
-
-        // Input passed into the child workflow's execute(). Ordered for the human who reads it
-        // rendered: what the task is, why it exists, what it carries, then where it came from —
-        // a HashMap serialized these in hash order, which put the name and title last. The task's
-        // own id is included because it is the handle every management operation needs, and the
-        // reader of a rendered envelope otherwise has no way to it.
-        Map<String, Object> inputs = new LinkedHashMap<>();
-        inputs.put("taskId", reviewId);
-        inputs.put("taskName", qualifiedTaskName);
-        inputs.put("activityName", fullActivityName);
-        inputs.put("errorMessage", errorMessage != null ? errorMessage : "");
-        inputs.put("activityArgs", activityArgs);
-        inputs.put("parentWorkflowId", parentWorkflowId);
+        TaskRecord task = TaskRecord.builder(TaskRecord.REVIEW_ACTIVITY)
+                .taskId(reviewId).taskName(qualifiedTaskName)
+                .parentWorkflowId(parentWorkflowId).parentWorkflowType(currentWorkflowDefinitionName())
+                .stepId(stepId).title(title).description(description)
+                .userRoles(List.of(roles)).taskInput(activityArgs)
+                .formSchema(deriveReviewInputSchema(activityType, activityArgs))
+                .timeoutMillis(timeoutMillis != null && timeoutMillis > 0 ? timeoutMillis : null)
+                .createdAt(Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString())
+                .trigger(trigger).activityName(fullActivityName).errorMessage(errorMessage)
+                .build();
 
         // REQUEST_CANCEL (not TERMINATE) so a review retired by its parent closing ends as
         // CANCELED — distinguishable from an admin terminating the task (ballerina-library#8892).
         io.temporal.workflow.ChildWorkflowOptions.Builder optsBuilder =
                 io.temporal.workflow.ChildWorkflowOptions.newBuilder().setWorkflowId(reviewId).setParentClosePolicy(
-                        io.temporal.api.enums.v1.ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL).setMemo(memo);
+                        io.temporal.api.enums.v1.ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL)
+                        .setMemo(task.toMemo());
         if (WorkflowWorkerNative.isKindSearchAttributeReady()) {
             // The indexed kind, so lists can include or exclude reviews server-side. Not part of
             // replay command validation, so the gate is safe for in-flight executions.
             optsBuilder.setTypedSearchAttributes(io.temporal.common.SearchAttributes.newBuilder()
                     .set(WorkflowWorkerNative.WORKFLOW_KIND_KEY, "REVIEW_ACTIVITY").build());
         }
-        if (timeoutMillis != null && timeoutMillis > 0) {
-            optsBuilder.setWorkflowExecutionTimeout(java.time.Duration.ofMillis(timeoutMillis));
-        }
 
         io.temporal.workflow.ChildWorkflowStub childStub = Workflow.newUntypedChildWorkflowStub(
                 reviewTypeName, optsBuilder.build());
 
         try {
-            Object rawResult = childStub.execute(Object.class, inputs);
+            Object rawResult = childStub.execute(Object.class, task.toInputs());
             if (rawResult instanceof Map<?, ?> resultMap) {
-                return (Map<String, Object>) resultMap;
+                Map<String, Object> decision = (Map<String, Object>) resultMap;
+                recordReviewDecision(reviewId, qualifiedTaskName, decision);
+                return decision;
             }
-        } catch (io.temporal.failure.ChildWorkflowFailure e) {
-            // Timed out (or otherwise ended) without a decision — treat as reject and say so.
-            Map<String, Object> timedOut = new HashMap<>();
-            timedOut.put("action", "reject");
-            timedOut.put("feedback", "the review timed out before a human decided");
-            return timedOut;
+        } catch (ChildWorkflowFailure e) {
+            return reviewFailureDecision(e);
         }
-        // Fallback: treat any unexpected result as reject
         Map<String, Object> failDecision = new HashMap<>();
         failDecision.put("action", "reject");
         return failDecision;
+    }
+
+    // The child ended without a decision: a timeout is reported as one, anything else as a plain reject.
+    private static Map<String, Object> reviewFailureDecision(ChildWorkflowFailure e) {
+        Map<String, Object> decision = new HashMap<>();
+        decision.put(TaskKeys.ACTION, TaskKeys.ACTION_REJECT);
+        if (e.getCause() instanceof ApplicationFailure af
+                && WorkflowWorkerNative.REVIEW_TIMEOUT_FAILURE_TYPE.equals(af.getType())) {
+            String msg = af.getOriginalMessage();
+            String[] parts = msg == null ? new String[0] : msg.split("\\|", -1);
+            decision.put(TaskKeys.TIMED_OUT, true);
+            decision.put(TaskKeys.TIMED_OUT_AFTER, parts.length > 2 ? parts[2] : "unknown");
+            decision.put(TaskKeys.TIMED_OUT_AT, parts.length > 3 ? parts[3] : "unknown");
+            decision.put(TaskKeys.FEEDBACK, "the review timed out before a human decided");
+            return decision;
+        }
+        decision.put(TaskKeys.FAILED, true);
+        decision.put(TaskKeys.FEEDBACK, e.getCause() != null ? e.getCause().getMessage() : e.getMessage());
+        return decision;
+    }
+
+    // The current workflow's user-facing type: the Temporal type without the "workflow-" prefix.
+    static String currentWorkflowDefinitionName() {
+        String rawType = Workflow.getInfo().getWorkflowType();
+        return rawType.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX)
+                ? rawType.substring(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length()) : rawType;
     }
 
     // On-failure manual-retry review (the ManualRetry policy). Delegates to the shared starter.
@@ -926,40 +924,17 @@ public final class WorkflowContextNative {
             // issuing it, or it fails replay validation.
             taskWorkflowId = InstanceIdNaming.childInstanceId("humantask-", Workflow.randomUUID().toString());
 
-            // --- Memo (immutable, readable without full history) --------------------
-            Map<String, Object> memo = new HashMap<>();
-            memo.put("workflowKind", "HUMAN_TASK");
-            memo.put("taskName", qualifiedTaskName);
-            memo.put("parentWorkflowId", parentWorkflowId);
-            memo.put("parentWorkflowType", workflowDefinitionName);
-            memo.put("title", title);
-            memo.put("description", description);
-            memo.put("userRoles", userRoles);
-            memo.put("taskInput", TypesUtil.convertBallerinaToJavaType(taskInput));
-            memo.put("createdAt", Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString());
-            memo.put("formSchema", TypesUtil.toJsonSchema(typedesc.getDescribingType()));
-            if (stepId instanceof BString site) {
-                // Which await in the workflow this task belongs to — the memo is readable
-                // without replaying history, so a listing can place the task on the graph.
-                memo.put(STEP_ID_KEY, site.getValue());
-            }
-
-            // --- Build input map passed to the child workflow -----------------------
-            // Ordered for the human who reads it rendered: what the task is, why it exists, what
-            // it carries, then where it came from — a HashMap serialized these in hash order,
-            // which put the name and title last. The task's own id is the handle every management
-            // operation needs, so the envelope carries it.
-            Map<String, Object> inputs = new LinkedHashMap<>();
-            inputs.put("taskId", taskWorkflowId);
-            inputs.put("taskName", qualifiedTaskName);
-            inputs.put("title", title);
-            inputs.put("description", description);
-            inputs.put("userRoles", userRoles);
-            inputs.put("taskInput", TypesUtil.convertBallerinaToJavaType(taskInput));
-            // null means no timeout (wait indefinitely)
-            inputs.put("timeoutMillis", timeoutMillis);
-            inputs.put("parentWorkflowId", parentWorkflowId);
-            inputs.put("workflowDefinitionName", workflowDefinitionName);
+            TaskRecord task = TaskRecord.builder(TaskRecord.HUMAN_TASK)
+                    .taskId(taskWorkflowId).taskName(qualifiedTaskName)
+                    .parentWorkflowId(parentWorkflowId).parentWorkflowType(workflowDefinitionName)
+                    .stepId(stepId instanceof BString site ? site.getValue() : null)
+                    .title(title).description(description).userRoles(userRoles)
+                    .taskInput(TypesUtil.convertBallerinaToJavaType(taskInput))
+                    .formSchema(TypesUtil.toJsonSchema(typedesc.getDescribingType()))
+                    .timeoutMillis(timeoutMillis)
+                    .createdAt(Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString())
+                    .build();
+            Map<String, Object> inputs = task.toInputs();
 
             // --- Start child workflow and block until completion --------------------
             // REQUEST_CANCEL (not TERMINATE) so a task retired by its parent closing ends as
@@ -969,7 +944,7 @@ public final class WorkflowContextNative {
                     .setWorkflowId(taskWorkflowId)
                     .setParentClosePolicy(
                             io.temporal.api.enums.v1.ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL)
-                    .setMemo(memo);
+                    .setMemo(task.toMemo());
             if (WorkflowWorkerNative.isKindSearchAttributeReady()) {
                 childOptionsBuilder.setTypedSearchAttributes(io.temporal.common.SearchAttributes.newBuilder()
                         .set(WorkflowWorkerNative.WORKFLOW_KIND_KEY, "HUMAN_TASK").build());
@@ -979,6 +954,7 @@ public final class WorkflowContextNative {
             ChildWorkflowStub childStub = Workflow.newUntypedChildWorkflowStub(humanTaskTypeName, childOptions);
 
             Object rawResult = childStub.execute(Object.class, inputs);
+            recordHumanTaskCompletion(taskWorkflowId, qualifiedTaskName, rawResult);
 
             // --- Extract the "result" field from the signal payload -----------------
             // Signal payload shape: { completedBy: {...}, result: <json> }
@@ -1089,6 +1065,48 @@ public final class WorkflowContextNative {
      * falling back to the whole payload map. If the payload is not a Map or has no "result" key, the raw value is
      * returned as-is.
      */
+    // Who acted on each task this execution created, keyed by qualified task name; "" holds the latest.
+    // Rebuilt on replay from the child results, so reads are deterministic.
+    private static final WorkflowLocal<Map<String, Map<String, Object>>> HUMAN_TASK_COMPLETIONS =
+            WorkflowLocal.withCachedInitial(HashMap::new);
+    private static final WorkflowLocal<Map<String, Map<String, Object>>> REVIEW_DECISIONS =
+            WorkflowLocal.withCachedInitial(HashMap::new);
+    private static final String LATEST = "";
+
+    private static void recordHumanTaskCompletion(String taskId, String taskName, Object rawResult) {
+        Map<String, Object> completion = new HashMap<>();
+        completion.put(TaskKeys.TASK_ID, taskId);
+        completion.put(TaskKeys.TASK_NAME, taskName);
+        if (rawResult instanceof Map<?, ?> envelope) {
+            completion.put(TaskKeys.COMPLETED_BY, envelope.get(TaskKeys.COMPLETED_BY));
+            completion.put(TaskKeys.COMPLETED_AT, envelope.get(TaskKeys.COMPLETED_AT));
+            completion.put(TaskKeys.IDENTITY_SOURCE, envelope.get(TaskKeys.IDENTITY_SOURCE));
+        }
+        HUMAN_TASK_COMPLETIONS.get().put(taskName, completion);
+        HUMAN_TASK_COMPLETIONS.get().put(LATEST, completion);
+    }
+
+    private static void recordReviewDecision(String taskId, String taskName, Map<String, Object> decision) {
+        Map<String, Object> record = new HashMap<>();
+        record.put(TaskKeys.TASK_ID, taskId);
+        record.put(TaskKeys.TASK_NAME, taskName);
+        record.put(TaskKeys.ACTION, decision.get(TaskKeys.ACTION));
+        record.put(TaskKeys.FEEDBACK, decision.get(TaskKeys.FEEDBACK));
+        record.put(TaskKeys.DECIDED_BY, decision.get(TaskKeys.DECIDED_BY));
+        record.put(TaskKeys.DECIDED_AT, decision.get(TaskKeys.DECIDED_AT));
+        REVIEW_DECISIONS.get().put(taskName, record);
+        REVIEW_DECISIONS.get().put(LATEST, record);
+    }
+
+    // The most recent completion of the named task, or of any task when the name is null; null when none.
+    public static Map<String, Object> lastHumanTaskCompletion(String taskName) {
+        return HUMAN_TASK_COMPLETIONS.get().get(taskName == null ? LATEST : taskName);
+    }
+
+    public static Map<String, Object> lastReviewDecision(String taskName) {
+        return REVIEW_DECISIONS.get().get(taskName == null ? LATEST : taskName);
+    }
+
     @SuppressWarnings("unchecked")
     private static Object extractResultField(Object rawResult) {
         if (rawResult instanceof Map<?, ?> rawMap) {

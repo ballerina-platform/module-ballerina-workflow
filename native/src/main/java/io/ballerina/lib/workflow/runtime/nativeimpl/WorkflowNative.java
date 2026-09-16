@@ -19,6 +19,7 @@
 package io.ballerina.lib.workflow.runtime.nativeimpl;
 
 import io.ballerina.lib.workflow.ModuleUtils;
+import io.ballerina.lib.workflow.TaskKeys;
 import io.ballerina.lib.workflow.runtime.WorkflowRuntime;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
@@ -50,12 +51,9 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -992,7 +990,7 @@ public final class WorkflowNative {
             // payload against the task's expected result type (ballerina-library#8866).
             BArray callerRolesArray = (callerRoles instanceof BArray ba) ? ba : null;
             Object validation = validateHumanTaskAndRoles(client, taskWorkflowId.getValue(), callerRolesArray,
-                                                          result, false);
+                                                          userId, result, false);
             if (!(validation instanceof TaskMemo memo)) {
                 return validation;
             }
@@ -1044,7 +1042,7 @@ public final class WorkflowNative {
             // Kind/status/role checks only — a rejection carries no result payload to validate.
             BArray callerRolesArray = (callerRoles instanceof BArray ba) ? ba : null;
             Object validation = validateHumanTaskAndRoles(client, taskWorkflowId.getValue(), callerRolesArray,
-                                                          null, true);
+                                                          userId, null, true);
             if (!(validation instanceof TaskMemo memo)) {
                 return validation;
             }
@@ -1088,7 +1086,7 @@ public final class WorkflowNative {
      * was added).  The {@code workflowKind} check is never skipped.
      */
     private static Object validateHumanTaskAndRoles(WorkflowClient client, String taskWorkflowId,
-                                                    BArray callerRolesArray, Object result,
+                                                    BArray callerRolesArray, Object userId, Object result,
                                                     boolean skipPayloadValidation) {
         try {
             DescribeWorkflowExecutionRequest req = DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
@@ -1155,42 +1153,29 @@ public final class WorkflowNative {
                 }
             }
 
-            // 3. Role intersection — only when callerRoles was supplied
-            Set<String> allowedRoles = new HashSet<>();
+            // 3. Assignment — enforced only when the caller supplied roles
+            TaskAssignment assignment;
             try {
-                io.temporal.api.common.v1.Payload rolesPl = memoFields.get("userRoles");
-                if (rolesPl != null) {
-                    String[] rolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
-                    allowedRoles.addAll(Arrays.asList(rolesArr));
-                }
+                assignment = TaskAssignment.fromMemo(dc, memoFields);
             } catch (Exception e) {
                 if (callerRolesArray != null) {
                     return ErrorCreator.createError(StringUtils.fromString(
                             "Failed to decode task roles for '" + taskWorkflowId + "': " + e.getMessage()));
                 }
-                // Nothing to enforce against, so an unreadable role list only costs the audit entry its roles.
-                LOGGER.debug("Could not decode userRoles from memo for '{}': {}", taskWorkflowId, e.getMessage());
+                LOGGER.debug("Could not decode assignment from memo for '{}': {}", taskWorkflowId, e.getMessage());
+                assignment = new TaskAssignment(List.of(), List.of(), List.of(), List.of());
             }
             // The decision's audit entry names the task, its parent, and who was allowed to decide it.
             TaskMemo memo = new TaskMemo(decodeMemoText(dc, memoFields, "taskName"),
                                          decodeMemoText(dc, memoFields, "parentWorkflowId"),
-                                         allowedRoles.stream().sorted().toList(),
-                                         decodeMemoValue(dc, memoFields, "taskInput"));
-
-            if (callerRolesArray == null || allowedRoles.isEmpty()) {
-                // No caller roles to check, or no roles configured on the task — nothing to enforce.
-                return memo;
+                                         assignment.userRoles().stream().sorted().toList(),
+                                         decodeMemoValue(dc, memoFields, TaskKeys.TASK_INPUT));
+            String denial = assignment.denial(TaskAssignment.roles(callerRolesArray),
+                    userId instanceof BString bs ? bs.getValue() : null, "task '" + taskWorkflowId + "'");
+            if (denial != null) {
+                return ErrorCreator.createError(StringUtils.fromString(denial));
             }
-
-            for (int i = 0; i < callerRolesArray.size(); i++) {
-                if (allowedRoles.contains(callerRolesArray.get(i).toString())) {
-                    return memo; // at least one matching role — authorized
-                }
-            }
-
-            return ErrorCreator.createError(StringUtils.fromString(
-                    "Unauthorized: caller does not have a required role to complete task '" + taskWorkflowId +
-                            "'. Required one of: " + allowedRoles));
+            return memo;
         } catch (Exception e) {
             return ErrorCreator.createError(
                     StringUtils.fromString("Failed to validate task '" + taskWorkflowId + "': " + e.getMessage()));

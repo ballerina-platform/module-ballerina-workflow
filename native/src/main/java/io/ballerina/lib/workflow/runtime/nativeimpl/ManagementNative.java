@@ -23,6 +23,7 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.JsonFormat;
 import io.ballerina.lib.workflow.ModuleUtils;
+import io.ballerina.lib.workflow.TaskKeys;
 import io.ballerina.lib.workflow.observability.WorkflowMetrics;
 import io.ballerina.lib.workflow.observability.WorkflowSampleLog;
 import io.ballerina.lib.workflow.runtime.WorkflowRuntime;
@@ -76,10 +77,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -705,9 +704,13 @@ public final class ManagementNative {
             record.put(StringUtils.fromString("formSchema"),
                        formSchema != null ? StringUtils.fromString(formSchema) : null);
 
-            // Audit fields from the taskCompletion signal stored in workflow history
-            String completedBy = readSignalField(client, taskIdStr, "taskCompletion", "completedBy");
-            String completedAt = readSignalField(client, taskIdStr, "taskCompletion", "completedAt");
+            // The decider rides the memo once the child records it; history covers older tasks.
+            String completedBy = decodeMemoString(dc, memoFields, WorkflowWorkerNative.COMPLETED_BY_MEMO_KEY, null);
+            String completedAt = decodeMemoString(dc, memoFields, WorkflowWorkerNative.COMPLETED_AT_MEMO_KEY, null);
+            if (completedBy == null) {
+                completedBy = readSignalField(client, taskIdStr, "taskCompletion", "completedBy");
+                completedAt = readSignalField(client, taskIdStr, "taskCompletion", "completedAt");
+            }
             Object resultRaw = readSignalPayloadField(client, taskIdStr, "taskCompletion", "result");
 
             record.put(StringUtils.fromString("completedBy"),
@@ -1117,7 +1120,7 @@ public final class ManagementNative {
             // Validate workflowKind and optionally enforce caller roles
             BArray callerRolesArray = (callerRoles instanceof BArray ba) ? ba : null;
             Object validation = validateReviewActivityAndRoles(client, taskWorkflowId.getValue(),
-                    callerRolesArray);
+                    callerRolesArray, userId);
             if (!(validation instanceof TaskMemo memo)) {
                 return validation;
             }
@@ -1164,7 +1167,7 @@ public final class ManagementNative {
      */
     @SuppressWarnings("unchecked")
     private static Object validateReviewActivityAndRoles(WorkflowClient client, String taskWorkflowId,
-                                                    BArray callerRolesArray) {
+                                                    BArray callerRolesArray, Object userId) {
         try {
             DescribeWorkflowExecutionRequest req = DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
                     client.getOptions().getNamespace()).setExecution(
@@ -1209,46 +1212,35 @@ public final class ManagementNative {
                                 workflowKind + ")"));
             }
 
-            Set<String> allowedRoles = new HashSet<>();
+            TaskAssignment assignment;
             try {
-                Payload rolesPl = memoFields.get("userRoles");
-                if (rolesPl != null) {
-                    String[] rolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
-                    allowedRoles.addAll(Arrays.asList(rolesArr));
-                }
+                assignment = TaskAssignment.fromMemo(dc, memoFields);
             } catch (Exception e) {
                 if (callerRolesArray != null) {
                     return ErrorCreator.createError(StringUtils.fromString(
                             "Failed to decode task roles for '" + taskWorkflowId + "': " + e.getMessage()));
                 }
-                // Nothing to enforce against, so an unreadable role list only costs the audit entry its roles.
-                LOGGER.debug("Could not decode userRoles from memo for '{}': {}", taskWorkflowId, e.getMessage());
+                LOGGER.debug("Could not decode assignment from memo for '{}': {}", taskWorkflowId, e.getMessage());
+                assignment = new TaskAssignment(List.of(), List.of(), List.of(), List.of());
             }
             // The decision's audit entry names the review, its parent, and who was allowed to decide it.
-            Object activityArgs;
+            Object taskInput;
             try {
-                Payload argsPl = memoFields.get("activityArgs");
-                activityArgs = argsPl == null ? null : dc.fromPayload(argsPl, Object.class, Object.class);
+                Payload inputPl = memoFields.getOrDefault(TaskKeys.TASK_INPUT,
+                        memoFields.get(TaskKeys.LEGACY_ACTIVITY_ARGS));
+                taskInput = inputPl == null ? null : dc.fromPayload(inputPl, Object.class, Object.class);
             } catch (Exception e) {
-                activityArgs = null; // the audit entry goes without the reviewed arguments
+                taskInput = null; // the audit entry goes without the reviewed arguments
             }
             TaskMemo memo = new TaskMemo(decodeMemoString(dc, memoFields, "taskName", null),
                                          decodeMemoString(dc, memoFields, "parentWorkflowId", null),
-                                         allowedRoles.stream().sorted().toList(), activityArgs);
-
-            if (callerRolesArray == null || allowedRoles.isEmpty()) {
-                return memo;
+                                         assignment.userRoles().stream().sorted().toList(), taskInput);
+            String denial = assignment.denial(TaskAssignment.roles(callerRolesArray),
+                    userId instanceof BString bs ? bs.getValue() : null, "review '" + taskWorkflowId + "'");
+            if (denial != null) {
+                return ErrorCreator.createError(StringUtils.fromString(denial));
             }
-
-            for (int i = 0; i < callerRolesArray.size(); i++) {
-                if (allowedRoles.contains(callerRolesArray.get(i).toString())) {
-                    return memo;
-                }
-            }
-
-            return ErrorCreator.createError(StringUtils.fromString(
-                    "Unauthorized: caller does not have a required role to complete retry task '" + taskWorkflowId +
-                            "'. Required one of: " + allowedRoles));
+            return memo;
 
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -1466,7 +1458,9 @@ public final class ManagementNative {
 
             Object activityArgsRaw = null;
             try {
-                Payload argsPl = memoFields.get("activityArgs");
+                // Reviews created before 0.10 recorded the reviewed arguments as activityArgs.
+                Payload argsPl = memoFields.getOrDefault(TaskKeys.TASK_INPUT,
+                        memoFields.get(TaskKeys.LEGACY_ACTIVITY_ARGS));
                 if (argsPl != null) {
                     activityArgsRaw = dc.fromPayload(argsPl, Object.class, Object.class);
                 }
@@ -1521,8 +1515,13 @@ public final class ManagementNative {
             // would report no decider during exactly that window. Callers that only need
             // eligibility, and cannot afford two history scans per task, use
             // getReviewActivityState instead.
-            String decidedBy = readSignalField(client, taskIdStr, "taskDecision", "decidedBy");
-            String decidedAt = readSignalField(client, taskIdStr, "taskDecision", "decidedAt");
+            // Reviews decided since 0.10 carry the decider on the memo; older ones only in history.
+            String decidedBy = decodeMemoString(dc, memoFields, WorkflowWorkerNative.COMPLETED_BY_MEMO_KEY, null);
+            String decidedAt = decodeMemoString(dc, memoFields, WorkflowWorkerNative.COMPLETED_AT_MEMO_KEY, null);
+            if (decidedBy == null) {
+                decidedBy = readSignalField(client, taskIdStr, "taskDecision", "decidedBy");
+                decidedAt = readSignalField(client, taskIdStr, "taskDecision", "decidedAt");
+            }
             record.put(StringUtils.fromString("decidedBy"),
                        decidedBy != null ? StringUtils.fromString(decidedBy) : null);
             record.put(StringUtils.fromString("decidedAt"),

@@ -20,7 +20,6 @@ package io.ballerina.lib.workflow.compiler;
 
 import io.ballerina.projects.BuildOptions;
 import io.ballerina.projects.JBallerinaBackend;
-import io.ballerina.projects.JvmTarget;
 import io.ballerina.projects.PackageCompilation;
 import io.ballerina.projects.ProjectEnvironmentBuilder;
 import io.ballerina.projects.directory.BuildProject;
@@ -175,7 +174,7 @@ public class ManagementApiArtifactExportTest {
 
         // The lifecycle's code-generation-completed tasks run when the backend emits.
         Path execJar = Files.createTempDirectory(tempPrefix).resolve("app.jar");
-        JBallerinaBackend.from(compilation, JvmTarget.JAVA_21)
+        JBallerinaBackend.from(compilation, TestUtils.getJvmTarget())
                 .emit(JBallerinaBackend.OutputType.EXEC, execJar);
         return target;
     }

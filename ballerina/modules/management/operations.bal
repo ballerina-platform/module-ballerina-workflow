@@ -272,7 +272,8 @@ isolated function opListHumanTasks(string? status, string? parentWorkflowId, str
 isolated function opListWorkItems(string? kinds, string? status, string? parentWorkflowId,
         string? parentWorkflowType, int 'limit, string? pageToken,
         string? startTimeFrom, string? startTimeTo, string? closeTimeFrom, string? closeTimeTo,
-        string? taskQueue, [string, string...]? callerRoles, string? userId) returns json|Error {
+        string? taskQueue, [string, string...]? callerRoles, string? userId, boolean all = false)
+        returns json|Error {
     boolean wantTasks = kinds is () || kinds.includes("HUMAN_TASK");
     boolean wantReviews = kinds is () || kinds.includes("REVIEW_ACTIVITY");
     WorkItemSummary[] merged = [];
@@ -290,10 +291,13 @@ isolated function opListWorkItems(string? kinds, string? status, string? parentW
             if parentWorkflowType is string && t.parentWorkflowType != parentWorkflowType {
                 continue;
             }
-            if !eligible(t, callerRoles, userId) {
+            boolean mine = eligible(t, callerRoles, userId);
+            if !all && !mine {
                 continue;
             }
-            merged.push(workItemOf(t, ()));
+            WorkItemSummary item = workItemOf(t, ());
+            item.canComplete = mine;
+            merged.push(item);
         }
     }
 
@@ -312,11 +316,13 @@ isolated function opListWorkItems(string? kinds, string? status, string? parentW
             if parentWorkflowType is string && reviewParentType != parentWorkflowType {
                 continue;
             }
-            if !canAccessReviewActivity(t, callerRoles, userId) {
+            boolean mine = canAccessReviewActivity(t, callerRoles, userId);
+            if !all && !mine {
                 continue;
             }
             WorkItemSummary item = workItemOf(t, t.trigger);
             item.parentWorkflowType = reviewParentType;
+            item.canComplete = mine;
             merged.push(item);
         }
     }
@@ -390,15 +396,17 @@ isolated function paginateWorkItems(WorkItemSummary[] items, int 'limit, string?
     return {items: pageItems, nextPageToken: nextToken, hasMore: hasMore};
 }
 
+# `all` counts every pending task regardless of the caller — the figure an administrator's
+# dashboard shows; without it only the tasks the caller may complete are counted.
 isolated function opPendingHumanTaskCount(string? taskQueue, [string, string...]? callerRoles,
-        string? userId) returns json|Error {
+        string? userId, boolean all = false) returns json|Error {
     HumanTaskSummary[]|error pending = listAllHumanTasks("PENDING", taskQueue = taskQueue);
     if pending is error {
         return executionFailed("Failed to count pending tasks: " + pending.message());
     }
     int visibleCount = 0;
     foreach HumanTaskSummary t in pending {
-        if eligible(t, callerRoles, userId) {
+        if all || eligible(t, callerRoles, userId) {
             visibleCount += 1;
         }
     }

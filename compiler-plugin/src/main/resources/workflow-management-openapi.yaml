@@ -377,6 +377,7 @@ paths:
       operationId: countPendingHumanTasks
       parameters:
         - {name: taskQueue, in: query, schema: {type: string}}
+        - {name: all, in: query, schema: {type: boolean}, description: "Count every pending task, not only the caller's"}
       responses:
         "200":
           description: The count

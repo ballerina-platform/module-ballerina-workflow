@@ -139,8 +139,8 @@ public type Command record {|
 //   `userRole`, `limit`, `pageToken`, the four time bounds, `taskQueue`.
 // - `LIST_WORK_ITEMS` — `kinds` (comma list of `HUMAN_TASK`/`REVIEW_ACTIVITY`; both when absent),
 //   `status`, `parentWorkflowId`, `parentWorkflowType`, `limit`, `pageToken`, the four time
-//   bounds, `taskQueue`.
-// - `COUNT_PENDING_HUMAN_TASKS` — `taskQueue`.
+//   bounds, `taskQueue`, `all` (every item, not only the caller's; `canComplete` still says which).
+// - `COUNT_PENDING_HUMAN_TASKS` — `taskQueue`, `all` (count regardless of the caller).
 // - `GET_HUMAN_TASK` — `taskId` (required).
 // - `COMPLETE_HUMAN_TASK` — `taskId` (required), `result`.
 // - `FAIL_HUMAN_TASK` — `taskId` and `reason` (required), `details`.
@@ -289,10 +289,12 @@ public isolated function executeCommand(Command command) returns json|Error {
                     intParam(params, "limit", 20),
                     strParam(params, "pageToken"), strParam(params, "startTimeFrom"),
                     strParam(params, "startTimeTo"), strParam(params, "closeTimeFrom"),
-                    strParam(params, "closeTimeTo"), strParam(params, "taskQueue"), callerRoles, userId);
+                    strParam(params, "closeTimeTo"), strParam(params, "taskQueue"), callerRoles, userId,
+                    boolParam(params, ALL_PARAM));
         }
         COUNT_PENDING_HUMAN_TASKS => {
-            return opPendingHumanTaskCount(strParam(params, "taskQueue"), callerRoles, userId);
+            return opPendingHumanTaskCount(strParam(params, "taskQueue"), callerRoles, userId,
+                    boolParam(params, ALL_PARAM));
         }
         GET_HUMAN_TASK => {
             string|Error taskId = requiredParam(params, "taskId");
@@ -502,6 +504,15 @@ isolated function rolesFromIdentity(Identity identity) returns [string, string..
 
 // Both accessors read a normalized map: a value of the wrong type has already been
 // reported, so a missing value is the only case left and the default applies.
+
+# Parameter asking a listing or count to cover every task, not only the caller's; the surface
+# that accepts it decides who may ask.
+const ALL_PARAM = "all";
+
+isolated function boolParam(map<json> params, string name) returns boolean {
+    json value = params[name];
+    return value == true || value == "true";
+}
 
 isolated function strParam(map<json> params, string name) returns string? {
     json value = params[name];

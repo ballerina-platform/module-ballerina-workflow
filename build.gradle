@@ -234,7 +234,10 @@ task installTemporalCli {
         temporalCliDir.mkdirs()
         def archive = new File(temporalCliDir, archiveName)
         logger.lifecycle("Downloading Temporal CLI ${temporalCliVersion} (${platform}/${arch})...")
-        new URL(url).withInputStream { input ->
+        def connection = new URL(url).openConnection()
+        connection.connectTimeout = 30000
+        connection.readTimeout = 120000
+        connection.inputStream.withStream { input ->
             archive.withOutputStream { output -> output << input }
         }
 
@@ -450,6 +453,15 @@ task authVariantTests {
     group = 'verification'
     dependsOn 'startTlsTestProxy'
     dependsOn ':workflow-integration-tests:ballerinaAuthVariantTest'
+}
+
+// The timestamped master build passes both `publish` and `authVariantTests` to a single
+// Gradle invocation. Nothing otherwise relates them, so a SNAPSHOT could be published and
+// only then have the auth matrix fail. Ordering only - it does not add publish to any graph.
+allprojects {
+    tasks.matching { it.name.startsWith('publish') }.configureEach {
+        mustRunAfter ':authVariantTests'
+    }
 }
 
 // Start shared test server - used by integration tests

@@ -433,7 +433,7 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
             }
             for (DurableAgentDeclInfo.ToolRef toolRef : decl.aiToolRefs()) {
                 addPrefixIfQualified(prefixes, toolRef.refSource());
-                addPrefixIfQualified(prefixes, toolRef.approvalPolicySource());
+                // A policy is a mapping: its qualified references arrive in typeRefPrefixes.
             }
             for (DurableAgentDeclInfo.EventDecl event : decl.events()) {
                 addPrefixIfQualified(prefixes, event.requestTypeSource());

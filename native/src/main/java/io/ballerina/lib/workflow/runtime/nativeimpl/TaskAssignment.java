@@ -56,18 +56,20 @@ public record TaskAssignment(List<String> userRoles, List<String> users, List<St
     }
 
     /**
-     * Why the caller may not act on this task, or null when they may. A caller without roles is an internal
-     * path and is not checked, as before; with roles, a task that names users needs a user id to decide.
+     * Why the caller may not act on this task, or null when they may. Only a caller with no identity at
+     * all — neither roles nor a user id — is an internal path and goes unchecked; a user id alone is a
+     * caller with no roles.
      *
-     * @param callerRoles the caller's roles, or null when no identity was supplied
-     * @param userId      the caller's user id, or null
-     * @param subject     how to name the task in the message
+     * @param roles   the caller's roles, or null when none were supplied
+     * @param userId  the caller's user id, or null
+     * @param subject how to name the task in the message
      * @return the denial message, or null
      */
-    public String denial(List<String> callerRoles, String userId, String subject) {
-        if (callerRoles == null) {
+    public String denial(List<String> roles, String userId, String subject) {
+        if (roles == null && userId == null) {
             return null;
         }
+        List<String> callerRoles = roles == null ? List.of() : roles;
         if (callerRoles.stream().anyMatch(excludedRoles::contains)) {
             return "Unauthorized: caller holds a role excluded from " + subject;
         }

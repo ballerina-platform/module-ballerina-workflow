@@ -18,6 +18,7 @@
 
 package io.ballerina.lib.workflow.context;
 
+import io.ballerina.lib.workflow.TaskKeys;
 import io.ballerina.lib.workflow.observability.AgentStep;
 import io.ballerina.lib.workflow.observability.AgentStepTelemetry;
 import io.ballerina.lib.workflow.observability.WorkflowMetrics;
@@ -31,7 +32,6 @@ import io.ballerina.runtime.api.types.Parameter;
 import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.utils.JsonUtils;
 import io.ballerina.runtime.api.utils.StringUtils;
-import io.ballerina.runtime.api.values.BArray;
 import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BHandle;
@@ -200,9 +200,6 @@ public final class AgentContextNative {
         private Long eventTimeoutMillis = null;
         private long maxEventWaits = 50;
         private long eventWaitCount = 0;
-        // Approval policy for gated tools (configured via ctx.buildAndRun approval config).
-        private String[] approvalUserRoles = new String[0];
-        private Long approvalTimeoutMillis = null;
         // The responder of the updateAgent request whose message the agent most recently
         // consumed; completed with the next recorded response (the turn's answer).
         private CompletablePromise<Object> pendingResponder = null;
@@ -304,44 +301,36 @@ public final class AgentContextNative {
      *                     {@code name} may be overridden at registration); {@code null} for other kinds
      * @param bindings     for activity tools, registration-time fixed arguments with client objects already converted
      *                     to {@code "connection:<name>"} markers; {@code null} when absent or for other kinds
-     * @param requiresApproval when {@code true}, a PRE_RUN review activity gates the tool before it runs
-     * @param retryPolicy  the activity tool's failure policy: {@code null} (NoRetry), an AutoRetry {@code BMap}, or
-     *                     a {@code HumanReview} record; {@code null} for non-activity tools
-     * @param reviewRoles  role(s) permitted to decide this tool's approval reviews; empty when the tool declares
-     *                     none, in which case the agent-level approval roles apply
+     * @param approval     the PRE_RUN review that gates each call, or {@code null} when the tool is ungated
+     * @param retryPolicy  the activity tool's failure policy record, or {@code null} for NoRetry and for
+     *                     non-activity tools
      */
     private record ToolMeta(String name, String description, Map<String, Object> schema, String kind,
-                            String activityName, Map<String, Object> bindings, boolean requiresApproval,
-                            Object retryPolicy, String[] reviewRoles) {
+                            String activityName, Map<String, Object> bindings,
+                            WorkflowContextNative.ReviewDeclaration approval, Object retryPolicy) {
         ToolMeta(String name, String description, Map<String, Object> schema, String kind) {
-            this(name, description, schema, kind, null, null, false, null, new String[0]);
+            this(name, description, schema, kind, null, null, null, null);
         }
 
-        ToolMeta(String name, String description, Map<String, Object> schema, String kind,
-                 String activityName, Map<String, Object> bindings) {
-            this(name, description, schema, kind, activityName, bindings, false, null, new String[0]);
+        boolean gated() {
+            return approval != null;
         }
     }
 
     private record HumanTaskMeta(Object userRoles, String title, String description, BTypedesc resultType,
                                  Object timeout, BTypedesc taskInputType) { }
 
-    /**
-     * Parses a per-tool reviewer-roles value (a BString for one role or a BArray of role strings) into a role
-     * array; returns an empty array when the tool declares no roles so the agent-level approval roles apply.
-     */
-    private static String[] parseReviewRoles(Object userRolesArg) {
-        if (userRolesArg instanceof BString role && !role.getValue().isBlank()) {
-            return new String[]{role.getValue()};
+    // The gate a tool declares: an approvalPolicy mapping read as a review declaration, or null for none.
+    private static Object gateOf(Object approvalPolicy, String toolName) {
+        if (approvalPolicy == null) {
+            return null;
         }
-        if (userRolesArg instanceof BArray roleArray) {
-            String[] roles = new String[(int) roleArray.size()];
-            for (int i = 0; i < roles.length; i++) {
-                roles[i] = String.valueOf(roleArray.get(i));
-            }
-            return roles;
+        WorkflowContextNative.ReviewDeclaration gate = WorkflowContextNative.readHumanReview(approvalPolicy);
+        if (gate == null) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "approvalPolicy of tool '" + toolName + "' must name 'userRoles' or 'users'"));
         }
-        return new String[0];
+        return gate;
     }
 
     /**
@@ -380,37 +369,6 @@ public final class AgentContextNative {
     }
 
     /**
-     * Stores the approval policy (roles allowed to decide a review, and an optional decision timeout) used when a
-     * gated tool creates a PRE_RUN review activity.
-     *
-     * @param handle    the agent context handle
-     * @param userRoles a BString or BString[] of roles permitted to decide
-     * @param timeout   a {@code time:Duration} map, or null to wait indefinitely
-     * @return null on success, or a Ballerina error
-     */
-    @SuppressWarnings("unchecked")
-    public static Object setAgentApproval(BHandle handle, Object userRoles, Object timeout) {
-        try {
-            AgentContextInfo info = (AgentContextInfo) handle.getValue();
-            List<String> roles = new ArrayList<>();
-            if (userRoles instanceof BString roleStr) {
-                roles.add(roleStr.getValue());
-            } else if (userRoles instanceof io.ballerina.runtime.api.values.BArray roleArr) {
-                for (int i = 0; i < roleArr.size(); i++) {
-                    roles.add(roleArr.get(i).toString());
-                }
-            }
-            info.approvalUserRoles = roles.toArray(new String[0]);
-            info.approvalTimeoutMillis = timeout instanceof BMap
-                    ? WorkflowContextNative.computeTimeoutMillis((BMap<BString, Object>) timeout) : null;
-            return null;
-        } catch (Exception e) {
-            return ErrorCreator.createError(StringUtils.fromString(
-                    "Failed to configure agent approval: " + e.getMessage()));
-        }
-    }
-
-    /**
      * Backs {@code awaitAgentToolReview}: starts a PRE_RUN review activity for a gated tool and blocks until a human
      * decides. Runs inside the agent workflow, so it is replay-safe. Returns the decision as a JSON string
      * ({@code {"action": "...", "input"?: {...}, "feedback"?: "..."}}).
@@ -428,7 +386,7 @@ public final class AgentContextNative {
             // For an activity tool, review under the underlying activity's qualified name so the
             // reviewer/inbox sees the real activity; other tools review under the tool name.
             String activityName = name;
-            String[] reviewRoles = info.approvalUserRoles;
+            WorkflowContextNative.ReviewDeclaration gate = null;
             for (ToolMeta tool : info.tools) {
                 if (!tool.name().equals(name)) {
                     continue;
@@ -436,12 +394,12 @@ public final class AgentContextNative {
                 if (KIND_ACTIVITY.equals(tool.kind()) && tool.activityName() != null) {
                     activityName = tool.activityName();
                 }
-                // Declared per-tool roles (activities and AI tools alike) override the
-                // agent-level approval roles.
-                if (tool.reviewRoles().length > 0) {
-                    reviewRoles = tool.reviewRoles();
-                }
+                gate = tool.approval();
                 break;
+            }
+            if (gate == null) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Tool '" + name + "' declares no approvalPolicy, so no review can be raised for it"));
             }
             String workflowType = Workflow.getInfo().getWorkflowType();
             String reviewTaskName = ActivityNaming.reviewTaskNameFor(workflowType, activityName);
@@ -462,9 +420,8 @@ public final class AgentContextNative {
                 // (as callActivityTool uses), which differs from the underlying activity when a
                 // registration-time override renames it. The review task name and activity type
                 // keep the real activity, so the reviewer still sees what would run.
-                decision = WorkflowContextNative.startReviewActivity(
-                        "PRE_RUN", reviewTaskName, activityType, argsMap, "", reviewRoles,
-                        info.approvalTimeoutMillis, AGENT_TOOL_SITE_PREFIX + name);
+                decision = WorkflowContextNative.startReviewActivity(TaskKeys.TRIGGER_PRE_RUN, reviewTaskName,
+                        activityType, argsMap, "", gate, AGENT_TOOL_SITE_PREFIX + name);
             } finally {
                 info.endPark();
             }
@@ -498,7 +455,7 @@ public final class AgentContextNative {
     @SuppressWarnings("unchecked")
     public static Object recordActivityTool(BHandle handle, BFunctionPointer fn, Object nameArg,
                                             Object descriptionArg, Object bindingsArg,
-                                            boolean requiresApproval, Object retryPolicy, Object userRolesArg) {
+                                            Object approvalPolicy, Object retryPolicy) {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             String activityName = fn.getType().getName();
@@ -517,8 +474,8 @@ public final class AgentContextNative {
             }
             Set<String> boundNames = bindings == null ? Set.of() : bindings.keySet();
             Map<String, Object> schema = parameterSchemaOf(fn, boundNames, activityName);
-            // NoAutomaticRetry arrives as nil; AutoRetry and HumanReview are both records,
-            // told apart downstream by `userRoles` (WorkflowContextNative.readHumanReview).
+            // NoRetry arrives as nil; the record shapes are told apart downstream
+            // (WorkflowContextNative.readHumanReview / retriesBeforeReview).
             Object policy = retryPolicy instanceof BMap ? retryPolicy : null;
             if (RESERVED_TOOL_NAMES.contains(toolName)) {
                 return reservedToolNameError(toolName);
@@ -527,8 +484,12 @@ public final class AgentContextNative {
             if (duplicate != null) {
                 return duplicate;
             }
+            Object gate = gateOf(approvalPolicy, toolName);
+            if (gate instanceof BError invalid) {
+                return invalid;
+            }
             info.tools.add(new ToolMeta(toolName, description, schema, KIND_ACTIVITY, activityName, bindings,
-                    requiresApproval, policy, parseReviewRoles(userRolesArg)));
+                    (WorkflowContextNative.ReviewDeclaration) gate, policy));
             return null;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -554,15 +515,13 @@ public final class AgentContextNative {
      * ({@code peeragent:<targetAgent>} or {@code peeragent:<targetAgent>#<callbackChannel>}
      * for asynchronous delegation).
      *
-     * @param handle           the AgentContextInfo handle
-     * @param name             the tool name advertised to the model
-     * @param description      the tool description advertised to the model
-     * @param kindSpec         the encoded peeragent kind
-     * @param requiresApproval whether a PRE_RUN review gates each delegation
+     * @param handle      the AgentContextInfo handle
+     * @param name        the tool name advertised to the model
+     * @param description the tool description advertised to the model
+     * @param kindSpec    the encoded peeragent kind
      * @return null on success, or a BError
      */
-    public static Object recordPeerTool(BHandle handle, BString name, BString description, BString kindSpec,
-                                        boolean requiresApproval) {
+    public static Object recordPeerTool(BHandle handle, BString name, BString description, BString kindSpec) {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             Map<String, Object> schema = new LinkedHashMap<>();
@@ -581,8 +540,7 @@ public final class AgentContextNative {
             if (duplicate != null) {
                 return duplicate;
             }
-            info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, kindSpec.getValue(),
-                    null, null, requiresApproval, null, new String[0]));
+            info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, kindSpec.getValue()));
             return null;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -629,8 +587,7 @@ public final class AgentContextNative {
     }
 
     public static Object recordAiTool(BHandle handle, BFunctionPointer fn, BString name, BString description,
-                                      Object parametersJson, boolean requiresApproval, Object userRolesArg,
-                                      boolean mcpTool) {
+                                      Object parametersJson, Object approvalPolicy, boolean mcpTool) {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             Map<String, Object> schema;
@@ -646,8 +603,12 @@ public final class AgentContextNative {
             if (duplicate != null) {
                 return duplicate;
             }
+            Object gate = gateOf(approvalPolicy, name.getValue());
+            if (gate instanceof BError invalid) {
+                return invalid;
+            }
             info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, KIND_AI_TOOL,
-                    null, null, requiresApproval, null, parseReviewRoles(userRolesArg)));
+                    null, null, (WorkflowContextNative.ReviewDeclaration) gate, null));
             WorkflowWorkerNative.putAgentTool(info.workflowType, name.getValue(), fn, mcpTool);
             return null;
         } catch (Exception e) {
@@ -718,7 +679,7 @@ public final class AgentContextNative {
         AgentContextInfo info = (AgentContextInfo) handle.getValue();
         List<Object> defs = new ArrayList<>();
         for (ToolMeta tool : info.tools) {
-            defs.add(toolDef(tool.name(), tool.description(), tool.schema(), tool.kind(), tool.requiresApproval()));
+            defs.add(toolDef(tool.name(), tool.description(), tool.schema(), tool.kind(), tool.gated()));
         }
         if (info.eventNames != null) {
             for (String eventName : info.eventNames) {
@@ -788,15 +749,18 @@ public final class AgentContextNative {
     }
 
     private static Map<String, Object> toolDef(String name, String description, Map<String, Object> schema,
-                                               String kind, boolean requiresApproval) {
+                                               String kind, boolean gated) {
         Map<String, Object> def = new LinkedHashMap<>();
         def.put("name", name);
         def.put("description", description);
         def.put("parameters", schema);
         def.put("kind", kind);
-        def.put("requiresApproval", requiresApproval);
+        def.put(TOOL_DEF_GATED, gated);
         return def;
     }
+
+    // Tool-definition field telling the loop a PRE_RUN review gates the call.
+    private static final String TOOL_DEF_GATED = "gated";
 
     /**
      * Returns the agent's workflow type (e.g. {@code workflow-orderAgent}).

@@ -156,6 +156,10 @@ public final class WorkflowContextNative {
             }
 
             ReviewDeclaration gate = readHumanReview(approvalPolicy);
+            if (gate == null && approvalPolicy instanceof BMap<?, ?>) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "approvalPolicy of '" + simpleActivityName + "' must name 'userRoles' or 'users'"));
+            }
             if (gate != null) {
                 Object approved = awaitApproval(gate, workflowType, simpleActivityName, fullActivityName,
                         namedArgs, stepIdValue);
@@ -232,6 +236,10 @@ public final class WorkflowContextNative {
     record ReviewDeclaration(String[] userRoles, String[] users, String[] excludedUsers, String[] excludedRoles,
                              String title, String description, Long timeoutMillis) {
 
+        boolean namesNobody() {
+            return userRoles.length == 0 && users.length == 0;
+        }
+
         static ReviewDeclaration rolesOnly(String[] userRoles, String title, String description, Long timeoutMillis) {
             return new ReviewDeclaration(userRoles != null ? userRoles : new String[0], new String[0],
                     new String[0], new String[0], title, description, timeoutMillis);
@@ -251,7 +259,7 @@ public final class WorkflowContextNative {
             return null;
         }
         Object timeout = policy.get(StringUtils.fromString(TIMEOUT_FIELD));
-        return new ReviewDeclaration(
+        ReviewDeclaration decl = new ReviewDeclaration(
                 rolesOf(roles),
                 rolesOf(users),
                 rolesOf(policy.get(StringUtils.fromString(TaskKeys.EXCLUDED_USERS))),
@@ -260,6 +268,8 @@ public final class WorkflowContextNative {
                 stringFieldOf(policy, TaskKeys.DESCRIPTION),
                 timeout instanceof BMap<?, ?> duration
                         ? computeTimeoutMillis((BMap<BString, Object>) duration) : null);
+        // Present but empty names nobody: not a review, so the caller reports the misdeclaration.
+        return decl.namesNobody() ? null : decl;
     }
 
     // RetryBeforeReview carries AutoRetry's fields beside the review's; maxRetries always has a value.

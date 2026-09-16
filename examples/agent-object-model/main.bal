@@ -192,7 +192,7 @@ final workflow:DurableAgent plannerAgent = check new ({
     systemPrompt: {role: "Planner", instructions: "Plan orders by consulting peer agents."},
     model: plannerModel,
     peers: [
-        {agent: orderAgent, name: "askInventory", description: "Asks the inventory agent about stock."}
+        {agent: orderAgent, description: "Asks the inventory agent about stock."}
     ],
     maxIter: 6
 });

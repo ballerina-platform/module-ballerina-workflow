@@ -263,7 +263,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 }
                 case "activities" ->
                         extractActivities(value, activities, seenNames, agentName, typeRefPrefixes, context);
-                case "tools" -> extractTools(value, aiToolRefs, seenNames, agentName, context);
+                case "tools" -> extractTools(value, aiToolRefs, seenNames, agentName, typeRefPrefixes, context);
                 case "events" -> extractEvents(value, events, seenNames, agentName, context);
                 case "humanTasks" -> extractHumanTasks(value, humanTasks, seenNames, agentName, context);
                 case "peers" -> extractPeers(value, peers, seenNames, agentName, context);
@@ -371,6 +371,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 }
                 case "approvalPolicy", "retryPolicy" -> {
                     checkReviewDefinition(declValue, context);
+                    collectQualifiedPrefixes(declValue, typeRefPrefixes);
                     appendMetaField(meta, sf, declValue.toSourceCode().strip());
                 }
                 case "requiresApproval", "userRoles" ->
@@ -407,7 +408,8 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
     }
 
     private void extractTools(ExpressionNode value, List<DurableAgentDeclInfo.ToolRef> aiToolRefs,
-                              Set<String> seenNames, String agentName, SyntaxNodeAnalysisContext context) {
+                              Set<String> seenNames, String agentName, List<String> typeRefPrefixes,
+                              SyntaxNodeAnalysisContext context) {
         if (!(value instanceof ListConstructorExpressionNode list)) {
             return;
         }
@@ -441,6 +443,9 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                         }
                         case "approvalPolicy" -> {
                             checkReviewDefinition(fieldValue, context);
+                            // Emitted verbatim into the generated registration, so any module
+                            // prefix inside must travel with it.
+                            collectQualifiedPrefixes(fieldValue, typeRefPrefixes);
                             approvalSource = fieldValue.toSourceCode().strip();
                         }
                         case "requiresApproval", "userRoles" -> reportRemovedField(context, specificField,
@@ -715,7 +720,8 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             }
             String key = mappingKeyName(sf);
             boolean nil = sf.valueExpr().isPresent() && sf.valueExpr().get().kind() == SyntaxKind.NIL_LITERAL;
-            audience |= ("userRoles".equals(key) && !nil) || "users".equals(key);
+            // `roles` is the pre-unification spelling the deprecated array form still carries.
+            audience |= ("userRoles".equals(key) && !nil) || "users".equals(key) || "roles".equals(key);
             retries |= "maxRetries".equals(key);
         }
         if (!audience && !retries) {

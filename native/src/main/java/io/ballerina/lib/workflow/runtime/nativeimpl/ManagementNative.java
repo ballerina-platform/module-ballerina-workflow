@@ -1216,7 +1216,7 @@ public final class ManagementNative {
             try {
                 assignment = TaskAssignment.fromMemo(dc, memoFields);
             } catch (Exception e) {
-                if (callerRolesArray != null) {
+                if (callerRolesArray != null || userId instanceof BString) {
                     return ErrorCreator.createError(StringUtils.fromString(
                             "Failed to decode task roles for '" + taskWorkflowId + "': " + e.getMessage()));
                 }

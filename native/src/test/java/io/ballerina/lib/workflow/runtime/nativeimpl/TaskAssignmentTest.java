@@ -43,9 +43,18 @@ public class TaskAssignmentTest {
     }
 
     @Test
-    public void callerWithoutRolesIsNotChecked() {
+    public void callerWithoutAnyIdentityIsNotChecked() {
         TaskAssignment strict = of(List.of("manager"), List.of(), List.of("alice"), List.of());
-        Assert.assertNull(strict.denial(null, "alice", SUBJECT));
+        Assert.assertNull(strict.denial(null, null, SUBJECT));
+    }
+
+    @Test
+    public void userIdWithoutRolesIsStillChecked() {
+        TaskAssignment strict = of(List.of("manager"), List.of(), List.of("alice"), List.of());
+        Assert.assertNotNull(strict.denial(null, "alice", SUBJECT));
+        Assert.assertNotNull(strict.denial(null, "bob", SUBJECT));
+        TaskAssignment byUser = of(List.of(), List.of("bob"), List.of(), List.of());
+        Assert.assertNull(byUser.denial(null, "bob", SUBJECT));
     }
 
     @Test

@@ -51,6 +51,17 @@ public class TaskRecordTest {
     }
 
     @Test
+    public void theWholeAudienceRoundTripsThroughTheMemo() {
+        Map<String, Object> memo = base(TaskRecord.HUMAN_TASK)
+                .users(List.of("alice", "bob")).excludedUsers(List.of("carol")).excludedRoles(List.of("intern"))
+                .build().toMemo();
+        Assert.assertEquals(memo.get("userRoles"), List.of("manager"));
+        Assert.assertEquals(memo.get("users"), List.of("alice", "bob"));
+        Assert.assertEquals(memo.get("excludedUsers"), List.of("carol"));
+        Assert.assertEquals(memo.get("excludedRoles"), List.of("intern"));
+    }
+
+    @Test
     public void emptyAssignmentListsStayOffTheMemo() {
         Map<String, Object> memo = base(TaskRecord.HUMAN_TASK).build().toMemo();
         Assert.assertFalse(memo.containsKey("users"));

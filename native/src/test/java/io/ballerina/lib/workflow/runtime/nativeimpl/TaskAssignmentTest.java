@@ -36,6 +36,15 @@ public class TaskAssignmentTest {
     }
 
     @Test
+    public void exclusionByUserNamesTheMissingIdentity() {
+        TaskAssignment ladder = of(List.of("manager"), List.of(), List.of("alice"), List.of());
+        String denial = ladder.denial(List.of("manager"), null, SUBJECT);
+        Assert.assertNotNull(denial);
+        Assert.assertTrue(denial.contains("no user id"), denial);
+        Assert.assertNull(ladder.denial(List.of("manager"), "bob", SUBJECT));
+    }
+
+    @Test
     public void openTaskAdmitsAnyCaller() {
         TaskAssignment open = of(List.of(), List.of(), List.of(), List.of());
         Assert.assertNull(open.denial(List.of("anyone"), null, SUBJECT));

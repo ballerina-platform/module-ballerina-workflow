@@ -301,6 +301,93 @@ isolated client class HumanTaskMockModelProvider {
 
 final HumanTaskMockModelProvider humanTaskAgentModel = new;
 
+// Two signatures from two different people: the model reads who completed the first task
+// from the tool result and excludes them from the second.
+isolated client class LadderMockModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        string? firstCompleter = ();
+        int completions = 0;
+        if messages is ai:ChatMessage[] {
+            foreach ai:ChatMessage message in messages {
+                if message is ai:ChatFunctionMessage && message.name == "signoff" {
+                    completions += 1;
+                    string content = message.content ?: "";
+                    int? at = content.indexOf("\"completedBy\":\"");
+                    if firstCompleter is () && at is int {
+                        string rest = content.substring(at + 15);
+                        int? close = rest.indexOf("\"");
+                        firstCompleter = close is int ? rest.substring(0, close) : rest;
+                    }
+                }
+            }
+        }
+        if completions >= 2 {
+            return {role: ai:ASSISTANT, content: "Signed off twice, first by " + (firstCompleter ?: "nobody")};
+        }
+        if completions == 1 {
+            return {
+                role: ai:ASSISTANT,
+                toolCalls: [{name: "signoff", arguments: {"orderId": "ORD-L1", "excludedUsers": [firstCompleter ?: ""]}}]
+            };
+        }
+        return {role: ai:ASSISTANT, toolCalls: [{name: "signoff", arguments: {"orderId": "ORD-L1"}}]};
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final LadderMockModelProvider ladderAgentModel = new;
+
+function ladderAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerHumanTask(ctx, "signoff", "APPROVER", ApprovalResult, title = "Sign off the order");
+    check buildAndRun(ctx, input.request,
+            systemPrompt = {role: "", instructions: "You collect two independent signatures."},
+            model = ladderAgentModel);
+}
+
+@test:Config {groups: ["unit"]}
+function testAgentLadderExcludesTheFirstCompleter() returns error? {
+    map<anydata> input = {id: "agent-ladder-001", request: "Get ORD-L1 signed off twice"};
+    string workflowId = check run(ladderAgent, input);
+    runtime:sleep(2);
+
+    string first = check firstPendingTask(workflowId);
+    check management:completeHumanTask(first, <ApprovalResult>{approved: true, comment: "first"},
+            ["APPROVER"], userId = "alice");
+    runtime:sleep(2);
+
+    string second = check firstPendingTask(workflowId);
+    test:assertNotEquals(second, first, "a second task is created after the first completes");
+    error? sameApprover = management:completeHumanTask(second, <ApprovalResult>{approved: true, comment: "again"},
+            ["APPROVER"], userId = "alice");
+    test:assertTrue(sameApprover is error, "the first completer is excluded from the second task");
+    check management:completeHumanTask(second, <ApprovalResult>{approved: true, comment: "second"},
+            ["APPROVER"], userId = "bob");
+
+    _ = check getWorkflowResult(workflowId, 30);
+    string? response = getAgentFinalResponse(workflowId);
+    test:assertTrue(response is string && response.includes("first by alice"),
+            "the model saw who completed the first task, got: " + (response ?: "()"));
+}
+
+isolated function firstPendingTask(string workflowId) returns string|error {
+    management:HumanTaskGroup[] groups = check management:listPendingHumanTasks(workflowId);
+    foreach management:HumanTaskGroup g in groups {
+        if g.taskIds.length() > 0 {
+            return g.taskIds[0];
+        }
+    }
+    return error("no pending human task for " + workflowId);
+}
+
 // ── Human task input checked against the declared taskInputType ─────────────
 
 type EscalationInput record {|
@@ -719,6 +806,7 @@ function setupAgentTests() returns error? {
     _ = check registerAgentWorkflowForTest(flakyModelAgent, "flakyModelAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(priceAgent, "priceAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(approvalAgent, "approvalAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(ladderAgent, "ladderAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(typedTaskAgent, "typedTaskAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(eventWaitingAgent, "eventWaitingAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(conversationAgent, "conversationAgent", agentActivities);

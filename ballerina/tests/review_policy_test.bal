@@ -63,6 +63,38 @@ function workflowWithRetriesThenNobody(Context ctx, string orderId) returns stri
     return result;
 }
 
+@Activity
+function shipOrderActivity(string orderId) returns string|error {
+    if orderId.endsWith("-fail") {
+        return error("Carrier rejected " + orderId);
+    }
+    return "shipped:" + orderId;
+}
+
+// Retries, then a review whose proceed-with-input reruns the activity with corrected arguments.
+@Workflow
+function workflowWithReviewCorrection(Context ctx, string orderId) returns string|error {
+    string result = check ctx->callActivity(shipOrderActivity, {"orderId": orderId},
+            retryPolicy = {maxRetries: 1, retryDelay: 0.1, userRoles: "manager"});
+    return result;
+}
+
+// The deprecated alias still spells the default: fail at once, no review.
+@Workflow
+function workflowWithLegacyNoRetry(Context ctx, string orderId) returns string|error {
+    string result = check ctx->callActivity(shipOrderActivity, {"orderId": orderId},
+            retryPolicy = NoAutomaticRetry);
+    return result;
+}
+
+// A role decides, except one named person — the second rung of an approval ladder.
+@Workflow
+function workflowWithAnExcludedApprover(Context ctx, string orderId) returns string|error {
+    string result = check ctx->awaitHumanTask("secondSignoff", {"orderId": orderId},
+            userRoles = "manager", excludedUsers = "alice");
+    return result;
+}
+
 // The workflow learns who completed its task, so a later task can exclude or prefer them.
 @Workflow
 function workflowThatRemembersTheCompleter(Context ctx, string orderId) returns string|error {
@@ -156,6 +188,58 @@ function testRetriesThenNobodyIsRefused() returns error? {
     if result is error {
         test:assertTrue(result.message().includes("must name 'userRoles' or 'users'"), result.message());
     }
+}
+
+@test:Config {groups: ["unit"]}
+function testReviewProceedWithInputRerunsTheActivity() returns error? {
+    map<function> activities = {"shipOrderActivity": shipOrderActivity};
+    _ = check registerWorkflowForTest(workflowWithReviewCorrection, "workflowWithReviewCorrection", activities);
+
+    string workflowId = check run(workflowWithReviewCorrection, "ORD-RC-001-fail");
+    runtime:sleep(3);
+    management:ReviewActivitySummary[] pending = check management:listPendingReviewActivities(workflowId);
+    test:assertEquals(pending.length(), 1, "the review is raised once the automatic attempt is spent");
+
+    check management:completeReviewActivity(pending[0].taskId,
+            {action: "proceed-with-input", input: {"orderId": "ORD-RC-001"}},
+            callerRoles = ["manager"], userId = "alice");
+    anydata result = check getWorkflowResult(workflowId, 20);
+    test:assertEquals(result, "shipped:ORD-RC-001", "the corrected arguments run and the workflow continues");
+}
+
+@test:Config {groups: ["unit"]}
+function testLegacyNoRetryAliasFailsAtOnce() returns error? {
+    map<function> activities = {"shipOrderActivity": shipOrderActivity};
+    _ = check registerWorkflowForTest(workflowWithLegacyNoRetry, "workflowWithLegacyNoRetry", activities);
+
+    string workflowId = check run(workflowWithLegacyNoRetry, "ORD-LN-001-fail");
+    anydata|error result = getWorkflowResult(workflowId, 20);
+    test:assertTrue(result is error, "NoAutomaticRetry means the failure reaches the workflow unreviewed");
+    management:ReviewActivitySummary[] pending = check management:listPendingReviewActivities(workflowId);
+    test:assertEquals(pending.length(), 0, "no review is raised");
+}
+
+@test:Config {groups: ["unit"]}
+function testAnExcludedUserMayNotCompleteEvenWithTheRole() returns error? {
+    _ = check registerWorkflowForTest(workflowWithAnExcludedApprover, "workflowWithAnExcludedApprover");
+
+    string workflowId = check run(workflowWithAnExcludedApprover, "ORD-EX-001");
+    runtime:sleep(1.5);
+    management:HumanTaskGroup[] pending = check management:listPendingHumanTasks(workflowId);
+    test:assertEquals(pending.length(), 1);
+    string taskId = pending[0].taskIds[0];
+
+    error? excluded = management:completeHumanTask(taskId, "yes", callerRoles = ["manager"], userId = "alice");
+    test:assertTrue(excluded is error, "the excluded user is denied although the role matches");
+    error? anonymous = management:completeHumanTask(taskId, "yes", callerRoles = ["manager"]);
+    test:assertTrue(anonymous is error, "an exclusion by user needs a user id to check against");
+
+    check management:completeHumanTask(taskId, "yes", callerRoles = ["manager"], userId = "bob");
+    anydata result = check getWorkflowResult(workflowId, 20);
+    test:assertEquals(result, "yes");
+    // The completer is the one the exclusion let through.
+    management:HumanTaskInfo info = check management:getHumanTaskInfo(taskId);
+    test:assertEquals(info.completedBy, "bob");
 }
 
 @test:Config {groups: ["unit"]}

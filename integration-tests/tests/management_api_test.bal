@@ -584,7 +584,7 @@ function testGetReviewActivityInfo() returns error? {
     test:assertTrue(info.decidedAt is (), "A pending review must report no decision time");
 
     // Clean up — decide fail so the workflow terminates (workflow itself will also error out)
-    check management:completeReviewActivity(reviewTask.taskId, {action: "reject"}, userId = "auditor");
+    check management:completeReviewActivity(reviewTask.taskId, {action: "reject"}, callerRoles = ["approver"], userId = "auditor");
     do {
         _ = check workflow:getWorkflowResult(workflowId, 15);
     } on fail {

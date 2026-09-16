@@ -38,7 +38,7 @@ function workflowWithApprovalGate(Context ctx, string orderId) returns string|er
 @Workflow
 function workflowWithRetryBeforeReview(Context ctx, string orderId) returns string|error {
     string|error result = ctx->callActivity(failingActivityForRetry, {"orderId": orderId},
-            retryPolicy = <RetryBeforeReview>{maxRetries: 1, retryDelay: 0.1, userRoles: "manager"});
+            retryPolicy = {maxRetries: 1, retryDelay: 0.1, userRoles: "manager"});
     if result is ReviewRejectedError {
         ReviewDecisionRecord? decision = ctx.lastReviewDecision();
         string action = decision is () ? "none" : decision.action;
@@ -51,7 +51,7 @@ function workflowWithRetryBeforeReview(Context ctx, string orderId) returns stri
 @Workflow
 function workflowWithNobodyToReview(Context ctx, string orderId) returns string|error {
     string result = check ctx->callActivity(failingActivityForRetry, {"orderId": orderId},
-            retryPolicy = <ReviewTaskDefinition>{userRoles: (), title: "Nobody can answer this"});
+            retryPolicy = {userRoles: (), title: "Nobody can answer this"});
     return result;
 }
 

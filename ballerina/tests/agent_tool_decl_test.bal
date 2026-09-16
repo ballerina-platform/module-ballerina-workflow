@@ -102,10 +102,10 @@ function testRegisterDurableAgentToolShapes() returns error? {
     // `{tool: x, approvalPolicy: {userRoles: "finance"}}`).
     _ = check wfInternal:registerDurableAgentTool("toolShapesAgent",
         {name: "gatedQuote", description: "Gated quote", caller: plainQuote},
-        approvalPolicy = <ReviewTaskDefinition>{userRoles: "finance"});
+        approvalPolicy = {userRoles: "finance"});
     _ = check wfInternal:registerDurableAgentTool("toolShapesAgent",
         {name: "multiRoleQuote", description: "Multi-role quote", caller: plainQuote},
-        approvalPolicy = <ReviewTaskDefinition>{userRoles: ["finance", "manager"]});
+        approvalPolicy = {userRoles: ["finance", "manager"]});
 
     // A bare function without @ai:AgentTool cannot self-describe.
     boolean|error unannotated = wfInternal:registerDurableAgentTool("toolShapesAgent", plainQuote);

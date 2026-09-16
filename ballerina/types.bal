@@ -74,15 +74,14 @@ public type AutoRetry record {|
 |};
 
 # Automatic retries first; when they are spent, a person decides. Carries both an
-# `AutoRetry` and a `ReviewTaskDefinition`, so the review is raised only after the
-# last automatic attempt fails. `maxRetries` is required here: a review definition
-# is open, so without it a plain review literal would also fit this shape. Write a
-# literal with an explicit `<RetryBeforeReview>` cast.
+# `AutoRetry` and a review's audience, so the review is raised only after the last
+# automatic attempt fails. `maxRetries` is required here and forbidden on
+# `ReviewTaskDefinition`, so a literal of either shape needs no cast.
 #
 # + maxRetries - Automatic attempts before the review is raised
 public type RetryBeforeReview record {
     *AutoRetry;
-    *ReviewTaskDefinition;
+    *ReviewTaskFields;
     int maxRetries;
 };
 
@@ -274,9 +273,6 @@ public type JsonObject map<json>;
 # Who may answer a human decision, and how it reads. Shared by a workflow's human task, a
 # durable agent's task capability, and the review a gated activity raises.
 #
-# This is a review's whole definition. A human task adds the shapes it is checked against —
-# see `HumanTaskDefinition`.
-#
 # At least one of `userRoles` and `users` must name someone. `userRoles` is required so that a
 # plain `AutoRetry` literal is never mistaken for a review; write `userRoles: ()` when the
 # audience is given by `users` alone.
@@ -288,7 +284,7 @@ public type JsonObject map<json>;
 # + title - Short summary shown in the inbox. Defaults to the task name
 # + description - Additional context shown with the form or decision
 # + timeout - Maximum time to wait. Omit to wait indefinitely
-public type ReviewTaskDefinition record {
+type ReviewTaskFields record {
     string|[string, string...]? userRoles;
     string|[string, string...] users?;
     string|[string, string...] excludedUsers?;
@@ -296,6 +292,16 @@ public type ReviewTaskDefinition record {
     string? title = ();
     string? description = ();
     Duration? timeout = ();
+};
+
+# A review's whole definition: its audience and wording. A human task adds the shapes it
+# is checked against — see `HumanTaskDefinition`. `maxRetries` is forbidden so a
+# `RetryBeforeReview` literal is never mistaken for a plain review.
+#
+# + maxRetries - Never present; retries belong to `RetryBeforeReview`
+public type ReviewTaskDefinition record {
+    *ReviewTaskFields;
+    never maxRetries?;
 };
 
 # A human task: who may answer it and how it reads, plus the shapes it takes and returns.

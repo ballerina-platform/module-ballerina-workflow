@@ -854,7 +854,7 @@ function testHumanReviewIsOpenForFutureOptions() {
 @test:Config {groups: ["unit"]}
 function testRetryPolicyMembersAreDistinguishable() {
     // All records; the audience and `maxRetries` tell them apart, at compile time and at run time.
-    RetryPolicy policy = <ReviewTaskDefinition>{userRoles: "manager"};
+    RetryPolicy policy = {userRoles: "manager"};
     test:assertTrue(policy is ReviewTaskDefinition, "a policy naming roles is a review");
     test:assertFalse(policy is AutoRetry, "and is not an automatic retry");
     policy = <AutoRetry>{maxRetries: 2};

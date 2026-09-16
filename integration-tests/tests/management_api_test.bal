@@ -580,8 +580,10 @@ function testGetReviewActivityInfo() returns error? {
     // Audit fields are reported on both sides of a decision. They are read from history
     // unconditionally: the decision signal is sent before the review closes, so a status
     // check is not a sound proxy for its absence.
-    test:assertTrue(info.decidedBy is (), "A pending review must report no decider");
-    test:assertTrue(info.decidedAt is (), "A pending review must report no decision time");
+    test:assertTrue(info.completedBy is (), "A pending review must report no decider");
+    test:assertTrue(info.completedAt is (), "A pending review must report no decision time");
+    test:assertTrue(info.decision is (), "A pending review must report no decision");
+    test:assertEquals(info.kind, "REVIEW_ACTIVITY");
 
     // Clean up — decide fail so the workflow terminates (workflow itself will also error out)
     check management:completeReviewActivity(reviewTask.taskId, {action: "reject"}, callerRoles = ["approver"], userId = "auditor");
@@ -593,8 +595,13 @@ function testGetReviewActivityInfo() returns error? {
 
     management:ReviewActivityInfo decided = check management:getReviewActivityInfo(reviewTask.taskId);
     test:assertFalse(decided.status == "PENDING", "The review must be closed once decided");
-    test:assertEquals(decided.decidedBy, "auditor", "A decided review must still report its decider");
-    test:assertTrue(decided.decidedAt is string, "A decided review must still report its decision time");
+    test:assertEquals(decided.completedBy, "auditor", "A decided review must still report its decider");
+    test:assertTrue(decided.completedAt is string, "A decided review must still report its decision time");
+    management:ReviewDecision? decision = decided.decision;
+    test:assertTrue(decision is management:ReviewDecision, "A decided review must report its decision");
+    if decision is management:ReviewDecision {
+        test:assertEquals(decision.action, "reject");
+    }
 }
 
 @test:Config {

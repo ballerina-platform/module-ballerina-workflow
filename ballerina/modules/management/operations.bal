@@ -236,7 +236,7 @@ isolated function opExecutionGraph(string workflowId, string? runId, [string, st
 isolated function opListHumanTasks(string? status, string? parentWorkflowId, string? parentWorkflowType,
         string? taskName, string? userRole, int 'limit, string? pageToken,
         string? startTimeFrom, string? startTimeTo, string? closeTimeFrom, string? closeTimeTo,
-        string? taskQueue, [string, string...]? callerRoles) returns json|Error {
+        string? taskQueue, [string, string...]? callerRoles, string? userId) returns json|Error {
     HumanTaskSummary[]|error all = listAllHumanTasks(status,
             startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
     if all is error {
@@ -248,12 +248,12 @@ isolated function opListHumanTasks(string? status, string? parentWorkflowId, str
         .filter(t => parentWorkflowType is () || t.parentWorkflowType == parentWorkflowType)
         .filter(t => taskName is () || t.taskName == taskName)
         .filter(t => userRole is () || t.userRoles.some(r => r == userRole));
-    // Role visibility in a foreach (avoids the lambda isolation constraint on
-    // computed local variables in this Ballerina version). A caller only ever sees
-    // tasks their roles match, so every listed task is one they can complete.
+    // Visibility in a foreach (avoids the lambda isolation constraint on computed local
+    // variables in this Ballerina version). A caller only ever sees tasks they may act on,
+    // so every listed task is one they can complete.
     HumanTaskSummary[] enriched = [];
     foreach HumanTaskSummary t in preFiltered {
-        if !hasRoleIntersection(t.userRoles, callerRoles) {
+        if !eligible(t, callerRoles, userId) {
             continue;
         }
         t.canComplete = true;
@@ -272,7 +272,7 @@ isolated function opListHumanTasks(string? status, string? parentWorkflowId, str
 isolated function opListWorkItems(string? kinds, string? status, string? parentWorkflowId,
         string? parentWorkflowType, int 'limit, string? pageToken,
         string? startTimeFrom, string? startTimeTo, string? closeTimeFrom, string? closeTimeTo,
-        string? taskQueue, [string, string...]? callerRoles) returns json|Error {
+        string? taskQueue, [string, string...]? callerRoles, string? userId) returns json|Error {
     boolean wantTasks = kinds is () || kinds.includes("HUMAN_TASK");
     boolean wantReviews = kinds is () || kinds.includes("REVIEW_ACTIVITY");
     WorkItemSummary[] merged = [];
@@ -290,24 +290,10 @@ isolated function opListWorkItems(string? kinds, string? status, string? parentW
             if parentWorkflowType is string && t.parentWorkflowType != parentWorkflowType {
                 continue;
             }
-            if !hasRoleIntersection(t.userRoles, callerRoles) {
+            if !eligible(t, callerRoles, userId) {
                 continue;
             }
-            merged.push({
-                kind: "HUMAN_TASK",
-                taskId: t.taskId,
-                taskName: t.taskName,
-                title: t.title != "" ? t.title : t.taskName,
-                namespace: t.namespace,
-                taskQueue: t.taskQueue,
-                parentWorkflowId: t.parentWorkflowId,
-                parentWorkflowType: t.parentWorkflowType,
-                status: t.status,
-                startTime: t.startTime,
-                closeTime: t.closeTime,
-                userRoles: t.userRoles,
-                canComplete: true
-            });
+            merged.push(workItemOf(t, ()));
         }
     }
 
@@ -321,30 +307,17 @@ isolated function opListWorkItems(string? kinds, string? status, string? parentW
             if parentWorkflowId is string && t.parentWorkflowId != parentWorkflowId {
                 continue;
             }
-            // A review's summary has no parent-type field; its qualified task name carries it.
-            string? reviewParentType = parentTypeOfQualifiedName(t.taskName);
+            // Older reviews recorded no parent type; their qualified task name carries it.
+            string? reviewParentType = t.parentWorkflowType ?: parentTypeOfQualifiedName(t.taskName);
             if parentWorkflowType is string && reviewParentType != parentWorkflowType {
                 continue;
             }
-            if !canAccessReviewActivity(t.userRoles, callerRoles) {
+            if !canAccessReviewActivity(t, callerRoles, userId) {
                 continue;
             }
-            merged.push({
-                kind: "REVIEW_ACTIVITY",
-                taskId: t.taskId,
-                taskName: t.taskName,
-                title: t.title != "" ? t.title : t.taskName,
-                trigger: t.trigger,
-                namespace: t.namespace,
-                taskQueue: t.taskQueue,
-                parentWorkflowId: t.parentWorkflowId,
-                parentWorkflowType: reviewParentType,
-                status: t.status,
-                startTime: t.startTime,
-                closeTime: t.closeTime,
-                userRoles: t.userRoles,
-                canComplete: true
-            });
+            WorkItemSummary item = workItemOf(t, t.trigger);
+            item.parentWorkflowType = reviewParentType;
+            merged.push(item);
         }
     }
 
@@ -360,6 +333,33 @@ isolated function parentTypeOfQualifiedName(string qualifiedName) returns string
     int? dot = qualifiedName.indexOf(".");
     return dot is int && dot > 0 ? qualifiedName.substring(0, dot) : ();
 }
+
+// The queue row of a task of either kind. Visibility was already decided by the caller, so
+// a listed item is one the caller may act on.
+isolated function workItemOf(HumanTaskSummary|ReviewActivitySummary t, string? trigger)
+        returns WorkItemSummary => {
+    kind: t.kind,
+    taskId: t.taskId,
+    taskName: t.taskName,
+    title: t.title != "" ? t.title : t.taskName,
+    description: t.description,
+    trigger,
+    namespace: t.namespace,
+    taskQueue: t.taskQueue,
+    parentWorkflowId: t.parentWorkflowId,
+    parentWorkflowType: t.parentWorkflowType,
+    stepId: t.stepId,
+    status: t.status,
+    startTime: t.startTime,
+    closeTime: t.closeTime,
+    userRoles: t.userRoles,
+    users: t.users,
+    excludedUsers: t.excludedUsers,
+    excludedRoles: t.excludedRoles,
+    completedBy: t.completedBy,
+    completedAt: t.completedAt,
+    canComplete: true
+};
 
 isolated function paginateWorkItems(WorkItemSummary[] items, int 'limit, string? pageToken)
         returns WorkItemPage {
@@ -390,28 +390,28 @@ isolated function paginateWorkItems(WorkItemSummary[] items, int 'limit, string?
     return {items: pageItems, nextPageToken: nextToken, hasMore: hasMore};
 }
 
-isolated function opPendingHumanTaskCount(string? taskQueue, [string, string...]? callerRoles)
-        returns json|Error {
+isolated function opPendingHumanTaskCount(string? taskQueue, [string, string...]? callerRoles,
+        string? userId) returns json|Error {
     HumanTaskSummary[]|error pending = listAllHumanTasks("PENDING", taskQueue = taskQueue);
     if pending is error {
         return executionFailed("Failed to count pending tasks: " + pending.message());
     }
     int visibleCount = 0;
     foreach HumanTaskSummary t in pending {
-        if hasRoleIntersection(t.userRoles, callerRoles) {
+        if eligible(t, callerRoles, userId) {
             visibleCount += 1;
         }
     }
     return {count: visibleCount};
 }
 
-isolated function opGetHumanTask(string taskId, [string, string...]? callerRoles)
+isolated function opGetHumanTask(string taskId, [string, string...]? callerRoles, string? userId)
         returns json|Error {
     HumanTaskInfo|error info = getHumanTaskInfo(taskId);
     if info is error {
         return notFoundOrExecutionError(info, "Human task not found: " + taskId);
     }
-    if !hasRoleIntersection(info.userRoles, callerRoles) {
+    if !eligible(info, callerRoles, userId) {
         return accessDenied("Unauthorized: caller is not allowed to access this task");
     }
     return info.toJson();
@@ -419,8 +419,8 @@ isolated function opGetHumanTask(string taskId, [string, string...]? callerRoles
 
 isolated function opCompleteHumanTask(string taskId, json result, [string, string...]? callerRoles,
         string? userId, IdentitySource identitySource) returns json|Error {
-    if callerRoles is () {
-        return accessDenied("Unauthorized: caller roles are required");
+    if callerRoles is () && userId is () {
+        return accessDenied("Unauthorized: caller identity is required");
     }
     error? err = decideCompleteHumanTask(taskId, result, callerRoles, userId, identitySource);
     if err is error {
@@ -435,8 +435,8 @@ isolated function opFailHumanTask(string taskId, json? reason, map<json>? detail
     if reason is () {
         return invalidRequest("reason is required");
     }
-    if callerRoles is () {
-        return accessDenied("Unauthorized: caller roles are required");
+    if callerRoles is () && userId is () {
+        return accessDenied("Unauthorized: caller identity is required");
     }
     error? err = decideFailHumanTask(taskId, reason.toString(), details, callerRoles, userId, identitySource);
     if err is error {
@@ -449,8 +449,8 @@ isolated function opFailHumanTask(string taskId, json? reason, map<json>? detail
 
 isolated function opListReviewActivities(string? status, string? parentWorkflowId, string? taskName,
         int 'limit, string? pageToken, string? startTimeFrom, string? startTimeTo,
-        string? closeTimeFrom, string? closeTimeTo, string? taskQueue, [string, string...]? callerRoles)
-        returns json|Error {
+        string? closeTimeFrom, string? closeTimeTo, string? taskQueue, [string, string...]? callerRoles,
+        string? userId) returns json|Error {
     ReviewActivitySummary[]|error all = listAllReviewActivities(status,
             startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
     if all is error {
@@ -463,20 +463,20 @@ isolated function opListReviewActivities(string? status, string? parentWorkflowI
     // computed local variables in this Ballerina version — see the human-task op).
     ReviewActivitySummary[] filtered = [];
     foreach ReviewActivitySummary t in preFiltered {
-        if canAccessReviewActivity(t.userRoles, callerRoles) {
+        if canAccessReviewActivity(t, callerRoles, userId) {
             filtered.push(t);
         }
     }
     return paginateReviewActivities(filtered, clampLimit('limit, maxPageSize), pageToken).toJson();
 }
 
-isolated function opGetReviewActivity(string taskId, [string, string...]? callerRoles)
+isolated function opGetReviewActivity(string taskId, [string, string...]? callerRoles, string? userId)
         returns json|Error {
     ReviewActivityInfo|error info = getReviewActivityInfo(taskId);
     if info is error {
         return notFoundOrExecutionError(info, "Review activity not found: " + taskId);
     }
-    if !canAccessReviewActivity(info.userRoles, callerRoles) {
+    if !canAccessReviewActivity(info, callerRoles, userId) {
         return accessDenied("Unauthorized: caller is not allowed to access this review activity");
     }
     return info.toJson();
@@ -685,11 +685,11 @@ isolated function decideOneInBulk(BulkCandidate candidate, ReviewDecision decisi
     ReviewActivitySummary? known = candidate.summary;
     string trigger;
     string status;
-    string[] taskRoles;
+    Assignment audience;
     if known is ReviewActivitySummary {
         trigger = known.trigger;
         status = known.status;
-        taskRoles = known.userRoles;
+        audience = known;
     } else {
         // The eligibility facts only — one describe. The full info record would add two
         // history scans per task for the audit fields a batch never reads.
@@ -699,9 +699,9 @@ isolated function decideOneInBulk(BulkCandidate candidate, ReviewDecision decisi
         }
         trigger = state.trigger;
         status = state.status;
-        taskRoles = state.userRoles;
+        audience = state;
     }
-    if !canAccessReviewActivity(taskRoles, callerRoles) {
+    if !canAccessReviewActivity(audience, callerRoles, userId) {
         return {
             taskId: candidate.taskId,
             outcome: FAILED,
@@ -940,11 +940,11 @@ isolated function buildCompletionResponse(string? userId) returns CompletionInfo
 # Builds a `ReviewDecisionInfo` record stamped with the current UTC time and the
 # caller's user ID (falls back to `"unknown"` when the header is absent).
 # + decision - The review decision taken: `"proceed"`, `"proceed-with-input"`, or `"reject"`.
-# + userId - Optional caller identity; used as the `decidedBy` field.
-# + return - A `ReviewDecisionInfo` record with `success`, `decision`, `decidedBy`, and `decidedAt` fields.
+# + userId - Optional caller identity; used as the `completedBy` field.
+# + return - A `ReviewDecisionInfo` record with `success`, `decision`, `completedBy`, and `completedAt` fields.
 isolated function buildReviewDecisionResponse(string decision, string? userId) returns ReviewDecisionInfo {
     time:Utc now = time:utcNow();
-    return {success: true, decision: decision, decidedBy: userId ?: "unknown", decidedAt: time:utcToString(now)};
+    return {success: true, decision: decision, completedBy: userId ?: "unknown", completedAt: time:utcToString(now)};
 }
 
 isolated function clampLimit(int requested, int maxAllowed) returns int {
@@ -968,16 +968,26 @@ isolated function ensureWorkflowDetailAccess([string, string...]? callerRoles) r
     return ();
 }
 
-# A review activity with declared roles requires a matching caller role (same rule as human
-# tasks). A review activity with no declared roles is visible to any caller by default;
-# when `reviewActivityAccessRole` is configured, the caller must hold that role instead.
+# Who may act on a task, as every task record reports it.
+type Assignment record {
+    string[] userRoles;
+    string[] users;
+    string[] excludedUsers;
+    string[] excludedRoles;
+};
+
+# A review activity that names an audience is visible to the callers eligible for it — the
+# same rule as human tasks. One naming nobody is visible to any caller by default; when
+# `reviewActivityAccessRole` is configured, the caller must hold that role instead.
 #
-# + taskRoles - Roles the review activity declares
+# + task - The review activity's audience
 # + callerRoles - Roles held by the caller
+# + userId - The caller's user id, when known
 # + return - Whether the caller may see or act on it
-isolated function canAccessReviewActivity(string[] taskRoles, [string, string...]? callerRoles) returns boolean {
-    if taskRoles.length() > 0 {
-        return hasRoleIntersection(taskRoles, callerRoles);
+isolated function canAccessReviewActivity(Assignment task, [string, string...]? callerRoles,
+        string? userId) returns boolean {
+    if task.userRoles.length() > 0 || task.users.length() > 0 {
+        return eligible(task, callerRoles, userId);
     }
     string? requiredRole = reviewActivityAccessRole;
     if requiredRole is string && requiredRole.trim().length() > 0 {
@@ -987,11 +997,11 @@ isolated function canAccessReviewActivity(string[] taskRoles, [string, string...
 }
 
 # Guard for review activity decision routes: when `reviewActivityAccessRole` is configured,
-# the caller must hold it. Task-declared roles are enforced separately by the native
-# completion path against the task's memo.
+# the caller must hold it. The task's own audience is enforced by the native completion path
+# against the task's memo.
 #
 # + callerRoles - Roles held by the caller
-# + return - The refusal when the configured role is missing, otherwise `()`
+# + return - The denial, or `()` when the caller passes
 isolated function reviewDecisionRoleError([string, string...]? callerRoles) returns AccessDeniedError? {
     string? requiredRole = reviewActivityAccessRole;
     if requiredRole is string && requiredRole.trim().length() > 0 {
@@ -1003,16 +1013,37 @@ isolated function reviewDecisionRoleError([string, string...]? callerRoles) retu
     return ();
 }
 
-isolated function hasRoleIntersection(string[] taskRoles, [string, string...]? callerRoles) returns boolean {
-    if callerRoles is () {
+# Whether the caller may act on a task — the one rule the runtime applies on completion,
+# so a caller sees exactly the tasks it can complete. A caller with no identity at all sees
+# nothing; a task that names users is closed to a caller with no user id.
+#
+# + task - The task's audience
+# + callerRoles - Roles held by the caller
+# + userId - The caller's user id, when known
+# + return - Whether the caller is eligible
+isolated function eligible(Assignment task, [string, string...]? callerRoles, string? userId) returns boolean {
+    if callerRoles is () && userId is () {
         return false;
     }
-    foreach string role in taskRoles {
-        if callerRoles.indexOf(role) != () {
+    string[] roles = callerRoles ?: [];
+    // Loops, not lambdas: a closure over `task` is not isolated in this Ballerina version.
+    foreach string role in roles {
+        if task.excludedRoles.indexOf(role) != () {
+            return false;
+        }
+    }
+    if task.excludedUsers.length() > 0 && (userId is () || task.excludedUsers.indexOf(userId) != ()) {
+        return false;
+    }
+    if task.userRoles.length() == 0 && task.users.length() == 0 {
+        return true;
+    }
+    foreach string role in roles {
+        if task.userRoles.indexOf(role) != () {
             return true;
         }
     }
-    return false;
+    return userId is string && task.users.indexOf(userId) != ();
 }
 
 isolated function paginateHumanTasks(HumanTaskSummary[] items, int 'limit, string? pageToken)

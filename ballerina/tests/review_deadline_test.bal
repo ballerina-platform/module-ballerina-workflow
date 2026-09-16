@@ -63,6 +63,6 @@ function testReviewDeciderIsReadableFromTheListingMemo() returns error? {
     test:assertTrue(outcome is error, "a rejected review surfaces the activity failure");
 
     management:ReviewActivityInfo info = check management:getReviewActivityInfo(pending[0].taskId);
-    test:assertEquals(info.decidedBy, "auditor");
-    test:assertTrue(info.decidedAt is string, "the decision instant is recorded beside the decider");
+    test:assertEquals(info.completedBy, "auditor");
+    test:assertTrue(info.completedAt is string, "the decision instant is recorded beside the decider");
 }

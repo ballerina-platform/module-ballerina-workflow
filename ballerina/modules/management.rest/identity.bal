@@ -41,8 +41,8 @@ import ballerina/workflow.management;
 // auth validates the token signature — an invalid token still gets its 401 from
 // the auth layer and never reaches a resource, so nothing is trusted early.
 // Scopes stay orthogonal to roles: scopes authorize operation classes (view vs
-// manage, workflow vs human task), while per-task eligibility remains the
-// userRoles-vs-caller-roles intersection.
+// manage, workflow vs human task), while per-task eligibility remains the task's
+// audience — roles or user id, minus exclusions — checked by the management module.
 
 # Claim holding the caller's user ID in token mode. Dotted paths address nested
 # claims. Common values: `sub` (default), `preferred_username`, `email`.
@@ -221,7 +221,7 @@ isolated function forwardedIdentity(http:Request req) returns CallerIdentity {
     };
 }
 
-// Extracts the basic-auth username for the audit identity (completedBy/decidedBy/
+// Extracts the basic-auth username for the audit identity (completedBy/
 // startedBy that would otherwise read "unknown"). The declarative auth layer still
 // validates the credentials; callers gate this on basic auth being enabled and on
 // no identity having been forwarded.

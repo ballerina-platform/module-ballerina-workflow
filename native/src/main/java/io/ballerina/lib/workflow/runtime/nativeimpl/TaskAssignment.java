@@ -19,7 +19,13 @@
 package io.ballerina.lib.workflow.runtime.nativeimpl;
 
 import io.ballerina.lib.workflow.TaskKeys;
+import io.ballerina.runtime.api.creators.TypeCreator;
+import io.ballerina.runtime.api.creators.ValueCreator;
+import io.ballerina.runtime.api.types.PredefinedTypes;
+import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BArray;
+import io.ballerina.runtime.api.values.BMap;
+import io.ballerina.runtime.api.values.BString;
 import io.temporal.api.common.v1.Payload;
 import io.temporal.common.converter.DataConverter;
 
@@ -42,6 +48,34 @@ public record TaskAssignment(List<String> userRoles, List<String> users, List<St
     public static TaskAssignment fromMemo(DataConverter dc, Map<String, Payload> memo) {
         return new TaskAssignment(strings(dc, memo, TaskKeys.USER_ROLES), strings(dc, memo, TaskKeys.USERS),
                 strings(dc, memo, TaskKeys.EXCLUDED_USERS), strings(dc, memo, TaskKeys.EXCLUDED_ROLES));
+    }
+
+    // Readers list a task whose audience they cannot decode rather than dropping it; only a completion must fail.
+    public static TaskAssignment fromMemoOrEmpty(DataConverter dc, Map<String, Payload> memo) {
+        try {
+            return fromMemo(dc, memo);
+        } catch (Exception e) {
+            return new TaskAssignment(List.of(), List.of(), List.of(), List.of());
+        }
+    }
+
+    public boolean namesAnyone() {
+        return !userRoles.isEmpty() || !users.isEmpty();
+    }
+
+    public void putInto(BMap<BString, Object> record) {
+        record.put(StringUtils.fromString(TaskKeys.USER_ROLES), array(userRoles));
+        record.put(StringUtils.fromString(TaskKeys.USERS), array(users));
+        record.put(StringUtils.fromString(TaskKeys.EXCLUDED_USERS), array(excludedUsers));
+        record.put(StringUtils.fromString(TaskKeys.EXCLUDED_ROLES), array(excludedRoles));
+    }
+
+    private static BArray array(List<String> values) {
+        BArray array = ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING));
+        for (String value : values) {
+            array.append(StringUtils.fromString(value));
+        }
+        return array;
     }
 
     public static List<String> roles(BArray callerRoles) {

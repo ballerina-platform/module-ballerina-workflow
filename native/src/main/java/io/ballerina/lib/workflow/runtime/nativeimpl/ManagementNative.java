@@ -24,6 +24,8 @@ import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.JsonFormat;
 import io.ballerina.lib.workflow.ModuleUtils;
 import io.ballerina.lib.workflow.TaskKeys;
+import io.ballerina.lib.workflow.context.TaskRecord;
+import io.ballerina.lib.workflow.context.WorkflowContextNative;
 import io.ballerina.lib.workflow.observability.WorkflowMetrics;
 import io.ballerina.lib.workflow.observability.WorkflowSampleLog;
 import io.ballerina.lib.workflow.runtime.WorkflowRuntime;
@@ -642,19 +644,8 @@ public final class ManagementNative {
             String taskName = decodeMemoString(dc, memoFields, TaskKeys.TASK_NAME, "");
             String parentId = decodeMemoString(dc, memoFields, TaskKeys.PARENT_WORKFLOW_ID, "");
             String title = decodeMemoString(dc, memoFields, TaskKeys.TITLE, taskName);
-            String description = decodeMemoString(dc, memoFields, TaskKeys.DESCRIPTION, "");
             String createdAt = decodeMemoString(dc, memoFields, TaskKeys.CREATED_AT, "");
             String formSchema = decodeMemoString(dc, memoFields, TaskKeys.FORM_SCHEMA, null);
-
-            String[] userRolesArr = new String[0];
-            try {
-                Payload rolesPl = memoFields.get(TaskKeys.USER_ROLES);
-                if (rolesPl != null) {
-                    userRolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
-                }
-            } catch (Exception e) {
-                LOGGER.debug("Could not decode userRoles memo field: {}", e.getMessage());
-            }
 
             Object taskInputRaw = null;
             try {
@@ -690,13 +681,8 @@ public final class ManagementNative {
             record.put(StringUtils.fromString("closeTime"),
                        closeTime != null ? StringUtils.fromString(closeTime) : null);
             record.put(StringUtils.fromString(TaskKeys.TITLE), StringUtils.fromString(title));
-            record.put(StringUtils.fromString(TaskKeys.DESCRIPTION), StringUtils.fromString(description));
 
-            BArray roles = ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING));
-            for (String role : userRolesArr) {
-                roles.append(StringUtils.fromString(role));
-            }
-            record.put(StringUtils.fromString(TaskKeys.USER_ROLES), roles);
+            putTaskBase(record, TaskRecord.HUMAN_TASK, dc, memoFields);
 
             Object bTaskInput = taskInputRaw != null ? TypesUtil.convertJavaToBallerinaType(taskInputRaw) : null;
             record.put(StringUtils.fromString(TaskKeys.TASK_INPUT), bTaskInput);
@@ -866,42 +852,19 @@ public final class ManagementNative {
         // falls back to the task name rather than arriving empty.
         String title = decodeMemoString(dc, memoFields, TaskKeys.TITLE, taskName);
         String parentId = decodeMemoString(dc, memoFields, TaskKeys.PARENT_WORKFLOW_ID, "");
-        String parentWorkflowType = decodeMemoString(dc, memoFields, TaskKeys.PARENT_WORKFLOW_TYPE, null);
-        // The task workflow upserts these when it is decided, so a listing can say who acted
-        // without reading each task's history to find the completion signal. Absent for tasks
-        // still pending, and for tasks decided before the memo carried it.
-        String completedBy = decodeMemoString(dc, memoFields,
-                WorkflowWorkerNative.COMPLETED_BY_MEMO_KEY, null);
-        String completedAt = decodeMemoString(dc, memoFields,
-                WorkflowWorkerNative.COMPLETED_AT_MEMO_KEY, null);
-
-        String[] userRolesArr = new String[0];
-        try {
-            Payload rolesPl = memoFields.get(TaskKeys.USER_ROLES);
-            if (rolesPl != null) {
-                userRolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
-            }
-        } catch (Exception e) {
-            LOGGER.debug("Could not decode userRoles from summary memo: {}", e.getMessage());
-        }
 
         BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                       "HumanTaskSummary");
+        putTaskBase(record, TaskRecord.HUMAN_TASK, dc, memoFields);
         record.put(StringUtils.fromString(TaskKeys.TASK_ID), StringUtils.fromString(wfId));
         record.put(StringUtils.fromString(TaskKeys.TASK_NAME), StringUtils.fromString(taskName));
         record.put(StringUtils.fromString(TaskKeys.TITLE), StringUtils.fromString(title));
-        record.put(StringUtils.fromString(TaskKeys.COMPLETED_BY),
-                   completedBy != null ? StringUtils.fromString(completedBy) : null);
-        record.put(StringUtils.fromString(TaskKeys.COMPLETED_AT),
-                   completedAt != null ? StringUtils.fromString(completedAt) : null);
         // Identify the owning integration: callers in a shared namespace (project) route
         // follow-up operations to the integration serving this task queue.
         record.put(StringUtils.fromString("namespace"),
                    StringUtils.fromString(client.getOptions().getNamespace()));
         record.put(StringUtils.fromString("taskQueue"), StringUtils.fromString(wfInfo.getTaskQueue()));
         record.put(StringUtils.fromString(TaskKeys.PARENT_WORKFLOW_ID), StringUtils.fromString(parentId));
-        record.put(StringUtils.fromString(TaskKeys.PARENT_WORKFLOW_TYPE),
-                   parentWorkflowType != null ? StringUtils.fromString(parentWorkflowType) : null);
         record.put(StringUtils.fromString("status"),
                    StringUtils.fromString(taskStatusFromTemporal(wfInfo.getStatus())));
 
@@ -917,11 +880,6 @@ public final class ManagementNative {
             record.put(StringUtils.fromString("closeTime"), null);
         }
 
-        BArray roles = ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING));
-        for (String role : userRolesArr) {
-            roles.append(StringUtils.fromString(role));
-        }
-        record.put(StringUtils.fromString(TaskKeys.USER_ROLES), roles);
         // canComplete defaults to false; the Ballerina service layer recomputes it per caller
         record.put(StringUtils.fromString("canComplete"), false);
         return record;
@@ -1448,18 +1406,7 @@ public final class ManagementNative {
             String title = decodeMemoString(dc, memoFields, TaskKeys.TITLE,
                     (TaskKeys.TRIGGER_ON_FAILURE.equals(trigger) ? "Review failed activity: " : "Approval required: ")
                             + activityName.substring(activityName.lastIndexOf('.') + 1));
-            String description = decodeMemoString(dc, memoFields, TaskKeys.DESCRIPTION, "");
             String formSchema = decodeMemoString(dc, memoFields, TaskKeys.FORM_SCHEMA, null);
-
-            String[] userRolesArr = new String[0];
-            try {
-                Payload rolesPl = memoFields.get(TaskKeys.USER_ROLES);
-                if (rolesPl != null) {
-                    userRolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
-                }
-            } catch (Exception e) {
-                LOGGER.debug("Could not decode userRoles memo field: {}", e.getMessage());
-            }
 
             Object activityArgsRaw = null;
             try {
@@ -1494,7 +1441,7 @@ public final class ManagementNative {
             record.put(StringUtils.fromString(TaskKeys.PARENT_WORKFLOW_ID), StringUtils.fromString(parentId));
             record.put(StringUtils.fromString(TaskKeys.TRIGGER), StringUtils.fromString(trigger));
             record.put(StringUtils.fromString(TaskKeys.TITLE), StringUtils.fromString(title));
-            record.put(StringUtils.fromString(TaskKeys.DESCRIPTION), StringUtils.fromString(description));
+            putTaskBase(record, TaskRecord.REVIEW_ACTIVITY, dc, memoFields);
             record.put(StringUtils.fromString("status"), StringUtils.fromString(statusStr));
             record.put(StringUtils.fromString("startTime"), StringUtils.fromString(startTime));
             record.put(StringUtils.fromString("closeTime"),
@@ -1502,37 +1449,24 @@ public final class ManagementNative {
             record.put(StringUtils.fromString(TaskKeys.FORM_SCHEMA),
                        formSchema != null ? StringUtils.fromString(formSchema) : null);
 
-            BArray roles = ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING));
-            for (String role : userRolesArr) {
-                roles.append(StringUtils.fromString(role));
-            }
-            record.put(StringUtils.fromString(TaskKeys.USER_ROLES), roles);
             record.put(StringUtils.fromString(TaskKeys.ERROR_MESSAGE), StringUtils.fromString(errorMessage));
 
             Object bArgs = activityArgsRaw != null ? TypesUtil.convertJavaToBallerinaType(activityArgsRaw) : null;
-            record.put(StringUtils.fromString(TaskKeys.LEGACY_ACTIVITY_ARGS), bArgs);
+            record.put(StringUtils.fromString(TaskKeys.TASK_INPUT), bArgs);
             record.put(StringUtils.fromString(TaskKeys.CREATED_AT), StringUtils.fromString(createdAt));
 
-            // Audit fields from the taskDecision signal stored in workflow history. These
-            // are read unconditionally: the signal carries decidedBy/decidedAt and is sent
-            // *before* the review closes, so there is an interval in which the decision is
-            // in history while the status is still PENDING. Gating the read on status
-            // would report no decider during exactly that window. Callers that only need
-            // eligibility, and cannot afford two history scans per task, use
-            // getReviewActivityState instead.
-            // Reviews decided since 0.10 carry the decider on the memo; older ones only in history.
-            String decidedBy = decodeMemoString(dc, memoFields, WorkflowWorkerNative.COMPLETED_BY_MEMO_KEY, null);
-            String decidedAt = decodeMemoString(dc, memoFields, WorkflowWorkerNative.COMPLETED_AT_MEMO_KEY, null);
-            if (decidedBy == null) {
-                decidedBy = readSignalField(client, taskIdStr, WorkflowWorkerNative.TASK_DECISION_SIGNAL_NAME,
-                        TaskKeys.DECIDED_BY);
-                decidedAt = readSignalField(client, taskIdStr, WorkflowWorkerNative.TASK_DECISION_SIGNAL_NAME,
-                        TaskKeys.DECIDED_AT);
+            // The decision lives in history, in the signal sent before the review closes; it is
+            // read whatever the status, since there is a window with the signal recorded and the
+            // status still PENDING. Reviews decided since 0.10 carry the decider on the memo.
+            Map<String, Object> decisionSignal = readSignalPayload(client, taskIdStr,
+                    WorkflowWorkerNative.TASK_DECISION_SIGNAL_NAME);
+            record.put(StringUtils.fromString("decision"), reviewDecisionRecord(decisionSignal));
+            if (record.get(StringUtils.fromString(TaskKeys.COMPLETED_BY)) == null && decisionSignal != null) {
+                putNullable(record, TaskKeys.COMPLETED_BY,
+                            decisionSignal.get(TaskKeys.DECIDED_BY) instanceof String by ? by : null);
+                putNullable(record, TaskKeys.COMPLETED_AT,
+                            decisionSignal.get(TaskKeys.DECIDED_AT) instanceof String at ? at : null);
             }
-            record.put(StringUtils.fromString(TaskKeys.DECIDED_BY),
-                       decidedBy != null ? StringUtils.fromString(decidedBy) : null);
-            record.put(StringUtils.fromString(TaskKeys.DECIDED_AT),
-                       decidedAt != null ? StringUtils.fromString(decidedAt) : null);
 
             return record;
 
@@ -1579,23 +1513,14 @@ public final class ManagementNative {
                         "Review activity not found: '" + taskIdStr + "' is not a review activity workflow"));
             }
 
-            String[] userRolesArr = new String[0];
-            Payload rolesPl = memoFields.get(TaskKeys.USER_ROLES);
-            if (rolesPl != null) {
-                try {
-                    userRolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
-                } catch (Exception e) {
-                    // Not recoverable here. An empty role list means "declares no roles",
-                    // which canAccessReviewActivity reads as unrestricted — so treating an
-                    // unreadable memo as empty would open a review the caller may not decide.
-                    return ErrorCreator.createError(StringUtils.fromString(
-                            "Could not read the roles declared by review activity '" + taskIdStr + "': "
-                                    + e.getMessage()));
-                }
-            }
-            BArray roles = ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING));
-            for (String role : userRolesArr) {
-                roles.append(StringUtils.fromString(role));
+            TaskAssignment assignment;
+            try {
+                assignment = TaskAssignment.fromMemo(dc, memoFields);
+            } catch (Exception e) {
+                // An empty audience reads as unrestricted, so an unreadable one must not pass as empty.
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Could not read the audience declared by review activity '" + taskIdStr + "': "
+                                + e.getMessage()));
             }
 
             BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
@@ -1606,7 +1531,7 @@ public final class ManagementNative {
                                TaskKeys.TRIGGER_ON_FAILURE)));
             record.put(StringUtils.fromString("status"),
                        StringUtils.fromString(taskStatusFromTemporal(execInfo.getStatus())));
-            record.put(StringUtils.fromString(TaskKeys.USER_ROLES), roles);
+            assignment.putInto(record);
             return record;
         } catch (Exception e) {
             return ErrorCreator.createError(
@@ -1635,6 +1560,7 @@ public final class ManagementNative {
             // Fallback: minimal record with the info we already have
             BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                           "ReviewActivitySummary");
+            record.put(StringUtils.fromString("kind"), StringUtils.fromString(TaskRecord.REVIEW_ACTIVITY));
             record.put(StringUtils.fromString(TaskKeys.TASK_ID), StringUtils.fromString(taskId));
             record.put(StringUtils.fromString(TaskKeys.TASK_NAME), StringUtils.fromString(fallbackTaskName));
             record.put(StringUtils.fromString(TaskKeys.ACTIVITY_NAME), StringUtils.fromString(""));
@@ -1646,8 +1572,6 @@ public final class ManagementNative {
             record.put(StringUtils.fromString("status"), StringUtils.fromString("UNKNOWN"));
             record.put(StringUtils.fromString("startTime"), StringUtils.fromString(""));
             record.put(StringUtils.fromString("closeTime"), null);
-            record.put(StringUtils.fromString(TaskKeys.USER_ROLES),
-                       ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING)));
             return record;
         }
     }
@@ -1672,18 +1596,10 @@ public final class ManagementNative {
         String title = decodeMemoString(dc, memoFields, TaskKeys.TITLE,
                 (TaskKeys.TRIGGER_ON_FAILURE.equals(trigger) ? "Review failed activity: " : "Approval required: ")
                         + activityName.substring(activityName.lastIndexOf('.') + 1));
-        String[] userRolesArr = new String[0];
-        try {
-            Payload rolesPl = memoFields.get(TaskKeys.USER_ROLES);
-            if (rolesPl != null) {
-                userRolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
-            }
-        } catch (Exception e) {
-            LOGGER.debug("Could not decode userRoles from review summary memo: {}", e.getMessage());
-        }
 
         BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                       "ReviewActivitySummary");
+        putTaskBase(record, TaskRecord.REVIEW_ACTIVITY, dc, memoFields);
         record.put(StringUtils.fromString(TaskKeys.TASK_ID), StringUtils.fromString(wfId));
         record.put(StringUtils.fromString(TaskKeys.TASK_NAME), StringUtils.fromString(taskName));
         record.put(StringUtils.fromString("namespace"),
@@ -1707,12 +1623,6 @@ public final class ManagementNative {
         } else {
             record.put(StringUtils.fromString("closeTime"), null);
         }
-
-        BArray roles = ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING));
-        for (String role : userRolesArr) {
-            roles.append(StringUtils.fromString(role));
-        }
-        record.put(StringUtils.fromString(TaskKeys.USER_ROLES), roles);
         return record;
     }
 
@@ -2083,8 +1993,14 @@ public final class ManagementNative {
      * {@code signalName} and returns the raw value of {@code fieldKey} from the decoded signal payload map. Returns
      * {@code null} if not found or on any error.
      */
-    @SuppressWarnings("unchecked")
     static Object readSignalPayloadField(WorkflowClient client, String workflowId, String signalName, String fieldKey) {
+        Map<String, Object> payload = readSignalPayload(client, workflowId, signalName);
+        return payload == null ? null : payload.get(fieldKey);
+    }
+
+    // The decoded payload map of the first signal named signalName, or null when there is none or on any error.
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> readSignalPayload(WorkflowClient client, String workflowId, String signalName) {
         try {
             WorkflowExecution execution = WorkflowExecution.newBuilder().setWorkflowId(workflowId).build();
             String namespace = client.getOptions().getNamespace();
@@ -2118,7 +2034,7 @@ public final class ManagementNative {
                     }
                     Object decoded = dc.fromPayload(payloads.getPayloads(0), Object.class, Object.class);
                     if (decoded instanceof Map<?, ?> m) {
-                        return ((Map<String, Object>) m).get(fieldKey);
+                        return (Map<String, Object>) m;
                     }
                 }
 
@@ -2126,10 +2042,45 @@ public final class ManagementNative {
             } while (!pageToken.isEmpty());
 
         } catch (Exception e) {
-            LOGGER.debug("readSignalPayloadField failed for {}/{}/{}: {}", workflowId, signalName, fieldKey,
-                         e.getMessage());
+            LOGGER.debug("readSignalPayload failed for {}/{}: {}", workflowId, signalName, e.getMessage());
         }
         return null;
+    }
+
+    // The fields every task record shares, read from the task child's memo.
+    private static void putTaskBase(BMap<BString, Object> record, String kind, DataConverter dc,
+                                    Map<String, Payload> memoFields) {
+        record.put(StringUtils.fromString("kind"), StringUtils.fromString(kind));
+        record.put(StringUtils.fromString(TaskKeys.DESCRIPTION),
+                   StringUtils.fromString(decodeMemoString(dc, memoFields, TaskKeys.DESCRIPTION, "")));
+        putNullable(record, WorkflowContextNative.STEP_ID_KEY,
+                    decodeMemoString(dc, memoFields, WorkflowContextNative.STEP_ID_KEY, null));
+        putNullable(record, TaskKeys.PARENT_WORKFLOW_TYPE,
+                    decodeMemoString(dc, memoFields, TaskKeys.PARENT_WORKFLOW_TYPE, null));
+        TaskAssignment.fromMemoOrEmpty(dc, memoFields).putInto(record);
+        putNullable(record, TaskKeys.COMPLETED_BY,
+                    decodeMemoString(dc, memoFields, WorkflowWorkerNative.COMPLETED_BY_MEMO_KEY, null));
+        putNullable(record, TaskKeys.COMPLETED_AT,
+                    decodeMemoString(dc, memoFields, WorkflowWorkerNative.COMPLETED_AT_MEMO_KEY, null));
+    }
+
+    private static void putNullable(BMap<BString, Object> record, String key, String value) {
+        record.put(StringUtils.fromString(key), value != null ? StringUtils.fromString(value) : null);
+    }
+
+    // The decision a review received, as a ReviewDecision record, or null while it is pending.
+    private static BMap<BString, Object> reviewDecisionRecord(Map<String, Object> signal) {
+        if (signal == null || !(signal.get(TaskKeys.ACTION) instanceof String action)) {
+            return null;
+        }
+        BMap<BString, Object> decision = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
+                                                                        "ReviewDecision");
+        decision.put(StringUtils.fromString(TaskKeys.ACTION), StringUtils.fromString(action));
+        Object input = signal.get(TaskKeys.INPUT);
+        decision.put(StringUtils.fromString(TaskKeys.INPUT),
+                     input != null ? TypesUtil.convertJavaToBallerinaType(input) : null);
+        putNullable(decision, TaskKeys.FEEDBACK, signal.get(TaskKeys.FEEDBACK) instanceof String f ? f : null);
+        return decision;
     }
 
     // =========================================================================

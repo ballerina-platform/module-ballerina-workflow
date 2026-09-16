@@ -281,7 +281,7 @@ public isolated function executeCommand(Command command) returns json|Error {
                     intParam(params, "limit", 20),
                     strParam(params, "pageToken"), strParam(params, "startTimeFrom"),
                     strParam(params, "startTimeTo"), strParam(params, "closeTimeFrom"),
-                    strParam(params, "closeTimeTo"), strParam(params, "taskQueue"), callerRoles);
+                    strParam(params, "closeTimeTo"), strParam(params, "taskQueue"), callerRoles, userId);
         }
         LIST_WORK_ITEMS => {
             return opListWorkItems(strParam(params, "kinds"), strParam(params, "status"),
@@ -289,17 +289,17 @@ public isolated function executeCommand(Command command) returns json|Error {
                     intParam(params, "limit", 20),
                     strParam(params, "pageToken"), strParam(params, "startTimeFrom"),
                     strParam(params, "startTimeTo"), strParam(params, "closeTimeFrom"),
-                    strParam(params, "closeTimeTo"), strParam(params, "taskQueue"), callerRoles);
+                    strParam(params, "closeTimeTo"), strParam(params, "taskQueue"), callerRoles, userId);
         }
         COUNT_PENDING_HUMAN_TASKS => {
-            return opPendingHumanTaskCount(strParam(params, "taskQueue"), callerRoles);
+            return opPendingHumanTaskCount(strParam(params, "taskQueue"), callerRoles, userId);
         }
         GET_HUMAN_TASK => {
             string|Error taskId = requiredParam(params, "taskId");
             if taskId is Error {
                 return taskId;
             }
-            return opGetHumanTask(taskId, callerRoles);
+            return opGetHumanTask(taskId, callerRoles, userId);
         }
         COMPLETE_HUMAN_TASK => {
             string|Error taskId = requiredParam(params, "taskId");
@@ -322,14 +322,14 @@ public isolated function executeCommand(Command command) returns json|Error {
                     intParam(params, "limit", 20), strParam(params, "pageToken"),
                     strParam(params, "startTimeFrom"), strParam(params, "startTimeTo"),
                     strParam(params, "closeTimeFrom"), strParam(params, "closeTimeTo"),
-                    strParam(params, "taskQueue"), callerRoles);
+                    strParam(params, "taskQueue"), callerRoles, userId);
         }
         GET_REVIEW_ACTIVITY => {
             string|Error taskId = requiredParam(params, "taskId");
             if taskId is Error {
                 return taskId;
             }
-            return opGetReviewActivity(taskId, callerRoles);
+            return opGetReviewActivity(taskId, callerRoles, userId);
         }
         DECIDE_REVIEW_ACTIVITY => {
             string|Error taskId = requiredParam(params, "taskId");

@@ -378,7 +378,7 @@ isolated function getReviewActivityState(string taskId) returns ReviewActivitySt
 # accepted by the `proceed-with-input` decision (`formSchema`).
 #
 # + taskId - The child workflow ID of the review activity (a bare UUID; the kind travels in its memo)
-# + return - Full review activity info including errorMessage, activityArgs, formSchema, and userRoles,
+# + return - Full review activity info including errorMessage, taskInput, formSchema, and its audience,
 #            or an error (including when the ID refers to a human task or any non-review workflow)
 public isolated function getReviewActivityInfo(string taskId) returns ReviewActivityInfo|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative",

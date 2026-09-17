@@ -1111,10 +1111,23 @@ public final class WorkflowNative {
             String taskId = taskWorkflowId.getValue();
             io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionResponse response = client
                     .getWorkflowServiceStubs().blockingStub()
+                    .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
                     .describeWorkflowExecution(io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest
                             .newBuilder().setNamespace(client.getOptions().getNamespace())
                             .setExecution(io.temporal.api.common.v1.WorkflowExecution.newBuilder()
                                     .setWorkflowId(taskId).build()).build());
+            // Administration, like completion, goes to the integration serving the task's queue.
+            String owningQueue = response.getExecutionConfig().getTaskQueue().getName();
+            String localQueue = io.ballerina.lib.workflow.worker.WorkflowWorkerNative.getTaskQueue();
+            if (localQueue == null || localQueue.isBlank()) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Unauthorized: the local task queue is not configured; cannot verify that task '"
+                                + taskId + "' belongs to this integration"));
+            }
+            if (!localQueue.equals(owningQueue)) {
+                return ErrorCreator.createError(StringUtils.fromString("Unauthorized: task '" + taskId
+                        + "' belongs to task queue '" + owningQueue + "', which is served by a different integration"));
+            }
             io.temporal.api.workflow.v1.WorkflowExecutionInfo execInfo = response.getWorkflowExecutionInfo();
             if (execInfo.getStatus() != WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING) {
                 return ErrorCreator.createError(StringUtils.fromString(

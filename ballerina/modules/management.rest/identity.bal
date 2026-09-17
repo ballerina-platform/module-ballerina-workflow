@@ -89,6 +89,8 @@ type CallerIdentity record {|
     string? userId = ();
     string[] roles = [];
     management:IdentitySource identitySource = "asserted";
+    // The token's OAuth scopes, when a JWT carried them; empty for every other scheme.
+    string[] scopes = [];
 |};
 
 # The request-context key the resolved `CallerIdentity` is stored under.
@@ -198,7 +200,8 @@ isolated function resolveCallerIdentity(http:Request req, string firstSegment,
         identity.roles = roles is string[] ? roles : [];
     }
 
-    if cfg.enforceScopes && !scopeAllowed(req.method, firstSegment, scopesOf(claims)) {
+    identity.scopes = scopesOf(claims);
+    if cfg.enforceScopes && !scopeAllowed(req.method, firstSegment, identity.scopes) {
         return <http:Forbidden>{body: errorBody(
                 "Insufficient scope: the token does not permit this operation")};
     }

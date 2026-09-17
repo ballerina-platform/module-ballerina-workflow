@@ -1618,9 +1618,7 @@ public final class AgentContextNative {
                 // be dropped on this path, so an agent tool's review was answerable by anyone.
                 Map<String, Object> decision = WorkflowContextNative.startReviewActivity(
                         TaskKeys.TRIGGER_ON_FAILURE, ActivityNaming.reviewTaskNameFor(workflowType, activityName),
-                        fullActivityName, currentArgs, errorMsg, reviewPolicy.userRoles(),
-                        reviewPolicy.timeoutMillis(), stepId,
-                        reviewPolicy.title(), reviewPolicy.description());
+                        fullActivityName, currentArgs, errorMsg, reviewPolicy, stepId);
                 String action = decision.containsKey("action") ? String.valueOf(decision.get("action")) : "reject";
                 if ("proceed".equals(action)) {
                     continue;

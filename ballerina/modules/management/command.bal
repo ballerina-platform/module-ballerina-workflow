@@ -329,7 +329,13 @@ public isolated function executeCommand(Command command) returns json|Error {
             if taskId is Error {
                 return taskId;
             }
-            return opReassignTask(taskId, params, callerRoles, userId);
+            map<json> audience = {};
+            foreach string key in AUDIENCE_PARAMS {
+                if params.hasKey(key) {
+                    audience[key] = params[key];
+                }
+            }
+            return opReassignTask(taskId, audience, callerRoles, userId);
         }
         EXTEND_TASK_DEADLINE => {
             string|Error taskId = requiredParam(params, "taskId");
@@ -450,6 +456,7 @@ final readonly & map<string> PARAM_TYPES = {
     "taskIds": "array",
     "taskName": "string",
     "taskQueue": "string",
+    "timeoutMillis": "int",
     "timeoutSeconds": "int",
     "userRole": "string",
     "workflowId": "string",
@@ -529,6 +536,7 @@ isolated function rolesFromIdentity(Identity identity) returns [string, string..
 # Parameter asking a listing or count to cover every task, not only the caller's; the surface
 # that accepts it decides who may ask.
 const ALL_PARAM = "all";
+final readonly & string[] AUDIENCE_PARAMS = ["userRoles", "users", "excludedUsers", "excludedRoles"];
 
 isolated function boolParam(map<json> params, string name) returns boolean {
     json value = params[name];

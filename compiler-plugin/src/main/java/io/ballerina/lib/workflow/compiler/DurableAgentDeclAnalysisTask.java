@@ -723,6 +723,9 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_163, field.location(), key, record, replacement);
     }
 
+    private static final Set<String> AUTO_RETRY_FIELDS =
+            Set.of(MAX_RETRIES_FIELD, "retryDelay", "retryBackoff", "maxRetryDelay");
+
     // A review definition literal must name an audience; an AutoRetry literal (maxRetries) is exempt.
     private void checkReviewDefinition(ExpressionNode value, SyntaxNodeAnalysisContext context) {
         if (!(value instanceof MappingConstructorExpressionNode mapping)) {
@@ -730,6 +733,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         }
         boolean audience = false;
         boolean retries = false;
+        boolean reviewShaped = false;
         for (MappingFieldNode field : mapping.fields()) {
             if (!(field instanceof SpecificFieldNode sf)) {
                 continue;
@@ -737,11 +741,13 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             String key = mappingKeyName(sf);
             boolean nil = sf.valueExpr().isPresent() && sf.valueExpr().get().kind() == SyntaxKind.NIL_LITERAL;
             // `roles` is the pre-unification spelling the deprecated array form still carries.
-            audience |= (USER_ROLES_FIELD.equals(key) && !nil) || USERS_FIELD.equals(key)
+            audience |= ((USER_ROLES_FIELD.equals(key) || USERS_FIELD.equals(key)) && !nil)
                     || LEGACY_ROLES_FIELD.equals(key);
             retries |= MAX_RETRIES_FIELD.equals(key);
+            reviewShaped |= !AUTO_RETRY_FIELDS.contains(key);
         }
-        if (!audience && !retries) {
+        // Attempts alone are an AutoRetry; any review field beside them makes a review that must name someone.
+        if (!audience && (!retries || reviewShaped)) {
             reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_164, value.location());
         }
     }

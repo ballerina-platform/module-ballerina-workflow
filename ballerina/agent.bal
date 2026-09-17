@@ -935,9 +935,15 @@ isolated function registerDeclaredActivity(handle agentCtx, DurableAgentActivity
 }
 
 // A review names an audience, AutoRetry names attempts, RetryBeforeReview names both.
+final readonly & string[] REVIEW_ONLY_KEYS = ["userRoles", "users", "excludedUsers", "excludedRoles",
+    "administratorRoles", "administratorUsers", "title", "description", "timeout"];
+
 isolated function retryPolicyOf(map<json> retryJson) returns RetryPolicy|error {
     boolean review = retryJson["userRoles"] !is () || retryJson["users"] !is ();
     boolean retries = retryJson["maxRetries"] !is ();
+    if !review && retryJson.keys().some(key => REVIEW_ONLY_KEYS.indexOf(key) !is ()) {
+        return error("retryPolicy must name 'userRoles' or 'users' when it declares a review");
+    }
     if review && retries {
         return check retryJson.cloneWithType(RetryBeforeReview);
     }

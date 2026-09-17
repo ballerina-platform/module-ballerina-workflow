@@ -176,7 +176,8 @@ function testScopeEnforcementPerOperationClass() {
     http:Request read = bearerRequest(viewToken);
     read.method = "GET";
     CallerIdentity|http:Forbidden allowed = resolveCallerIdentity(read, "workflows", enforcing);
-    test:assertEquals(allowed, <CallerIdentity>{userId: "alice", roles: [], identitySource: "verified"});
+    test:assertEquals(allowed, <CallerIdentity>{userId: "alice", roles: [], identitySource: "verified",
+            scopes: ["openid", "workflow:view"]});
 
     // A mutation with only the view scope is forbidden.
     http:Request mutation = bearerRequest(viewToken);

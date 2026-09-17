@@ -21,7 +21,6 @@ package io.ballerina.lib.workflow.compiler;
 import io.ballerina.projects.JvmTarget;
 
 import java.util.Arrays;
-import java.util.Comparator;
 
 /**
  * Shared helpers for compiler plugin tests.
@@ -33,19 +32,10 @@ final class TestUtils {
 
     static JvmTarget getJvmTarget() {
         String runtimeCode = "java" + Runtime.version().feature();
-        // The runner's JDK follows the lang version, so it can run ahead of the targets the
-        // distribution knows (JDK 25 against a distribution that still tops out at java21).
-        // Fall back to the highest target it does know rather than failing the test.
         return Arrays.stream(JvmTarget.values())
                 .filter(target -> target.code().equals(runtimeCode))
                 .findFirst()
-                .orElseGet(() -> Arrays.stream(JvmTarget.values())
-                        .max(Comparator.comparingInt(target -> featureOf(target.code())))
-                        .orElseThrow(() -> new IllegalStateException(
-                                "cannot find a compatible JvmTarget for the runtime version: " + runtimeCode)));
-    }
-
-    private static int featureOf(String code) {
-        return Integer.parseInt(code.replaceAll("\\D", ""));
+                .orElseThrow(() -> new IllegalStateException(
+                        "cannot find a compatible JvmTarget for the runtime version: " + runtimeCode));
     }
 }

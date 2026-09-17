@@ -440,6 +440,28 @@ function testUndeclaredRolesAreOpenByDefault() {
         "With no reviewActivityAccessRole configured, deciding is not gated on roles");
 }
 
+@test:Config {groups: ["unit"]}
+function testANonPositiveDeadlineIsRefusedBeforeAnyRuntimeCall() {
+    test:assertTrue(extendTaskDeadline("humantask-x", 0, ["ops"], "carol") is InvalidRequestError);
+    test:assertTrue(extendTaskDeadline("humantask-x", -5, ["ops"], "carol") is InvalidRequestError);
+}
+
+@test:Config {groups: ["unit"]}
+function testExclusionsGateAnOtherwiseOpenReview() {
+    // A review naming nobody but excluding someone is not open to the excluded caller, even though
+    // the audience rule alone would admit anyone; an administrator still sees it.
+    Assignment excluding = {userRoles: [], users: [], excludedUsers: ["alice"], excludedRoles: ["AUDITOR"],
+        administratorRoles: ["OPS"]};
+    test:assertFalse(canAccessReviewActivity(excluding, ["APPROVER"], "alice"),
+        "The excluded user may not see the review");
+    test:assertFalse(canAccessReviewActivity(excluding, ["AUDITOR"], "bob"),
+        "A caller holding an excluded role may not see the review");
+    test:assertTrue(canAccessReviewActivity(excluding, ["APPROVER"], "bob"),
+        "Anyone else still may");
+    test:assertTrue(canAccessReviewActivity(excluding, ["OPS"], "alice"),
+        "An administrator sees it even when the audience rule excludes them");
+}
+
 // ── Operation names on the wire ───────────────────────────────────────────────
 
 @test:Config {groups: ["unit"]}
@@ -590,6 +612,8 @@ isolated function commandCases() returns CommandCase[] => [
         required: ["taskId"]},
     {operation: FAIL_HUMAN_TASK, params: {taskId: "humantask-x", reason: "boom"},
         required: ["taskId", "reason"]},
+    {operation: REASSIGN_TASK, params: {taskId: "humantask-x", users: ["frank"]}, required: ["taskId"]},
+    {operation: EXTEND_TASK_DEADLINE, params: {taskId: "humantask-x", timeoutMillis: 60000}, required: ["taskId"]},
     {operation: LIST_WORK_ITEMS, params: {kinds: "HUMAN_TASK,REVIEW_ACTIVITY", status: "PENDING", 'limit: 10}},
     {operation: LIST_REVIEW_ACTIVITIES, params: {status: "PENDING", 'limit: 10}},
     {operation: GET_REVIEW_ACTIVITY, params: {taskId: "reviewactivity-x"}, required: ["taskId"]},
@@ -610,7 +634,7 @@ isolated function allOperations() returns Operation[] => [
     GET_INSTANCE_HISTORY,
     GET_INSTANCE_ACTIVITY_TREE, GET_INSTANCE_EXECUTION_GRAPH, LIST_HUMAN_TASKS,
     COUNT_PENDING_HUMAN_TASKS, GET_HUMAN_TASK, COMPLETE_HUMAN_TASK, FAIL_HUMAN_TASK,
-    LIST_WORK_ITEMS, LIST_REVIEW_ACTIVITIES, GET_REVIEW_ACTIVITY, DECIDE_REVIEW_ACTIVITY,
+    REASSIGN_TASK, EXTEND_TASK_DEADLINE, LIST_WORK_ITEMS, LIST_REVIEW_ACTIVITIES, GET_REVIEW_ACTIVITY, DECIDE_REVIEW_ACTIVITY,
     BULK_RETRY_REVIEW_ACTIVITIES, LIST_RESET_POINTS, RESET_INSTANCE
 ];
 

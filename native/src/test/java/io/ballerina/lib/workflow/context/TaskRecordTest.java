@@ -76,6 +76,15 @@ public class TaskRecordTest {
     }
 
     @Test
+    public void administratorsRideTheMemoBesideTheAudience() {
+        Map<String, Object> memo = base(TaskRecord.HUMAN_TASK)
+                .administratorRoles(List.of("ops")).administratorUsers(List.of("dana")).build().toMemo();
+        Assert.assertEquals(memo.get("administratorRoles"), List.of("ops"));
+        Assert.assertEquals(memo.get("administratorUsers"), List.of("dana"));
+        Assert.assertFalse(base(TaskRecord.HUMAN_TASK).build().toMemo().containsKey("administratorRoles"));
+    }
+
+    @Test
     public void reviewMemoAddsItsOwnFieldsUnderTheSameInputKey() {
         Map<String, Object> memo = base(TaskRecord.REVIEW_ACTIVITY).stepId("s1")
                 .trigger("PRE_RUN").activityName("order.charge").build().toMemo();

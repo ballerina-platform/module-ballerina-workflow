@@ -760,7 +760,32 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
     resource isolated function get human\-tasks/pending\-count(
             http:RequestContext ctx,
             string? taskQueue = (), boolean all = false) returns http:Response {
+        // The caller-independent total is a management view. Under scope enforcement it needs a manage
+        // scope of either class; deployments without scopes keep the route as it was.
+        string[] scopes = callerIdentityOf(ctx).scopes;
+        if all && enforceScopes && scopes.indexOf(scopeHumanTaskManage) is ()
+                && scopes.indexOf(scopeWorkflowManage) is () {
+            http:Response denied = new;
+            denied.statusCode = http:STATUS_FORBIDDEN;
+            denied.setJsonPayload(errorBody("Counting every pending task requires the '" + scopeHumanTaskManage
+                    + "' or '" + scopeWorkflowManage + "' scope"));
+            return denied;
+        }
         return executeToResponse(management:COUNT_PENDING_HUMAN_TASKS, {taskQueue: taskQueue, all: all}, ctx);
+    }
+
+    // Administration acts on human tasks and reviews alike, so it lives in the human-task scope class.
+    resource isolated function post human\-tasks/[string taskId]/reassign(
+            http:RequestContext ctx, @http:Payload map<json> audience) returns http:Response {
+        map<json> params = audience.clone();
+        params["taskId"] = taskId;
+        return executeToResponse(management:REASSIGN_TASK, params, ctx);
+    }
+
+    resource isolated function post human\-tasks/[string taskId]/deadline(
+            http:RequestContext ctx, @http:Payload map<json> body) returns http:Response {
+        return executeToResponse(management:EXTEND_TASK_DEADLINE,
+                {taskId: taskId, timeoutMillis: body["timeoutMillis"]}, ctx);
     }
 
     resource isolated function get human\-tasks/[string taskId](

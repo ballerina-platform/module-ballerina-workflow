@@ -42,9 +42,10 @@ isolated function registerAgentEvent(handle agentCtx, string name, typedesc<anyd
 
 isolated function registerHumanTask(handle agentCtx, string taskName, string|string[] userRoles,
         typedesc<anydata> resultType = anydata, string? title = (), string? description = (),
-        Duration? timeout = (), typedesc<map<json>>? taskInputType = ()) returns error? {
-    return recordHumanTaskTool(agentCtx, taskName, userRoles, (), (), (), resultType, title, description,
-            timeout, taskInputType);
+        Duration? timeout = (), typedesc<map<json>>? taskInputType = (),
+        string|string[]? administratorRoles = ()) returns error? {
+    return recordHumanTaskTool(agentCtx, taskName, userRoles, (), (), (), administratorRoles, (), resultType, title,
+            description, timeout, taskInputType);
 }
 
 isolated function buildAndRun(handle agentCtx, string query = "", *AgentLoopConfig config) returns error? {

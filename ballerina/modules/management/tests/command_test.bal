@@ -440,6 +440,22 @@ function testUndeclaredRolesAreOpenByDefault() {
         "With no reviewActivityAccessRole configured, deciding is not gated on roles");
 }
 
+@test:Config {groups: ["unit"]}
+function testExclusionsGateAnOtherwiseOpenReview() {
+    // A review naming nobody but excluding someone is not open to the excluded caller, even though
+    // the audience rule alone would admit anyone; an administrator still sees it.
+    Assignment excluding = {userRoles: [], users: [], excludedUsers: ["alice"], excludedRoles: ["AUDITOR"],
+        administratorRoles: ["OPS"]};
+    test:assertFalse(canAccessReviewActivity(excluding, ["APPROVER"], "alice"),
+        "The excluded user may not see the review");
+    test:assertFalse(canAccessReviewActivity(excluding, ["AUDITOR"], "bob"),
+        "A caller holding an excluded role may not see the review");
+    test:assertTrue(canAccessReviewActivity(excluding, ["APPROVER"], "bob"),
+        "Anyone else still may");
+    test:assertTrue(canAccessReviewActivity(excluding, ["OPS"], "alice"),
+        "An administrator sees it even when the audience rule excludes them");
+}
+
 // ── Operation names on the wire ───────────────────────────────────────────────
 
 @test:Config {groups: ["unit"]}

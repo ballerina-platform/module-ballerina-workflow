@@ -1067,9 +1067,9 @@ isolated function visible(Assignment task, [string, string...]? callerRoles, str
     return accessOf(task, callerRoles, userId) != NONE;
 }
 
-# A review activity that names an audience is visible to the callers eligible for it — the
-# same rule as human tasks. One naming nobody is visible to any caller by default; when
-# `reviewActivityAccessRole` is configured, the caller must hold that role instead.
+# A review activity that names an audience, or excludes anyone, is visible to the callers eligible
+# for it — the same rule as human tasks. One naming nobody is visible to any caller by default; when
+# `reviewActivityAccessRole` is configured, the caller must hold that role or administer the review.
 #
 # + task - The review activity's audience
 # + callerRoles - Roles held by the caller
@@ -1077,12 +1077,14 @@ isolated function visible(Assignment task, [string, string...]? callerRoles, str
 # + return - Whether the caller may see or act on it
 isolated function canAccessReviewActivity(Assignment task, [string, string...]? callerRoles,
         string? userId) returns boolean {
-    if task.userRoles.length() > 0 || task.users.length() > 0 {
+    if task.userRoles.length() > 0 || task.users.length() > 0
+            || task.excludedUsers.length() > 0 || task.excludedRoles.length() > 0 {
         return visible(task, callerRoles, userId);
     }
     string? requiredRole = reviewActivityAccessRole;
     if requiredRole is string && requiredRole.trim().length() > 0 {
-        return callerRoles !is () && callerRoles.indexOf(requiredRole) != ();
+        return (callerRoles !is () && callerRoles.indexOf(requiredRole) != ())
+            || administers(task, callerRoles, userId);
     }
     return true;
 }

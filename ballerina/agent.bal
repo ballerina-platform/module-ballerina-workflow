@@ -711,7 +711,7 @@ isolated function awaitAgentToolReview(handle nativeContext, string toolName, st
 
 isolated function recordHumanTaskTool(handle nativeContext, string taskName, string|string[]? userRoles,
         string|string[]? users, string|string[]? excludedUsers, string|string[]? excludedRoles,
-        typedesc<anydata> resultType, string? title, string? description, Duration? timeout,
+        string|string[]? administratorRoles, string|string[]? administratorUsers, typedesc<anydata> resultType, string? title, string? description, Duration? timeout,
         typedesc<map<json>>? taskInputType) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "recordHumanTaskTool"
@@ -1006,6 +1006,8 @@ isolated function registerDeclaredHumanTask(handle agentCtx, DurableAgentHumanTa
     string|string[]? users = ();
     string|string[]? excludedUsers = ();
     string|string[]? excludedRoles = ();
+    string|string[]? administratorRoles = ();
+    string|string[]? administratorUsers = ();
     string? title = ();
     string? description = ();
     Duration? timeout = ();
@@ -1017,6 +1019,8 @@ isolated function registerDeclaredHumanTask(handle agentCtx, DurableAgentHumanTa
         users = check namesOf(meta["users"]);
         excludedUsers = check namesOf(meta["excludedUsers"]);
         excludedRoles = check namesOf(meta["excludedRoles"]);
+        administratorRoles = check namesOf(meta["administratorRoles"]);
+        administratorUsers = check namesOf(meta["administratorUsers"]);
         json titleJson = meta["title"];
         if titleJson is string {
             title = titleJson;
@@ -1031,7 +1035,8 @@ isolated function registerDeclaredHumanTask(handle agentCtx, DurableAgentHumanTa
         }
     }
     check recordHumanTaskTool(agentCtx, taskSpec.name, roles, users, excludedUsers, excludedRoles,
-            taskSpec.resultType, title, description, timeout, taskSpec.taskInputType);
+            administratorRoles, administratorUsers, taskSpec.resultType, title, description, timeout,
+            taskSpec.taskInputType);
 }
 
 // A single name or a list of them from declaration metadata; `()` when absent.

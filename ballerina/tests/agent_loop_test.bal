@@ -458,7 +458,8 @@ function typedTaskAgent(handle ctx, AgentOrderInput input) returns error? {
 function approvalAgent(handle ctx, AgentOrderInput input) returns error? {
     check registerActivity(ctx, checkStock);
     check registerHumanTask(ctx, "approveOrder", "APPROVER", ApprovalResult,
-            title = "Approve order", description = "Ask a person to approve the order.");
+            title = "Approve order", description = "Ask a person to approve the order.",
+            administratorRoles = "OPS");
     check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "You are an approval assistant."},
             model = humanTaskAgentModel);
@@ -955,6 +956,11 @@ function testAgentHumanTaskTool() returns error? {
     if taskId is () {
         return; // Task not visible — skip.
     }
+    // The declared administrator reaches the task the agent created, beside its audience.
+    json opsView = check management:executeCommand({operation: management:GET_HUMAN_TASK,
+            params: {taskId}, identity: {userId: "carol", roles: ["OPS"]}});
+    test:assertEquals(check opsView.canAdminister, true);
+    test:assertEquals(check opsView.canComplete, true);
 
     ApprovalResult decision = {approved: true, comment: "Looks good"};
     check management:completeHumanTask(taskId, decision, ["APPROVER"]);

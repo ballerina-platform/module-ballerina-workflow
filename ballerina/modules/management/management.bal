@@ -280,10 +280,12 @@ isolated function decideFailHumanTask(string taskWorkflowId, string reason,
 # + audience - The lists to replace: `userRoles`, `users`, `excludedUsers`, `excludedRoles`
 # + callerRoles - Roles held by the caller
 # + userId - The caller's user id
+# + identitySource - `verified` when the caller's auth layer validated the identity, else `asserted`
 # + return - `()` on success, or an error
 public isolated function reassignTask(string taskWorkflowId, TaskAudience audience,
-        [string, string...]? callerRoles = (), string? userId = ()) returns error? {
-    return administer(taskWorkflowId, "reassign", audience, callerRoles, userId, "asserted");
+        [string, string...]? callerRoles = (), string? userId = (), IdentitySource identitySource = "asserted")
+        returns error? {
+    return administer(taskWorkflowId, "reassign", audience, callerRoles, userId, identitySource);
 }
 
 # Moves a live task's or review's deadline: milliseconds from now, or `()` to let it wait indefinitely.
@@ -293,11 +295,16 @@ public isolated function reassignTask(string taskWorkflowId, TaskAudience audien
 # + timeoutMillis - The new deadline as milliseconds from now, or `()` to clear it
 # + callerRoles - Roles held by the caller
 # + userId - The caller's user id
+# + identitySource - `verified` when the caller's auth layer validated the identity, else `asserted`
 # + return - `()` on success, or an error
 public isolated function extendTaskDeadline(string taskWorkflowId, int? timeoutMillis,
-        [string, string...]? callerRoles = (), string? userId = ()) returns error? {
+        [string, string...]? callerRoles = (), string? userId = (), IdentitySource identitySource = "asserted")
+        returns error? {
+    if timeoutMillis is int && timeoutMillis <= 0 {
+        return error InvalidRequestError("timeoutMillis must be greater than zero, or () to clear the deadline");
+    }
     map<json> payload = {timeoutMillis: timeoutMillis};
-    return administer(taskWorkflowId, "extendDeadline", payload, callerRoles, userId, "asserted");
+    return administer(taskWorkflowId, "extendDeadline", payload, callerRoles, userId, identitySource);
 }
 
 isolated function administer(string taskWorkflowId, observe:AdministrationAction action, map<json> payload,

@@ -466,7 +466,7 @@ isolated function opFailHumanTask(string taskId, json? reason, map<json>? detail
 // in the task's history.
 
 isolated function opReassignTask(string taskId, map<json> params, [string, string...]? callerRoles,
-        string? userId) returns json|Error {
+        string? userId, IdentitySource identitySource) returns json|Error {
     if callerRoles is () && userId is () {
         return accessDenied("Unauthorized: caller identity is required");
     }
@@ -478,7 +478,7 @@ isolated function opReassignTask(string taskId, map<json> params, [string, strin
     if audience.length() == 0 {
         return invalidRequest("Name at least one audience list to replace");
     }
-    error? err = reassignTask(taskId, audience, callerRoles, userId);
+    error? err = reassignTask(taskId, audience, callerRoles, userId, identitySource);
     if err is error {
         return classifyRuntimeError(err);
     }
@@ -486,14 +486,14 @@ isolated function opReassignTask(string taskId, map<json> params, [string, strin
 }
 
 isolated function opExtendTaskDeadline(string taskId, int? timeoutMillis, [string, string...]? callerRoles,
-        string? userId) returns json|Error {
+        string? userId, IdentitySource identitySource) returns json|Error {
     if callerRoles is () && userId is () {
         return accessDenied("Unauthorized: caller identity is required");
     }
     if timeoutMillis is int && timeoutMillis <= 0 {
         return invalidRequest("timeoutMillis must be positive, or absent to clear the deadline");
     }
-    error? err = extendTaskDeadline(taskId, timeoutMillis, callerRoles, userId);
+    error? err = extendTaskDeadline(taskId, timeoutMillis, callerRoles, userId, identitySource);
     if err is error {
         return classifyRuntimeError(err);
     }
@@ -544,10 +544,6 @@ isolated function opGetReviewActivity(string taskId, [string, string...]? caller
 isolated function opDecideReviewActivity(string taskId, string action, map<json>? input, string? feedback,
         [string, string...]? callerRoles, string? userId, IdentitySource identitySource)
         returns json|Error {
-    AccessDeniedError? roleErr = reviewDecisionRoleError(callerRoles);
-    if roleErr is AccessDeniedError {
-        return roleErr;
-    }
     ReviewDecision decision;
     if action == "proceed" {
         decision = {action: "proceed"};
@@ -560,6 +556,14 @@ isolated function opDecideReviewActivity(string taskId, string action, map<json>
         decision = {action: "reject", feedback: feedback};
     } else {
         return invalidRequest("Unknown review decision action: " + action);
+    }
+    // The task-aware rule: its audience minus exclusions, its administrators, or the configured role.
+    ReviewActivityState|error state = getReviewActivityState(taskId);
+    if state is error {
+        return classifyRuntimeError(state);
+    }
+    if !canAccessReviewActivity(state, callerRoles, userId) {
+        return accessDenied("Unauthorized: caller is not allowed to decide this review activity");
     }
     error? err = decideReviewActivity(taskId, decision, callerRoles, userId, identitySource);
     if err is error {
@@ -597,10 +601,6 @@ isolated function opBulkRetryReviewActivities(string action, json? taskIds, stri
     if action != "retry" && action != "fail" {
         return invalidRequest("Unknown bulk retry action: " + action
                 + " (expected \"retry\" or \"fail\")");
-    }
-    AccessDeniedError? roleErr = reviewDecisionRoleError(callerRoles);
-    if roleErr is AccessDeniedError {
-        return roleErr;
     }
     BulkCandidate[]|Error resolved = resolveBulkCandidates(taskIds, parentWorkflowId, activityName);
     if resolved is Error {

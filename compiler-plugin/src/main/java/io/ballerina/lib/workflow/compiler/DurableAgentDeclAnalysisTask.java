@@ -739,6 +739,9 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 continue;
             }
             String key = mappingKeyName(sf);
+            if (key == null) {
+                continue;
+            }
             boolean nil = sf.valueExpr().isPresent() && sf.valueExpr().get().kind() == SyntaxKind.NIL_LITERAL;
             // `roles` is the pre-unification spelling the deprecated array form still carries.
             audience |= ((USER_ROLES_FIELD.equals(key) || USERS_FIELD.equals(key)) && !nil)

@@ -2810,7 +2810,8 @@ public final class WorkflowWorkerNative {
                         timeoutMillis = millis instanceof Number n ? n.longValue() : null;
                         deadlineAt = timeoutMillis == null ? null : Workflow.currentTimeMillis() + timeoutMillis;
                         Map<String, Object> memo = new HashMap<>();
-                        memo.put(TaskKeys.TIMEOUT_MILLIS, timeoutMillis == null ? Long.valueOf(0L) : timeoutMillis);
+                        // A null value removes the key: absent means "wait indefinitely", as at creation.
+                        memo.put(TaskKeys.TIMEOUT_MILLIS, timeoutMillis);
                         try {
                             Workflow.upsertMemo(memo);
                         } catch (Exception e) {

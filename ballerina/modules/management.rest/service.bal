@@ -760,12 +760,15 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
     resource isolated function get human\-tasks/pending\-count(
             http:RequestContext ctx,
             string? taskQueue = (), boolean all = false) returns http:Response {
-        // The caller-independent total is a management view: only the workflow manage scope may ask.
-        if all && callerIdentityOf(ctx).scopes.indexOf(scopeWorkflowManage) is () {
+        // The caller-independent total is a management view. Under scope enforcement it needs a manage
+        // scope of either class; deployments without scopes keep the route as it was.
+        string[] scopes = callerIdentityOf(ctx).scopes;
+        if all && enforceScopes && scopes.indexOf(scopeHumanTaskManage) is ()
+                && scopes.indexOf(scopeWorkflowManage) is () {
             http:Response denied = new;
             denied.statusCode = http:STATUS_FORBIDDEN;
-            denied.setJsonPayload(errorBody("Counting every pending task requires the '" + scopeWorkflowManage
-                    + "' scope"));
+            denied.setJsonPayload(errorBody("Counting every pending task requires the '" + scopeHumanTaskManage
+                    + "' or '" + scopeWorkflowManage + "' scope"));
             return denied;
         }
         return executeToResponse(management:COUNT_PENDING_HUMAN_TASKS, {taskQueue: taskQueue, all: all}, ctx);

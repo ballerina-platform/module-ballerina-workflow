@@ -335,7 +335,7 @@ public isolated function executeCommand(Command command) returns json|Error {
                     audience[key] = params[key];
                 }
             }
-            return opReassignTask(taskId, audience, callerRoles, userId);
+            return opReassignTask(taskId, audience, callerRoles, userId, identitySource);
         }
         EXTEND_TASK_DEADLINE => {
             string|Error taskId = requiredParam(params, "taskId");
@@ -343,7 +343,7 @@ public isolated function executeCommand(Command command) returns json|Error {
                 return taskId;
             }
             json millis = params["timeoutMillis"];
-            return opExtendTaskDeadline(taskId, millis is int ? millis : (), callerRoles, userId);
+            return opExtendTaskDeadline(taskId, millis is int ? millis : (), callerRoles, userId, identitySource);
         }
         LIST_REVIEW_ACTIVITIES => {
             return opListReviewActivities(strParam(params, "status"),

@@ -81,7 +81,7 @@ public record TaskRecord(String kind, String taskId, String taskName, String par
         memo.put(TaskKeys.USER_ROLES, userRoles);
         putIfAny(memo, TaskKeys.USERS, users);
         putIfAny(memo, TaskKeys.EXCLUDED_USERS, excludedUsers);
-            putIfAny(memo, TaskKeys.EXCLUDED_ROLES, excludedRoles);
+        putIfAny(memo, TaskKeys.EXCLUDED_ROLES, excludedRoles);
         putIfAny(memo, TaskKeys.ADMINISTRATOR_ROLES, administratorRoles);
         putIfAny(memo, TaskKeys.ADMINISTRATOR_USERS, administratorUsers);
         memo.put(TaskKeys.TASK_INPUT, taskInput);

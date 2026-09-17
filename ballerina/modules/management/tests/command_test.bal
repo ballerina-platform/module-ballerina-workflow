@@ -441,6 +441,12 @@ function testUndeclaredRolesAreOpenByDefault() {
 }
 
 @test:Config {groups: ["unit"]}
+function testANonPositiveDeadlineIsRefusedBeforeAnyRuntimeCall() {
+    test:assertTrue(extendTaskDeadline("humantask-x", 0, ["ops"], "carol") is InvalidRequestError);
+    test:assertTrue(extendTaskDeadline("humantask-x", -5, ["ops"], "carol") is InvalidRequestError);
+}
+
+@test:Config {groups: ["unit"]}
 function testExclusionsGateAnOtherwiseOpenReview() {
     // A review naming nobody but excluding someone is not open to the excluded caller, even though
     // the audience rule alone would admit anyone; an administrator still sees it.

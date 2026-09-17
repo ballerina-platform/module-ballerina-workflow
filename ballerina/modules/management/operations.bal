@@ -465,10 +465,31 @@ isolated function opFailHumanTask(string taskId, json? reason, map<json>? detail
 // Both acts go to the runtime, which admits only an administrator of the task and records the act
 // in the task's history.
 
+// A task id names a task of one kind. An administration route under one resource must not act on
+// the other's tasks, so each route states the kind it serves and the id is checked against it —
+// the same guard the read paths carry (ballerina-library#8894).
+isolated function checkTaskKind(string taskId, string? expectedKind) returns Error? {
+    if expectedKind == "HUMAN_TASK" {
+        HumanTaskInfo|error info = getHumanTaskInfo(taskId);
+        if info is error {
+            return notFoundOrExecutionError(info, "Human task not found: " + taskId);
+        }
+    } else if expectedKind == "REVIEW_ACTIVITY" {
+        ReviewActivityInfo|error info = getReviewActivityInfo(taskId);
+        if info is error {
+            return notFoundOrExecutionError(info, "Review activity not found: " + taskId);
+        }
+    }
+}
+
 isolated function opReassignTask(string taskId, map<json> params, [string, string...]? callerRoles,
-        string? userId, IdentitySource identitySource) returns json|Error {
+        string? userId, IdentitySource identitySource, string? expectedKind = ()) returns json|Error {
     if callerRoles is () && userId is () {
         return accessDenied("Unauthorized: caller identity is required");
+    }
+    Error? wrongKind = checkTaskKind(taskId, expectedKind);
+    if wrongKind is Error {
+        return wrongKind;
     }
     TaskAudience|error audience = params.cloneWithType();
     if audience is error {
@@ -486,9 +507,13 @@ isolated function opReassignTask(string taskId, map<json> params, [string, strin
 }
 
 isolated function opExtendTaskDeadline(string taskId, int? timeoutMillis, [string, string...]? callerRoles,
-        string? userId, IdentitySource identitySource) returns json|Error {
+        string? userId, IdentitySource identitySource, string? expectedKind = ()) returns json|Error {
     if callerRoles is () && userId is () {
         return accessDenied("Unauthorized: caller identity is required");
+    }
+    Error? wrongKind = checkTaskKind(taskId, expectedKind);
+    if wrongKind is Error {
+        return wrongKind;
     }
     if timeoutMillis is int && timeoutMillis <= 0 {
         return invalidRequest("timeoutMillis must be positive, or absent to clear the deadline");
@@ -523,6 +548,8 @@ isolated function opListReviewActivities(string? status, string? parentWorkflowI
     ReviewActivitySummary[] filtered = [];
     foreach ReviewActivitySummary t in preFiltered {
         if canAccessReviewActivity(t, callerRoles, userId) {
+            t.canComplete = true;
+            t.canAdminister = administers(t, callerRoles, userId);
             filtered.push(t);
         }
     }
@@ -538,6 +565,8 @@ isolated function opGetReviewActivity(string taskId, [string, string...]? caller
     if !canAccessReviewActivity(info, callerRoles, userId) {
         return accessDenied("Unauthorized: caller is not allowed to access this review activity");
     }
+    info.canComplete = true;
+    info.canAdminister = administers(info, callerRoles, userId);
     return info.toJson();
 }
 

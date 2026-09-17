@@ -593,3 +593,17 @@ function manualRetrySameInputWorkflow(workflow:Context ctx, RetryActivityInput i
             retryPolicy = {userRoles: "approver"});
     return result;
 }
+
+# Workflow whose review names administrators as well as an audience, so the
+# eligibility flags and the administration routes can be asserted against it.
+#
+# + ctx - Workflow context
+# + input - Workflow input
+# + return - Result or error
+@workflow:Workflow
+function administeredReviewWorkflow(workflow:Context ctx, RetryActivityInput input) returns string|error {
+    string result = check ctx->callActivity(recoverableByInputActivity,
+            {"mode": "fail"},
+            retryPolicy = {userRoles: "approver", administratorRoles: "ops-lead"});
+    return result;
+}

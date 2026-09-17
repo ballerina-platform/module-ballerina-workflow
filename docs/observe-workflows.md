@@ -137,7 +137,8 @@ The trace's top spans name a parent that is never recorded — the anchor the in
 derives — so a UI shows them as roots. A refused decision joins the run's trace whenever the
 runtime found the task at all: the refusal names the owning run, whether the caller lacked a
 role, the payload was the wrong shape, the task had already closed, or it belongs to another
-integration. Only a task the runtime could not find stands in a trace of its own.
+integration. A call with no run to anchor on — a task the runtime could not find, or a start that
+failed before it was given an instance ID — stays in its caller's own trace instead.
 
 A span the worker opened is lost if that worker stops before the step ends — a run that
 survives a restart shows a `workflow.closed` marker instead of one long `workflow` span,

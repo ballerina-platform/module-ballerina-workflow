@@ -702,6 +702,7 @@ public final class AgentContextNative {
                                                       Workflow.currentTimeMillis() - startedAt, null), span);
             return !woken;
         } catch (io.temporal.worker.NonDeterministicException e) {
+            AgentStepTelemetry.abandon(span, e);
             throw e;
         } catch (io.temporal.failure.TemporalFailure e) {
             AgentStepTelemetry.abandon(span, e);

@@ -2034,10 +2034,13 @@ public final class WorkflowWorkerNative {
                         LOGGER.debug("[JWorkflowAdapter] Signal received: {}", signalName);
                         if (!Workflow.isReplaying() && !isFrameworkSignal(signalName)) {
                             Map<String, String> tags = WorkerSpans.runTags(Workflow.getInfo());
-                            tags.put("workflow.data.name", signalName);
+                            // Signal names are caller-supplied and unvalidated: bound them as the metrics
+                            // path does, so an operation name per name cannot flood the tracing backend.
+                            String dataName = WorkerSpans.dataName(signalName);
+                            tags.put("workflow.data.name", dataName);
                             // Signal handlers run on their own workflow thread, which the engine does not
                             // hand the propagated context to; the run's context was kept at first execution.
-                            WorkerSpans.point("workflow.data_received " + signalName, tags, null,
+                            WorkerSpans.point("workflow.data_received " + dataName, tags, null,
                                     runTraceContext != null ? runTraceContext : TraceContextPropagator.current());
                         }
 

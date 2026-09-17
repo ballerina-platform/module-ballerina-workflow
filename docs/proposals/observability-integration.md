@@ -90,8 +90,9 @@ context to pass. The derived ids are not secret and not meant to be: an instance
 already on every span as a tag.
 
 The anchor span is never emitted, so a tracing UI shows the trace's top spans as roots. A
-span whose instance is not known cannot join a trace: only a decision on a task the runtime
-could not find stands in a trace of its own. Every other refusal carries `parentWorkflowId` and
+span whose instance is not known falls back to its caller's trace: a decision on a task the
+runtime could not find, or a start that failed before it was given an instance ID, is recorded
+under the request that made it rather than alone. Every other refusal carries `parentWorkflowId` and
 `rootWorkflowId` in its error detail, and the decision span reads them from there — the task's
 memo arrives with the description the validation already makes, so it is read before the checks
 rather than after them.

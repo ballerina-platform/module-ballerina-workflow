@@ -1143,25 +1143,25 @@ public final class ManagementNative {
 
             // Decisions must go to the integration serving the task's queue: the reviewer
             // roles and forms are configured there, not here. Reads stay namespace-wide.
+            Map<String, Payload> memoFields = execInfo.getMemo().getFieldsMap();
+            DataConverter dc = client.getOptions().getDataConverter();
+            // Read before every check below, so a refused decision still joins the owning run's trace.
+            String owningRun = decodeMemoString(dc, memoFields, TaskKeys.PARENT_WORKFLOW_ID, null);
+            String owningRoot = decodeMemoString(dc, memoFields, TaskKeys.ROOT_WORKFLOW_ID, null);
+
             String owningQueue = resp.getExecutionConfig().getTaskQueue().getName();
             String localQueue = WorkflowWorkerNative.getTaskQueue();
             if (localQueue == null || localQueue.isBlank()) {
                 // Fail closed: without a configured local queue, ownership cannot be verified.
-                return ErrorCreator.createError(StringUtils.fromString(
+                return TaskMemo.refusal(owningRun, owningRoot,
                         "Unauthorized: the local task queue is not configured; cannot verify that review "
-                                + "activity '" + taskWorkflowId + "' belongs to this integration"));
+                                + "activity '" + taskWorkflowId + "' belongs to this integration");
             }
             if (!localQueue.equals(owningQueue)) {
-                return ErrorCreator.createError(StringUtils.fromString(
+                return TaskMemo.refusal(owningRun, owningRoot,
                         "Unauthorized: review activity '" + taskWorkflowId + "' belongs to task queue '"
-                                + owningQueue + "', which is served by a different integration"));
+                                + owningQueue + "', which is served by a different integration");
             }
-
-            Map<String, Payload> memoFields = execInfo.getMemo().getFieldsMap();
-            DataConverter dc = client.getOptions().getDataConverter();
-            // Read before the status check, so a refused decision still joins the owning run's trace.
-            String owningRun = decodeMemoString(dc, memoFields, TaskKeys.PARENT_WORKFLOW_ID, null);
-            String owningRoot = decodeMemoString(dc, memoFields, TaskKeys.ROOT_WORKFLOW_ID, null);
 
             WorkflowExecutionStatus execStatus = execInfo.getStatus();
             if (execStatus != WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING) {
@@ -1173,9 +1173,9 @@ public final class ManagementNative {
             // workflowKind check
             String workflowKind = decodeMemoString(dc, memoFields, TaskKeys.KIND, null);
             if (!isReviewActivityKind(workflowKind)) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Invalid task: '" + taskWorkflowId + "' is not a review activity workflow (workflowKind=" +
-                                workflowKind + ")"));
+                return TaskMemo.refusal(owningRun, owningRoot,
+                        "Invalid task: '" + taskWorkflowId + "' is not a review activity workflow (workflowKind="
+                                + workflowKind + ")");
             }
 
             TaskAssignment assignment;

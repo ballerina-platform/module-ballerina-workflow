@@ -38,6 +38,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetAddress;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -59,6 +60,8 @@ public final class ClientSpans {
     private static final AtomicLong NEXT_ID = new AtomicLong(1);
     // Bounds the map if a caller ever opens spans it never closes; the module's own wrappers always close.
     private static final int MAX_PENDING = 10000;
+    // How long an open recording may live before it is treated as leaked; a wait-for-result may be long.
+    private static final Duration PENDING_TTL = Duration.ofHours(24);
     private static final String NONE = "none";
     // Resolved once: looking the host up can block on DNS, and every client span closes on a request thread.
     private static final String HOST = hostName();
@@ -76,8 +79,14 @@ public final class ClientSpans {
         }
         try {
             if (PENDING.size() >= MAX_PENDING) {
-                LOGGER.debug("Too many client spans are open; not recording another");
-                return 0;
+                // A caller that panics between begin and end leaks its entry, and a latched-off map would
+                // silence every later span: shed the stale ones first and only then refuse.
+                Instant cutoff = Instant.now().minus(PENDING_TTL);
+                PENDING.values().removeIf(pending -> pending.startedAt().isBefore(cutoff));
+                if (PENDING.size() >= MAX_PENDING) {
+                    LOGGER.debug("Too many client spans are open; not recording another");
+                    return 0;
+                }
             }
             long id = NEXT_ID.getAndIncrement();
             PENDING.put(id, new Pending(Instant.now(), callerContext(env)));
@@ -96,16 +105,21 @@ public final class ClientSpans {
             return;
         }
         try {
-            SpanBuilder builder = TracersStore.getInstance().getTracer(WorkerSpans.SERVICE).spanBuilder(name)
+            SpanBuilder builder = WorkerSpans.tracer().spanBuilder(name)
                     .setSpanKind(SpanKind.CLIENT)
                     .setStartTimestamp(pending.startedAt());
             SpanContext anchor = InstanceTrace.anchorOf(instanceId);
             if (anchor != null) {
                 builder.setParent(Context.root().with(Span.wrap(anchor)));
+            } else if (pending.caller() != null) {
+                // No instance to anchor on — a start that failed before it was given an id, or a task the
+                // runtime could not place: keep the call in the caller's own trace rather than orphan it.
+                builder.setParent(Context.root().with(Span.wrap(pending.caller())));
             } else {
                 builder.setNoParent();
             }
-            if (pending.caller() != null) {
+            if (pending.caller() != null && anchor != null) {
+                // Only when the span sits elsewhere: a call already parented on its caller needs no link back.
                 builder.addLink(pending.caller());
             }
             Span span = builder.startSpan();

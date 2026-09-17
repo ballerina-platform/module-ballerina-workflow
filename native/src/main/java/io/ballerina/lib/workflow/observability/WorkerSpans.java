@@ -28,6 +28,7 @@ import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.TraceFlags;
 import io.opentelemetry.api.trace.TraceState;
+import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
 import io.temporal.workflow.WorkflowInfo;
 import org.slf4j.Logger;
@@ -41,6 +42,7 @@ import java.util.Map;
 public final class WorkerSpans {
 
     public static final String SERVICE = "workflow";
+    private static volatile Tracer tracer;
     // The carried context is a trace and span id, not W3C headers: header injection belongs to the tracer
     // provider's propagators, and not every provider has them.
     static final String INSTANCE_ID = "workflow.instance.id";
@@ -101,7 +103,7 @@ public final class WorkerSpans {
             return null;
         }
         try {
-            SpanBuilder builder = TracersStore.getInstance().getTracer(SERVICE).spanBuilder(operation)
+            SpanBuilder builder = tracer().spanBuilder(operation)
                     .setSpanKind(SpanKind.INTERNAL);
             SpanContext parentContext = parent == null ? null : SpanContext.createFromRemoteParent(
                     parent.getOrDefault(TRACE_ID, ""), parent.getOrDefault(SPAN_ID, ""),
@@ -123,6 +125,22 @@ public final class WorkerSpans {
             LOGGER.debug("Could not start worker span '{}'", operation, e);
             return null;
         }
+    }
+
+    // Resolved once: TracersStore keeps its tracers in an unsynchronized HashMap, and every span open
+    // would otherwise race a concurrent put on it.
+    static Tracer tracer() {
+        Tracer resolved = tracer;
+        if (resolved == null) {
+            resolved = TracersStore.getInstance().getTracer(SERVICE);
+            tracer = resolved;
+        }
+        return resolved;
+    }
+
+    // The bound the metrics path puts on caller-supplied data names, so a span never outgrows it either.
+    public static String dataName(String name) {
+        return WorkflowMetrics.boundedDataName(name);
     }
 
     // A span as the trace context its children carry.

@@ -1056,6 +1056,9 @@ isolated function dispatchPeerAgent(handle ctxHandle, string targetAgent, map<an
     anydata waitArg = args["wait"];
     boolean waitForAnswer = waitArg is boolean ? waitArg : true;
     anydata replyEvent = args["replyEvent"];
+    if replyEvent is string && replyEvent.trim().length() == 0 {
+        return error("replyEvent must name one of this agent's events; it cannot be empty");
+    }
     map<anydata>? replyTo = replyEvent is string
         ? {instanceId: check agentWorkflowId(ctxHandle), eventName: replyEvent} : ();
 

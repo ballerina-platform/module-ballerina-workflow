@@ -1132,6 +1132,19 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "invalid")
+    public void testInvalidDurableAgentGateFields() {
+        // requiresApproval and userRoles are gone from ActivityDecl and ToolDecl alike; each
+        // occurrence names approvalPolicy as its replacement instead of being ignored.
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_gate_fields");
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_163").size(), 3,
+                "Each removed gate field should be flagged. Errors: " + getDiagnosticMessages(diagnosticResult));
+        Assert.assertTrue(getDiagnosticMessages(diagnosticResult).contains("approvalPolicy"),
+                "The replacement should be named. Errors: " + getDiagnosticMessages(diagnosticResult));
+        Assert.assertEquals(diagnosticResult.errorCount(), 3,
+                "Only the removed fields should be flagged. Errors: " + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
     public void testInvalidDurableAgentMapNames() {
         // A computed key in the mapping form has no static name (WORKFLOW_156, for a channel
         // and a human task alike), and a peer written against the 0.9 fields — name, 'wait,

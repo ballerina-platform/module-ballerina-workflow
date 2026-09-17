@@ -750,15 +750,13 @@ public final class AgentContextNative {
             String descriptionStr = description instanceof BString d ? d.getValue()
                     : "Creates the human task '" + name + "' and waits for a person to complete it. "
                             + "Pass any details relevant for the person as fields.";
-            // The model may pass arbitrary payload fields shown to the person, plus two reserved
-            // ones that narrow who may act on this creation: an approval ladder names the next
-            // decider, a resubmission excludes the last one.
+            // The model may pass arbitrary payload fields shown to the person, plus one reserved
+            // field that narrows who may act on this creation — a ladder excludes whoever already
+            // decided. It can never widen the declared audience.
             Map<String, Object> schema = new LinkedHashMap<>();
             schema.put(SCHEMA_TYPE, TYPE_OBJECT);
             schema.put("additionalProperties", Boolean.TRUE);
             Map<String, Object> properties = new LinkedHashMap<>();
-            properties.put(TaskKeys.USERS, namesProperty(
-                    "User ids that may complete this task, in addition to the declared audience"));
             properties.put(TaskKeys.EXCLUDED_USERS, namesProperty(
                     "User ids that may not complete this task, such as someone who already decided"));
             schema.put(SCHEMA_PROPERTIES, properties);
@@ -1344,15 +1342,14 @@ public final class AgentContextNative {
         BMap<BString, Object> supplied = payload instanceof BMap
                 ? (BMap<BString, Object>) payload
                 : ValueCreator.createMapValue();
-        // The reserved assignment keys narrow this creation and never reach the person.
+        // The reserved exclusion key narrows this creation and never reaches the person.
         BMap<BString, Object> payloadMap = ValueCreator.createMapValue();
         for (Map.Entry<BString, Object> entry : supplied.entrySet()) {
-            String key = entry.getKey().getValue();
-            if (!TaskKeys.USERS.equals(key) && !TaskKeys.EXCLUDED_USERS.equals(key)) {
+            if (!TaskKeys.EXCLUDED_USERS.equals(entry.getKey().getValue())) {
                 payloadMap.put(entry.getKey(), entry.getValue());
             }
         }
-        Object users = mergedNames(meta.users(), supplied.get(StringUtils.fromString(TaskKeys.USERS)));
+        Object users = meta.users();
         Object excludedUsers = mergedNames(meta.excludedUsers(),
                 supplied.get(StringUtils.fromString(TaskKeys.EXCLUDED_USERS)));
         // The declared taskInputType gates the agent path too: the model supplies this input,

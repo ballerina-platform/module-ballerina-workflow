@@ -357,14 +357,12 @@ function ladderAgent(handle ctx, AgentOrderInput input) returns error? {
 function testAgentLadderExcludesTheFirstCompleter() returns error? {
     map<anydata> input = {id: "agent-ladder-001", request: "Get ORD-L1 signed off twice"};
     string workflowId = check run(ladderAgent, input);
-    runtime:sleep(2);
 
-    string first = check firstPendingTask(workflowId);
+    string first = check awaitPendingTask(workflowId, ());
     check management:completeHumanTask(first, <ApprovalResult>{approved: true, comment: "first"},
             ["APPROVER"], userId = "alice");
-    runtime:sleep(2);
 
-    string second = check firstPendingTask(workflowId);
+    string second = check awaitPendingTask(workflowId, first);
     test:assertNotEquals(second, first, "a second task is created after the first completes");
     error? sameApprover = management:completeHumanTask(second, <ApprovalResult>{approved: true, comment: "again"},
             ["APPROVER"], userId = "alice");
@@ -376,6 +374,18 @@ function testAgentLadderExcludesTheFirstCompleter() returns error? {
     string? response = getAgentFinalResponse(workflowId);
     test:assertTrue(response is string && response.includes("first by alice"),
             "the model saw who completed the first task, got: " + (response ?: "()"));
+}
+
+// Polls until a pending task other than `except` is visible; scheduling decides when, not a fixed sleep.
+isolated function awaitPendingTask(string workflowId, string? except) returns string|error {
+    foreach int attempt in 0 ..< 20 {
+        runtime:sleep(1);
+        string|error task = firstPendingTask(workflowId);
+        if task is string && task != except {
+            return task;
+        }
+    }
+    return error("no pending human task appeared for " + workflowId);
 }
 
 isolated function firstPendingTask(string workflowId) returns string|error {

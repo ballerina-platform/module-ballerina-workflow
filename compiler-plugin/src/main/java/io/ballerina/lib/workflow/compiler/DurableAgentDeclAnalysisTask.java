@@ -264,7 +264,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 case "systemPrompt" -> systemPromptSource = value.toSourceCode().strip();
                 case "maxIter" -> maxIterSource = value.toSourceCode().strip();
                 case "eventTimeout" -> eventTimeoutSource = value.toSourceCode().strip();
-                case "maxEventWaits" -> maxEventWaitsSource = value.toSourceCode().strip();
+                case "maxEventWaits" -> {
+                    maxEventWaitsSource = value.toSourceCode().strip();
+                    collectQualifiedPrefixes(value, typeRefPrefixes);
+                }
                 case "inputType" -> {
                     inputTypeSource = value.toSourceCode().strip();
                     collectQualifiedPrefixes(value, typeRefPrefixes);

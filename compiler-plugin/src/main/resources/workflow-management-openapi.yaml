@@ -377,6 +377,7 @@ paths:
       operationId: countPendingHumanTasks
       parameters:
         - {name: taskQueue, in: query, schema: {type: string}}
+        - {name: all, in: query, schema: {type: boolean}, description: "Count every pending task, not only the caller's"}
       responses:
         "200":
           description: The count
@@ -702,23 +703,33 @@ components:
       properties:
         workflowId: {type: string}
         runId: {type: string}
-    HumanTaskSummary:
+    TaskSummary:
       type: object
+      description: What every task instance reports in a list, whichever kind it is
       properties:
+        kind: {type: string, enum: [HUMAN_TASK, REVIEW_ACTIVITY]}
         taskId: {type: string}
         taskName: {type: string}
         title: {type: string}
+        description: {type: string}
         namespace: {type: string}
         taskQueue: {type: string}
         parentWorkflowId: {type: string}
         parentWorkflowType: {type: string, nullable: true}
+        stepId: {type: string, nullable: true, description: "The call site that created the task"}
         status: {type: string}
         startTime: {type: string, format: date-time}
         closeTime: {type: string, format: date-time, nullable: true}
+        userRoles: {type: array, items: {type: string}}
+        users: {type: array, items: {type: string}}
+        excludedUsers: {type: array, items: {type: string}}
+        excludedRoles: {type: array, items: {type: string}}
         completedBy: {type: string, nullable: true}
         completedAt: {type: string, format: date-time, nullable: true}
-        userRoles: {type: array, items: {type: string}}
         canComplete: {type: boolean}
+    HumanTaskSummary:
+      allOf:
+        - {$ref: "#/components/schemas/TaskSummary"}
     HumanTaskPage:
       type: object
       properties:
@@ -734,26 +745,17 @@ components:
         - {$ref: "#/components/schemas/HumanTaskSummary"}
         - type: object
           properties:
-            description: {type: string}
-            # A task created by a pre-rename runtime reports this as null: its record
-            # carries the old key and this runtime reads taskInput.
+            createdAt: {type: string, format: date-time}
+            formSchema: {type: string, nullable: true}
             taskInput: {type: object, nullable: true}
-            resultSchema: {type: string, nullable: true}
+            result: {type: object, nullable: true, description: "The value submitted on completion, as JSON"}
     ReviewActivitySummary:
-      type: object
-      properties:
-        taskId: {type: string}
-        taskName: {type: string}
-        namespace: {type: string}
-        taskQueue: {type: string}
-        activityName: {type: string}
-        parentWorkflowId: {type: string}
-        trigger: {type: string, enum: [PRE_RUN, ON_FAILURE]}
-        title: {type: string}
-        status: {type: string}
-        startTime: {type: string, format: date-time}
-        closeTime: {type: string, format: date-time, nullable: true}
-        userRoles: {type: array, items: {type: string}}
+      allOf:
+        - {$ref: "#/components/schemas/TaskSummary"}
+        - type: object
+          properties:
+            activityName: {type: string}
+            trigger: {type: string, enum: [PRE_RUN, ON_FAILURE]}
     ReviewActivityPage:
       type: object
       properties:
@@ -769,10 +771,10 @@ components:
         - {$ref: "#/components/schemas/ReviewActivitySummary"}
         - type: object
           properties:
-            description: {type: string}
-            args: {type: object, description: The activity's proposed named arguments}
-            inputSchema: {type: string, nullable: true}
-            errorMessage: {type: string, nullable: true}
+            createdAt: {type: string, format: date-time}
+            formSchema: {type: string, nullable: true}
+            taskInput: {type: object, nullable: true, description: "The activity's proposed named arguments"}
+            errorMessage: {type: string}
             decision: {type: object, nullable: true, description: "The recorded decision, once made"}
     BulkRetryResult:
       type: object

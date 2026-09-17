@@ -19,6 +19,7 @@
 package io.ballerina.lib.workflow.runtime.nativeimpl;
 
 import io.ballerina.lib.workflow.ModuleUtils;
+import io.ballerina.lib.workflow.TaskKeys;
 import io.ballerina.lib.workflow.runtime.WorkflowRuntime;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
@@ -50,12 +51,9 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -328,10 +326,10 @@ public final class WorkflowNative {
                 if (entry instanceof Map<?, ?> pendingEntry) {
                     BMap<BString, Object> record = ValueCreator.createRecordValue(
                             ModuleUtils.getModule(), "PendingAgentEvent");
-                    record.put(StringUtils.fromString("token"), StringUtils.fromString(
-                            String.valueOf(pendingEntry.get("token"))));
-                    record.put(StringUtils.fromString("eventName"), StringUtils.fromString(
-                            String.valueOf(pendingEntry.get("eventName"))));
+                    record.put(StringUtils.fromString(WorkflowWorkerNative.EVENT_TOKEN_KEY), StringUtils.fromString(
+                            String.valueOf(pendingEntry.get(WorkflowWorkerNative.EVENT_TOKEN_KEY))));
+                    record.put(StringUtils.fromString(WorkflowWorkerNative.EVENT_NAME_KEY), StringUtils.fromString(
+                            String.valueOf(pendingEntry.get(WorkflowWorkerNative.EVENT_NAME_KEY))));
                     result.append(record);
                 }
             }
@@ -516,7 +514,7 @@ public final class WorkflowNative {
 
             String status = (String) info.get("status");
             Object result = info.get("result");
-            String errorMessage = (String) info.get("errorMessage");
+            String errorMessage = (String) info.get(TaskKeys.ERROR_MESSAGE);
 
             if ("FAILED".equals(status) || "CANCELED".equals(status) || "TIMED_OUT".equals(status)) {
                 return ErrorCreator.createError(StringUtils.fromString(ERR_GET_RESULT + errorMessage));
@@ -690,9 +688,9 @@ public final class WorkflowNative {
         }
 
         if (errorMessage != null) {
-            record.put(StringUtils.fromString("errorMessage"), StringUtils.fromString(errorMessage));
+            record.put(StringUtils.fromString(TaskKeys.ERROR_MESSAGE), StringUtils.fromString(errorMessage));
         } else {
-            record.put(StringUtils.fromString("errorMessage"), null);
+            record.put(StringUtils.fromString(TaskKeys.ERROR_MESSAGE), null);
         }
 
         BArray activityInvocations;
@@ -736,7 +734,7 @@ public final class WorkflowNative {
                                               WorkflowExecutionInfo describedInfo) {
         try {
             io.temporal.api.common.v1.Payload kindPayload =
-                    describedInfo.getMemo().getFieldsMap().get("workflowKind");
+                    describedInfo.getMemo().getFieldsMap().get(TaskKeys.KIND);
             if (kindPayload != null && !kindPayload.getData().isEmpty()) {
                 String kind = client.getOptions().getDataConverter()
                         .fromPayload(kindPayload, String.class, String.class);
@@ -940,11 +938,11 @@ public final class WorkflowNative {
                                                                   String errorMessage, int attempt) {
         BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                       "ActivityInvocation");
-        record.put(StringUtils.fromString("activityName"), StringUtils.fromString(activityName));
+        record.put(StringUtils.fromString(TaskKeys.ACTIVITY_NAME), StringUtils.fromString(activityName));
         record.put(StringUtils.fromString("input"), ValueCreator.createArrayValue(new BString[0]));
         record.put(StringUtils.fromString("output"), null);
         record.put(StringUtils.fromString("status"), StringUtils.fromString(status));
-        record.put(StringUtils.fromString("errorMessage"),
+        record.put(StringUtils.fromString(TaskKeys.ERROR_MESSAGE),
                    errorMessage != null ? StringUtils.fromString(errorMessage) : null);
         record.put(StringUtils.fromString("attempt"), (long) attempt);
         return record;
@@ -992,7 +990,7 @@ public final class WorkflowNative {
             // payload against the task's expected result type (ballerina-library#8866).
             BArray callerRolesArray = (callerRoles instanceof BArray ba) ? ba : null;
             Object validation = validateHumanTaskAndRoles(client, taskWorkflowId.getValue(), callerRolesArray,
-                                                          result, false);
+                                                          userId, result, false);
             if (!(validation instanceof TaskMemo memo)) {
                 return validation;
             }
@@ -1001,11 +999,11 @@ public final class WorkflowNative {
             Map<String, Object> payload = new HashMap<>();
             payload.put("result", javaResult);
             // Embed audit fields so executeBuiltinHumanTask can store them in workflow history
-            payload.put("completedBy", userId instanceof BString bs ? bs.getValue() : "unknown");
-            payload.put("completedAt", java.time.Instant.now().toString());
+            payload.put(TaskKeys.COMPLETED_BY, userId instanceof BString bs ? bs.getValue() : "unknown");
+            payload.put(TaskKeys.COMPLETED_AT, java.time.Instant.now().toString());
 
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(taskWorkflowId.getValue(),
-                                                                                   "taskCompletion", payload);
+                    WorkflowWorkerNative.TASK_COMPLETION_SIGNAL_NAME, payload);
             if (!delivered) {
                 return memo.refusal("Failed to complete human task: task '" + taskWorkflowId.getValue() +
                                             "' completed or was no longer running when signal was delivered");
@@ -1043,7 +1041,7 @@ public final class WorkflowNative {
             // Kind/status/role checks only — a rejection carries no result payload to validate.
             BArray callerRolesArray = (callerRoles instanceof BArray ba) ? ba : null;
             Object validation = validateHumanTaskAndRoles(client, taskWorkflowId.getValue(), callerRolesArray,
-                                                          null, true);
+                                                          userId, null, true);
             if (!(validation instanceof TaskMemo memo)) {
                 return validation;
             }
@@ -1054,11 +1052,11 @@ public final class WorkflowNative {
             if (details != null) {
                 payload.put("details", TypesUtil.convertBallerinaToJavaType(details));
             }
-            payload.put("completedBy", userId instanceof BString bs ? bs.getValue() : "unknown");
-            payload.put("completedAt", java.time.Instant.now().toString());
+            payload.put(TaskKeys.COMPLETED_BY, userId instanceof BString bs ? bs.getValue() : "unknown");
+            payload.put(TaskKeys.COMPLETED_AT, java.time.Instant.now().toString());
 
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(taskWorkflowId.getValue(),
-                                                                                   "taskCompletion", payload);
+                    WorkflowWorkerNative.TASK_COMPLETION_SIGNAL_NAME, payload);
             if (!delivered) {
                 return memo.refusal("Failed to fail human task: task '" + taskWorkflowId.getValue() +
                                             "' completed or was no longer running when signal was delivered");
@@ -1086,7 +1084,7 @@ public final class WorkflowNative {
      * was added).  The {@code workflowKind} check is never skipped.
      */
     private static Object validateHumanTaskAndRoles(WorkflowClient client, String taskWorkflowId,
-                                                    BArray callerRolesArray, Object result,
+                                                    BArray callerRolesArray, Object userId, Object result,
                                                     boolean skipPayloadValidation) {
         try {
             DescribeWorkflowExecutionRequest req = DescribeWorkflowExecutionRequest.newBuilder().setNamespace(
@@ -1100,8 +1098,8 @@ public final class WorkflowNative {
             Map<String, io.temporal.api.common.v1.Payload> memoFields = execInfo.getMemo().getFieldsMap();
             io.temporal.common.converter.DataConverter dc = client.getOptions().getDataConverter();
             // Read before the checks below, so a refused decision still joins the owning run's trace.
-            String owningRun = decodeMemoText(dc, memoFields, "parentWorkflowId");
-            String owningRoot = decodeMemoText(dc, memoFields, "rootWorkflowId");
+            String owningRun = decodeMemoText(dc, memoFields, TaskKeys.PARENT_WORKFLOW_ID);
+            String owningRoot = decodeMemoText(dc, memoFields, TaskKeys.ROOT_WORKFLOW_ID);
 
             // Completions must go to the integration serving the task's queue: the user
             // roles and form schemas are configured there, not here. Reads stay
@@ -1131,7 +1129,7 @@ public final class WorkflowNative {
             // 1. workflowKind check — always enforced
             String workflowKind = null;
             try {
-                io.temporal.api.common.v1.Payload kindPl = memoFields.get("workflowKind");
+                io.temporal.api.common.v1.Payload kindPl = memoFields.get(TaskKeys.KIND);
                 if (kindPl != null) {
                     workflowKind = dc.fromPayload(kindPl, String.class, String.class);
                 }
@@ -1155,41 +1153,29 @@ public final class WorkflowNative {
                 }
             }
 
-            // 3. Role intersection — only when callerRoles was supplied
-            Set<String> allowedRoles = new HashSet<>();
+            // 3. Assignment — enforced for any caller who supplied an identity
+            TaskAssignment assignment;
             try {
-                io.temporal.api.common.v1.Payload rolesPl = memoFields.get("userRoles");
-                if (rolesPl != null) {
-                    String[] rolesArr = dc.fromPayload(rolesPl, String[].class, String[].class);
-                    allowedRoles.addAll(Arrays.asList(rolesArr));
-                }
+                assignment = TaskAssignment.fromMemo(dc, memoFields);
             } catch (Exception e) {
-                if (callerRolesArray != null) {
+                if (callerRolesArray != null || userId instanceof BString) {
                     return ErrorCreator.createError(StringUtils.fromString(
                             "Failed to decode task roles for '" + taskWorkflowId + "': " + e.getMessage()));
                 }
-                // Nothing to enforce against, so an unreadable role list only costs the audit entry its roles.
-                LOGGER.debug("Could not decode userRoles from memo for '{}': {}", taskWorkflowId, e.getMessage());
+                LOGGER.debug("Could not decode assignment from memo for '{}': {}", taskWorkflowId, e.getMessage());
+                assignment = new TaskAssignment(List.of(), List.of(), List.of(), List.of());
             }
             // The decision's audit entry names the task, its parent, and who was allowed to decide it.
-            TaskMemo memo = new TaskMemo(decodeMemoText(dc, memoFields, "taskName"),
+            TaskMemo memo = new TaskMemo(decodeMemoText(dc, memoFields, TaskKeys.TASK_NAME),
                                          owningRun, owningRoot,
-                                         allowedRoles.stream().sorted().toList(),
-                                         decodeMemoValue(dc, memoFields, "taskInput"));
-
-            if (callerRolesArray == null || allowedRoles.isEmpty()) {
-                // No caller roles to check, or no roles configured on the task — nothing to enforce.
-                return memo;
+                                         assignment.userRoles().stream().sorted().toList(),
+                                         decodeMemoValue(dc, memoFields, TaskKeys.TASK_INPUT));
+            String denial = assignment.denial(TaskAssignment.roles(callerRolesArray),
+                    userId instanceof BString bs ? bs.getValue() : null, "task '" + taskWorkflowId + "'");
+            if (denial != null) {
+                return memo.refusal(denial);
             }
-
-            for (int i = 0; i < callerRolesArray.size(); i++) {
-                if (allowedRoles.contains(callerRolesArray.get(i).toString())) {
-                    return memo; // at least one matching role — authorized
-                }
-            }
-
-            return memo.refusal("Unauthorized: caller does not have a required role to complete task '"
-                                        + taskWorkflowId + "'. Required one of: " + allowedRoles);
+            return memo;
         } catch (Exception e) {
             return ErrorCreator.createError(
                     StringUtils.fromString("Failed to validate task '" + taskWorkflowId + "': " + e.getMessage()));
@@ -1234,7 +1220,7 @@ public final class WorkflowNative {
                                                     Object result) {
         String qualifiedTaskName;
         try {
-            io.temporal.api.common.v1.Payload namePl = memoFields.get("taskName");
+            io.temporal.api.common.v1.Payload namePl = memoFields.get(TaskKeys.TASK_NAME);
             if (namePl == null) {
                 return null;
             }

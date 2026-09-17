@@ -33,12 +33,6 @@ isolated function plainQuote(string item) returns string {
     return item + " costs $500";
 }
 
-final ai:ToolConfig plainQuoteTool = {
-    name: "plainQuoteTool",
-    description: "Quotes the plain price of an item",
-    caller: plainQuote
-};
-
 final ai:ToolConfig quoteTool = {
     name: "quoteTool",
     description: "Quotes the price of an item",
@@ -55,17 +49,20 @@ isolated class PricingToolKit {
 
 final PricingToolKit pricingToolKit = new;
 
-// Every accepted tool shape: a bare @ai:AgentTool function, ToolDecl wrappers with
-// gating over a function / an ai:ToolConfig, and toolkit / config variable references.
+@workflow:Activity
+isolated function shipItem(string item) returns string {
+    return "shipped " + item;
+}
+
+// The 0.9 gate fields on an activity and a tool: each is refused by name (WORKFLOW_163).
 final workflow:DurableAgent toolsAgent = check new ({
     systemPrompt: {role: "Pricing assistant", instructions: "Answer pricing questions."},
     model: toolsModel,
+    activities: [
+        {activity: shipItem, requiresApproval: true, userRoles: "finance"}
+    ],
     tools: [
         priceLookup,
-        {tool: stockLookup, approvalPolicy: {userRoles: "finance"}},
-        {tool: quoteTool, approvalPolicy: {userRoles: ["finance", "manager"]}},
-        {tool: plainQuoteTool, approvalPolicy: {userRoles: (), users: "alice", excludedRoles: "intern"}},
-        pricingToolKit
-    ],
-    maxEventWaits: 5
+        {tool: stockLookup, requiresApproval: true}
+    ]
 });

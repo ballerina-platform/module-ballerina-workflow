@@ -18,6 +18,7 @@
 
 package io.ballerina.lib.workflow.runtime.nativeimpl;
 
+import io.ballerina.lib.workflow.TaskKeys;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.creators.TypeCreator;
@@ -61,16 +62,16 @@ record TaskMemo(String taskName, String parentWorkflowId, String rootWorkflowId,
         BMap<BString, Object> receipt =
                 ValueCreator.createMapValue(TypeCreator.createMapType(PredefinedTypes.TYPE_ANYDATA));
         if (taskName != null) {
-            receipt.put(StringUtils.fromString("taskName"), StringUtils.fromString(taskName));
+            receipt.put(StringUtils.fromString(TaskKeys.TASK_NAME), StringUtils.fromString(taskName));
         }
         if (parentWorkflowId != null) {
-            receipt.put(StringUtils.fromString("parentWorkflowId"), StringUtils.fromString(parentWorkflowId));
+            receipt.put(StringUtils.fromString(TaskKeys.PARENT_WORKFLOW_ID), StringUtils.fromString(parentWorkflowId));
         }
         if (rootWorkflowId != null) {
             receipt.put(StringUtils.fromString("rootWorkflowId"), StringUtils.fromString(rootWorkflowId));
         }
         if (taskInput != null) {
-            receipt.put(StringUtils.fromString("taskInput"), TypesUtil.convertJavaToBallerinaType(taskInput));
+            receipt.put(StringUtils.fromString(TaskKeys.TASK_INPUT), TypesUtil.convertJavaToBallerinaType(taskInput));
         }
         BArray roles = ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_STRING));
         for (String role : assignedRoles) {

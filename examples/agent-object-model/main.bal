@@ -139,7 +139,7 @@ final workflow:DurableAgent orderAgent = check new ({
     model: orderModel,
     activities: [
         checkInventory,
-        {activity: reserveStock, name: "reserve", requiresApproval: true}
+        {activity: reserveStock, name: "reserve", approvalPolicy: {userRoles: "manager"}}
     ],
     tools: [priceLookup],
     events: {
@@ -163,7 +163,7 @@ isolated client class PlannerModelProvider {
             return {role: ai:ASSISTANT, content: "unexpected single message"};
         }
         foreach ai:ChatMessage message in messages {
-            if message is ai:ChatFunctionMessage && message.name == "askInventory" {
+            if message is ai:ChatFunctionMessage && message.name == "orderAgent" {
                 string? content = message.content;
                 return {
                     role: ai:ASSISTANT,
@@ -173,7 +173,7 @@ isolated client class PlannerModelProvider {
         }
         return {
             role: ai:ASSISTANT,
-            toolCalls: [{name: "askInventory", arguments: {"query": "Are laptops in stock?"}, id: "call-1"}]
+            toolCalls: [{name: "orderAgent", arguments: {"query": "Are laptops in stock?"}, id: "call-1"}]
         };
     }
 
@@ -192,7 +192,7 @@ final workflow:DurableAgent plannerAgent = check new ({
     systemPrompt: {role: "Planner", instructions: "Plan orders by consulting peer agents."},
     model: plannerModel,
     peers: [
-        {agent: orderAgent, name: "askInventory", description: "Asks the inventory agent about stock."}
+        {agent: orderAgent, description: "Asks the inventory agent about stock."}
     ],
     maxIter: 6
 });

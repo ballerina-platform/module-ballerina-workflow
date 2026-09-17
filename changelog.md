@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **Management API task records share one shape.** `HumanTaskSummary`, `WorkItemSummary` and
+  `ReviewActivitySummary` include `TaskSummary`; `HumanTaskInfo` and `ReviewActivityInfo`
+  include `TaskInfo`. Every task now reports `kind`, `description`, `stepId`,
+  `parentWorkflowType`, its full audience (`userRoles`, `users`, `excludedUsers`,
+  `excludedRoles`) and `completedBy`/`completedAt`. On `ReviewActivityInfo`, `taskInput`
+  replaces `activityArgs`, `completedBy`/`completedAt` replace `decidedBy`/`decidedAt`, and
+  `decision` carries the recorded decision; `ReviewDecisionInfo` renames the same two fields.
+- **Task visibility is eligibility.** Listing, counting and reading a task apply the rule the
+  runtime applies on completion — roles or user id, minus exclusions — so a caller sees
+  exactly the tasks it can complete. A caller with no identity sees nothing; a task assigned
+  to users is closed to a caller without a user id.
+
 ### Added
 
 - **Observability integration at the durable-engine wrapper layer**, plugged into the

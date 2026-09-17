@@ -759,8 +759,8 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
 
     resource isolated function get human\-tasks/pending\-count(
             http:RequestContext ctx,
-            string? taskQueue = ()) returns http:Response {
-        return executeToResponse(management:COUNT_PENDING_HUMAN_TASKS, {taskQueue: taskQueue}, ctx);
+            string? taskQueue = (), boolean all = false) returns http:Response {
+        return executeToResponse(management:COUNT_PENDING_HUMAN_TASKS, {taskQueue: taskQueue, all: all}, ctx);
     }
 
     resource isolated function get human\-tasks/[string taskId](

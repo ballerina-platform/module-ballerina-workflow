@@ -148,8 +148,10 @@ public type Command record {|
 // - `GET_HUMAN_TASK` — `taskId` (required).
 // - `COMPLETE_HUMAN_TASK` — `taskId` (required), `result`.
 // - `FAIL_HUMAN_TASK` — `taskId` and `reason` (required), `details`.
-// - `REASSIGN_TASK` — `taskId` (required), any of `userRoles`, `users`, `excludedUsers`, `excludedRoles`.
-// - `EXTEND_TASK_DEADLINE` — `taskId` (required), `timeoutMillis` (absent or null clears the deadline).
+// - `REASSIGN_TASK` — `taskId` (required), any of `userRoles`, `users`, `excludedUsers`, `excludedRoles`,
+//   and `kind` (optional: `HUMAN_TASK` or `REVIEW_ACTIVITY`) to require the id name that kind of task.
+// - `EXTEND_TASK_DEADLINE` — `taskId` (required), `timeoutMillis` (absent or null clears the deadline),
+//   and `kind` (optional: `HUMAN_TASK` or `REVIEW_ACTIVITY`) to require the id name that kind of task.
 // - `LIST_REVIEW_ACTIVITIES` — `status`, `parentWorkflowId`, `taskName`, `limit`,
 //   `pageToken`, the four time bounds, `taskQueue`.
 // - `GET_REVIEW_ACTIVITY` — `taskId` (required).
@@ -335,7 +337,9 @@ public isolated function executeCommand(Command command) returns json|Error {
                     audience[key] = params[key];
                 }
             }
-            return opReassignTask(taskId, audience, callerRoles, userId, identitySource);
+            json kind = params["kind"];
+            return opReassignTask(taskId, audience, callerRoles, userId, identitySource,
+                    kind is string ? kind : ());
         }
         EXTEND_TASK_DEADLINE => {
             string|Error taskId = requiredParam(params, "taskId");
@@ -343,7 +347,9 @@ public isolated function executeCommand(Command command) returns json|Error {
                 return taskId;
             }
             json millis = params["timeoutMillis"];
-            return opExtendTaskDeadline(taskId, millis is int ? millis : (), callerRoles, userId, identitySource);
+            json deadlineKind = params["kind"];
+            return opExtendTaskDeadline(taskId, millis is int ? millis : (), callerRoles, userId,
+                    identitySource, deadlineKind is string ? deadlineKind : ());
         }
         LIST_REVIEW_ACTIVITIES => {
             return opListReviewActivities(strParam(params, "status"),

@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.10.1]
+
+### Added
+
+- `POST /review-activities/{taskId}/reassign` and `POST /review-activities/{taskId}/deadline`,
+  so a review is administered through its own resource. `tasks.reassign` and
+  `tasks.extendDeadline` take an optional `kind` (`HUMAN_TASK` or `REVIEW_ACTIVITY`) to require
+  the id name that kind of task; it defaults to accepting either, so existing callers are
+  unaffected. ([#134](https://github.com/ballerina-platform/module-ballerina-workflow/pull/134))
+
+### Fixed
+
+- A review activity reported `canComplete` and `canAdminister` as `false` to every caller,
+  including the audience that may decide it and the administrators that may administer it.
+  Only the advertised flags were wrong — the decision and administration paths authorized
+  correctly — but `TaskSummary` declares both fields for either kind, so the response
+  contradicted its own schema and a console that renders its controls from them disabled the
+  actions for the very people entitled to take them. `reviewActivities.list` and
+  `reviewActivities.get` now answer both from the same predicate the decision path authorizes
+  with. ([#134](https://github.com/ballerina-platform/module-ballerina-workflow/pull/134))
+- `POST /human-tasks/{taskId}/reassign` and `/deadline` accepted a review activity's task id, so
+  a review could be administered through the human-task resource. Each administration route now
+  serves one kind of task, the guard the read paths have carried since
+  ballerina-library#8894. ([#134](https://github.com/ballerina-platform/module-ballerina-workflow/pull/134))
+
 ## [0.10.0] - 2026-09-18
 
 ### Added

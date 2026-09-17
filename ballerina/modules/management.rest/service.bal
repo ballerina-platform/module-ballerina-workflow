@@ -779,13 +779,14 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             http:RequestContext ctx, @http:Payload map<json> audience) returns http:Response {
         map<json> params = audience.clone();
         params["taskId"] = taskId;
+        params["kind"] = "HUMAN_TASK";
         return executeToResponse(management:REASSIGN_TASK, params, ctx);
     }
 
     resource isolated function post human\-tasks/[string taskId]/deadline(
             http:RequestContext ctx, @http:Payload map<json> body) returns http:Response {
         return executeToResponse(management:EXTEND_TASK_DEADLINE,
-                {taskId: taskId, timeoutMillis: body["timeoutMillis"]}, ctx);
+                {taskId: taskId, timeoutMillis: body["timeoutMillis"], kind: "HUMAN_TASK"}, ctx);
     }
 
     resource isolated function get human\-tasks/[string taskId](
@@ -839,6 +840,20 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
             closeTimeTo: closeTimeTo,
             taskQueue: taskQueue
         }, ctx);
+    }
+
+    resource isolated function post review\-activities/[string taskId]/reassign(
+            http:RequestContext ctx, @http:Payload map<json> audience) returns http:Response {
+        map<json> params = audience.clone();
+        params["taskId"] = taskId;
+        params["kind"] = "REVIEW_ACTIVITY";
+        return executeToResponse(management:REASSIGN_TASK, params, ctx);
+    }
+
+    resource isolated function post review\-activities/[string taskId]/deadline(
+            http:RequestContext ctx, @http:Payload map<json> body) returns http:Response {
+        return executeToResponse(management:EXTEND_TASK_DEADLINE,
+                {taskId: taskId, timeoutMillis: body["timeoutMillis"], kind: "REVIEW_ACTIVITY"}, ctx);
     }
 
     resource isolated function get review\-activities/[string taskId](

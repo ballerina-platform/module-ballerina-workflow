@@ -373,7 +373,7 @@ paths:
   /human-tasks/{taskId}/reassign:
     post:
       tags: [administration]
-      summary: Replace a live task's audience (administrators only)
+      summary: Replace a live human task's audience (administrators only)
       operationId: reassignTask
       parameters:
         - {name: taskId, in: path, required: true, schema: {type: string}}
@@ -394,7 +394,7 @@ paths:
   /human-tasks/{taskId}/deadline:
     post:
       tags: [administration]
-      summary: Move or clear a live task's deadline (administrators only)
+      summary: Move or clear a live human task's deadline (administrators only)
       operationId: extendTaskDeadline
       parameters:
         - {name: taskId, in: path, required: true, schema: {type: string}}
@@ -414,6 +414,51 @@ paths:
               schema: {$ref: "#/components/schemas/TaskAdministration"}
         "403": {description: The caller does not administer the task}
         "404": {description: No such task}
+        default: {$ref: "#/components/responses/Error"}
+  /review-activities/{taskId}/reassign:
+    post:
+      tags: [administration]
+      summary: Replace a live review's audience (administrators only)
+      operationId: reassignReviewActivity
+      parameters:
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/TaskAudience"}
+      responses:
+        "200":
+          description: The act was recorded
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TaskAdministration"}
+        "403": {description: The caller does not administer the review}
+        "404": {description: No such review activity}
+        default: {$ref: "#/components/responses/Error"}
+  /review-activities/{taskId}/deadline:
+    post:
+      tags: [administration]
+      summary: Move or clear a live review's deadline (administrators only)
+      operationId: extendReviewActivityDeadline
+      parameters:
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                timeoutMillis: {type: integer, nullable: true, description: "Milliseconds from now; null clears the deadline"}
+      responses:
+        "200":
+          description: The act was recorded
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TaskAdministration"}
+        "403": {description: The caller does not administer the review}
+        "404": {description: No such review activity}
         default: {$ref: "#/components/responses/Error"}
   /human-tasks/pending-count:
     get:

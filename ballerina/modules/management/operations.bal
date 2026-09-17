@@ -479,6 +479,8 @@ isolated function checkTaskKind(string taskId, string? expectedKind) returns Err
         if info is error {
             return notFoundOrExecutionError(info, "Review activity not found: " + taskId);
         }
+    } else if expectedKind is string {
+        return invalidRequest("kind must be HUMAN_TASK or REVIEW_ACTIVITY");
     }
 }
 

@@ -1103,6 +1103,7 @@ public final class ManagementNative {
             // Embed audit fields so the history scan in getReviewActivityInfo can retrieve them
             javaDecision.put(TaskKeys.DECIDED_BY, userId instanceof BString bs ? bs.getValue() : "unknown");
             javaDecision.put(TaskKeys.COMPLETED_AS, memo.completedAs());
+            javaDecision.put(TaskKeys.CALLER_ROLES, TaskAssignment.roles(callerRolesArray));
             javaDecision.put(TaskKeys.DECIDED_AT, Instant.now().toString());
 
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(taskWorkflowId.getValue(),

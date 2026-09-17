@@ -1004,6 +1004,7 @@ public final class WorkflowNative {
             payload.put(TaskKeys.COMPLETED_BY, userId instanceof BString bs ? bs.getValue() : "unknown");
             payload.put(TaskKeys.COMPLETED_AT, java.time.Instant.now().toString());
             payload.put(TaskKeys.COMPLETED_AS, memo.completedAs());
+            payload.put(TaskKeys.CALLER_ROLES, TaskAssignment.roles(callerRolesArray));
 
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(taskWorkflowId.getValue(),
                     WorkflowWorkerNative.TASK_COMPLETION_SIGNAL_NAME, payload);
@@ -1059,6 +1060,7 @@ public final class WorkflowNative {
             payload.put(TaskKeys.COMPLETED_BY, userId instanceof BString bs ? bs.getValue() : "unknown");
             payload.put(TaskKeys.COMPLETED_AT, java.time.Instant.now().toString());
             payload.put(TaskKeys.COMPLETED_AS, memo.completedAs());
+            payload.put(TaskKeys.CALLER_ROLES, TaskAssignment.roles(callerRolesArray));
 
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(taskWorkflowId.getValue(),
                     WorkflowWorkerNative.TASK_COMPLETION_SIGNAL_NAME, payload);

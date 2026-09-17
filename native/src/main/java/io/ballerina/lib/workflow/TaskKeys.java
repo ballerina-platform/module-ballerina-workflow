@@ -64,6 +64,8 @@ public final class TaskKeys {
     public static final String TIMED_OUT_AT = "timedOutAt";
     public static final String FAILED = "failed";
     public static final String DECIDED_BY = "decidedBy";
+    /** The roles the decider held, so the task re-checks the decision against its live audience. */
+    public static final String CALLER_ROLES = "callerRoles";
     public static final String DECIDED_AT = "decidedAt";
 
     // Human task completion envelope

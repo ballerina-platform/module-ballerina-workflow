@@ -266,6 +266,13 @@ public enum WorkflowDiagnostic {
                     + "time, so a type computed per execution cannot be described — and it is what "
                     + "the input and the result of this task are checked against, which only "
                     + "means something if every execution of the task agrees on it. Name a type",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_163("WORKFLOW_163",
+            "'%s' is no longer a field of '%s': %s. Ignoring it would silently change what the "
+                    + "declaration does, so it is an error rather than a warning",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_164("WORKFLOW_164",
+            "A review definition must name who may decide it: give 'userRoles', 'users', or both",
             DiagnosticSeverity.ERROR);
 
     private final String code;

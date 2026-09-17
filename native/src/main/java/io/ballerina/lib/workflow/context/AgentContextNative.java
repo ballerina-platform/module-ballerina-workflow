@@ -18,6 +18,7 @@
 
 package io.ballerina.lib.workflow.context;
 
+import io.ballerina.lib.workflow.TaskKeys;
 import io.ballerina.lib.workflow.observability.AgentStep;
 import io.ballerina.lib.workflow.observability.AgentStepTelemetry;
 import io.ballerina.lib.workflow.observability.WorkflowMetrics;
@@ -31,7 +32,6 @@ import io.ballerina.runtime.api.types.Parameter;
 import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.utils.JsonUtils;
 import io.ballerina.runtime.api.utils.StringUtils;
-import io.ballerina.runtime.api.values.BArray;
 import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BHandle;
@@ -120,15 +120,37 @@ public final class AgentContextNative {
     private static final String KIND_SLEEP = "sleep";
     private static final String KIND_WORKFLOW_ID = "workflowid";
     private static final String KIND_CURRENT_TIME = "currenttime";
+    private static final String KIND_PEER_AGENT_PREFIX = "peeragent:";
+    private static final String KIND_COLLECT = "collect";
+    private static final String KIND_REPLY_CALLER = "replycaller";
     private static final String SLEEP_TOOL = "sleep";
     private static final String WORKFLOW_ID_TOOL = "getWorkflowId";
     private static final String CURRENT_TIME_TOOL = "getCurrentTime";
+    private static final String COLLECT_PEER_TOOL = "collectPeerResult";
+    private static final String REPLY_TO_CALLER_TOOL = "replyToCaller";
     private static final String EVENT_TOOL_PREFIX = "awaitEvent_";
     private static final String END_CONVERSATION_TOOL = "endConversation";
+    // Argument names of the peer tools.
+    private static final String SCHEMA_TYPE = "type";
+    private static final String SCHEMA_PROPERTIES = "properties";
+    private static final String SCHEMA_REQUIRED = "required";
+    private static final String SCHEMA_DESCRIPTION = "description";
+    private static final String SCHEMA_ITEMS = "items";
+    private static final String TYPE_OBJECT = "object";
+    private static final String TYPE_STRING = "string";
+    private static final String TYPE_BOOLEAN = "boolean";
+    private static final String TYPE_INTEGER = "integer";
+    private static final String TYPE_ARRAY = "array";
+    private static final String RESULT_FIELD = "result";
+    private static final String PEER_QUERY_ARG = "query";
+    private static final String PEER_WAIT_ARG = "wait";
+    private static final String PEER_REPLY_EVENT_ARG = "replyEvent";
+    private static final String COLLECT_ID_ARG = "correlationId";
+    private static final String REPLY_MESSAGE_ARG = "message";
     // Names of built-in tools published by getAgentToolDefs; user registrations must not
     // shadow them, or the model would see duplicate definitions with diverging dispatch.
-    private static final java.util.Set<String> RESERVED_TOOL_NAMES =
-            java.util.Set.of(SLEEP_TOOL, END_CONVERSATION_TOOL, WORKFLOW_ID_TOOL, CURRENT_TIME_TOOL);
+    private static final java.util.Set<String> RESERVED_TOOL_NAMES = java.util.Set.of(SLEEP_TOOL,
+            END_CONVERSATION_TOOL, WORKFLOW_ID_TOOL, CURRENT_TIME_TOOL, COLLECT_PEER_TOOL, REPLY_TO_CALLER_TOOL);
 
     private static BError reservedToolNameError(String name) {
         return ErrorCreator.createError(StringUtils.fromString(
@@ -200,9 +222,8 @@ public final class AgentContextNative {
         private Long eventTimeoutMillis = null;
         private long maxEventWaits = 50;
         private long eventWaitCount = 0;
-        // Approval policy for gated tools (configured via ctx.buildAndRun approval config).
-        private String[] approvalUserRoles = new String[0];
-        private Long approvalTimeoutMillis = null;
+        // The address of the agent that delegated this run and asked to be answered on an event, or null.
+        private Object replyTo = null;
         // The responder of the updateAgent request whose message the agent most recently
         // consumed; completed with the next recorded response (the turn's answer).
         private CompletablePromise<Object> pendingResponder = null;
@@ -273,17 +294,6 @@ public final class AgentContextNative {
             this.sideTurnActive = active;
         }
 
-        /**
-         * Injects a data event into this agent's own signal queues, as if the event had
-         * arrived externally. Used by the asynchronous peer-callback path.
-         *
-         * @param eventName the event channel name
-         * @param data      the payload
-         */
-        public void recordEvent(String eventName, Object data) {
-            signalWrapper.recordSignal(eventName, data);
-        }
-
         public boolean isClosing() {
             return closing;
         }
@@ -304,44 +314,38 @@ public final class AgentContextNative {
      *                     {@code name} may be overridden at registration); {@code null} for other kinds
      * @param bindings     for activity tools, registration-time fixed arguments with client objects already converted
      *                     to {@code "connection:<name>"} markers; {@code null} when absent or for other kinds
-     * @param requiresApproval when {@code true}, a PRE_RUN review activity gates the tool before it runs
-     * @param retryPolicy  the activity tool's failure policy: {@code null} (NoRetry), an AutoRetry {@code BMap}, or
-     *                     a {@code HumanReview} record; {@code null} for non-activity tools
-     * @param reviewRoles  role(s) permitted to decide this tool's approval reviews; empty when the tool declares
-     *                     none, in which case the agent-level approval roles apply
+     * @param approval     the PRE_RUN review that gates each call, or {@code null} when the tool is ungated
+     * @param retryPolicy  the activity tool's failure policy record, or {@code null} for NoRetry and for
+     *                     non-activity tools
      */
     private record ToolMeta(String name, String description, Map<String, Object> schema, String kind,
-                            String activityName, Map<String, Object> bindings, boolean requiresApproval,
-                            Object retryPolicy, String[] reviewRoles) {
+                            String activityName, Map<String, Object> bindings,
+                            WorkflowContextNative.ReviewDeclaration approval, Object retryPolicy) {
         ToolMeta(String name, String description, Map<String, Object> schema, String kind) {
-            this(name, description, schema, kind, null, null, false, null, new String[0]);
+            this(name, description, schema, kind, null, null, null, null);
         }
 
-        ToolMeta(String name, String description, Map<String, Object> schema, String kind,
-                 String activityName, Map<String, Object> bindings) {
-            this(name, description, schema, kind, activityName, bindings, false, null, new String[0]);
+        boolean gated() {
+            return approval != null;
         }
     }
 
-    private record HumanTaskMeta(Object userRoles, String title, String description, BTypedesc resultType,
-                                 Object timeout, BTypedesc taskInputType) { }
+    // A declared human task; the audience fields hold a BString, a BArray of them, or null.
+    private record HumanTaskMeta(Object userRoles, Object users, Object excludedUsers, Object excludedRoles,
+                                 String title, String description, BTypedesc resultType, Object timeout,
+                                 BTypedesc taskInputType) { }
 
-    /**
-     * Parses a per-tool reviewer-roles value (a BString for one role or a BArray of role strings) into a role
-     * array; returns an empty array when the tool declares no roles so the agent-level approval roles apply.
-     */
-    private static String[] parseReviewRoles(Object userRolesArg) {
-        if (userRolesArg instanceof BString role && !role.getValue().isBlank()) {
-            return new String[]{role.getValue()};
+    // The gate a tool declares: an approvalPolicy mapping read as a review declaration, or null for none.
+    private static Object gateOf(Object approvalPolicy, String toolName) {
+        if (approvalPolicy == null) {
+            return null;
         }
-        if (userRolesArg instanceof BArray roleArray) {
-            String[] roles = new String[(int) roleArray.size()];
-            for (int i = 0; i < roles.length; i++) {
-                roles[i] = String.valueOf(roleArray.get(i));
-            }
-            return roles;
+        WorkflowContextNative.ReviewDeclaration gate = WorkflowContextNative.readHumanReview(approvalPolicy);
+        if (gate == null) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "approvalPolicy of tool '" + toolName + "' must name 'userRoles' or 'users'"));
         }
-        return new String[0];
+        return gate;
     }
 
     /**
@@ -380,37 +384,6 @@ public final class AgentContextNative {
     }
 
     /**
-     * Stores the approval policy (roles allowed to decide a review, and an optional decision timeout) used when a
-     * gated tool creates a PRE_RUN review activity.
-     *
-     * @param handle    the agent context handle
-     * @param userRoles a BString or BString[] of roles permitted to decide
-     * @param timeout   a {@code time:Duration} map, or null to wait indefinitely
-     * @return null on success, or a Ballerina error
-     */
-    @SuppressWarnings("unchecked")
-    public static Object setAgentApproval(BHandle handle, Object userRoles, Object timeout) {
-        try {
-            AgentContextInfo info = (AgentContextInfo) handle.getValue();
-            List<String> roles = new ArrayList<>();
-            if (userRoles instanceof BString roleStr) {
-                roles.add(roleStr.getValue());
-            } else if (userRoles instanceof io.ballerina.runtime.api.values.BArray roleArr) {
-                for (int i = 0; i < roleArr.size(); i++) {
-                    roles.add(roleArr.get(i).toString());
-                }
-            }
-            info.approvalUserRoles = roles.toArray(new String[0]);
-            info.approvalTimeoutMillis = timeout instanceof BMap
-                    ? WorkflowContextNative.computeTimeoutMillis((BMap<BString, Object>) timeout) : null;
-            return null;
-        } catch (Exception e) {
-            return ErrorCreator.createError(StringUtils.fromString(
-                    "Failed to configure agent approval: " + e.getMessage()));
-        }
-    }
-
-    /**
      * Backs {@code awaitAgentToolReview}: starts a PRE_RUN review activity for a gated tool and blocks until a human
      * decides. Runs inside the agent workflow, so it is replay-safe. Returns the decision as a JSON string
      * ({@code {"action": "...", "input"?: {...}, "feedback"?: "..."}}).
@@ -428,7 +401,7 @@ public final class AgentContextNative {
             // For an activity tool, review under the underlying activity's qualified name so the
             // reviewer/inbox sees the real activity; other tools review under the tool name.
             String activityName = name;
-            String[] reviewRoles = info.approvalUserRoles;
+            WorkflowContextNative.ReviewDeclaration gate = null;
             for (ToolMeta tool : info.tools) {
                 if (!tool.name().equals(name)) {
                     continue;
@@ -436,12 +409,12 @@ public final class AgentContextNative {
                 if (KIND_ACTIVITY.equals(tool.kind()) && tool.activityName() != null) {
                     activityName = tool.activityName();
                 }
-                // Declared per-tool roles (activities and AI tools alike) override the
-                // agent-level approval roles.
-                if (tool.reviewRoles().length > 0) {
-                    reviewRoles = tool.reviewRoles();
-                }
+                gate = tool.approval();
                 break;
+            }
+            if (gate == null) {
+                return ErrorCreator.createError(StringUtils.fromString(
+                        "Tool '" + name + "' declares no approvalPolicy, so no review can be raised for it"));
             }
             String workflowType = Workflow.getInfo().getWorkflowType();
             String reviewTaskName = ActivityNaming.reviewTaskNameFor(workflowType, activityName);
@@ -462,9 +435,8 @@ public final class AgentContextNative {
                 // (as callActivityTool uses), which differs from the underlying activity when a
                 // registration-time override renames it. The review task name and activity type
                 // keep the real activity, so the reviewer still sees what would run.
-                decision = WorkflowContextNative.startReviewActivity(
-                        "PRE_RUN", reviewTaskName, activityType, argsMap, "", reviewRoles,
-                        info.approvalTimeoutMillis, AGENT_TOOL_SITE_PREFIX + name);
+                decision = WorkflowContextNative.startReviewActivity(TaskKeys.TRIGGER_PRE_RUN, reviewTaskName,
+                        activityType, argsMap, "", gate, AGENT_TOOL_SITE_PREFIX + name);
             } finally {
                 info.endPark();
             }
@@ -498,7 +470,7 @@ public final class AgentContextNative {
     @SuppressWarnings("unchecked")
     public static Object recordActivityTool(BHandle handle, BFunctionPointer fn, Object nameArg,
                                             Object descriptionArg, Object bindingsArg,
-                                            boolean requiresApproval, Object retryPolicy, Object userRolesArg) {
+                                            Object approvalPolicy, Object retryPolicy) {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             String activityName = fn.getType().getName();
@@ -517,8 +489,8 @@ public final class AgentContextNative {
             }
             Set<String> boundNames = bindings == null ? Set.of() : bindings.keySet();
             Map<String, Object> schema = parameterSchemaOf(fn, boundNames, activityName);
-            // NoAutomaticRetry arrives as nil; AutoRetry and HumanReview are both records,
-            // told apart downstream by `userRoles` (WorkflowContextNative.readHumanReview).
+            // NoRetry arrives as nil; the record shapes are told apart downstream
+            // (WorkflowContextNative.readHumanReview / retriesBeforeReview).
             Object policy = retryPolicy instanceof BMap ? retryPolicy : null;
             if (RESERVED_TOOL_NAMES.contains(toolName)) {
                 return reservedToolNameError(toolName);
@@ -527,8 +499,12 @@ public final class AgentContextNative {
             if (duplicate != null) {
                 return duplicate;
             }
+            Object gate = gateOf(approvalPolicy, toolName);
+            if (gate instanceof BError invalid) {
+                return invalid;
+            }
             info.tools.add(new ToolMeta(toolName, description, schema, KIND_ACTIVITY, activityName, bindings,
-                    requiresApproval, policy, parseReviewRoles(userRolesArg)));
+                    (WorkflowContextNative.ReviewDeclaration) gate, policy));
             return null;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -554,26 +530,34 @@ public final class AgentContextNative {
      * ({@code peeragent:<targetAgent>} or {@code peeragent:<targetAgent>#<callbackChannel>}
      * for asynchronous delegation).
      *
-     * @param handle           the AgentContextInfo handle
-     * @param name             the tool name advertised to the model
-     * @param description      the tool description advertised to the model
-     * @param kindSpec         the encoded peeragent kind
-     * @param requiresApproval whether a PRE_RUN review gates each delegation
+     * @param handle      the AgentContextInfo handle
+     * @param name        the tool name advertised to the model
+     * @param description the tool description advertised to the model
+     * @param kindSpec    the encoded peeragent kind
      * @return null on success, or a BError
      */
-    public static Object recordPeerTool(BHandle handle, BString name, BString description, BString kindSpec,
-                                        boolean requiresApproval) {
+    public static Object recordPeerTool(BHandle handle, BString name, BString description, BString kindSpec) {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             Map<String, Object> schema = new LinkedHashMap<>();
-            schema.put("type", "object");
+            schema.put(SCHEMA_TYPE, TYPE_OBJECT);
             Map<String, Object> properties = new LinkedHashMap<>();
             Map<String, Object> query = new LinkedHashMap<>();
-            query.put("type", "string");
-            query.put("description", "The task or question to delegate to the peer agent");
-            properties.put("query", query);
-            schema.put("properties", properties);
-            schema.put("required", java.util.List.of("query"));
+            query.put(SCHEMA_TYPE, TYPE_STRING);
+            query.put(SCHEMA_DESCRIPTION, "The task or question to delegate to the peer agent");
+            properties.put(PEER_QUERY_ARG, query);
+            Map<String, Object> wait = new LinkedHashMap<>();
+            wait.put(SCHEMA_TYPE, TYPE_BOOLEAN);
+            wait.put(SCHEMA_DESCRIPTION, "Wait for the peer's final answer (default). When false the call returns a "
+                    + "correlation id at once; fetch the answer later with " + COLLECT_PEER_TOOL + ".");
+            properties.put(PEER_WAIT_ARG, wait);
+            Map<String, Object> replyEvent = new LinkedHashMap<>();
+            replyEvent.put(SCHEMA_TYPE, TYPE_STRING);
+            replyEvent.put(SCHEMA_DESCRIPTION, "One of this agent's own events the peer may answer on, instead of "
+                    + "returning its answer here.");
+            properties.put(PEER_REPLY_EVENT_ARG, replyEvent);
+            schema.put(SCHEMA_PROPERTIES, properties);
+            schema.put(SCHEMA_REQUIRED, java.util.List.of(PEER_QUERY_ARG));
             if (RESERVED_TOOL_NAMES.contains(name.getValue())) {
                 return reservedToolNameError(name.getValue());
             }
@@ -581,13 +565,87 @@ public final class AgentContextNative {
             if (duplicate != null) {
                 return duplicate;
             }
-            info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, kindSpec.getValue(),
-                    null, null, requiresApproval, null, new String[0]));
+            info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, kindSpec.getValue()));
             return null;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
                     "Failed to register peer agent tool: " + e.getMessage()));
         }
+    }
+
+    /**
+     * Records one event of a peer as a tool: its schema is the event's request type, and the kind spec
+     * ({@code peerevent:<target>:<event>}) tells the loop where to send the arguments.
+     *
+     * @param handle      the AgentContextInfo handle
+     * @param name        the tool name advertised to the model
+     * @param description the tool description advertised to the model
+     * @param kindSpec    the encoded peerevent kind
+     * @param schemaJson  the request JSON schema
+     * @return null on success, or a BError
+     */
+    public static Object recordPeerEventTool(BHandle handle, BString name, BString description, BString kindSpec,
+                                             BString schemaJson) {
+        try {
+            AgentContextInfo info = (AgentContextInfo) handle.getValue();
+            if (RESERVED_TOOL_NAMES.contains(name.getValue())) {
+                return reservedToolNameError(name.getValue());
+            }
+            BError duplicate = duplicateCapabilityError(info, name.getValue());
+            if (duplicate != null) {
+                return duplicate;
+            }
+            info.tools.add(new ToolMeta(name.getValue(), description.getValue(), parseSchema(schemaJson.getValue()),
+                    kindSpec.getValue()));
+            return null;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to register peer event tool: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Gives an agent started with a reply address a tool to answer its caller; the address stays on the
+     * context for the dispatch.
+     *
+     * @param handle  the AgentContextInfo handle
+     * @param replyTo the caller's address ({@code instanceId}, {@code eventName})
+     * @return null on success, or a BError
+     */
+    public static Object recordReplyToCallerTool(BHandle handle, BMap<BString, Object> replyTo) {
+        try {
+            AgentContextInfo info = (AgentContextInfo) handle.getValue();
+            info.replyTo = replyTo;
+            Map<String, Object> schema = new LinkedHashMap<>();
+            schema.put(SCHEMA_TYPE, TYPE_OBJECT);
+            Map<String, Object> properties = new LinkedHashMap<>();
+            Map<String, Object> message = new LinkedHashMap<>();
+            message.put(SCHEMA_TYPE, TYPE_STRING);
+            message.put(SCHEMA_DESCRIPTION, "The answer to send back to the agent that delegated this task");
+            properties.put(REPLY_MESSAGE_ARG, message);
+            schema.put(SCHEMA_PROPERTIES, properties);
+            schema.put(SCHEMA_REQUIRED, java.util.List.of(REPLY_MESSAGE_ARG));
+            info.tools.add(new ToolMeta(REPLY_TO_CALLER_TOOL,
+                    "Sends an answer to the agent that delegated this task. Use it when your caller asked to be "
+                            + "answered on one of its events rather than through your final response.",
+                    schema, KIND_REPLY_CALLER));
+            return null;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to register the reply tool: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Answers the caller this agent was started for, on the event it named.
+     *
+     * @param handle  the AgentContextInfo handle
+     * @param message the answer
+     * @return an acknowledgement, or a BError
+     */
+    public static Object replyToCaller(BHandle handle, BString message) {
+        AgentContextInfo info = (AgentContextInfo) handle.getValue();
+        return io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative.replyToCaller(info.replyTo, message);
     }
 
     /**
@@ -629,8 +687,7 @@ public final class AgentContextNative {
     }
 
     public static Object recordAiTool(BHandle handle, BFunctionPointer fn, BString name, BString description,
-                                      Object parametersJson, boolean requiresApproval, Object userRolesArg,
-                                      boolean mcpTool) {
+                                      Object parametersJson, Object approvalPolicy, boolean mcpTool) {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             Map<String, Object> schema;
@@ -646,8 +703,12 @@ public final class AgentContextNative {
             if (duplicate != null) {
                 return duplicate;
             }
+            Object gate = gateOf(approvalPolicy, name.getValue());
+            if (gate instanceof BError invalid) {
+                return invalid;
+            }
             info.tools.add(new ToolMeta(name.getValue(), description.getValue(), schema, KIND_AI_TOOL,
-                    null, null, requiresApproval, null, parseReviewRoles(userRolesArg)));
+                    null, null, (WorkflowContextNative.ReviewDeclaration) gate, null));
             WorkflowWorkerNative.putAgentTool(info.workflowType, name.getValue(), fn, mcpTool);
             return null;
         } catch (Exception e) {
@@ -660,9 +721,12 @@ public final class AgentContextNative {
      * Records a human task as an agent tool. When the agent invokes it, {@link #awaitHumanTask} starts the human-task
      * sub-workflow and suspends the agent until completion.
      *
-     * @param handle      the agent context handle
+     * @param handle        the agent context handle
      * @param taskName      the task name (also the tool name advertised to the model)
-     * @param userRoles     role or roles permitted to complete the task
+     * @param userRoles     role or roles permitted to complete the task, or null
+     * @param users         user id(s) permitted to complete it, or null
+     * @param excludedUsers user id(s) that may not, or null
+     * @param excludedRoles role(s) that may not, or null
      * @param resultType    the expected completion result type
      * @param title         optional short title
      * @param description   optional description (also the tool description)
@@ -671,9 +735,10 @@ public final class AgentContextNative {
      *                      or null for the open default
      * @return null on success, or a Ballerina error
      */
-    public static Object recordHumanTaskTool(BHandle handle, BString taskName, Object userRoles,
-                                             BTypedesc resultType, Object title, Object description,
-                                             Object timeout, Object taskInputType) {
+    public static Object recordHumanTaskTool(BHandle handle, BString taskName, Object userRoles, Object users,
+                                             Object excludedUsers, Object excludedRoles, BTypedesc resultType,
+                                             Object title, Object description, Object timeout,
+                                             Object taskInputType) {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             String name = taskName.getValue();
@@ -685,10 +750,18 @@ public final class AgentContextNative {
             String descriptionStr = description instanceof BString d ? d.getValue()
                     : "Creates the human task '" + name + "' and waits for a person to complete it. "
                             + "Pass any details relevant for the person as fields.";
-            // The model may pass arbitrary payload fields shown to the person.
+            // The model may pass arbitrary payload fields shown to the person, plus two reserved
+            // ones that narrow who may act on this creation: an approval ladder names the next
+            // decider, a resubmission excludes the last one.
             Map<String, Object> schema = new LinkedHashMap<>();
-            schema.put("type", "object");
+            schema.put(SCHEMA_TYPE, TYPE_OBJECT);
             schema.put("additionalProperties", Boolean.TRUE);
+            Map<String, Object> properties = new LinkedHashMap<>();
+            properties.put(TaskKeys.USERS, namesProperty(
+                    "User ids that may complete this task, in addition to the declared audience"));
+            properties.put(TaskKeys.EXCLUDED_USERS, namesProperty(
+                    "User ids that may not complete this task, such as someone who already decided"));
+            schema.put(SCHEMA_PROPERTIES, properties);
             if (RESERVED_TOOL_NAMES.contains(name)) {
                 return reservedToolNameError(name);
             }
@@ -697,8 +770,8 @@ public final class AgentContextNative {
                 return duplicate;
             }
             info.tools.add(new ToolMeta(name, descriptionStr, schema, KIND_HUMAN_TASK));
-            info.humanTasks.put(name, new HumanTaskMeta(userRoles, titleStr, descriptionStr, resultType,
-                    timeout instanceof BMap ? timeout : null,
+            info.humanTasks.put(name, new HumanTaskMeta(userRoles, users, excludedUsers, excludedRoles,
+                    titleStr, descriptionStr, resultType, timeout instanceof BMap ? timeout : null,
                     taskInputType instanceof BTypedesc t ? t : null));
             return null;
         } catch (Exception e) {
@@ -718,13 +791,13 @@ public final class AgentContextNative {
         AgentContextInfo info = (AgentContextInfo) handle.getValue();
         List<Object> defs = new ArrayList<>();
         for (ToolMeta tool : info.tools) {
-            defs.add(toolDef(tool.name(), tool.description(), tool.schema(), tool.kind(), tool.requiresApproval()));
+            defs.add(toolDef(tool.name(), tool.description(), tool.schema(), tool.kind(), tool.gated()));
         }
         if (info.eventNames != null) {
             for (String eventName : info.eventNames) {
                 Map<String, Object> schema = new LinkedHashMap<>();
-                schema.put("type", "object");
-                schema.put("properties", new LinkedHashMap<>());
+                schema.put(SCHEMA_TYPE, TYPE_OBJECT);
+                schema.put(SCHEMA_PROPERTIES, new LinkedHashMap<>());
                 defs.add(toolDef(EVENT_TOOL_PREFIX + eventName,
                         "Suspends until the external data event '" + eventName + "' arrives and returns its data. "
                                 + "Use this when you need to wait for '" + eventName + "'.",
@@ -735,30 +808,46 @@ public final class AgentContextNative {
             // Under MULTI_EVENT the loop keeps the conversation open automatically after
             // each answer; ending is an explicit act via this tool (or the event timeout).
             Map<String, Object> schema = new LinkedHashMap<>();
-            schema.put("type", "object");
+            schema.put(SCHEMA_TYPE, TYPE_OBJECT);
             Map<String, Object> properties = new LinkedHashMap<>();
             Map<String, Object> farewell = new LinkedHashMap<>();
-            farewell.put("type", "string");
-            farewell.put("description", "Optional farewell message shown to the user");
+            farewell.put(SCHEMA_TYPE, TYPE_STRING);
+            farewell.put(SCHEMA_DESCRIPTION, "Optional farewell message shown to the user");
             properties.put("farewell", farewell);
-            schema.put("properties", properties);
+            schema.put(SCHEMA_PROPERTIES, properties);
             defs.add(toolDef(END_CONVERSATION_TOOL,
                     "Permanently ends this conversation. Call this ONLY when the user says goodbye or asks to "
                             + "end the conversation.",
                     schema, KIND_END));
         }
+        // An agent with peers can delegate without waiting; this fetches such a result later.
+        if (info.tools.stream().anyMatch(tool -> tool.kind().startsWith(KIND_PEER_AGENT_PREFIX))) {
+            Map<String, Object> collectSchema = new LinkedHashMap<>();
+            collectSchema.put(SCHEMA_TYPE, TYPE_OBJECT);
+            Map<String, Object> collectProperties = new LinkedHashMap<>();
+            Map<String, Object> correlationId = new LinkedHashMap<>();
+            correlationId.put(SCHEMA_TYPE, TYPE_STRING);
+            correlationId.put(SCHEMA_DESCRIPTION, "The correlation id a non-waiting peer delegation returned");
+            collectProperties.put(COLLECT_ID_ARG, correlationId);
+            collectSchema.put(SCHEMA_PROPERTIES, collectProperties);
+            collectSchema.put(SCHEMA_REQUIRED, java.util.List.of(COLLECT_ID_ARG));
+            defs.add(toolDef(COLLECT_PEER_TOOL,
+                    "Returns the final answer of a peer delegation started without waiting, or tells you it is "
+                            + "still running. Call it when you need that answer.",
+                    collectSchema, KIND_COLLECT));
+        }
         // Durable sleep is always available: the timer is a workflow-side operation
         // (never an activity), so the agent survives restarts while sleeping.
         Map<String, Object> sleepSchema = new LinkedHashMap<>();
-        sleepSchema.put("type", "object");
+        sleepSchema.put(SCHEMA_TYPE, TYPE_OBJECT);
         Map<String, Object> sleepProperties = new LinkedHashMap<>();
         Map<String, Object> secondsProperty = new LinkedHashMap<>();
-        secondsProperty.put("type", "integer");
-        secondsProperty.put("description", "How long to sleep, in seconds");
+        secondsProperty.put(SCHEMA_TYPE, TYPE_INTEGER);
+        secondsProperty.put(SCHEMA_DESCRIPTION, "How long to sleep, in seconds");
         secondsProperty.put("minimum", 1);
         sleepProperties.put("seconds", secondsProperty);
-        sleepSchema.put("properties", sleepProperties);
-        sleepSchema.put("required", java.util.List.of("seconds"));
+        sleepSchema.put(SCHEMA_PROPERTIES, sleepProperties);
+        sleepSchema.put(SCHEMA_REQUIRED, java.util.List.of("seconds"));
         defs.add(toolDef(SLEEP_TOOL,
                 "Pauses this agent durably for the given number of seconds. The agent survives worker "
                         + "restarts while sleeping and resumes exactly where it left off; a wake signal "
@@ -767,8 +856,8 @@ public final class AgentContextNative {
         // Workflow-context reads a plain workflow gets from ctx: the agent loop answers these
         // deterministically on the workflow thread, so no activity (and no worker slot) is spent.
         Map<String, Object> emptySchema = new LinkedHashMap<>();
-        emptySchema.put("type", "object");
-        emptySchema.put("properties", new LinkedHashMap<>());
+        emptySchema.put(SCHEMA_TYPE, TYPE_OBJECT);
+        emptySchema.put(SCHEMA_PROPERTIES, new LinkedHashMap<>());
         defs.add(toolDef(WORKFLOW_ID_TOOL,
                 "Returns this run's workflow instance ID - the durable reference identifier of this "
                         + "agent execution. Use it whenever the user or an external system needs a "
@@ -788,15 +877,18 @@ public final class AgentContextNative {
     }
 
     private static Map<String, Object> toolDef(String name, String description, Map<String, Object> schema,
-                                               String kind, boolean requiresApproval) {
+                                               String kind, boolean gated) {
         Map<String, Object> def = new LinkedHashMap<>();
         def.put("name", name);
-        def.put("description", description);
+        def.put(SCHEMA_DESCRIPTION, description);
         def.put("parameters", schema);
         def.put("kind", kind);
-        def.put("requiresApproval", requiresApproval);
+        def.put(TOOL_DEF_GATED, gated);
         return def;
     }
+
+    // Tool-definition field telling the loop a PRE_RUN review gates the call.
+    private static final String TOOL_DEF_GATED = "gated";
 
     /**
      * Returns the agent's workflow type (e.g. {@code workflow-orderAgent}).
@@ -905,7 +997,7 @@ public final class AgentContextNative {
         // environments may not support memo upserts; the in-JVM store remains the fallback.
         try {
             Map<String, Object> memo = new HashMap<>();
-            memo.put("workflowKind", "AGENT");
+            memo.put(TaskKeys.KIND, "AGENT");
             memo.put("agentResponse", response.getValue());
             Workflow.upsertMemo(memo);
         } catch (Exception e) {
@@ -1249,9 +1341,20 @@ public final class AgentContextNative {
             return ErrorCreator.createError(StringUtils.fromString(
                     "Human task '" + taskName.getValue() + "' is not registered on this agent."));
         }
-        BMap<BString, Object> payloadMap = payload instanceof BMap
+        BMap<BString, Object> supplied = payload instanceof BMap
                 ? (BMap<BString, Object>) payload
                 : ValueCreator.createMapValue();
+        // The reserved assignment keys narrow this creation and never reach the person.
+        BMap<BString, Object> payloadMap = ValueCreator.createMapValue();
+        for (Map.Entry<BString, Object> entry : supplied.entrySet()) {
+            String key = entry.getKey().getValue();
+            if (!TaskKeys.USERS.equals(key) && !TaskKeys.EXCLUDED_USERS.equals(key)) {
+                payloadMap.put(entry.getKey(), entry.getValue());
+            }
+        }
+        Object users = mergedNames(meta.users(), supplied.get(StringUtils.fromString(TaskKeys.USERS)));
+        Object excludedUsers = mergedNames(meta.excludedUsers(),
+                supplied.get(StringUtils.fromString(TaskKeys.EXCLUDED_USERS)));
         // The declared taskInputType gates the agent path too: the model supplies this input,
         // so the check the workflow surface runs before creating a task runs here as well.
         // The mismatch goes back as a tool error, which the loop feeds to the model as text —
@@ -1265,7 +1368,8 @@ public final class AgentContextNative {
         long startedAt = Workflow.currentTimeMillis();
         Object result;
         try {
-            result = WorkflowContextNative.awaitHumanTaskExploded(null, taskName, meta.userRoles(), payloadMap,
+            result = WorkflowContextNative.awaitHumanTaskExploded(null, taskName, meta.userRoles(), users,
+                    excludedUsers, meta.excludedRoles(), payloadMap,
                     StringUtils.fromString(meta.title()), StringUtils.fromString(meta.description()),
                     meta.timeout(), meta.resultType(),
                     StringUtils.fromString(AGENT_TASK_SITE_PREFIX + taskName.getValue()));
@@ -1273,10 +1377,61 @@ public final class AgentContextNative {
             info.endPark();
         }
         String workflowType = Workflow.getInfo().getWorkflowType();
-        AgentStepTelemetry.record(AgentStep.taskAwaited(workflowType, taskName.getValue(),
-                humanTaskNameFor(workflowType, taskName.getValue()),
+        String qualifiedName = humanTaskNameFor(workflowType, taskName.getValue());
+        AgentStepTelemetry.record(AgentStep.taskAwaited(workflowType, taskName.getValue(), qualifiedName,
                 Workflow.currentTimeMillis() - startedAt, taskErrorTypeOf(result)));
-        return result;
+        if (result instanceof BError) {
+            return result;
+        }
+        // The model sees who acted, so it can reason about independence on the next task.
+        BMap<BString, Object> envelope = ValueCreator.createMapValue(
+                io.ballerina.runtime.api.creators.TypeCreator.createMapType(
+                        io.ballerina.runtime.api.types.PredefinedTypes.TYPE_ANYDATA));
+        envelope.put(StringUtils.fromString(RESULT_FIELD), result);
+        Map<String, Object> completion = WorkflowContextNative.lastHumanTaskCompletion(qualifiedName);
+        if (completion != null) {
+            envelope.put(StringUtils.fromString(TaskKeys.COMPLETED_BY), asText(completion.get(TaskKeys.COMPLETED_BY)));
+            envelope.put(StringUtils.fromString(TaskKeys.COMPLETED_AT), asText(completion.get(TaskKeys.COMPLETED_AT)));
+        }
+        return envelope;
+    }
+
+    private static Map<String, Object> namesProperty(String description) {
+        Map<String, Object> items = new LinkedHashMap<>();
+        items.put(SCHEMA_TYPE, TYPE_STRING);
+        Map<String, Object> property = new LinkedHashMap<>();
+        property.put(SCHEMA_TYPE, TYPE_ARRAY);
+        property.put(SCHEMA_ITEMS, items);
+        property.put(SCHEMA_DESCRIPTION, description);
+        return property;
+    }
+
+    // The declared names plus the ones this creation supplied, as one string array (or null when neither).
+    private static Object mergedNames(Object declared, Object supplied) {
+        List<String> names = new ArrayList<>();
+        for (Object source : new Object[]{declared, supplied}) {
+            if (source instanceof BString one && !one.getValue().isBlank()) {
+                names.add(one.getValue());
+            } else if (source instanceof io.ballerina.runtime.api.values.BArray many) {
+                for (int i = 0; i < many.size(); i++) {
+                    names.add(String.valueOf(many.get(i)));
+                }
+            }
+        }
+        if (names.isEmpty()) {
+            return null;
+        }
+        io.ballerina.runtime.api.values.BArray merged = ValueCreator.createArrayValue(
+                io.ballerina.runtime.api.creators.TypeCreator.createArrayType(
+                        io.ballerina.runtime.api.types.PredefinedTypes.TYPE_STRING));
+        for (String name : names) {
+            merged.append(StringUtils.fromString(name));
+        }
+        return merged;
+    }
+
+    private static BString asText(Object value) {
+        return value == null ? null : StringUtils.fromString(String.valueOf(value));
     }
 
     // The qualified task name the task child is created under, as awaitHumanTask derives it.
@@ -1465,7 +1620,7 @@ public final class AgentContextNative {
                 // honoured here as it is on a workflow's own callActivity — its roles used to
                 // be dropped on this path, so an agent tool's review was answerable by anyone.
                 Map<String, Object> decision = WorkflowContextNative.startReviewActivity(
-                        "ON_FAILURE", ActivityNaming.reviewTaskNameFor(workflowType, activityName),
+                        TaskKeys.TRIGGER_ON_FAILURE, ActivityNaming.reviewTaskNameFor(workflowType, activityName),
                         fullActivityName, currentArgs, errorMsg, reviewPolicy.userRoles(),
                         reviewPolicy.timeoutMillis(), stepId,
                         reviewPolicy.title(), reviewPolicy.description());
@@ -1477,7 +1632,7 @@ public final class AgentContextNative {
                     currentArgs = (Map<String, Object>) in;
                     continue;
                 }
-                Object feedback = decision.get("feedback");
+                Object feedback = decision.get(TaskKeys.FEEDBACK);
                 String msg = feedback instanceof String fb && !fb.isBlank()
                         ? errorMsg + " (reviewer: " + fb + ")" : errorMsg;
                 return ActivityOutcome.failed(ErrorCreator.createError(StringUtils.fromString(msg)), failure);
@@ -1542,7 +1697,7 @@ public final class AgentContextNative {
             return (Map<String, Object>) map;
         }
         Map<String, Object> fallback = new LinkedHashMap<>();
-        fallback.put("type", "object");
+        fallback.put(SCHEMA_TYPE, TYPE_OBJECT);
         return fallback;
     }
 }

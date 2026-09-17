@@ -48,7 +48,16 @@ type ActivityRetryPolicy record {|
 # is specified. Note that an AI agent may still decide to call the activity
 # again from its own reasoning — this policy only disables engine-driven
 # retries.
+public const NoRetry = ();
+
+# Deprecated alias of `NoRetry`.
+# # Deprecated
+# Use `NoRetry` instead.
+@deprecated
 public const NoAutomaticRetry = ();
+
+# No approval gate: the call runs as soon as it is made.
+public const NoApproval = ();
 
 # Automatic retry configuration. When the activity fails, it is automatically
 # retried according to the configured backoff policy.
@@ -63,6 +72,27 @@ public type AutoRetry record {|
     decimal retryBackoff = 2.0;
     decimal maxRetryDelay?;
 |};
+
+# Automatic retries first; when they are spent, a person decides. Carries both an
+# `AutoRetry` and a review's audience, so the review is raised only after the last
+# automatic attempt fails. `maxRetries` is required here and forbidden on
+# `ReviewTaskDefinition`, so a literal of either shape needs no cast.
+#
+# + maxRetries - Automatic attempts before the review is raised
+public type RetryBeforeReview record {
+    *AutoRetry;
+    *ReviewTaskFields;
+    int maxRetries;
+};
+
+# Failure behaviour of an activity call: fail at once (`NoRetry`), retry with backoff
+# (`AutoRetry`), raise a review (`ReviewTaskDefinition`), or retry then review
+# (`RetryBeforeReview`).
+public type RetryPolicy AutoRetry|ReviewTaskDefinition|RetryBeforeReview|NoRetry;
+
+# Whether a person must approve a call before it runs, and who. `NoApproval` runs the
+# call directly; a `ReviewTaskDefinition` raises a `PRE_RUN` review first.
+public type ApprovalPolicy ReviewTaskDefinition|NoApproval;
 
 # Information about a registered workflow process.
 #
@@ -131,6 +161,90 @@ public type HumanTaskFailedError distinct error;
 # task could not produce a result at all (`HumanTaskFailedError`).
 public type HumanTaskError HumanTaskTimeoutError|HumanTaskRejectedError|HumanTaskFailedError;
 
+# Who acted on a human task this workflow created, as recorded when the task closed.
+#
+# + taskId - Child workflow ID of the task instance
+# + taskName - The qualified task name
+# + completedBy - The user who completed or rejected it, when the completion recorded one
+# + completedAt - ISO-8601 instant of the decision, when recorded
+# + identitySource - Where that identity came from, when recorded
+public type HumanTaskCompletion record {|
+    string taskId;
+    string taskName;
+    string? completedBy = ();
+    string? completedAt = ();
+    string? identitySource = ();
+|};
+
+// ---------------------------------------------------------------------------
+// Review task types
+// ---------------------------------------------------------------------------
+
+# Detail fields carried by a `ReviewTimeoutError`.
+#
+# + taskName - The review's qualified task name
+# + taskWorkflowId - Child workflow ID of the review instance
+# + activityName - The activity under review
+# + trigger - `PRE_RUN` for an approval gate, `ON_FAILURE` for a failed activity
+# + timedOutAfter - Configured deadline as an ISO-8601 duration
+# + timedOutAt - ISO-8601 timestamp at which the timeout was recorded
+public type ReviewTimeoutDetail record {|
+    string taskName;
+    string taskWorkflowId;
+    string activityName;
+    string trigger;
+    string timedOutAfter;
+    string timedOutAt;
+|};
+
+# Returned when a review's deadline passes before a person decides. For a failed activity the
+# original failure is the error's cause.
+public type ReviewTimeoutError distinct error<ReviewTimeoutDetail>;
+
+# Detail fields carried by a `ReviewRejectedError`.
+#
+# + taskName - The review's qualified task name
+# + taskWorkflowId - Child workflow ID of the review instance
+# + activityName - The activity under review
+# + trigger - `PRE_RUN` for an approval gate, `ON_FAILURE` for a failed activity
+# + feedback - The reviewer's note, when one was given
+# + rejectedBy - The user who rejected it, when recorded
+public type ReviewRejectedDetail record {|
+    string taskName;
+    string taskWorkflowId;
+    string activityName;
+    string trigger;
+    string? feedback = ();
+    string? rejectedBy = ();
+|};
+
+# Returned when a person rejects a review: a gated call is skipped, or a failed activity's
+# failure stands. For a failed activity the original failure is the error's cause.
+public type ReviewRejectedError distinct error<ReviewRejectedDetail>;
+
+# Returned when a review ended without a usable decision — terminated, or its child failed.
+public type ReviewFailedError distinct error;
+
+# Every failure a review can report.
+public type ReviewTaskError ReviewTimeoutError|ReviewRejectedError|ReviewFailedError;
+
+# The decision a review reached, as this workflow saw it.
+#
+# + taskId - Child workflow ID of the review instance
+# + taskName - The review's qualified task name
+# + action - `proceed`, `proceed-with-input` or `reject`
+# + feedback - The reviewer's note, when one was given
+# + decidedBy - The user who decided, when recorded
+# + decidedAt - ISO-8601 instant of the decision, when recorded
+public type ReviewDecisionRecord record {|
+    string taskId;
+    string taskName;
+    string action;
+    string? feedback = ();
+    string? decidedBy = ();
+    string? decidedAt = ();
+|};
+
 # A data-event turn a durable agent has accepted but not yet answered. Returned
 # by `getPendingAgentEvents` so callers can rediscover in-flight event turns
 # after a crash and fetch their answers via `DurableAgent.getDataResult` /
@@ -159,18 +273,35 @@ public type JsonObject map<json>;
 # Who may answer a human decision, and how it reads. Shared by a workflow's human task, a
 # durable agent's task capability, and the review a gated activity raises.
 #
-# This is a review's whole definition. A human task adds the shapes it is checked against —
-# see `HumanTaskDefinition`.
+# At least one of `userRoles` and `users` must name someone. `userRoles` is required so that a
+# plain `AutoRetry` literal is never mistaken for a review; write `userRoles: ()` when the
+# audience is given by `users` alone.
 #
-# + userRoles - Role(s) permitted to answer this decision
+# + userRoles - Role(s) permitted to answer this decision, or `()` when only `users` may
+# + users - User id(s) permitted to answer it, whatever their roles
+# + excludedUsers - User id(s) that may not answer it, whatever their roles
+# + excludedRoles - Role(s) that may not answer it
 # + title - Short summary shown in the inbox. Defaults to the task name
 # + description - Additional context shown with the form or decision
 # + timeout - Maximum time to wait. Omit to wait indefinitely
-public type ReviewTaskDefinition record {
-    string|string[] userRoles;
+type ReviewTaskFields record {
+    string|[string, string...]? userRoles;
+    string|[string, string...] users?;
+    string|[string, string...] excludedUsers?;
+    string|[string, string...] excludedRoles?;
     string? title = ();
     string? description = ();
     Duration? timeout = ();
+};
+
+# A review's whole definition: its audience and wording. A human task adds the shapes it
+# is checked against — see `HumanTaskDefinition`. `maxRetries` is forbidden so a
+# `RetryBeforeReview` literal is never mistaken for a plain review.
+#
+# + maxRetries - Never present; retries belong to `RetryBeforeReview`
+public type ReviewTaskDefinition record {
+    *ReviewTaskFields;
+    never maxRetries?;
 };
 
 # A human task: who may answer it and how it reads, plus the shapes it takes and returns.
@@ -194,12 +325,14 @@ public type HumanTaskDefinition record {
 # The step identity (`stepId`) is NOT here: it is workflow mechanics, not invocation
 # behaviour, and stays a function parameter on every context operation.
 #
-# + retryPolicy - Failure behaviour: `NoAutomaticRetry` (fail the workflow),
-#                 `AutoRetry` (durable backoff retries), or a `ReviewTaskDefinition`
-#                 (raise a review on failure so a person decides to rerun, rerun with
-#                 edited input, or fail)
+# + approvalPolicy - Whether a person approves the call before it runs, and who
+# + retryPolicy - Failure behaviour: `NoRetry` (fail the workflow), `AutoRetry`
+#                 (durable backoff retries), a `ReviewTaskDefinition` (raise a review
+#                 on failure so a person decides to rerun, rerun with edited input, or
+#                 fail), or `RetryBeforeReview` (retry, then review)
 public type CallActivityOptions record {
-    AutoRetry|ReviewTaskDefinition|NoAutomaticRetry retryPolicy = NoAutomaticRetry;
+    ApprovalPolicy approvalPolicy = NoApproval;
+    RetryPolicy retryPolicy = NoRetry;
 };
 
 # A time duration, structurally identical to `time:Duration`. Declared in this module so

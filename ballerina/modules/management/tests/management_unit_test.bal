@@ -57,11 +57,47 @@ function testDecodeCursorTokenTaskIdWithTilde() {
     test:assertEquals(cursor[1], taskId, "Full taskId including embedded tilde should round-trip");
 }
 
+// ── eligible ──────────────────────────────────────────────────────────────────
+
+const Assignment ROLE_TASK = {userRoles: ["approver"], users: [], excludedUsers: [], excludedRoles: []};
+const Assignment USERS_TASK = {userRoles: [], users: ["alice"], excludedUsers: [], excludedRoles: []};
+const Assignment LADDER_TASK = {userRoles: ["approver"], users: [], excludedUsers: ["alice"], excludedRoles: ["auditor"]};
+
+@test:Config {groups: ["unit"]}
+function testEligibleByRole() {
+    test:assertTrue(eligible(ROLE_TASK, ["approver"], ()));
+    test:assertFalse(eligible(ROLE_TASK, ["viewer"], "alice"));
+    test:assertFalse(eligible(ROLE_TASK, (), ()), "no identity sees nothing");
+}
+
+@test:Config {groups: ["unit"]}
+function testEligibleByUser() {
+    test:assertTrue(eligible(USERS_TASK, ["viewer"], "alice"));
+    test:assertTrue(eligible(USERS_TASK, (), "alice"));
+    test:assertFalse(eligible(USERS_TASK, ["approver"], ()), "a task assigned to users needs a user id");
+    test:assertFalse(eligible(USERS_TASK, ["approver"], "bob"));
+}
+
+@test:Config {groups: ["unit"]}
+function testEligibleHonoursExclusions() {
+    test:assertFalse(eligible(LADDER_TASK, ["approver"], "alice"), "excluded user");
+    test:assertFalse(eligible(LADDER_TASK, ["approver", "auditor"], "bob"), "excluded role");
+    test:assertFalse(eligible(LADDER_TASK, ["approver"], ()), "exclusions by user need a user id");
+    test:assertTrue(eligible(LADDER_TASK, ["approver"], "bob"));
+}
+
+@test:Config {groups: ["unit"]}
+function testEligibleOpenAudience() {
+    Assignment open = {userRoles: [], users: [], excludedUsers: [], excludedRoles: ["auditor"]};
+    test:assertTrue(eligible(open, [], "bob"));
+    test:assertFalse(eligible(open, ["auditor"], "bob"));
+}
+
 // ── paginateHumanTasks ────────────────────────────────────────────────────────
 
 // Helper creates a minimal HumanTaskSummary for test data.
 function mkHumanTask(string taskId, string startTime) returns HumanTaskSummary =>
-    {taskId, taskName: "review", parentWorkflowId: "parent", parentWorkflowType: (),
+    {kind: "HUMAN_TASK", taskId, taskName: "review", parentWorkflowId: "parent", parentWorkflowType: (),
      status: "PENDING", startTime, closeTime: (), userRoles: ["admin"]};
 
 @test:Config {groups: ["unit"]}
@@ -172,7 +208,7 @@ function testPaginateHumanTasksOldOffsetTokenRestartsFromBeginning() {
 // ── paginateReviewActivities ────────────────────────────────────────────────────────
 
 function mkReviewActivity(string taskId, string startTime) returns ReviewActivitySummary =>
-    {taskId, taskName: "retryOrder", activityName: "processOrder",
+    {kind: "REVIEW_ACTIVITY", taskId, taskName: "retryOrder", activityName: "processOrder",
      parentWorkflowId: "parent", trigger: "ON_FAILURE",
      title: "Review failed activity: processOrder", status: "PENDING", startTime, closeTime: (),
      userRoles: []};
@@ -323,14 +359,14 @@ function testBuildReviewDecisionResponseWithUserId() {
     ReviewDecisionInfo info = buildReviewDecisionResponse("proceed", "bob@example.com");
     test:assertTrue(info.success, "success must be true");
     test:assertEquals(info.decision, "proceed");
-    test:assertEquals(info.decidedBy, "bob@example.com");
-    test:assertFalse(info.decidedAt == "", "decidedAt should be populated");
+    test:assertEquals(info.completedBy, "bob@example.com");
+    test:assertFalse(info.completedAt == "", "completedAt should be populated");
 }
 
 @test:Config {groups: ["unit"]}
 function testBuildReviewDecisionResponseNoUserId() {
     ReviewDecisionInfo info = buildReviewDecisionResponse("reject", ());
-    test:assertEquals(info.decidedBy, "unknown", "missing userId should fall back to 'unknown'");
+    test:assertEquals(info.completedBy, "unknown", "missing userId should fall back to 'unknown'");
     test:assertEquals(info.decision, "reject");
 }
 

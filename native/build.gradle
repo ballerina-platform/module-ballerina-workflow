@@ -56,6 +56,12 @@ dependencies {
     implementation "io.grpc:grpc-netty-shaded:${grpcVersion}"
     implementation "io.grpc:grpc-services:${grpcVersion}"
     implementation "io.grpc:grpc-util:${grpcVersion}"
+
+    testImplementation group: 'org.testng', name: 'testng', version: "${testngVersion}"
+}
+
+test {
+    useTestNG()
 }
 
 def excludePattern = '**/module-info.java'
@@ -70,6 +76,7 @@ checkstyle {
 }
 
 checkstyleMain.dependsOn(":checkstyle:downloadCheckstyleRuleFiles")
+checkstyleTest.dependsOn(":checkstyle:downloadCheckstyleRuleFiles")
 
 spotbugsMain {
     def classLoader = plugins["com.github.spotbugs"].class.classLoader

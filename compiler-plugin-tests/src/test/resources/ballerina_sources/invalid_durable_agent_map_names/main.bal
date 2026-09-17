@@ -24,8 +24,8 @@ final string taskName = "signoff";
 
 // ERROR (WORKFLOW_156 x2): a computed key has no static name, which the registration and
 // the designer rendering need — for a channel and for a human task alike.
-// ERROR (WORKFLOW_152): the async peer's callbackChannel names a channel the agent does
-// not declare, so the peer's reply would be swallowed silently.
+// ERROR (WORKFLOW_163 x3): the peer is written against the 0.9 fields — name, 'wait and
+// callbackChannel — each of which is rejected rather than silently ignored.
 final workflow:DurableAgent computedAgent = check new ({
     systemPrompt: {role: "Assistant", instructions: "Help."},
     model: chatModel,

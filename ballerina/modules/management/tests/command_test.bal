@@ -40,15 +40,15 @@ function testCommandListDefinitionsReturnsPayloadShape() returns error? {
 
 @test:Config {groups: ["unit"]}
 function testCommandCompleteHumanTaskRequiresRoles() {
-    // An empty identity.roles array means the caller holds no roles — the same
-    // denial the REST layer reports when the caller presents none.
+    // No roles and no user id is no identity — the same denial the REST layer reports
+    // when the caller presents neither.
     json|Error result = executeCommand({
         operation: COMPLETE_HUMAN_TASK,
         params: {taskId: "humantask-x", result: {}}
     });
     test:assertTrue(result is AccessDeniedError,
-        "Completing without roles must be an AccessDeniedError");
-    test:assertEquals((<Error>result).message(), "Unauthorized: caller roles are required");
+        "Completing without an identity must be an AccessDeniedError");
+    test:assertEquals((<Error>result).message(), "Unauthorized: caller identity is required");
 }
 
 @test:Config {groups: ["unit"]}
@@ -411,14 +411,17 @@ function testResetAcceptsStringEventId() returns error? {
 // applies, so it is pinned here — including the permissive default, which is easy
 // to mistake for "bulk retry is authorized" when it is not.
 
+function audienceOf(string[] roles) returns Assignment =>
+    {userRoles: roles, users: [], excludedUsers: [], excludedRoles: []};
+
 @test:Config {groups: ["unit"]}
 function testDeclaredRolesGateAccess() {
     // A review that declares roles admits only a caller holding one of them.
-    test:assertTrue(canAccessReviewActivity(["OPS", "APPROVER"], ["APPROVER"]),
+    test:assertTrue(canAccessReviewActivity(audienceOf(["OPS", "APPROVER"]), ["APPROVER"], ()),
         "A caller holding a declared role may decide the review");
-    test:assertFalse(canAccessReviewActivity(["OPS"], ["AUDITOR"]),
+    test:assertFalse(canAccessReviewActivity(audienceOf(["OPS"]), ["AUDITOR"], ()),
         "A caller holding none of the declared roles may not");
-    test:assertFalse(canAccessReviewActivity(["OPS"], ()),
+    test:assertFalse(canAccessReviewActivity(audienceOf(["OPS"]), (), ()),
         "A caller presenting no roles may not decide a role-restricted review");
 }
 
@@ -429,9 +432,9 @@ function testUndeclaredRolesAreOpenByDefault() {
     // legacy `"MANUAL_RETRY"` sentinel, which opts out of role restriction; for those,
     // and with reviewActivityAccessRole left at (), any caller may decide — in bulk or
     // one at a time. That combination is the only open path, and it is opted into.
-    test:assertTrue(canAccessReviewActivity([], ()),
+    test:assertTrue(canAccessReviewActivity(audienceOf([]), (), ()),
         "With no declared roles and no configured role, access is open by default");
-    test:assertTrue(canAccessReviewActivity([], ["ANYTHING"]),
+    test:assertTrue(canAccessReviewActivity(audienceOf([]), ["ANYTHING"], ()),
         "The declared-role check does not restrict a review that declares none");
     test:assertTrue(reviewDecisionRoleError(()) is (),
         "With no reviewActivityAccessRole configured, deciding is not gated on roles");

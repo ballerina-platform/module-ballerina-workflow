@@ -73,7 +73,7 @@ final workflow:DurableAgent orderAgent = check new ({
     model: chatModel,
     tools: [
         lookupOrder,
-        {tool: cancelOrder, requiresApproval: true},
+        {tool: cancelOrder, approvalPolicy: {userRoles: "ops"}},
         plainTool,
         locallyAnnotatedTool
     ]

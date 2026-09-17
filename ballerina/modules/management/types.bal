@@ -87,78 +87,70 @@ public type HumanTaskGroup record {|
     string[] taskIds;
 |};
 
-# Summary of a human task instance for list views.
+# What every task instance reports in a list, whichever kind it is: identity, where it came
+# from, who may act on it, and who did.
 #
+# + kind - `HUMAN_TASK` or `REVIEW_ACTIVITY`
 # + taskId - Child workflow ID of this task instance (a bare UUID; the kind travels in its memo)
-# + taskName - Task type name (the `taskName` passed to `awaitHumanTask`)
+# + taskName - Qualified task name (`workflowDefinition.taskOrActivityName`)
+# + title - Display title given at creation, falling back to the task name when none was set
+# + description - Supporting context shown with the form or decision
 # + parentWorkflowId - Workflow ID of the parent that created this task
 # + parentWorkflowType - Registered workflow type of the parent, or `()` if not available
+# + stepId - The call site that created the task, or `()` when the parent did not name it
 # + status - Current status, mirroring the underlying task workflow:
-#            `PENDING` (awaiting a human) | `COMPLETED` (a human submitted a result) |
+#            `PENDING` (awaiting a human) | `COMPLETED` (a human submitted a result or decision) |
 #            `FAILED` (rejected via the fail operation, or timed out before anyone acted) |
 #            `CANCELED` (retired internally because the parent workflow closed) |
 #            `TERMINATED` (an admin terminated the task workflow)
 # + startTime - ISO-8601 timestamp when the task was created
 # + closeTime - ISO-8601 timestamp when the task ended, or `()` if still pending
-# + completedBy - User ID of whoever completed or rejected it, or `()` while pending. Also
+# + userRoles - Roles permitted to act on this task
+# + users - User ids permitted to act on it, whatever their roles
+# + excludedUsers - User ids that may not act on it
+# + excludedRoles - Roles that may not act on it
+# + completedBy - User ID of whoever completed, rejected or decided it, or `()` while pending. Also
 #                 `()` for tasks decided before the completer was recorded on the row
 # + completedAt - When that decision was recorded, or `()` when unknown
-# + userRoles - Roles permitted to complete this task
-# + canComplete - Whether the requesting caller has a role that permits completion
-public type HumanTaskSummary record {|
+# + canComplete - Whether the requesting caller may act on it
+public type TaskSummary record {|
+    string kind;
     string taskId;
     string taskName;
-    # Display title given at task creation, falling back to the task name when none was set
     string title = "";
+    string description = "";
     # The Temporal namespace the task lives in (the project scope)
     string namespace?;
     # The task queue of the integration serving this task; route mutations there
     string taskQueue?;
     string parentWorkflowId;
-    string? parentWorkflowType;
+    string? parentWorkflowType = ();
+    string? stepId = ();
     string status;
     string startTime;
     string? closeTime;
+    string[] userRoles = [];
+    string[] users = [];
+    string[] excludedUsers = [];
+    string[] excludedRoles = [];
     string? completedBy = ();
     string? completedAt = ();
-    string[] userRoles;
     boolean canComplete = false;
+|};
+
+# Summary of a human task instance for list views.
+public type HumanTaskSummary record {|
+    *TaskSummary;
 |};
 
 # One item of a person's unified work queue: a human task, or a review activity — which is a
 # human task with a fixed decision contract. The kinds stay distinct (each opens its own UX);
 # what they share is the queue and its filters.
 #
-# + kind - `HUMAN_TASK` or `REVIEW_ACTIVITY`
-# + taskId - The instance id of the item (a bare UUID)
-# + taskName - Qualified name (`workflowDefinition.taskOrActivityName`)
-# + title - Display title, falling back to the task name when none was set
 # + trigger - Reviews only: `PRE_RUN` (approval gate) | `ON_FAILURE` (rerun decision)
-# + parentWorkflowId - The workflow instance waiting on this item
-# + parentWorkflowType - The parent's registered workflow type, when known
-# + status - The item's current state; a rejected review completes — its failure travels
-#            to the workflow, never into the review's own status
-# + startTime - ISO-8601 timestamp when the item was created
-# + closeTime - ISO-8601 timestamp when it ended, or `()` while pending
-# + userRoles - Roles permitted to act on this item
-# + canComplete - Whether the requesting caller may act on it
 public type WorkItemSummary record {|
-    string kind;
-    string taskId;
-    string taskName;
-    string title = "";
+    *TaskSummary;
     string? trigger = ();
-    # The Temporal namespace the item lives in (the project scope)
-    string namespace?;
-    # The task queue of the integration serving this item; route mutations there
-    string taskQueue?;
-    string parentWorkflowId;
-    string? parentWorkflowType;
-    string status;
-    string startTime;
-    string? closeTime;
-    string[] userRoles;
-    boolean canComplete = false;
 |};
 
 # One page of the unified work queue.
@@ -172,46 +164,23 @@ public type WorkItemPage record {|
     boolean hasMore;
 |};
 
-# Detailed info about a human task, including memo fields set at task creation.
+# What every task instance reports in detail, on top of its summary.
 #
-# + taskId - Child workflow ID of this task instance
-# + taskName - Task type name
-# + parentWorkflowId - Workflow ID of the parent that created this task
-# + status - Current status, mirroring the underlying task workflow:
-#            `PENDING` (awaiting a human) | `COMPLETED` (a human submitted a result) |
-#            `FAILED` (rejected via the fail operation, or timed out before anyone acted) |
-#            `CANCELED` (retired internally because the parent workflow closed) |
-#            `TERMINATED` (an admin terminated the task workflow)
-# + startTime - ISO-8601 timestamp when the task was created
-# + closeTime - ISO-8601 timestamp when the task ended, or `()` if still pending
-# + title - Display title shown in the task inbox
-# + description - Supporting context for the reviewer
-# + userRoles - Roles permitted to complete this task
-# + taskInput - Read-only context map rendered alongside the form
 # + createdAt - ISO-8601 timestamp stored in memo at task start
 # + formSchema - JSON Schema for the completion form (populated by compiler plugin; `()` until then)
-# + completedBy - User ID of the person who completed the task, or `()` if not yet completed
-# + completedAt - ISO-8601 timestamp when the task was completed, or `()` if pending
-# + result - The value submitted when completing the task, or `()` if not yet completed
-public type HumanTaskInfo record {|
-    # The Temporal namespace the task lives in (the project scope)
-    string namespace?;
-    # The task queue of the integration serving this task; route mutations there
-    string taskQueue?;
-    string taskId;
-    string taskName;
-    string parentWorkflowId;
-    string status;
-    string startTime;
-    string? closeTime;
-    string title;
-    string description;
-    [string, string...] userRoles;
-    map<json>? taskInput;
+public type TaskInfo record {|
+    *TaskSummary;
     string createdAt;
     string? formSchema;
-    string? completedBy;
-    string? completedAt;
+|};
+
+# Detailed info about a human task, including memo fields set at task creation.
+#
+# + taskInput - Read-only context map rendered alongside the form
+# + result - The value submitted when completing the task, or `()` if not yet completed
+public type HumanTaskInfo record {|
+    *TaskInfo;
+    map<json>? taskInput;
     json? result;
 |};
 
@@ -239,88 +208,29 @@ public type ReviewDecision record {|
 
 # Summary of a review activity instance for list views.
 #
-# + taskId - Temporal workflow ID of this review activity (a bare UUID; the kind travels in its memo)
-# + taskName - User-facing task name (qualified with workflow type)
 # + activityName - Fully-qualified name of the reviewed activity (`workflowType.activityName`)
-# + parentWorkflowId - Workflow ID of the parent that triggered this review
 # + trigger - Why the review was created: `PRE_RUN` (approval gate) | `ON_FAILURE` (rerun decision)
-# + title - Display title for task inboxes; indicates whether this reviews a failed
-#           activity (`ON_FAILURE`) or gates a proposed activity call (`PRE_RUN`)
-# + status - Current status, mirroring the underlying task workflow:
-#            `PENDING` (awaiting a decision) | `COMPLETED` (a human decided) |
-#            `FAILED` (the review timed out before a human decided) |
-#            `CANCELED` (retired internally because the parent workflow closed) |
-#            `TERMINATED` (an admin terminated the review workflow)
-# + startTime - ISO-8601 timestamp when the review was created
-# + closeTime - ISO-8601 timestamp when the review ended, or `()` if still pending
-# + userRoles - Roles permitted to review this activity; an empty array means any caller
 public type ReviewActivitySummary record {|
-    string taskId;
-    string taskName;
-    # The Temporal namespace the task lives in (the project scope)
-    string namespace?;
-    # The task queue of the integration serving this task; route mutations there
-    string taskQueue?;
+    *TaskSummary;
     string activityName;
-    string parentWorkflowId;
     string trigger;
-    string title;
-    string status;
-    string startTime;
-    string? closeTime;
-    string[] userRoles;
 |};
 
 # Detailed info about a review activity, including the proposal or failure context.
 #
-# + taskId - Temporal workflow ID of this review activity
-# + taskName - User-facing task name
 # + activityName - Fully-qualified name of the reviewed activity
-# + parentWorkflowId - Workflow ID of the parent that triggered this review
 # + trigger - Why the review was created: `PRE_RUN` (approval gate) | `ON_FAILURE` (rerun decision)
-# + title - Display title for task inboxes; indicates whether this reviews a failed
-#           activity (`ON_FAILURE`) or gates a proposed activity call (`PRE_RUN`)
-# + description - Supporting context for the reviewer, including the failure message for
-#                 `ON_FAILURE` reviews
-# + status - Current status, mirroring the underlying task workflow:
-#            `PENDING` (awaiting a decision) | `COMPLETED` (a human decided) |
-#            `FAILED` (the review timed out before a human decided) |
-#            `CANCELED` (retired internally because the parent workflow closed) |
-#            `TERMINATED` (an admin terminated the review workflow)
-# + startTime - ISO-8601 timestamp when the review was created
-# + closeTime - ISO-8601 timestamp when the review ended, or `()` if still pending
-# + userRoles - Roles permitted to complete this review activity
 # + errorMessage - Error message from the failed activity invocation (empty for a pre-run gate)
-# + activityArgs - Arguments proposed for (or passed to) the activity invocation; use these to
-#                  pre-fill the `formSchema` form
-# + formSchema - JSON Schema describing the `input` accepted by the `proceed-with-input`
-#                decision — one property per data parameter of the reviewed activity —
-#                or `()` when no schema could be derived
-# + createdAt - ISO-8601 timestamp stored in memo at review creation
-# + decidedBy - User ID of the person who submitted the decision, or `()` if pending
-# + decidedAt - ISO-8601 timestamp when the decision was submitted, or `()` if pending
+# + taskInput - Arguments proposed for (or passed to) the activity invocation; use these to
+#               pre-fill the `formSchema` form
+# + decision - The decision recorded, or `()` while pending
 public type ReviewActivityInfo record {|
-    # The Temporal namespace the task lives in (the project scope)
-    string namespace?;
-    # The task queue of the integration serving this task; route mutations there
-    string taskQueue?;
-    string taskId;
-    string taskName;
+    *TaskInfo;
     string activityName;
-    string parentWorkflowId;
     string trigger;
-    string title;
-    string description;
-    string status;
-    string startTime;
-    string? closeTime;
-    [string, string...] userRoles;
     string errorMessage;
-    map<json>? activityArgs;
-    string? formSchema;
-    string createdAt;
-    string? decidedBy;
-    string? decidedAt;
+    map<json>? taskInput;
+    ReviewDecision? decision;
 |};
 
 // ================================================================================
@@ -342,13 +252,13 @@ public type CompletionInfo record {|
 #
 # + success - Always true on the success path
 # + decision - The decision taken: `"proceed"`, `"proceed-with-input"`, or `"reject"`
-# + decidedBy - User ID extracted from the `x-user-id` request header
-# + decidedAt - ISO-8601 timestamp of when the decision was processed
+# + completedBy - User ID extracted from the `x-user-id` request header
+# + completedAt - ISO-8601 timestamp of when the decision was processed
 public type ReviewDecisionInfo record {|
     boolean success;
     string decision;
-    string decidedBy;
-    string decidedAt;
+    string completedBy;
+    string completedAt;
 |};
 
 # What deciding one review activity in bulk needs to know about it: whether it
@@ -360,11 +270,17 @@ public type ReviewDecisionInfo record {|
 #
 # + trigger - `ON_FAILURE` for a failed activity, `PRE_RUN` for a gated call
 # + status - `PENDING` while the review is still open
-# + userRoles - Roles permitted to decide it; empty means unrestricted
+# + userRoles - Roles permitted to decide it; with `users` empty, means unrestricted
+# + users - User ids permitted to decide it
+# + excludedUsers - User ids that may not decide it
+# + excludedRoles - Roles that may not decide it
 type ReviewActivityState record {|
     string trigger;
     string status;
     string[] userRoles;
+    string[] users = [];
+    string[] excludedUsers = [];
+    string[] excludedRoles = [];
 |};
 
 // ================================================================================

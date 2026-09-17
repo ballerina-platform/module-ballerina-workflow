@@ -56,8 +56,8 @@ final workflow:DurableAgent toolsAgent = check new ({
     model: toolsModel,
     tools: [
         priceLookup,
-        {tool: stockLookup, requiresApproval: true, userRoles: "finance"},
-        {tool: quoteTool, requiresApproval: true, userRoles: ["finance", "manager"]},
+        {tool: stockLookup, approvalPolicy: {userRoles: "finance"}},
+        {tool: quoteTool, approvalPolicy: {userRoles: ["finance", "manager"]}},
         pricingToolKit
     ]
 });

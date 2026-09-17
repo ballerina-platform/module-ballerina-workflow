@@ -217,7 +217,7 @@ function testHighValueApprovedWithEmailRetry() returns error? {
     test:assertEquals(reviewTask.parentWorkflowId, wfId);
 
     // Proceed with corrected email via Management API
-    record {|boolean success; string decision; string decidedBy; string decidedAt;|} reviewResp =
+    record {|boolean success; string decision; string completedBy; string completedAt;|} reviewResp =
             check mgmt->post(string `/review-activities/${reviewTask.taskId}/proceed-with-input`, {
                 "input": {
                     "requestId": "REQ-HIGH-001",

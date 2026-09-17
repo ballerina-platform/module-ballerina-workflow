@@ -22,22 +22,19 @@ final workflow:DurableAgent deskAgent = check new ({
     systemPrompt: {role: "Desk", instructions: "Delegate, then summarise."},
     model: deskModel,
     events: {specialistReply: {request: string}},
-    // `wait` is a keyword, so the declaration quotes it; emitted bare it would parse as the
-    // wait action rather than a field.
     peers: [
         {
             agent: specialistAgent,
-            name: "askSpecialist",
-            description: "Asks the specialist and takes the reply on a channel.",
-            'wait: false,
-            callbackChannel: "specialistReply"
+            description: "Asks the specialist and takes the reply on a channel."
         }
     ],
-    // HumanTaskDefinition is open, so these reach the metadata as written. Unquoting and
-    // re-escaping them would double the escapes and break the generated mapping.
+    // HumanTaskDefinition is open, so these reach the metadata as written. `wait` is a
+    // keyword: the declaration quotes it, and emitted bare it would parse as the wait action.
+    // Unquoting and re-escaping the string keys would double the escapes.
     humanTasks: {
         signoff: {
             userRoles: "manager",
+            'wait: "P1D",
             "label\"with\"quotes": "ok",
             "back\\slash": "ok"
         }

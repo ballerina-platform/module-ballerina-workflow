@@ -81,8 +81,8 @@ type AgentFunctionMessage record {|
 // Any message in an agent conversation.
 type AgentChatMessage AgentSystemMessage|AgentUserMessage|AgentAssistantMessage|AgentFunctionMessage;
 
-# Runs the durable agent ReAct loop. Called from `buildAndRun`;
-# not intended to be called directly.
+# Runs the durable agent ReAct loop. Called from the object-model runner once every
+# capability is registered on the context; not intended to be called directly.
 #
 # Conversation history is a workflow-local variable (replay-safe). Tool calls
 # dispatch by kind: activities and AI tools run as durable Temporal activities
@@ -98,19 +98,20 @@ type AgentChatMessage AgentSystemMessage|AgentUserMessage|AgentAssistantMessage|
 #
 # + ctxHandle - The native agent context handle
 # + agentName - The agent's workflow type (keys the registered model provider)
-# + config - The system prompt and reasoning limits
+# + systemPrompt - The agent's identity: role and instructions
+# + maxIter - Reasoning iterations allowed per conversation turn
 # + prompt - The initial user prompt, or "" to wait for the first chat event
 # + toolDefs - The registered tool definitions (with dispatch kinds)
 # + return - An error if the agent fails, otherwise nil
-isolated function runAgentLoop(handle ctxHandle, string agentName, AgentRunConfig config, string prompt,
-        AgentToolDef[] toolDefs) returns error? {
+isolated function runAgentLoop(handle ctxHandle, string agentName, ai:SystemPrompt systemPrompt, int maxIter,
+        string prompt, AgentToolDef[] toolDefs) returns error? {
     map<string> toolKinds = {};
     map<boolean> toolGated = {};
     boolean conversational = false;
     boolean hasChatEvent = false;
     foreach AgentToolDef def in toolDefs {
         toolKinds[def.name] = def.kind;
-        toolGated[def.name] = def.requiresApproval;
+        toolGated[def.name] = def.gated;
         if def.kind == "end" {
             conversational = true; // the endConversation tool is advertised under MULTI_EVENT
         }
@@ -138,8 +139,8 @@ isolated function runAgentLoop(handle ctxHandle, string agentName, AgentRunConfi
 
     // Render the system prompt the same way `ai:Agent` does: role followed by
     // the specific instructions.
-    string role = config.systemPrompt.role.trim();
-    string instructions = config.systemPrompt.instructions;
+    string role = systemPrompt.role.trim();
+    string instructions = systemPrompt.instructions;
     string systemContent = role == "" ? instructions : string `${role} ${instructions}`;
     AgentChatMessage[] history = [<AgentSystemMessage>{content: systemContent}];
     if prompt != "" {
@@ -155,7 +156,7 @@ isolated function runAgentLoop(handle ctxHandle, string agentName, AgentRunConfi
     }
     publishTranscript(ctxHandle, history);
 
-    int maxIterations = int:max(1, config.maxIter);
+    int maxIterations = int:max(1, maxIter);
     while true {
         // One conversation turn: a bounded ReAct loop over LLM + tool calls.
         boolean turnAnswered = false;
@@ -381,6 +382,20 @@ isolated function dispatchAgentTool(handle ctxHandle, string agentName, AgentFun
     } else if kind.startsWith("peeragent:") {
         // Delegates to a peer durable agent running as a true Temporal child workflow.
         result = dispatchPeerAgent(ctxHandle, kind.substring(10), args);
+    } else if kind.startsWith("peerevent:") {
+        // Sends one of the peer's events to its companion instance; a duplex event returns the answer.
+        int split = <int>kind.lastIndexOf(":");
+        result = sendPeerEvent(kind.substring(10, split), kind.substring(split + 1), args);
+    } else if kind == "collect" {
+        anydata correlationId = args["correlationId"];
+        result = correlationId is string ? collectPeerResult(correlationId)
+            : error("collectPeerResult needs the correlation id a delegation returned");
+        if result is AgentBusyError {
+            return "The peer is still working; collect its result later.";
+        }
+    } else if kind == "replycaller" {
+        anydata message = args["message"];
+        result = replyToCaller(ctxHandle, message is string ? message : args.toJson().toJsonString());
     } else {
         return string `Error: unsupported tool kind '${kind}' for tool '${call.name}'`;
     }
@@ -607,100 +622,26 @@ isolated function getAgentModel(string agentName) returns ai:ModelProvider|error
 } external;
 
 // ============================================================================
-// Agent capability registration and run configuration (internal)
+// Agent capability registration (internal)
 //
-// A durable agent's capabilities are registered on its native context handle
-// before the ReAct loop starts. The only production caller is the object-model
-// runner below (`runDurableAgentObject`); there is no user-facing imperative
-// agent API.
+// A durable agent's capabilities are registered on its native context handle by
+// the object-model runner below (`runDurableAgentObject`) before the ReAct loop
+// starts; there is no user-facing imperative agent API.
 // ============================================================================
 
-# Configuration for a durable agent run: the agent's identity (system prompt),
-# its model, and reasoning limits.
-type AgentRunConfig record {|
-    # The system prompt assigned to the agent
-    ai:SystemPrompt systemPrompt;
-
-    # The model provider used for the agent's LLM calls
-    ai:ModelProvider model;
-
-    # The maximum number of LLM reasoning iterations per conversation turn
-    # before the agent fails with an error
-    int maxIter = 16;
-
-    # How the agent consumes its event-channel requests: `SINGLE_EVENT` (each
-    # channel once per run) or `MULTI_EVENT` (re-armable channels for multi-turn
-    # conversations; requires `eventTimeout`)
-    EventCardinality interaction = SINGLE_EVENT;
-
-    # Maximum wait per event. On timeout the model is told the wait timed
-    # out so it can wrap up gracefully. Omit to wait indefinitely
-    Duration? eventTimeout = ();
-
-    # Hard cap on the total number of event waits per run; exceeding it fails
-    # the agent (backstop for open-ended conversations)
-    int maxEventWaits = 50;
-
-    # Approval policy for capabilities registered with `requiresApproval = true`.
-    # When such a capability is about to run, a review activity is created and the
-    # agent suspends durably until a human decides
-    ApprovalConfig approval = {};
-|};
-
-# Approval policy for gated agent capabilities.
-#
-# + userRoles - Role(s) permitted to decide the review. Defaults to `"manager"`
-# + timeout - Maximum time to wait for a decision. On timeout the model is told
-#             the review timed out so it can wrap up. Omit to wait indefinitely
-type ApprovalConfig record {|
-    string|string[] userRoles = "manager";
-    Duration? timeout = ();
-|};
+// Hard cap on event waits per run: the backstop for a conversation that never ends.
+const int MAX_EVENT_WAITS = 50;
 
 // Internal shape of a registered tool: the LLM-facing definition plus the
 // dispatch kind ("activity", "aitool", "humantask", or "event:<name>") and
-// whether the tool is gated (a review activity is created before it runs).
+// whether its approvalPolicy gates it (a review activity is created before it runs).
 type AgentToolDef record {|
     string name;
     string description;
     map<json> parameters?;
     string kind;
-    boolean requiresApproval = false;
+    boolean gated = false;
 |};
-
-# Registers a `@workflow:Activity` function as an agent tool. The tool runs as
-# a durable Temporal activity that the agent may invoke during reasoning.
-#
-# Arguments may be partially applied at registration via `bindings`: bound
-# values are fixed and never advertised to the model — only the remaining
-# data parameters appear in the tool's schema. Client-object parameters
-# (e.g. the `connection` of a built-in activity such as `activity:callRestAPI`)
-# must be bound this way, referencing a module-level `final` client variable.
-#
-# + agentCtx - The native agent context handle
-# + activity - The `@workflow:Activity` function to expose as a tool
-# + name - The tool name advertised to the model. Defaults to the function name
-# + description - The tool description advertised to the model
-# + bindings - Arguments fixed at registration, keyed by parameter name.
-#              Bound client objects are transported as `"connection:<name>"`
-#              markers and resolved on the executing worker
-# + requiresApproval - When `true`, the tool is gated: before the agent runs it,
-#              a review activity is created and the agent suspends durably until
-#              a human proceeds (optionally editing the arguments) or rejects
-# + retryPolicy - Failure behaviour: `NoAutomaticRetry` (report the failure to the model),
-#              `AutoRetry` (durable backoff retries), or a `ReviewTaskDefinition` (create a
-#              review activity on failure so a human decides to rerun or fail)
-# + userRoles - Role(s) permitted to decide this tool's approval reviews. When
-#              absent, the agent-level `ApprovalConfig` roles apply
-# + return - An error if the tool cannot be registered, otherwise nil
-isolated function registerActivity(handle agentCtx, function activity, string? name = (),
-        string? description = (), map<anydata|object {}>? bindings = (),
-        boolean requiresApproval = false,
-        AutoRetry|ReviewTaskDefinition|NoAutomaticRetry retryPolicy = NoAutomaticRetry,
-        string|string[]? userRoles = ()) returns error? {
-    return recordActivityTool(agentCtx, activity, name, description, bindings,
-            requiresApproval, retryPolicy, userRoles);
-}
 
 # Registers an AI tool with the agent. Accepts an `ai:ToolConfig` value, a
 # function annotated with `@ai:AgentTool` (normalized via the ai module's tool
@@ -711,133 +652,34 @@ isolated function registerActivity(handle agentCtx, function activity, string? n
 #
 # + agentCtx - The native agent context handle
 # + tool - The tool to register
-# + requiresApproval - When `true`, a `PRE_RUN` review activity gates every call
-# + userRoles - Role(s) permitted to decide reviews of gated tools; defaults to
-#               the agent-level approval roles when omitted
+# + approvalPolicy - A `ReviewTaskDefinition` gates every call behind a PRE_RUN review
 # + return - An error if the tool cannot be registered (e.g. a function
 #            missing the `@ai:AgentTool` annotation), otherwise nil
 isolated function registerAgentTool(handle agentCtx, ai:BaseToolKit|ai:ToolConfig|ai:FunctionTool tool,
-        boolean requiresApproval = false, string|string[]? userRoles = (), boolean mcpTool = false)
-        returns error? {
+        ApprovalPolicy approvalPolicy = NoApproval, boolean mcpTool = false) returns error? {
     if tool is ai:BaseToolKit {
         // MCP toolkit callers take a single `mcp:CallToolParams` argument, so the
         // execution wrapper must know to wrap the model's arguments accordingly.
         boolean isMcp = tool is ai:McpBaseToolKit;
         foreach ai:ToolConfig config in tool.getTools() {
-            check recordToolConfig(agentCtx, config, requiresApproval, userRoles, isMcp);
+            check recordToolConfig(agentCtx, config, approvalPolicy, isMcp);
         }
     } else if tool is ai:ToolConfig {
-        check recordToolConfig(agentCtx, tool, requiresApproval, userRoles, mcpTool);
+        check recordToolConfig(agentCtx, tool, approvalPolicy, mcpTool);
     } else {
         ai:ToolConfig[] configs = ai:getToolConfigs([tool]);
         if configs.length() == 0 {
             return error("Agent tool functions must be annotated with @ai:AgentTool");
         }
-        check recordToolConfig(agentCtx, configs[0], requiresApproval, userRoles, mcpTool);
+        check recordToolConfig(agentCtx, configs[0], approvalPolicy, mcpTool);
     }
 }
 
-isolated function recordToolConfig(handle agentCtx, ai:ToolConfig config, boolean requiresApproval = false,
-        string|string[]? userRoles = (), boolean mcpTool = false) returns error? {
+isolated function recordToolConfig(handle agentCtx, ai:ToolConfig config,
+        ApprovalPolicy approvalPolicy = NoApproval, boolean mcpTool = false) returns error? {
     map<json>? parameters = config.parameters;
     return recordAiTool(agentCtx, config.caller, config.name, config.description,
-            parameters is () ? () : parameters.toJsonString(), requiresApproval, userRoles, mcpTool);
-}
-
-# Declares a named two-way data-event channel for the agent. `DurableAgent.sendData`
-# sends a request on the channel and blocks until the agent answers the turn
-# that consumed it. Inside the ReAct loop the channel also appears as a durable
-# wait: a channel named `chat` drives the conversation itself.
-#
-# + agentCtx - The native agent context handle
-# + name - The event channel name (e.g. `"chat"`)
-# + requestType - The request payload type: senders (`sendData`) validate each
-#                 payload against it before delivery, and it shapes the channel's
-#                 model-facing wait-tool schema
-# + responseType - The expected response type; when provided, the turn answer
-#                  is validated against it before completing the event turn
-# + return - An error if the channel cannot be registered, otherwise nil
-isolated function registerAgentEvent(handle agentCtx, string name, typedesc<anydata> requestType,
-        typedesc<anydata>? responseType = ()) returns error? {
-    return registerAgentUpdateEvent(agentCtx, name, requestType, responseType);
-}
-
-# Registers a human task as an agent tool: when the agent decides to involve a
-# person, invoking this tool starts a human-task sub-workflow and suspends the
-# agent durably until the task is completed (via `workflow:completeHumanTask`
-# or the management API).
-#
-# + agentCtx - The native agent context handle
-# + taskName - Identifies the task type; must not contain `.` or `|`
-# + userRoles - One or more roles permitted to complete this task
-# + resultType - Expected result type; drives form schema generation and
-#                runtime validation of the completion payload
-# + title - Short summary shown in the inbox. Defaults to `taskName`
-# + description - Additional context shown alongside the form; also used as
-#                 the tool description advertised to the model
-# + timeout - Maximum time to wait for completion. On timeout the model is told
-#             the task timed out so it can react. Omit to wait indefinitely
-# + return - An error if the task cannot be registered, otherwise nil
-isolated function registerHumanTask(handle agentCtx, string taskName, string|string[] userRoles,
-        typedesc<anydata> resultType = anydata, string? title = (), string? description = (),
-        Duration? timeout = (), typedesc<map<json>>? taskInputType = ()) returns error? {
-    return recordHumanTaskTool(agentCtx, taskName, userRoles, resultType, title, description,
-            timeout, taskInputType);
-}
-
-# Registers a peer durable agent as a delegable tool of this agent.
-#
-# + agentCtx - The native agent context handle
-# + name - The tool name advertised to the model
-# + targetAgent - The peer agent's name (its module-level variable name)
-# + description - What the peer does, for the model
-# + waitForReply - `true`: the delegation blocks durably for the peer's result;
-#                  `false`: the peer runs async and replies on `callbackChannel`
-# + callbackChannel - Declared event channel receiving the async peer's reply
-# + requiresApproval - Whether a PRE_RUN review gates each delegation
-# + return - An error when the registration is invalid
-isolated function registerPeerAgent(handle agentCtx, string name, string targetAgent,
-        string? description = (), boolean waitForReply = true, string? callbackChannel = (),
-        boolean requiresApproval = false) returns error? {
-    if !waitForReply && callbackChannel is () {
-        return error("Peer agent '" + name + "' declares wait = false but no callbackChannel");
-    }
-    string kindSpec = "peeragent:" + targetAgent
-        + (waitForReply ? "" : "#" + (callbackChannel ?: ""));
-    string desc = description ?: ("Delegates a task or question to the peer durable agent '"
-        + targetAgent + "'.");
-    return recordPeerTool(agentCtx, name, desc, kindSpec, requiresApproval);
-}
-
-# Builds the agent from everything registered on the context (activities, AI
-# tools, human tasks, event channels) and hands control to the durable ReAct
-# loop. This is a terminal operation: it must be the last step of the runner
-# (the loop is framework-driven). Every LLM call and tool call is executed
-# durably, so the agent survives worker crashes and can suspend for days
-# waiting on human tasks or events.
-#
-# + agentCtx - The native agent context handle
-# + query - The initial user query. When empty, the agent waits for the
-#           first `chat` event channel request
-# + config - The agent configuration (system prompt, model, limits)
-# + return - An error if the agent fails, otherwise nil
-isolated function buildAndRun(handle agentCtx, string query = "", *AgentRunConfig config)
-        returns error? {
-    check setAgentInteraction(agentCtx, config.interaction, config.eventTimeout,
-            config.maxEventWaits);
-    check setAgentApproval(agentCtx, config.approval.userRoles, config.approval.timeout);
-    setAgentModelProvider(agentCtx, config.model);
-    check registerAgentModelForContext(agentCtx);
-    string agentName = getAgentWorkflowType(agentCtx);
-    string toolDefsJson = check getAgentToolDefs(agentCtx);
-    json toolDefs = check toolDefsJson.fromJsonString();
-    AgentToolDef[] defs = check toolDefs.cloneWithType();
-    error? result = runAgentLoop(agentCtx, agentName, config, query, defs);
-    // Settle any outstanding event turns before the workflow completes:
-    // unconsumed events receive the agent's final response (or its failure)
-    // instead of failing with "workflow completed before the update completed".
-    finishAgentUpdates(agentCtx, result is error ? result.message() : ());
-    return result;
+            parameters is () ? () : parameters.toJsonString(), approvalPolicy, mcpTool);
 }
 
 // ============================================================================
@@ -845,15 +687,14 @@ isolated function buildAndRun(handle agentCtx, string query = "", *AgentRunConfi
 // ============================================================================
 
 isolated function recordActivityTool(handle nativeContext, function tool, string? name,
-        string? description, map<anydata|object {}>? bindings, boolean requiresApproval,
-        AutoRetry|ReviewTaskDefinition|NoAutomaticRetry retryPolicy, string|string[]? userRoles) returns error? = @java:Method {
+        string? description, map<anydata|object {}>? bindings, ApprovalPolicy approvalPolicy,
+        RetryPolicy retryPolicy) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "recordActivityTool"
 } external;
 
 isolated function recordAiTool(handle nativeContext, function tool, string name, string description,
-        string? parametersJson, boolean requiresApproval, string|string[]? userRoles,
-        boolean mcpTool) returns error? = @java:Method {
+        string? parametersJson, ApprovalPolicy approvalPolicy, boolean mcpTool) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "recordAiTool"
 } external;
@@ -867,13 +708,9 @@ isolated function awaitAgentToolReview(handle nativeContext, string toolName, st
     name: "awaitToolReview"
 } external;
 
-isolated function setAgentApproval(handle nativeContext, string|string[] userRoles, Duration? timeout)
-        returns error? = @java:Method {
-    'class: "io.ballerina.lib.workflow.context.AgentContextNative",
-    name: "setAgentApproval"
-} external;
 
-isolated function recordHumanTaskTool(handle nativeContext, string taskName, string|string[] userRoles,
+isolated function recordHumanTaskTool(handle nativeContext, string taskName, string|string[]? userRoles,
+        string|string[]? users, string|string[]? excludedUsers, string|string[]? excludedRoles,
         typedesc<anydata> resultType, string? title, string? description, Duration? timeout,
         typedesc<map<json>>? taskInputType) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
@@ -918,7 +755,7 @@ isolated function registerAgentModelForContext(handle nativeContext) returns err
 } external;
 
 isolated function recordPeerTool(handle nativeContext, string name, string description,
-        string kindSpec, boolean requiresApproval) returns error? = @java:Method {
+        string kindSpec) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "recordPeerTool"
 } external;
@@ -966,7 +803,7 @@ isolated function runDurableAgentObject(handle agentCtx, map<anydata> runInput)
     }
     boolean multiEvent = false;
     foreach DurableAgentEventSpec eventSpec in spec.events {
-        check registerAgentEvent(agentCtx, eventSpec.name, eventSpec.request, eventSpec.response);
+        check registerAgentUpdateEvent(agentCtx, eventSpec.name, eventSpec.request, eventSpec.response);
         if eventSpec.cardinality == "MULTI_EVENT" {
             multiEvent = true;
         }
@@ -977,6 +814,11 @@ isolated function runDurableAgentObject(handle agentCtx, map<anydata> runInput)
     foreach DurableAgentPeerSpec peerSpec in spec.peers {
         check registerDeclaredPeer(agentCtx, peerSpec);
     }
+    // A run delegated with a reply address gets a tool to answer that caller.
+    anydata replyTo = runInput["replyTo"];
+    if replyTo is map<anydata> {
+        check recordReplyToCallerTool(agentCtx, replyTo);
+    }
 
     ai:SystemPrompt systemPrompt = check spec.systemPrompt.cloneWithType();
 
@@ -986,19 +828,26 @@ isolated function runDurableAgentObject(handle agentCtx, map<anydata> runInput)
 
     // Only a declared eventTimeout bounds the waits: an unbounded chat session is the
     // point of a durable agent, and a default here silently killed conversations that
-    // idled past it. maxEventWaits remains the runaway backstop.
+    // idled past it. The declared maxEventWaits remains the runaway backstop.
     Duration? eventTimeout = ();
     json declaredTimeout = spec.eventTimeout;
     if declaredTimeout != () {
         eventTimeout = check declaredTimeout.cloneWithType();
     }
-    check buildAndRun(agentCtx, effectiveQuery,
-        systemPrompt = systemPrompt,
-        model = spec.model,
-        maxIter = spec.maxIter,
-        interaction = multiEvent ? MULTI_EVENT : SINGLE_EVENT,
-        eventTimeout = eventTimeout
-    );
+    check setAgentInteraction(agentCtx, multiEvent ? MULTI_EVENT : SINGLE_EVENT, eventTimeout, spec.maxEventWaits);
+    setAgentModelProvider(agentCtx, spec.model);
+    check registerAgentModelForContext(agentCtx);
+    string toolDefsJson = check getAgentToolDefs(agentCtx);
+    json toolDefs = check toolDefsJson.fromJsonString();
+    AgentToolDef[] defs = check toolDefs.cloneWithType();
+    error? loopResult = runAgentLoop(agentCtx, getAgentWorkflowType(agentCtx), systemPrompt, spec.maxIter,
+            effectiveQuery, defs);
+    // Settle any outstanding event turns before the workflow completes: unconsumed events
+    // receive the agent's final response (or its failure) instead of failing as orphaned updates.
+    finishAgentUpdates(agentCtx, loopResult is error ? loopResult.message() : ());
+    if loopResult is error {
+        return loopResult;
+    }
     typedesc<anydata>? declaredResultType = spec.resultType;
     if declaredResultType is () {
         return readAgentContextFinalResponse(agentCtx);
@@ -1033,8 +882,7 @@ isolated function runDurableAgentObject(handle agentCtx, map<anydata> runInput)
 isolated function registerDeclaredTool(handle agentCtx, DurableAgentToolSpec toolSpec) returns error? {
     string description = toolSpec.toolName;
     map<json>? parameters = ();
-    boolean requiresApproval = false;
-    string|string[]? userRoles = ();
+    ApprovalPolicy approvalPolicy = NoApproval;
     json meta = toolSpec.meta;
     if meta is map<json> {
         json descriptionJson = meta["description"];
@@ -1046,15 +894,9 @@ isolated function registerDeclaredTool(handle agentCtx, DurableAgentToolSpec too
             json parsed = check parametersJson.fromJsonString();
             parameters = check parsed.cloneWithType();
         }
-        json approvalJson = meta["requiresApproval"];
-        if approvalJson is boolean {
-            requiresApproval = approvalJson;
-        }
-        json rolesJson = meta["userRoles"];
-        if rolesJson is string {
-            userRoles = rolesJson;
-        } else if rolesJson is json[] {
-            userRoles = check rolesJson.cloneWithType();
+        json approvalJson = meta["approvalPolicy"];
+        if approvalJson is map<json> {
+            approvalPolicy = check approvalJson.cloneWithType(ReviewTaskDefinition);
         }
     }
     boolean mcpTool = meta is map<json> && meta["isMcp"] == true;
@@ -1065,42 +907,46 @@ isolated function registerDeclaredTool(handle agentCtx, DurableAgentToolSpec too
         parameters,
         caller
     };
-    check registerAgentTool(agentCtx, config, requiresApproval, userRoles, mcpTool);
+    check registerAgentTool(agentCtx, config, approvalPolicy, mcpTool);
 }
 
 isolated function registerDeclaredActivity(handle agentCtx, DurableAgentActivitySpec activitySpec)
         returns error? {
     string? description = ();
-    boolean requiresApproval = false;
-    AutoRetry|ReviewTaskDefinition|NoAutomaticRetry retryPolicy = NoAutomaticRetry;
-    string|string[]? userRoles = ();
+    ApprovalPolicy approvalPolicy = NoApproval;
+    RetryPolicy retryPolicy = NoRetry;
     json meta = activitySpec.meta;
     if meta is map<json> {
         json descriptionJson = meta["description"];
         if descriptionJson is string {
             description = descriptionJson;
         }
-        json approvalJson = meta["requiresApproval"];
-        if approvalJson is boolean {
-            requiresApproval = approvalJson;
+        json approvalJson = meta["approvalPolicy"];
+        if approvalJson is map<json> {
+            approvalPolicy = check approvalJson.cloneWithType(ReviewTaskDefinition);
         }
         json retryJson = meta["retryPolicy"];
         if retryJson is map<json> {
-            // Both policies are records; `userRoles` is what only a review has.
-            retryPolicy = retryJson["userRoles"] !is ()
-                    ? check retryJson.cloneWithType(ReviewTaskDefinition)
-                    : check retryJson.cloneWithType(AutoRetry);
-        }
-        json rolesJson = meta["userRoles"];
-        if rolesJson is string {
-            userRoles = rolesJson;
-        } else if rolesJson is json[] {
-            userRoles = check rolesJson.cloneWithType();
+            retryPolicy = check retryPolicyOf(retryJson);
         }
     }
-    check registerActivity(agentCtx, activitySpec.activity, activitySpec.toolName, description,
-        activitySpec.bindings, requiresApproval, retryPolicy, userRoles);
+    check recordActivityTool(agentCtx, activitySpec.activity, activitySpec.toolName, description,
+        activitySpec.bindings, approvalPolicy, retryPolicy);
 }
+
+// A review names an audience, AutoRetry names attempts, RetryBeforeReview names both.
+isolated function retryPolicyOf(map<json> retryJson) returns RetryPolicy|error {
+    boolean review = retryJson["userRoles"] !is () || retryJson["users"] !is ();
+    boolean retries = retryJson["maxRetries"] !is ();
+    if review && retries {
+        return check retryJson.cloneWithType(RetryBeforeReview);
+    }
+    if review {
+        return check retryJson.cloneWithType(ReviewTaskDefinition);
+    }
+    return check retryJson.cloneWithType(AutoRetry);
+}
+
 
 # Registers one declared peer agent on the runner's context, converting the
 # declaration metadata (description, wait, callbackChannel, gating).
@@ -1111,30 +957,36 @@ isolated function registerDeclaredActivity(handle agentCtx, DurableAgentActivity
 isolated function registerDeclaredPeer(handle agentCtx, DurableAgentPeerSpec peerSpec)
         returns error? {
     string? description = ();
-    boolean waitForReply = true;
-    string? callbackChannel = ();
-    boolean requiresApproval = false;
     json meta = peerSpec.meta;
     if meta is map<json> {
         json descriptionJson = meta["description"];
         if descriptionJson is string {
             description = descriptionJson;
         }
-        json waitJson = meta["wait"];
-        if waitJson is boolean {
-            waitForReply = waitJson;
-        }
-        json channelJson = meta["callbackChannel"];
-        if channelJson is string {
-            callbackChannel = channelJson;
-        }
-        json approvalJson = meta["requiresApproval"];
-        if approvalJson is boolean {
-            requiresApproval = approvalJson;
+    }
+    string[]? allowedEvents = ();
+    if meta is map<json> {
+        json allowedJson = meta["allowedEvents"];
+        if allowedJson is json[] {
+            allowedEvents = check allowedJson.cloneWithType();
         }
     }
-    check registerPeerAgent(agentCtx, peerSpec.name, peerSpec.targetAgent, description,
-        waitForReply, callbackChannel, requiresApproval);
+    string target = peerSpec.targetAgent;
+    string desc = description ?: ("Delegates a task or question to the peer durable agent '" + target + "'.");
+    // The run entry keeps the peer's own name; each exposed event becomes `<peer>_<event>` (a model
+    // tool name admits no dot) with the event's request type as its schema.
+    check recordPeerTool(agentCtx, peerSpec.name, desc, "peeragent:" + target);
+    string toolsJson = check peerEventTools(target, allowedEvents);
+    json[] eventTools = check (check toolsJson.fromJsonString()).ensureType();
+    foreach json tool in eventTools {
+        string eventName = check tool.name;
+        boolean duplex = check tool.duplex;
+        string schema = check tool.schema;
+        string eventDesc = (duplex ? "Sends '" : "Notifies '") + eventName + "' to peer '" + target + "'"
+            + (duplex ? " and returns its answer." : "; the peer does not answer on this event.");
+        check recordPeerEventTool(agentCtx, peerSpec.name + "_" + eventName, eventDesc,
+            "peerevent:" + target + ":" + eventName, schema);
+    }
 }
 
 # Registers one declared human task capability on the runner's context.
@@ -1144,7 +996,10 @@ isolated function registerDeclaredPeer(handle agentCtx, DurableAgentPeerSpec pee
 # + return - An error when registration fails
 isolated function registerDeclaredHumanTask(handle agentCtx, DurableAgentHumanTaskSpec taskSpec)
         returns error? {
-    string|string[] roles = "manager";
+    string|string[]? roles = ();
+    string|string[]? users = ();
+    string|string[]? excludedUsers = ();
+    string|string[]? excludedRoles = ();
     string? title = ();
     string? description = ();
     Duration? timeout = ();
@@ -1152,12 +1007,10 @@ isolated function registerDeclaredHumanTask(handle agentCtx, DurableAgentHumanTa
     if meta is map<json> {
         // `userRoles` is the one spelling across a workflow's task, an agent's task and a
         // review; `roles` is the pre-unification name of the same thing.
-        json rolesJson = meta["userRoles"] is () ? meta["roles"] : meta["userRoles"];
-        if rolesJson is string {
-            roles = rolesJson;
-        } else if rolesJson is json[] {
-            roles = check rolesJson.cloneWithType();
-        }
+        roles = check namesOf(meta["userRoles"] is () ? meta["roles"] : meta["userRoles"]);
+        users = check namesOf(meta["users"]);
+        excludedUsers = check namesOf(meta["excludedUsers"]);
+        excludedRoles = check namesOf(meta["excludedRoles"]);
         json titleJson = meta["title"];
         if titleJson is string {
             title = titleJson;
@@ -1171,8 +1024,19 @@ isolated function registerDeclaredHumanTask(handle agentCtx, DurableAgentHumanTa
             timeout = check timeoutJson.cloneWithType();
         }
     }
-    check registerHumanTask(agentCtx, taskSpec.name, roles, taskSpec.resultType, title, description, timeout,
-            taskSpec.taskInputType);
+    check recordHumanTaskTool(agentCtx, taskSpec.name, roles, users, excludedUsers, excludedRoles,
+            taskSpec.resultType, title, description, timeout, taskSpec.taskInputType);
+}
+
+// A single name or a list of them from declaration metadata; `()` when absent.
+isolated function namesOf(json names) returns string|string[]?|error {
+    if names is string {
+        return names;
+    }
+    if names is json[] {
+        return check names.cloneWithType();
+    }
+    return ();
 }
 
 # Dispatches one model-requested peer delegation. The peer runs as a true Temporal
@@ -1185,28 +1049,61 @@ isolated function registerDeclaredHumanTask(handle agentCtx, DurableAgentHumanTa
 # + peerSpec - The encoded target ("<target>" or "<target>#<callbackChannel>")
 # + args - The model's tool-call arguments ({query})
 # + return - The peer's response (sync), a dispatch acknowledgement (async), or an error
-isolated function dispatchPeerAgent(handle ctxHandle, string peerSpec, map<anydata> args)
+isolated function dispatchPeerAgent(handle ctxHandle, string targetAgent, map<anydata> args)
         returns anydata|error {
-    int? separator = peerSpec.indexOf("#");
-    string targetAgent = separator is int ? peerSpec.substring(0, separator) : peerSpec;
-    string? callbackChannel = separator is int ? peerSpec.substring(separator + 1) : ();
-
     anydata queryArg = args["query"];
     string query = queryArg is string ? queryArg : args.toJson().toJsonString();
+    anydata waitArg = args["wait"];
+    boolean waitForAnswer = waitArg is boolean ? waitArg : true;
+    anydata replyEvent = args["replyEvent"];
+    map<anydata>? replyTo = replyEvent is string
+        ? {instanceId: check agentWorkflowId(ctxHandle), eventName: replyEvent} : ();
 
-    string childId = check runPeerAgent(targetAgent, query);
-    if callbackChannel is () {
+    string childId = check runPeerAgent(targetAgent, query, replyTo);
+    if waitForAnswer && replyTo is () {
         return waitForPeerAgentResult(childId);
     }
-    check armPeerAgentCallback(ctxHandle, childId, callbackChannel);
-    return "Delegated to peer agent '" + targetAgent + "' asynchronously (correlation id "
-        + childId + "). Its reply will arrive as the '" + callbackChannel
-        + "' event - wait for that event when you need the result.";
+    return "Delegated to peer agent '" + targetAgent + "' (correlation id " + childId + ")."
+        + (replyTo is () ? " Call collectPeerResult with that id when you need the answer."
+            : " It will answer on your '" + <string>replyEvent + "' event.");
 }
 
-isolated function runPeerAgent(string targetAgent, string query) returns string|error = @java:Method {
+isolated function runPeerAgent(string targetAgent, string query, map<anydata>? replyTo)
+        returns string|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
     name: "runPeerAgent"
+} external;
+
+isolated function peerEventTools(string targetAgent, string[]? allowedEvents) returns string|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "peerEventTools"
+} external;
+
+isolated function sendPeerEvent(string targetAgent, string eventName, map<anydata> payload)
+        returns anydata|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "sendPeerEvent"
+} external;
+
+isolated function collectPeerResult(string childId) returns anydata|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "collectPeerResult"
+} external;
+
+isolated function recordPeerEventTool(handle nativeContext, string name, string description, string kindSpec,
+        string schemaJson) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.AgentContextNative",
+    name: "recordPeerEventTool"
+} external;
+
+isolated function recordReplyToCallerTool(handle nativeContext, map<anydata> replyTo) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.AgentContextNative",
+    name: "recordReplyToCallerTool"
+} external;
+
+isolated function replyToCaller(handle nativeContext, string message) returns string|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.AgentContextNative",
+    name: "replyToCaller"
 } external;
 
 isolated function waitForPeerAgentResult(string childId) returns anydata|error = @java:Method {
@@ -1214,11 +1111,6 @@ isolated function waitForPeerAgentResult(string childId) returns anydata|error =
     name: "waitForPeerAgentResult"
 } external;
 
-isolated function armPeerAgentCallback(handle ctxHandle, string childId, string callbackChannel)
-        returns error? = @java:Method {
-    'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
-    name: "armPeerAgentCallback"
-} external;
 
 // Hands the object-model runner and the built-in agent activities to the native
 // agent registry once, at workflow-module init. Generated user code then wires an

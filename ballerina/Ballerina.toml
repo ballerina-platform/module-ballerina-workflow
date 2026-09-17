@@ -6,7 +6,7 @@ authors = ["Ballerina"]
 keywords = ["workflow", "Type/Library"]
 repository = "https://github.com/ballerina-platform/module-ballerina-workflow"
 license = ["Apache-2.0"]
-distribution = "2201.14.0-20260914-141400-b8d79cea"
+distribution = "2201.14.0-20260916-095600-2ad98357"
 
 [[package.modules]]
 name = "workflow.internal"

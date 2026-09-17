@@ -16,4 +16,4 @@ observabilityIncluded = true
 groupId = "io.ballerina.lib"
 artifactId = "workflow-native"
 version = "0.10.0"
-path = "../../native/build/libs/workflow-native-0.10.0-SNAPSHOT.jar"
+path = "../../native/build/libs/workflow-native-0.10.0.jar"

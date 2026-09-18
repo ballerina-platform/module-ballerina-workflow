@@ -313,6 +313,7 @@ task ballerinaAuthVariantTest {
     group = 'verification'
     dependsOn(":${packageName}-ballerina:build")
     dependsOn(updateTomlFiles)
+    dependsOn(prepareIntegrationTestLibs)
     dependsOn(":startSharedTestServer")
     dependsOn(compileJava)
     dependsOn(processResources)

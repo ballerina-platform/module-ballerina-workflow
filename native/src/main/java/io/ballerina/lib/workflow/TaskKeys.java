@@ -30,6 +30,7 @@ public final class TaskKeys {
     public static final String TASK_NAME = "taskName";
     public static final String PARENT_WORKFLOW_ID = "parentWorkflowId";
     public static final String PARENT_WORKFLOW_TYPE = "parentWorkflowType";
+    public static final String ROOT_WORKFLOW_ID = "rootWorkflowId";
     public static final String TITLE = "title";
     public static final String DESCRIPTION = "description";
     public static final String USER_ROLES = "userRoles";

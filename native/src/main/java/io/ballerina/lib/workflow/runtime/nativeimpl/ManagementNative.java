@@ -26,6 +26,8 @@ import io.ballerina.lib.workflow.ModuleUtils;
 import io.ballerina.lib.workflow.TaskKeys;
 import io.ballerina.lib.workflow.context.TaskRecord;
 import io.ballerina.lib.workflow.context.WorkflowContextNative;
+import io.ballerina.lib.workflow.observability.TraceContextPropagator;
+import io.ballerina.lib.workflow.observability.WorkerSpans;
 import io.ballerina.lib.workflow.observability.WorkflowMetrics;
 import io.ballerina.lib.workflow.observability.WorkflowSampleLog;
 import io.ballerina.lib.workflow.runtime.WorkflowRuntime;
@@ -1110,9 +1112,8 @@ public final class ManagementNative {
                     WorkflowWorkerNative.TASK_DECISION_SIGNAL_NAME, javaDecision);
 
             if (!delivered) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Failed to complete retry task: task '" + taskWorkflowId.getValue() +
-                                "' was no longer running when signal was delivered"));
+                return memo.refusal("Failed to complete retry task: task '" + taskWorkflowId.getValue() +
+                                            "' was no longer running when signal was delivered");
             }
             return memo.toReceipt();
         } catch (Exception e) {
@@ -1144,36 +1145,39 @@ public final class ManagementNative {
 
             // Decisions must go to the integration serving the task's queue: the reviewer
             // roles and forms are configured there, not here. Reads stay namespace-wide.
+            Map<String, Payload> memoFields = execInfo.getMemo().getFieldsMap();
+            DataConverter dc = client.getOptions().getDataConverter();
+            // Read before every check below, so a refused decision still joins the owning run's trace.
+            String owningRun = decodeMemoString(dc, memoFields, TaskKeys.PARENT_WORKFLOW_ID, null);
+            String owningRoot = decodeMemoString(dc, memoFields, TaskKeys.ROOT_WORKFLOW_ID, null);
+
             String owningQueue = resp.getExecutionConfig().getTaskQueue().getName();
             String localQueue = WorkflowWorkerNative.getTaskQueue();
             if (localQueue == null || localQueue.isBlank()) {
                 // Fail closed: without a configured local queue, ownership cannot be verified.
-                return ErrorCreator.createError(StringUtils.fromString(
+                return TaskMemo.refusal(owningRun, owningRoot,
                         "Unauthorized: the local task queue is not configured; cannot verify that review "
-                                + "activity '" + taskWorkflowId + "' belongs to this integration"));
+                                + "activity '" + taskWorkflowId + "' belongs to this integration");
             }
             if (!localQueue.equals(owningQueue)) {
-                return ErrorCreator.createError(StringUtils.fromString(
+                return TaskMemo.refusal(owningRun, owningRoot,
                         "Unauthorized: review activity '" + taskWorkflowId + "' belongs to task queue '"
-                                + owningQueue + "', which is served by a different integration"));
+                                + owningQueue + "', which is served by a different integration");
             }
 
             WorkflowExecutionStatus execStatus = execInfo.getStatus();
             if (execStatus != WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Retry task '" + taskWorkflowId + "' is not running (status=" + convertStatus(execStatus) +
-                                ")"));
+                return TaskMemo.refusal(owningRun, owningRoot,
+                        "Retry task '" + taskWorkflowId + "' is not running (status=" + convertStatus(execStatus)
+                                + ")");
             }
-
-            Map<String, Payload> memoFields = execInfo.getMemo().getFieldsMap();
-            DataConverter dc = client.getOptions().getDataConverter();
 
             // workflowKind check
             String workflowKind = decodeMemoString(dc, memoFields, TaskKeys.KIND, null);
             if (!isReviewActivityKind(workflowKind)) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Invalid task: '" + taskWorkflowId + "' is not a review activity workflow (workflowKind=" +
-                                workflowKind + ")"));
+                return TaskMemo.refusal(owningRun, owningRoot,
+                        "Invalid task: '" + taskWorkflowId + "' is not a review activity workflow (workflowKind="
+                                + workflowKind + ")");
             }
 
             TaskAssignment assignment;
@@ -1200,13 +1204,13 @@ public final class ManagementNative {
             List<String> roles = TaskAssignment.roles(callerRolesArray);
             String caller = userId instanceof BString bs ? bs.getValue() : null;
             TaskAssignment.Access access = assignment.access(roles, caller);
+            TaskMemo memo = new TaskMemo(decodeMemoString(dc, memoFields, TaskKeys.TASK_NAME, null),
+                                         owningRun, owningRoot,
+                                         assignment.userRoles().stream().sorted().toList(), taskInput, access);
             if (access == TaskAssignment.Access.NONE) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        assignment.denial(roles, caller, "review '" + taskWorkflowId + "'")));
+                return memo.refusal(assignment.denial(roles, caller, "review '" + taskWorkflowId + "'"));
             }
-            return new TaskMemo(decodeMemoString(dc, memoFields, TaskKeys.TASK_NAME, null),
-                                decodeMemoString(dc, memoFields, TaskKeys.PARENT_WORKFLOW_ID, null),
-                                assignment.userRoles().stream().sorted().toList(), taskInput, access);
+            return memo;
 
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
@@ -1699,6 +1703,12 @@ public final class ManagementNative {
     // WORKFLOW LISTING AND STARTING
     // -------------------------------------------------------------------------
 
+    // Whether a registered type name (without the engine prefix) is a durable agent's.
+    public static boolean isAgentWorkflowType(BString workflowType) {
+        return WorkflowWorkerNative.isAgentWorkflowType(
+                WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + workflowType.getValue());
+    }
+
     /**
      * Starts a new workflow instance by its registered type name. Returns a {@code WorkflowHandle} record with
      * {@code workflowId} and {@code runId}.
@@ -1762,7 +1772,9 @@ public final class ManagementNative {
             }
             // The started event is counted at the worker's first execution, where every
             // start path converges.
-            WorkflowExecution execution = stub.start(javaInput);
+            Object startInput = javaInput;
+            WorkflowExecution execution = TraceContextPropagator.runWith(WorkerSpans.instanceContext(wfId),
+                                                                        () -> stub.start(startInput));
 
             BMap<BString, Object> handle = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                           "WorkflowHandle");

@@ -30,8 +30,8 @@ import ballerina/workflow.observe as wfobserve;
 import ballerinax/prometheus as _;
 
 // Service names under which the runtime may register spans; the mock tracer
-// stores finished spans per service.
-final readonly & string[] spanServiceCandidates = ["Ballerina", "Unknown Service"];
+// stores finished spans per service. The module publishes its own under "workflow".
+final readonly & string[] spanServiceCandidates = ["workflow", "Ballerina", "Unknown Service"];
 
 @test:Config {
     groups: ["integration", "observability"]
@@ -115,6 +115,29 @@ function testWorkflowSpanEmission() returns error? {
 
     mock:Span resultSpan = check findSpan(string `get_workflow_result ${workflowId}`, workflowId);
     test:assertEquals(resultSpan.tags["workflow.operation.name"], "get_workflow_result");
+
+    // Three separate calls with no context to hand on, one trace: they all name the same instance.
+    test:assertEquals(sendSpan.traceId, startSpan.traceId, "sending data joins the run's trace");
+    test:assertEquals(resultSpan.traceId, startSpan.traceId, "waiting for the result joins the run's trace");
+
+    // The run's execution joins the trace that started it: the run, its activity attempt and the
+    // data event it received are worker spans under the start span's trace.
+    mock:Span[] story = check workerSpansOf(workflowId, 3);
+    test:assertTrue(hasOperation(story, "workflow workflow-observabilityFlow"), "the run itself is a span");
+    test:assertTrue(hasOperation(story, "activity observabilityEcho"), "each activity attempt is a span");
+    test:assertTrue(hasOperation(story, "workflow.data_received obsApproval"), "each data event received is a span");
+    foreach mock:Span span in story {
+        test:assertEquals(span.traceId, startSpan.traceId,
+                string `worker span '${span.operationName}' should join the trace that started the run`);
+        test:assertEquals(span.tags["workflow.run.id"] is string, true, "worker spans name the run");
+    }
+
+    // The propagated context, not just the shared trace id: the attempt nests under the run, and the
+    // run and its start hang from the same derived anchor.
+    mock:Span runSpan = check spanNamed(story, "workflow workflow-observabilityFlow");
+    test:assertEquals(runSpan.parentId, startSpan.parentId, "the run and its start hang from the same anchor");
+    mock:Span attempt = check spanNamed(story, "activity observabilityEcho");
+    test:assertEquals(attempt.parentId, runSpan.spanId, "an activity attempt nests under the run span");
 }
 
 @test:Config {
@@ -179,6 +202,12 @@ function testHumanTaskDecisionTelemetry() returns error? {
         test:assertEquals(denied.tags["user.roles"], "OBS_BYSTANDER", "a refused decision still records who tried");
         test:assertFalse(denied.tags.hasKey("workflow.task.name"),
                 "a refused decision never resolved the task, so it cannot name it");
+        // The runtime read the task's memo before refusing, so it knows which run owns the task: the
+        // refusal belongs on that run's trace, where someone auditing the run will look for it.
+        test:assertEquals(denied.tags["workflow.instance.id"], workflowId,
+                "a refused decision the runtime could place still joins the run's trace");
+        mock:Span runStart = check findSpan("start_workflow workflow-observabilityApprovalFlow", workflowId);
+        test:assertEquals(denied.traceId, runStart.traceId, "and that trace is the run's own");
     }
 }
 
@@ -314,6 +343,48 @@ function testDurableAgentStepMetrics() returns error? {
     test:assertTrue(findMetricValue("workflow_agent_step_duration_seconds",
             {event: "agent_model_called", activity_type: "llmChat"}) !is (),
             "model calls should be summarized");
+
+    if observe:isTracingEnabled() {
+        // Every step is also a span on the agent's run: the sleep, the wait that timed out (an error
+        // span naming the timeout), the tool, the task it handed to a person, and the model calls.
+        mock:Span[] story = check workerSpansOf(agentId, 6);
+        test:assertTrue(hasOperation(story, "agent.sleep"));
+        test:assertTrue(hasOperation(story, "agent.tool_call obsAgentLookup"));
+        test:assertTrue(hasOperation(story, "agent.task_wait obsSignoff"));
+        test:assertTrue(hasOperation(story, "agent.model_call llmChat"));
+        mock:Span timedOut = check spanNamed(story, "agent.event_wait obsGreenLight");
+        test:assertEquals(timedOut.tags["error"], "true", "a wait that timed out is an error span");
+        test:assertEquals(timedOut.tags["error.type"], "TIMEOUT");
+        test:assertEquals(timedOut.tags["workflow.data.name"], "obsGreenLight");
+        mock:Span task = check spanNamed(story, "agent.task_wait obsSignoff");
+        test:assertEquals(task.tags["workflow.task.name"], "observabilityAgent.obsSignoff");
+        mock:Span startSpan = check findSpan("start_agent observabilityAgent", agentId);
+        foreach mock:Span span in story {
+            test:assertEquals(span.traceId, startSpan.traceId,
+                    string `agent step '${span.operationName}' should join the trace that started the agent`);
+        }
+    }
+}
+
+@test:Config {
+    groups: ["integration", "observability"]
+}
+function testChildWorkflowActivityJoinsTheRootTrace() returns error? {
+    if !observe:isTracingEnabled() {
+        return;
+    }
+    string name = uniqueId("obs-tree");
+    string workflowId = check workflow:run(observabilityParentFlow, {name});
+    anydata result = check workflow:getWorkflowResult(workflowId, 60);
+    test:assertEquals(<string>result, "obs:" + name, "the parent returns what the child's activity echoed");
+
+    // The activity ran inside the child, which knows only the workflow that scheduled it. The run's
+    // context carries the tree's root, so the attempt names it and joins the trace the parent opened.
+    mock:Span parentRun = check findSpan("workflow workflow-observabilityParentFlow", workflowId);
+    mock:Span attempt = check spanInTree("activity observabilityEcho", workflowId);
+    test:assertNotEquals(attempt.tags["workflow.instance.id"], workflowId,
+            "the attempt belongs to the child, not to the run that started the tree");
+    test:assertEquals(attempt.traceId, parentRun.traceId, "the child's activity joins the root's trace");
 }
 
 // ================================================================================
@@ -371,6 +442,47 @@ function findDecisionSpan(string operationName, string idTag, string taskId, str
         runtime:sleep(0.5);
     }
     return error(string `decision span '${operationName}' for task '${taskId}' by '${userId}' was not recorded`);
+}
+
+// The worker-side spans tagged with the instance, once at least `atLeast` of them have finished.
+function workerSpansOf(string instanceId, int atLeast) returns mock:Span[]|error {
+    mock:Span[] found = [];
+    foreach int attempt in 0 ..< 20 {
+        found = from mock:Span span in mock:getFinishedSpans("workflow")
+            where span.tags["workflow.instance.id"] == instanceId && span.tags["type"] == "worker"
+            select span;
+        if found.length() >= atLeast {
+            return found;
+        }
+        runtime:sleep(0.5);
+    }
+    return error(string `only ${found.length()} worker spans finished for ${instanceId}`);
+}
+
+// A worker span of a run's tree: one naming `rootInstanceId` as its root, retrying briefly.
+function spanInTree(string operationName, string rootInstanceId) returns mock:Span|error {
+    foreach int attempt in 0 ..< 20 {
+        foreach mock:Span span in mock:getFinishedSpans("workflow") {
+            if span.operationName == operationName && span.tags["workflow.root.instance.id"] == rootInstanceId {
+                return span;
+            }
+        }
+        runtime:sleep(0.5);
+    }
+    return error(string `no '${operationName}' span named '${rootInstanceId}' as its root`);
+}
+
+function hasOperation(mock:Span[] spans, string operationName) returns boolean {
+    return spans.some(span => span.operationName == operationName);
+}
+
+function spanNamed(mock:Span[] spans, string operationName) returns mock:Span|error {
+    foreach mock:Span span in spans {
+        if span.operationName == operationName {
+            return span;
+        }
+    }
+    return error(string `no span named '${operationName}'`);
 }
 
 // Finds a finished span by operation name carrying the workflow instance ID, retrying briefly.

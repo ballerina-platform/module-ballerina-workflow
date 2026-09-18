@@ -29,6 +29,8 @@ dependencies {
     checkstyle "com.puppycrawl.tools:checkstyle:${checkstylePluginVersion}"
 
     implementation group: 'org.ballerinalang', name: 'ballerina-runtime', version: "${ballerinaLangVersion}"
+    // The runtime's BSpan API is typed against OpenTelemetry, which the Ballerina runtime bundles.
+    compileOnly "io.opentelemetry:opentelemetry-api:${openTelemetryVersion}"
     
     // Temporal SDK for durable workflow execution
     implementation "io.temporal:temporal-sdk:${temporalSdkVersion}"

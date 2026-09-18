@@ -109,10 +109,15 @@ public type HumanTaskGroup record {|
 # + users - User ids permitted to act on it, whatever their roles
 # + excludedUsers - User ids that may not act on it
 # + excludedRoles - Roles that may not act on it
+# + administratorRoles - Roles that administer it: see it, reassign it, move its deadline, fail or complete it
+# + administratorUsers - User ids that administer it
 # + completedBy - User ID of whoever completed, rejected or decided it, or `()` while pending. Also
 #                 `()` for tasks decided before the completer was recorded on the row
 # + completedAt - When that decision was recorded, or `()` when unknown
-# + canComplete - Whether the requesting caller may act on it
+# + completedAs - `audience` when someone it was assigned to completed it, `administrator` when an
+#                 administrator stepped in; `()` while pending or for tasks decided before 0.10
+# + canComplete - Whether the requesting caller may act on it (administrators may)
+# + canAdminister - Whether the requesting caller administers it
 public type TaskSummary record {|
     string kind;
     string taskId;
@@ -133,9 +138,13 @@ public type TaskSummary record {|
     string[] users = [];
     string[] excludedUsers = [];
     string[] excludedRoles = [];
+    string[] administratorRoles = [];
+    string[] administratorUsers = [];
     string? completedBy = ();
     string? completedAt = ();
+    string? completedAs = ();
     boolean canComplete = false;
+    boolean canAdminister = false;
 |};
 
 # Summary of a human task instance for list views.
@@ -237,6 +246,33 @@ public type ReviewActivityInfo record {|
 // COMPLETION AUDIT
 // ================================================================================
 
+# The audience an administrator gives a live task. Each present list replaces the one the task was
+# created with; an absent one is left as it was. Administrators themselves cannot be changed.
+#
+# + userRoles - Roles that may act
+# + users - User ids that may act
+# + excludedUsers - User ids that may not act
+# + excludedRoles - Roles that may not act
+public type TaskAudience record {|
+    string[] userRoles?;
+    string[] users?;
+    string[] excludedUsers?;
+    string[] excludedRoles?;
+|};
+
+# Audit record returned by the administer operations.
+#
+# + success - Always true on the success path
+# + action - `reassign` or `extendDeadline`
+# + administeredBy - User ID extracted from the `x-user-id` request header
+# + administeredAt - ISO-8601 timestamp of when the act was processed
+public type TaskAdministration record {|
+    boolean success;
+    string action;
+    string administeredBy;
+    string administeredAt;
+|};
+
 # Audit record returned by human task completion operations.
 #
 # + success - Always true on the success path
@@ -281,6 +317,8 @@ type ReviewActivityState record {|
     string[] users = [];
     string[] excludedUsers = [];
     string[] excludedRoles = [];
+    string[] administratorRoles = [];
+    string[] administratorUsers = [];
 |};
 
 // ================================================================================

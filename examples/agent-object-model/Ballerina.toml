@@ -2,7 +2,7 @@
 org = "ballerina_examples"
 name = "agent_object_model"
 version = "0.1.0"
-distribution = "2201.13.4"
+distribution = "2201.13.6"
 
 [[dependency]]
 org = "ballerina"
@@ -15,5 +15,5 @@ observabilityIncluded = true
 [[platform.java21.dependency]]
 groupId = "io.ballerina.lib"
 artifactId = "workflow-native"
-version = "0.9.1"
-path = "../../native/build/libs/workflow-native-0.9.1-SNAPSHOT.jar"
+version = "0.10.0"
+path = "../../native/build/libs/workflow-native-0.10.0-SNAPSHOT.jar"

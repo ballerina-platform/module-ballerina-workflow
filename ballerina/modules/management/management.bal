@@ -273,6 +273,60 @@ isolated function decideFailHumanTask(string taskWorkflowId, string reason,
     span.close();
 }
 
+# Reassigns a live task or review: each named audience list replaces the declared one. Only an
+# administrator of the task may ask; the act is recorded in the task's history.
+#
+# + taskWorkflowId - The task or review id
+# + audience - The lists to replace: `userRoles`, `users`, `excludedUsers`, `excludedRoles`
+# + callerRoles - Roles held by the caller
+# + userId - The caller's user id
+# + identitySource - `verified` when the caller's auth layer validated the identity, else `asserted`
+# + return - `()` on success, or an error
+public isolated function reassignTask(string taskWorkflowId, TaskAudience audience,
+        [string, string...]? callerRoles = (), string? userId = (), IdentitySource identitySource = "asserted")
+        returns error? {
+    return administer(taskWorkflowId, "reassign", audience, callerRoles, userId, identitySource);
+}
+
+# Moves a live task's or review's deadline: milliseconds from now, or `()` to let it wait indefinitely.
+# Only an administrator of the task may ask.
+#
+# + taskWorkflowId - The task or review id
+# + timeoutMillis - The new deadline as milliseconds from now, or `()` to clear it
+# + callerRoles - Roles held by the caller
+# + userId - The caller's user id
+# + identitySource - `verified` when the caller's auth layer validated the identity, else `asserted`
+# + return - `()` on success, or an error
+public isolated function extendTaskDeadline(string taskWorkflowId, int? timeoutMillis,
+        [string, string...]? callerRoles = (), string? userId = (), IdentitySource identitySource = "asserted")
+        returns error? {
+    if timeoutMillis is int && timeoutMillis <= 0 {
+        return error InvalidRequestError("timeoutMillis must be greater than zero, or () to clear the deadline");
+    }
+    map<json> payload = {timeoutMillis: timeoutMillis};
+    return administer(taskWorkflowId, "extendDeadline", payload, callerRoles, userId, identitySource);
+}
+
+isolated function administer(string taskWorkflowId, observe:AdministrationAction action, map<json> payload,
+        [string, string...]? callerRoles, string? userId, observe:IdentitySource identitySource) returns error? {
+    observe:TaskDecisionSpan span = observe:createTaskAdministrationSpan(taskWorkflowId, action);
+    span.addDecider(userId, callerRoles, identitySource);
+    span.addContent(payload);
+    map<anydata>|error receipt = administerTaskNative(taskWorkflowId, action, payload, callerRoles, userId);
+    if receipt is error {
+        span.close(receipt);
+        return receipt;
+    }
+    span.addTaskDetails(receipt);
+    span.close();
+}
+
+isolated function administerTaskNative(string taskWorkflowId, string action, map<json> payload,
+        [string, string...]? callerRoles, string? userId) returns map<anydata>|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
+    name: "administerTask"
+} external;
+
 isolated function failHumanTaskNative(string taskWorkflowId, string reason, map<json>? details,
         [string, string...]? callerRoles, string? userId) returns map<anydata>|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",

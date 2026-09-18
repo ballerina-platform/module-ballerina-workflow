@@ -6,22 +6,63 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-### Changed
-
-- **Management API task records share one shape.** `HumanTaskSummary`, `WorkItemSummary` and
-  `ReviewActivitySummary` include `TaskSummary`; `HumanTaskInfo` and `ReviewActivityInfo`
-  include `TaskInfo`. Every task now reports `kind`, `description`, `stepId`,
-  `parentWorkflowType`, its full audience (`userRoles`, `users`, `excludedUsers`,
-  `excludedRoles`) and `completedBy`/`completedAt`. On `ReviewActivityInfo`, `taskInput`
-  replaces `activityArgs`, `completedBy`/`completedAt` replace `decidedBy`/`decidedAt`, and
-  `decision` carries the recorded decision; `ReviewDecisionInfo` renames the same two fields.
-- **Task visibility is eligibility.** Listing, counting and reading a task apply the rule the
-  runtime applies on completion — roles or user id, minus exclusions — so a caller sees
-  exactly the tasks it can complete. A caller with no identity sees nothing; a task assigned
-  to users is closed to a caller without a user id.
+## [0.10.1]
 
 ### Added
 
+- `POST /review-activities/{taskId}/reassign` and `POST /review-activities/{taskId}/deadline`,
+  so a review is administered through its own resource. `tasks.reassign` and
+  `tasks.extendDeadline` take an optional `kind` (`HUMAN_TASK` or `REVIEW_ACTIVITY`) to require
+  the id name that kind of task; it defaults to accepting either, so existing callers are
+  unaffected. ([#134](https://github.com/ballerina-platform/module-ballerina-workflow/pull/134))
+
+### Fixed
+
+- A review activity reported `canComplete` and `canAdminister` as `false` to every caller,
+  including the audience that may decide it and the administrators that may administer it.
+  Only the advertised flags were wrong — the decision and administration paths authorized
+  correctly — but `TaskSummary` declares both fields for either kind, so the response
+  contradicted its own schema and a console that renders its controls from them disabled the
+  actions for the very people entitled to take them. `reviewActivities.list` and
+  `reviewActivities.get` now answer both from the same predicate the decision path authorizes
+  with. ([#134](https://github.com/ballerina-platform/module-ballerina-workflow/pull/134))
+- `POST /human-tasks/{taskId}/reassign` and `/deadline` accepted a review activity's task id, so
+  a review could be administered through the human-task resource. Each administration route now
+  serves one kind of task, the guard the read paths have carried since
+  ballerina-library#8894. ([#134](https://github.com/ballerina-platform/module-ballerina-workflow/pull/134))
+
+## [0.10.0] - 2026-09-18
+
+### Added
+
+- **One task model.** `ReviewTaskDefinition` is the single shape of a review wherever one is
+  raised: `retryPolicy` is `AutoRetry | ReviewTaskDefinition | RetryBeforeReview`, and
+  `approvalPolicy: ReviewTaskDefinition | NoApproval` gates an activity, a tool or a
+  `callActivity`. A task names its audience as `userRoles` and/or `users`, minus
+  `excludedUsers` and `excludedRoles`; a definition that names nobody is a compile error
+  (`WORKFLOW_164`). Reviews get their own deadline timer and `ReviewTimeoutError`, record who
+  decided them, and a workflow reads `ctx.lastHumanTaskCompletion()` and
+  `ctx.lastReviewDecision()`. A durable agent may cap its event waits with `maxEventWaits`
+  (default 50), and its human-task tool may narrow a task's audience per creation with
+  `excludedUsers`. ([#128](https://github.com/ballerina-platform/module-ballerina-workflow/pull/128), [#129](https://github.com/ballerina-platform/module-ballerina-workflow/pull/129))
+- **Task administrators.** Every task definition — `awaitHumanTask`, a `retryPolicy` review,
+  an `approvalPolicy` gate and an agent's declared human task — may name `administratorRoles`
+  and `administratorUsers` beside its audience. An administrator sees the task, may reassign
+  its audience, move or clear its deadline, fail it, or complete it; a completion by an
+  administrator is recorded with `completedAs: "administrator"`, and every act travels the
+  task's own history. The management API gains `tasks.reassign` and `tasks.extendDeadline`
+  (`POST /human-tasks/{taskId}/reassign` and `/deadline`), `canAdminister` and `completedAs`
+  on every task record, and the caller-independent `all` parameter on the pending count and
+  the work queue. An administrator's act that arrives together with a decision is applied
+  first, and a decision by a caller no longer in the audience is dropped. ([#131](https://github.com/ballerina-platform/module-ballerina-workflow/pull/131))
+- **Peers by agent.** `PeerDecl` is `agent`, `description?` and `allowedEvents?`; the peer's
+  run and each allowed event become tools named after the agent, and a delegation chooses
+  per call whether to wait or to be answered on one of the caller's events
+  (`replyEvent`). ([#129](https://github.com/ballerina-platform/module-ballerina-workflow/pull/129))
+- **A data event can be delivered from the management API.** `sendData` on an instance
+  (`instances.sendData`, `POST /workflows/{workflowId}/data/{dataName}`) answers a
+  `wait events.x` from a console or a test driver that holds only the instance id, where
+  `workflow:sendData` needed the workflow's function pointer. ([#113](https://github.com/ballerina-platform/module-ballerina-workflow/pull/113))
 - **Observability integration at the durable-engine wrapper layer**, plugged into the
   standard Ballerina observability pipeline (`observabilityIncluded = true`):
   - Tracing: a new exported `workflow.observe` submodule records client-side spans for
@@ -106,6 +147,86 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   spans and decision records, content included.
   See `docs/proposals/observability-integration.md` for the design.
 
+### Added
+
+- **Task administrators.** Every task definition — `awaitHumanTask`, a `retryPolicy` review,
+  an `approvalPolicy` gate and an agent's declared human task — may name `administratorRoles`
+  and `administratorUsers` beside its audience. An administrator sees the task, may reassign
+  its audience, move or clear its deadline, fail it, or complete it; a completion by an
+  administrator is recorded with `completedAs: "administrator"`, and every act travels the
+  task's own history. The management API gains `tasks.reassign` and `tasks.extendDeadline`
+  (`POST /human-tasks/{taskId}/reassign` and `/deadline`), `canAdminister` and `completedAs`
+  on every task record, and the caller-independent `all` parameter on the pending count and
+  the work queue. A review naming no audience but excluding someone is closed to the excluded
+  caller; an administrator's act arriving with a decision is applied first, and a decision by
+  a caller no longer in the audience is dropped.
+- **One task model.** `ReviewTaskDefinition` is the single shape of a review wherever one is
+  raised: `retryPolicy` is `AutoRetry | ReviewTaskDefinition | RetryBeforeReview`, and
+  `approvalPolicy: ReviewTaskDefinition | NoApproval` gates an activity, a tool or a
+  `callActivity`. A task names its audience as `userRoles` and/or `users`, minus
+  `excludedUsers` and `excludedRoles`; a definition that names nobody is a compile error
+  (`WORKFLOW_164`). Reviews get their own deadline timer and `ReviewTimeoutError`, and a
+  workflow reads `ctx.lastHumanTaskCompletion()` and `ctx.lastReviewDecision()`. A durable
+  agent may cap its event waits with `maxEventWaits` (default 50), and its human-task tool may
+  narrow a task's audience per creation with `excludedUsers`.
+- **Peers by agent.** `PeerDecl` is `agent`, `description?` and `allowedEvents?`; the peer's
+  run and each allowed event become tools named after the agent, and a delegation chooses
+  per call whether to wait or to be answered on one of the caller's events (`replyEvent`).
+
+### Removed
+
+- `requiresApproval` and `userRoles` on `ActivityDecl`, `ToolDecl` and `PeerDecl`, the peer's
+  `name`, `'wait` and `callbackChannel`, and the string and sentinel forms of `retryPolicy`
+  (`"manager"`, `ManualRetry`, `HumanReview`). Each is reported at compile time
+  (`WORKFLOW_163`) with the replacement; the VS Code designer offers the migration as a
+  quick fix. The imperative agent layer (`AgentRunConfig`, `ApprovalConfig`, `buildAndRun`) is
+  gone; the object model is the one way to declare an agent.
+
+## [0.9.1] - 2026-09-16 ([#106](https://github.com/ballerina-platform/module-ballerina-workflow/pull/106))
+
+### Changed
+
+- **Management API task records share one shape.** `HumanTaskSummary`, `WorkItemSummary` and
+  `ReviewActivitySummary` include `TaskSummary`; `HumanTaskInfo` and `ReviewActivityInfo`
+  include `TaskInfo`. Every task now reports `kind`, `description`, `stepId`,
+  `parentWorkflowType`, its full audience (`userRoles`, `users`, `excludedUsers`,
+  `excludedRoles`, `administratorRoles`, `administratorUsers`) and
+  `completedBy`/`completedAt`/`completedAs`. On `ReviewActivityInfo`, `taskInput` replaces
+  `activityArgs`, `completedBy`/`completedAt` replace `decidedBy`/`decidedAt`, and `decision`
+  carries the recorded decision; `ReviewDecisionInfo` renames the same two fields. ([#130](https://github.com/ballerina-platform/module-ballerina-workflow/pull/130))
+- **Task visibility is eligibility.** Listing, counting and reading a task apply the rule the
+  runtime applies on completion — roles or user id, minus exclusions, plus administrators — so
+  a caller sees exactly the tasks it can act on. A caller with no identity sees nothing; a task
+  assigned to users is closed to a caller without a user id. ([#130](https://github.com/ballerina-platform/module-ballerina-workflow/pull/130), [#131](https://github.com/ballerina-platform/module-ballerina-workflow/pull/131))
+- **The API docs are short.** Every public function's description is two or three lines, the
+  fenced examples moved to the module documentation, and parameter docs say what a parameter
+  is — so the designer's forms and editor hovers stay skimmable. ([#115](https://github.com/ballerina-platform/module-ballerina-workflow/pull/115))
+- `ballerina/ai` moves to 1.15.0. ([#111](https://github.com/ballerina-platform/module-ballerina-workflow/pull/111))
+- The README follows the connector store's package layout and carries the `Type/Library`
+  keyword. ([#109](https://github.com/ballerina-platform/module-ballerina-workflow/pull/109))
+
+### Removed
+
+- `requiresApproval` and `userRoles` on `ActivityDecl`, `ToolDecl` and `PeerDecl`, the peer's
+  `name`, `'wait` and `callbackChannel`, and the string and sentinel forms of `retryPolicy`
+  (`"manager"`, `ManualRetry`, `HumanReview`). Each is reported at compile time
+  (`WORKFLOW_163`) with its replacement; the VS Code designer offers the migration as a
+  quick fix. The imperative agent layer (`AgentRunConfig`, `ApprovalConfig`, `buildAndRun`)
+  is gone; the object model is the one way to declare an agent. ([#129](https://github.com/ballerina-platform/module-ballerina-workflow/pull/129))
+
+### Fixed
+
+- **The management listings work where the server has no query API.** `mode = "IN_MEMORY"`
+  runs Temporal's test environment, which does not implement `ListWorkflowExecutions`; the
+  listings now fall back to the standard open and closed executions feeds with the filters
+  applied client-side, reset points resolve on that server's event numbering, and a reset —
+  which that engine cannot do — says so instead of surfacing `UNIMPLEMENTED`. Time skipping is
+  off, so timers run on a clock a run can trust. ([#112](https://github.com/ballerina-platform/module-ballerina-workflow/pull/112))
+- Generated metadata keys are written as string literals, so a quoted-identifier field such
+  as `'wait` is read back by its plain name. ([#114](https://github.com/ballerina-platform/module-ballerina-workflow/pull/114))
+
+## [0.9.1] - 2026-09-16
+
 ### Fixed
 
 - **`bal build --export-endpoints` now writes the management API's OpenAPI description into
@@ -119,7 +240,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   truncated and a nonsense key landed in the schema — one of them in the request body of
   `POST /human-tasks/{taskId}/complete`, which made that operation fail validation outright.
   Four schemas also carried `nullable: true` with no `type`, which constrains nothing. The
-  suite now parses the description with an OpenAPI parser and fails on any message.
+  suite now parses the description with an OpenAPI parser and fails on any message. ([#121](https://github.com/ballerina-platform/module-ballerina-workflow/pull/121))
+- The release build commits the `Dependencies.toml` it regenerates. ([#125](https://github.com/ballerina-platform/module-ballerina-workflow/pull/125))
 
 ## [0.9.0] - 2026-09-07
 

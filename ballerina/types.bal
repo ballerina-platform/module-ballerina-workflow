@@ -174,7 +174,15 @@ public type HumanTaskCompletion record {|
     string? completedBy = ();
     string? completedAt = ();
     string? identitySource = ();
+    CompletionRole completedAs = AUDIENCE;
 |};
+
+# Who completed a task, relative to its definition: someone it was assigned to, or one of its
+# administrators stepping in.
+public enum CompletionRole {
+    AUDIENCE = "audience",
+    ADMINISTRATOR = "administrator"
+}
 
 // ---------------------------------------------------------------------------
 // Review task types
@@ -243,6 +251,7 @@ public type ReviewDecisionRecord record {|
     string? feedback = ();
     string? decidedBy = ();
     string? decidedAt = ();
+    CompletionRole completedAs = AUDIENCE;
 |};
 
 # A data-event turn a durable agent has accepted but not yet answered. Returned
@@ -281,6 +290,9 @@ public type JsonObject map<json>;
 # + users - User id(s) permitted to answer it, whatever their roles
 # + excludedUsers - User id(s) that may not answer it, whatever their roles
 # + excludedRoles - Role(s) that may not answer it
+# + administratorRoles - Role(s) that administer it: they see it, may reassign it, move its deadline,
+#                        fail it, or complete it — a completion by them is recorded as an administrator's
+# + administratorUsers - User id(s) that administer it, whatever their roles
 # + title - Short summary shown in the inbox. Defaults to the task name
 # + description - Additional context shown with the form or decision
 # + timeout - Maximum time to wait. Omit to wait indefinitely
@@ -289,6 +301,8 @@ type ReviewTaskFields record {
     string|[string, string...] users?;
     string|[string, string...] excludedUsers?;
     string|[string, string...] excludedRoles?;
+    string|[string, string...] administratorRoles?;
+    string|[string, string...] administratorUsers?;
     string? title = ();
     string? description = ();
     Duration? timeout = ();

@@ -42,6 +42,8 @@ import java.util.Map;
  * @param users              user ids that may act
  * @param excludedUsers      user ids that may not act
  * @param excludedRoles      roles that may not act
+ * @param administratorRoles roles that administer the task
+ * @param administratorUsers user ids that administer the task
  * @param taskInput          what the decider is shown
  * @param formSchema         JSON schema of the answer, or null
  * @param timeoutMillis      deadline, or null to wait indefinitely
@@ -54,7 +56,8 @@ public record TaskRecord(String kind, String taskId, String taskName, String par
                          String rootWorkflowId, String parentWorkflowType, String stepId, String title,
                          String description,
                          List<String> userRoles, List<String> users, List<String> excludedUsers,
-                         List<String> excludedRoles, Object taskInput, String formSchema, Long timeoutMillis,
+                         List<String> excludedRoles, List<String> administratorRoles,
+                         List<String> administratorUsers, Object taskInput, String formSchema, Long timeoutMillis,
                          String createdAt, String trigger, String activityName, String errorMessage) {
 
     public static final String HUMAN_TASK = "HUMAN_TASK";
@@ -82,6 +85,8 @@ public record TaskRecord(String kind, String taskId, String taskName, String par
         putIfAny(memo, TaskKeys.USERS, users);
         putIfAny(memo, TaskKeys.EXCLUDED_USERS, excludedUsers);
         putIfAny(memo, TaskKeys.EXCLUDED_ROLES, excludedRoles);
+        putIfAny(memo, TaskKeys.ADMINISTRATOR_ROLES, administratorRoles);
+        putIfAny(memo, TaskKeys.ADMINISTRATOR_USERS, administratorUsers);
         memo.put(TaskKeys.TASK_INPUT, taskInput);
         putIfSet(memo, TaskKeys.FORM_SCHEMA, formSchema);
         putIfSet(memo, TaskKeys.TIMEOUT_MILLIS, timeoutMillis);
@@ -112,6 +117,8 @@ public record TaskRecord(String kind, String taskId, String taskName, String par
         putIfAny(inputs, TaskKeys.USERS, users);
         putIfAny(inputs, TaskKeys.EXCLUDED_USERS, excludedUsers);
         putIfAny(inputs, TaskKeys.EXCLUDED_ROLES, excludedRoles);
+        putIfAny(inputs, TaskKeys.ADMINISTRATOR_ROLES, administratorRoles);
+        putIfAny(inputs, TaskKeys.ADMINISTRATOR_USERS, administratorUsers);
         inputs.put(TaskKeys.TASK_INPUT, taskInput);
         inputs.put(TaskKeys.TIMEOUT_MILLIS, timeoutMillis);
         inputs.put(TaskKeys.PARENT_WORKFLOW_ID, parentWorkflowId);
@@ -153,6 +160,8 @@ public record TaskRecord(String kind, String taskId, String taskName, String par
         private List<String> users = List.of();
         private List<String> excludedUsers = List.of();
         private List<String> excludedRoles = List.of();
+        private List<String> administratorRoles = List.of();
+        private List<String> administratorUsers = List.of();
         private Object taskInput;
         private String formSchema;
         private Long timeoutMillis;
@@ -225,6 +234,16 @@ public record TaskRecord(String kind, String taskId, String taskName, String par
             return this;
         }
 
+        public Builder administratorRoles(List<String> value) {
+            this.administratorRoles = value == null ? List.of() : value;
+            return this;
+        }
+
+        public Builder administratorUsers(List<String> value) {
+            this.administratorUsers = value == null ? List.of() : value;
+            return this;
+        }
+
         public Builder taskInput(Object value) {
             this.taskInput = value;
             return this;
@@ -262,9 +281,9 @@ public record TaskRecord(String kind, String taskId, String taskName, String par
 
         public TaskRecord build() {
             return new TaskRecord(kind, taskId, taskName, parentWorkflowId, rootWorkflowId, parentWorkflowType,
-                    stepId, title,
-                    description, userRoles, users, excludedUsers, excludedRoles, taskInput, formSchema,
-                    timeoutMillis, createdAt, trigger, activityName, errorMessage);
+                    stepId, title, description, userRoles, users, excludedUsers, excludedRoles, administratorRoles,
+                    administratorUsers, taskInput, formSchema, timeoutMillis, createdAt, trigger, activityName,
+                    errorMessage);
         }
     }
 }

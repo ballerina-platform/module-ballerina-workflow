@@ -333,7 +333,8 @@ public final class AgentContextNative {
 
     // A declared human task; the audience fields hold a BString, a BArray of them, or null.
     private record HumanTaskMeta(Object userRoles, Object users, Object excludedUsers, Object excludedRoles,
-                                 String title, String description, BTypedesc resultType, Object timeout,
+                                 Object administratorRoles, Object administratorUsers, String title,
+                                 String description, BTypedesc resultType, Object timeout,
                                  BTypedesc taskInputType) { }
 
     // The gate a tool declares: an approvalPolicy mapping read as a review declaration, or null for none.
@@ -763,9 +764,9 @@ public final class AgentContextNative {
      * @return null on success, or a Ballerina error
      */
     public static Object recordHumanTaskTool(BHandle handle, BString taskName, Object userRoles, Object users,
-                                             Object excludedUsers, Object excludedRoles, BTypedesc resultType,
-                                             Object title, Object description, Object timeout,
-                                             Object taskInputType) {
+                                             Object excludedUsers, Object excludedRoles, Object administratorRoles,
+                                             Object administratorUsers, BTypedesc resultType, Object title,
+                                             Object description, Object timeout, Object taskInputType) {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             String name = taskName.getValue();
@@ -796,6 +797,7 @@ public final class AgentContextNative {
             }
             info.tools.add(new ToolMeta(name, descriptionStr, schema, KIND_HUMAN_TASK));
             info.humanTasks.put(name, new HumanTaskMeta(userRoles, users, excludedUsers, excludedRoles,
+                    administratorRoles, administratorUsers,
                     titleStr, descriptionStr, resultType, timeout instanceof BMap ? timeout : null,
                     taskInputType instanceof BTypedesc t ? t : null));
             return null;
@@ -1402,7 +1404,8 @@ public final class AgentContextNative {
         Object result;
         try {
             result = WorkflowContextNative.awaitHumanTaskExploded(null, taskName, meta.userRoles(), users,
-                    excludedUsers, meta.excludedRoles(), payloadMap,
+                    excludedUsers, meta.excludedRoles(), meta.administratorRoles(), meta.administratorUsers(),
+                    payloadMap,
                     StringUtils.fromString(meta.title()), StringUtils.fromString(meta.description()),
                     meta.timeout(), meta.resultType(),
                     StringUtils.fromString(AGENT_TASK_SITE_PREFIX + taskName.getValue()));
@@ -1673,9 +1676,7 @@ public final class AgentContextNative {
                 // be dropped on this path, so an agent tool's review was answerable by anyone.
                 Map<String, Object> decision = WorkflowContextNative.startReviewActivity(
                         TaskKeys.TRIGGER_ON_FAILURE, ActivityNaming.reviewTaskNameFor(workflowType, activityName),
-                        fullActivityName, currentArgs, errorMsg, reviewPolicy.userRoles(),
-                        reviewPolicy.timeoutMillis(), stepId,
-                        reviewPolicy.title(), reviewPolicy.description());
+                        fullActivityName, currentArgs, errorMsg, reviewPolicy, stepId);
                 String action = decision.containsKey("action") ? String.valueOf(decision.get("action")) : "reject";
                 if ("proceed".equals(action)) {
                     continue;

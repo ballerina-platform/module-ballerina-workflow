@@ -1104,6 +1104,8 @@ public final class ManagementNative {
             }
             // Embed audit fields so the history scan in getReviewActivityInfo can retrieve them
             javaDecision.put(TaskKeys.DECIDED_BY, userId instanceof BString bs ? bs.getValue() : "unknown");
+            javaDecision.put(TaskKeys.COMPLETED_AS, memo.completedAs());
+            javaDecision.put(TaskKeys.CALLER_ROLES, TaskAssignment.roles(callerRolesArray));
             javaDecision.put(TaskKeys.DECIDED_AT, Instant.now().toString());
 
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(taskWorkflowId.getValue(),
@@ -1187,9 +1189,10 @@ public final class ManagementNative {
                             "Failed to decode task roles for '" + taskWorkflowId + "': " + e.getMessage()));
                 }
                 LOGGER.debug("Could not decode assignment from memo for '{}': {}", taskWorkflowId, e.getMessage());
-                assignment = new TaskAssignment(List.of(), List.of(), List.of(), List.of());
+                assignment = TaskAssignment.empty();
             }
-            // The decision's audit entry names the review, its parent, and who was allowed to decide it.
+            // The decision's audit entry names the review, its parent, who was allowed to decide it, and
+            // whether the caller decides as its audience or as an administrator.
             Object taskInput;
             try {
                 Payload inputPl = memoFields.getOrDefault(TaskKeys.TASK_INPUT,
@@ -1198,13 +1201,14 @@ public final class ManagementNative {
             } catch (Exception e) {
                 taskInput = null; // the audit entry goes without the reviewed arguments
             }
+            List<String> roles = TaskAssignment.roles(callerRolesArray);
+            String caller = userId instanceof BString bs ? bs.getValue() : null;
+            TaskAssignment.Access access = assignment.access(roles, caller);
             TaskMemo memo = new TaskMemo(decodeMemoString(dc, memoFields, TaskKeys.TASK_NAME, null),
                                          owningRun, owningRoot,
-                                         assignment.userRoles().stream().sorted().toList(), taskInput);
-            String denial = assignment.denial(TaskAssignment.roles(callerRolesArray),
-                    userId instanceof BString bs ? bs.getValue() : null, "review '" + taskWorkflowId + "'");
-            if (denial != null) {
-                return memo.refusal(denial);
+                                         assignment.userRoles().stream().sorted().toList(), taskInput, access);
+            if (access == TaskAssignment.Access.NONE) {
+                return memo.refusal(assignment.denial(roles, caller, "review '" + taskWorkflowId + "'"));
             }
             return memo;
 
@@ -1464,6 +1468,13 @@ public final class ManagementNative {
             // status still PENDING. Reviews decided since 0.10 carry the decider on the memo.
             Map<String, Object> decisionSignal = readSignalPayload(client, taskIdStr,
                     WorkflowWorkerNative.TASK_DECISION_SIGNAL_NAME);
+            if (decisionSignal == null) {
+                // An administrator's fail closes the review without a decision signal; it reads as a reject.
+                decisionSignal = administratorFailAsDecision(readSignalPayload(client, taskIdStr,
+                        WorkflowWorkerNative.TASK_ADMINISTER_SIGNAL_NAME,
+                        m -> WorkflowWorkerNative.ADMINISTER_FAIL.equals(
+                                m.get(WorkflowWorkerNative.ADMINISTER_ACTION))));
+            }
             record.put(StringUtils.fromString("decision"), reviewDecisionRecord(decisionSignal));
             if (record.get(StringUtils.fromString(TaskKeys.COMPLETED_BY)) == null && decisionSignal != null) {
                 putNullable(record, TaskKeys.COMPLETED_BY,
@@ -2013,6 +2024,13 @@ public final class ManagementNative {
     // The decoded payload map of the first signal named signalName, or null when there is none or on any error.
     @SuppressWarnings("unchecked")
     static Map<String, Object> readSignalPayload(WorkflowClient client, String workflowId, String signalName) {
+        return readSignalPayload(client, workflowId, signalName, m -> true);
+    }
+
+    // The first payload of the named signal the predicate accepts, or null.
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> readSignalPayload(WorkflowClient client, String workflowId, String signalName,
+                                                 java.util.function.Predicate<Map<String, Object>> accept) {
         try {
             WorkflowExecution execution = WorkflowExecution.newBuilder().setWorkflowId(workflowId).build();
             String namespace = client.getOptions().getNamespace();
@@ -2045,7 +2063,7 @@ public final class ManagementNative {
                         continue;
                     }
                     Object decoded = dc.fromPayload(payloads.getPayloads(0), Object.class, Object.class);
-                    if (decoded instanceof Map<?, ?> m) {
+                    if (decoded instanceof Map<?, ?> m && accept.test((Map<String, Object>) m)) {
                         return (Map<String, Object>) m;
                     }
                 }
@@ -2074,6 +2092,7 @@ public final class ManagementNative {
                     decodeMemoString(dc, memoFields, WorkflowWorkerNative.COMPLETED_BY_MEMO_KEY, null));
         putNullable(record, TaskKeys.COMPLETED_AT,
                     decodeMemoString(dc, memoFields, WorkflowWorkerNative.COMPLETED_AT_MEMO_KEY, null));
+        putNullable(record, TaskKeys.COMPLETED_AS, decodeMemoString(dc, memoFields, TaskKeys.COMPLETED_AS, null));
     }
 
     private static void putNullable(BMap<BString, Object> record, String key, String value) {
@@ -2081,6 +2100,19 @@ public final class ManagementNative {
     }
 
     // The decision a review received, as a ReviewDecision record, or null while it is pending.
+    private static Map<String, Object> administratorFailAsDecision(Map<String, Object> act) {
+        if (act == null) {
+            return null;
+        }
+        Map<String, Object> decision = new java.util.HashMap<>();
+        decision.put(TaskKeys.ACTION, TaskKeys.ACTION_REJECT);
+        decision.put(TaskKeys.FEEDBACK, act.get("reason"));
+        decision.put(TaskKeys.DECIDED_BY, act.get(WorkflowWorkerNative.ADMINISTERED_BY));
+        decision.put(TaskKeys.DECIDED_AT, act.get(TaskKeys.COMPLETED_AT));
+        decision.put(TaskKeys.COMPLETED_AS, TaskKeys.COMPLETED_AS_ADMINISTRATOR);
+        return decision;
+    }
+
     private static BMap<BString, Object> reviewDecisionRecord(Map<String, Object> signal) {
         if (signal == null || !(signal.get(TaskKeys.ACTION) instanceof String action)) {
             return null;

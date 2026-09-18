@@ -75,6 +75,10 @@ public enum Operation {
     COMPLETE_HUMAN_TASK = "humanTasks.complete",
     # Fail a human task.
     FAIL_HUMAN_TASK = "humanTasks.fail",
+    # Reassign a live task or review: an administrator replaces its audience.
+    REASSIGN_TASK = "tasks.reassign",
+    # Move or clear a live task's or review's deadline: an administrator's act.
+    EXTEND_TASK_DEADLINE = "tasks.extendDeadline",
     # List review activities visible to the caller.
     LIST_REVIEW_ACTIVITIES = "reviewActivities.list",
     # Get one review activity.
@@ -144,6 +148,10 @@ public type Command record {|
 // - `GET_HUMAN_TASK` — `taskId` (required).
 // - `COMPLETE_HUMAN_TASK` — `taskId` (required), `result`.
 // - `FAIL_HUMAN_TASK` — `taskId` and `reason` (required), `details`.
+// - `REASSIGN_TASK` — `taskId` (required), any of `userRoles`, `users`, `excludedUsers`, `excludedRoles`,
+//   and `kind` (optional: `HUMAN_TASK` or `REVIEW_ACTIVITY`) to require the id name that kind of task.
+// - `EXTEND_TASK_DEADLINE` — `taskId` (required), `timeoutMillis` (absent or null clears the deadline),
+//   and `kind` (optional: `HUMAN_TASK` or `REVIEW_ACTIVITY`) to require the id name that kind of task.
 // - `LIST_REVIEW_ACTIVITIES` — `status`, `parentWorkflowId`, `taskName`, `limit`,
 //   `pageToken`, the four time bounds, `taskQueue`.
 // - `GET_REVIEW_ACTIVITY` — `taskId` (required).
@@ -318,6 +326,31 @@ public isolated function executeCommand(Command command) returns json|Error {
             map<json>? details = params["details"] is map<json> ? <map<json>>params["details"] : ();
             return opFailHumanTask(taskId, params["reason"], details, callerRoles, userId, identitySource);
         }
+        REASSIGN_TASK => {
+            string|Error taskId = requiredParam(params, "taskId");
+            if taskId is Error {
+                return taskId;
+            }
+            map<json> audience = {};
+            foreach string key in AUDIENCE_PARAMS {
+                if params.hasKey(key) {
+                    audience[key] = params[key];
+                }
+            }
+            json kind = params["kind"];
+            return opReassignTask(taskId, audience, callerRoles, userId, identitySource,
+                    kind is string ? kind : ());
+        }
+        EXTEND_TASK_DEADLINE => {
+            string|Error taskId = requiredParam(params, "taskId");
+            if taskId is Error {
+                return taskId;
+            }
+            json millis = params["timeoutMillis"];
+            json deadlineKind = params["kind"];
+            return opExtendTaskDeadline(taskId, millis is int ? millis : (), callerRoles, userId,
+                    identitySource, deadlineKind is string ? deadlineKind : ());
+        }
         LIST_REVIEW_ACTIVITIES => {
             return opListReviewActivities(strParam(params, "status"),
                     strParam(params, "parentWorkflowId"), strParam(params, "taskName"),
@@ -429,6 +462,7 @@ final readonly & map<string> PARAM_TYPES = {
     "taskIds": "array",
     "taskName": "string",
     "taskQueue": "string",
+    "timeoutMillis": "int",
     "timeoutSeconds": "int",
     "userRole": "string",
     "workflowId": "string",
@@ -508,6 +542,7 @@ isolated function rolesFromIdentity(Identity identity) returns [string, string..
 # Parameter asking a listing or count to cover every task, not only the caller's; the surface
 # that accepts it decides who may ask.
 const ALL_PARAM = "all";
+final readonly & string[] AUDIENCE_PARAMS = ["userRoles", "users", "excludedUsers", "excludedRoles"];
 
 isolated function boolParam(map<json> params, string name) returns boolean {
     json value = params[name];

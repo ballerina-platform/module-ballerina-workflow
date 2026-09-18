@@ -32,7 +32,21 @@ public class TaskAssignmentTest {
 
     private static TaskAssignment of(List<String> roles, List<String> users, List<String> exUsers,
                                      List<String> exRoles) {
-        return new TaskAssignment(roles, users, exUsers, exRoles);
+        return TaskAssignment.audienceOnly(roles, users, exUsers, exRoles);
+    }
+
+    @Test
+    public void administratorsSeeWhatTheAudienceRuleDenies() {
+        TaskAssignment task = new TaskAssignment(List.of("approver"), List.of(), List.of("alice"), List.of(),
+                List.of("ops"), List.of("dana"));
+        Assert.assertEquals(task.access(List.of("approver"), "bob"), TaskAssignment.Access.AUDIENCE);
+        Assert.assertEquals(task.access(List.of("ops"), "carol"), TaskAssignment.Access.ADMINISTRATOR);
+        Assert.assertEquals(task.access(List.of("viewer"), "dana"), TaskAssignment.Access.ADMINISTRATOR);
+        Assert.assertEquals(task.access(List.of("viewer"), "erin"), TaskAssignment.Access.NONE);
+        // An excluded administrator is out of the audience, still an administrator.
+        Assert.assertEquals(task.access(List.of("approver", "ops"), "alice"), TaskAssignment.Access.ADMINISTRATOR);
+        // Audience wins when both apply: the completion is the person's own.
+        Assert.assertEquals(task.access(List.of("approver", "ops"), "bob"), TaskAssignment.Access.AUDIENCE);
     }
 
     @Test

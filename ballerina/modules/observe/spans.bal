@@ -84,12 +84,17 @@ public isolated distinct class GetWorkflowResultSpan {
 # The kind of task a person decides on.
 public enum TaskKind {
     HUMAN_TASK,
-    REVIEW_ACTIVITY
+    REVIEW_ACTIVITY,
+    # Either kind: an administrator's act names the task id, and the runtime knows which it is.
+    TASK
 }
 
 # What a person decided: `complete` or `fail` for a human task; `proceed`,
 # `proceed-with-input` or `reject` for a review activity.
-public type TaskAction "complete"|"fail"|"proceed"|"proceed-with-input"|"reject";
+public type TaskAction "complete"|"fail"|"proceed"|"proceed-with-input"|"reject"|"reassign"|"extendDeadline";
+
+# An administrator's acts on a live task.
+public type AdministrationAction "reassign"|"extendDeadline";
 
 # Where a decision's user identity came from: `verified` when it was resolved from a
 # credential the receiving service's auth layer validated (a JWT claim, a basic-auth
@@ -127,12 +132,12 @@ public isolated distinct class TaskDecisionSpan {
         self.kind = kind;
         self.taskId = taskId;
         self.action = action;
-        Operations operation = kind == HUMAN_TASK
-            ? (action == "fail" ? FAIL_HUMAN_TASK : COMPLETE_HUMAN_TASK)
+        Operations operation = kind == TASK ? ADMINISTER_TASK
+            : kind == HUMAN_TASK ? (action == "fail" ? FAIL_HUMAN_TASK : COMPLETE_HUMAN_TASK)
             : COMPLETE_REVIEW_ACTIVITY;
         self.baseSpan = new (string `${operation} ${taskId}`);
         self.baseSpan.addTag(OPERATION_NAME, operation);
-        self.baseSpan.addTag(kind == HUMAN_TASK ? HUMAN_TASK_ID : REVIEW_ACTIVITY_ID, taskId);
+        self.baseSpan.addTag(kind == TASK ? TASK_ID : kind == HUMAN_TASK ? HUMAN_TASK_ID : REVIEW_ACTIVITY_ID, taskId);
         self.baseSpan.addTag(TASK_ACTION, action);
     }
 
@@ -254,7 +259,7 @@ public isolated distinct class TaskDecisionSpan {
                     task_name = taskName ?: UNKNOWN_TASK_NAME, action = self.action,
                     outcome = (err is ()) ? "success" : "failure");
         }
-        string subject = self.kind == HUMAN_TASK ? "human task" : "review activity";
+        string subject = self.kind == HUMAN_TASK ? "human task" : self.kind == TASK ? "task" : "review activity";
         if err is () {
             log:printInfo(string `${subject} decision ${outcome}`, taskKind = self.kind, taskId = self.taskId,
                     taskName = taskName, parentWorkflowId = parentWorkflowId, action = self.action,
@@ -348,6 +353,14 @@ public isolated function createGetWorkflowResultSpan(string instanceId) returns 
 public isolated function createHumanTaskDecisionSpan(string taskWorkflowId, "complete"|"fail" action)
         returns TaskDecisionSpan {
     return new (HUMAN_TASK, taskWorkflowId, action);
+}
+
+# Creates the span for an administrator's act on a live task or review.
+# + action - `reassign` or `extendDeadline`
+# + return - The span
+public isolated function createTaskAdministrationSpan(string taskWorkflowId, AdministrationAction action)
+        returns TaskDecisionSpan {
+    return new (TASK, taskWorkflowId, action);
 }
 
 # Creates the span for a person's decision on a review activity.

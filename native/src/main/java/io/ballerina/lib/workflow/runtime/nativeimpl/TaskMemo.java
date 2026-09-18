@@ -34,7 +34,13 @@ import java.util.List;
 
 // What the runtime read from a task's memo while validating a decision; returned to Ballerina as the receipt.
 record TaskMemo(String taskName, String parentWorkflowId, String rootWorkflowId, List<String> assignedRoles,
-                Object taskInput) {
+                Object taskInput, TaskAssignment.Access access) {
+
+    String completedAs() {
+        return access == TaskAssignment.Access.ADMINISTRATOR
+                ? TaskKeys.COMPLETED_AS_ADMINISTRATOR : TaskKeys.COMPLETED_AS_AUDIENCE;
+    }
+
 
     // A refusal that still knows which run owns the task, so its span and audit entry can name that run.
     // The parent rides the error's detail; without it the decision would stand outside the run's trace.

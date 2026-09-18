@@ -58,6 +58,7 @@ enum WorkflowTagNames {
     DATA_NAME = "workflow.data.name",
     HUMAN_TASK_ID = "workflow.human_task.id",
     REVIEW_ACTIVITY_ID = "workflow.review_activity.id",
+    TASK_ID = "workflow.task.id",
     TASK_NAME = "workflow.task.name",
     TASK_ACTION = "workflow.task.action",
     TASK_INPUT = "workflow.task.input",
@@ -77,6 +78,7 @@ enum Operations {
     COMPLETE_HUMAN_TASK = "complete_human_task",
     FAIL_HUMAN_TASK = "fail_human_task",
     COMPLETE_REVIEW_ACTIVITY = "complete_review_activity",
+    ADMINISTER_TASK = "administer_task",
     START_AGENT = "start_agent",
     SEND_AGENT_EVENT = "send_agent_event"
 }

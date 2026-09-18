@@ -711,7 +711,7 @@ isolated function awaitAgentToolReview(handle nativeContext, string toolName, st
 
 isolated function recordHumanTaskTool(handle nativeContext, string taskName, string|string[]? userRoles,
         string|string[]? users, string|string[]? excludedUsers, string|string[]? excludedRoles,
-        typedesc<anydata> resultType, string? title, string? description, Duration? timeout,
+        string|string[]? administratorRoles, string|string[]? administratorUsers, typedesc<anydata> resultType, string? title, string? description, Duration? timeout,
         typedesc<map<json>>? taskInputType) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "recordHumanTaskTool"
@@ -935,9 +935,15 @@ isolated function registerDeclaredActivity(handle agentCtx, DurableAgentActivity
 }
 
 // A review names an audience, AutoRetry names attempts, RetryBeforeReview names both.
+final readonly & string[] REVIEW_ONLY_KEYS = ["userRoles", "users", "excludedUsers", "excludedRoles",
+    "administratorRoles", "administratorUsers", "title", "description", "timeout"];
+
 isolated function retryPolicyOf(map<json> retryJson) returns RetryPolicy|error {
     boolean review = retryJson["userRoles"] !is () || retryJson["users"] !is ();
     boolean retries = retryJson["maxRetries"] !is ();
+    if !review && retryJson.keys().some(key => REVIEW_ONLY_KEYS.indexOf(key) !is ()) {
+        return error("retryPolicy must name 'userRoles' or 'users' when it declares a review");
+    }
     if review && retries {
         return check retryJson.cloneWithType(RetryBeforeReview);
     }
@@ -1000,6 +1006,8 @@ isolated function registerDeclaredHumanTask(handle agentCtx, DurableAgentHumanTa
     string|string[]? users = ();
     string|string[]? excludedUsers = ();
     string|string[]? excludedRoles = ();
+    string|string[]? administratorRoles = ();
+    string|string[]? administratorUsers = ();
     string? title = ();
     string? description = ();
     Duration? timeout = ();
@@ -1011,6 +1019,8 @@ isolated function registerDeclaredHumanTask(handle agentCtx, DurableAgentHumanTa
         users = check namesOf(meta["users"]);
         excludedUsers = check namesOf(meta["excludedUsers"]);
         excludedRoles = check namesOf(meta["excludedRoles"]);
+        administratorRoles = check namesOf(meta["administratorRoles"]);
+        administratorUsers = check namesOf(meta["administratorUsers"]);
         json titleJson = meta["title"];
         if titleJson is string {
             title = titleJson;
@@ -1025,7 +1035,8 @@ isolated function registerDeclaredHumanTask(handle agentCtx, DurableAgentHumanTa
         }
     }
     check recordHumanTaskTool(agentCtx, taskSpec.name, roles, users, excludedUsers, excludedRoles,
-            taskSpec.resultType, title, description, timeout, taskSpec.taskInputType);
+            administratorRoles, administratorUsers, taskSpec.resultType, title, description, timeout,
+            taskSpec.taskInputType);
 }
 
 // A single name or a list of them from declaration metadata; `()` when absent.

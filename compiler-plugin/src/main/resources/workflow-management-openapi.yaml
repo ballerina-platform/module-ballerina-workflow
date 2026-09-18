@@ -370,6 +370,96 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/HumanTaskPage"}
         default: {$ref: "#/components/responses/Error"}
+  /human-tasks/{taskId}/reassign:
+    post:
+      tags: [administration]
+      summary: Replace a live human task's audience (administrators only)
+      operationId: reassignTask
+      parameters:
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/TaskAudience"}
+      responses:
+        "200":
+          description: The act was recorded
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TaskAdministration"}
+        "403": {description: The caller does not administer the task}
+        "404": {description: No such task}
+        default: {$ref: "#/components/responses/Error"}
+  /human-tasks/{taskId}/deadline:
+    post:
+      tags: [administration]
+      summary: Move or clear a live human task's deadline (administrators only)
+      operationId: extendTaskDeadline
+      parameters:
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                timeoutMillis: {type: integer, nullable: true, description: "Milliseconds from now; null clears the deadline"}
+      responses:
+        "200":
+          description: The act was recorded
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TaskAdministration"}
+        "403": {description: The caller does not administer the task}
+        "404": {description: No such task}
+        default: {$ref: "#/components/responses/Error"}
+  /review-activities/{taskId}/reassign:
+    post:
+      tags: [administration]
+      summary: Replace a live review's audience (administrators only)
+      operationId: reassignReviewActivity
+      parameters:
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/TaskAudience"}
+      responses:
+        "200":
+          description: The act was recorded
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TaskAdministration"}
+        "403": {description: The caller does not administer the review}
+        "404": {description: No such review activity}
+        default: {$ref: "#/components/responses/Error"}
+  /review-activities/{taskId}/deadline:
+    post:
+      tags: [administration]
+      summary: Move or clear a live review's deadline (administrators only)
+      operationId: extendReviewActivityDeadline
+      parameters:
+        - {name: taskId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                timeoutMillis: {type: integer, nullable: true, description: "Milliseconds from now; null clears the deadline"}
+      responses:
+        "200":
+          description: The act was recorded
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TaskAdministration"}
+        "403": {description: The caller does not administer the review}
+        "404": {description: No such review activity}
+        default: {$ref: "#/components/responses/Error"}
   /human-tasks/pending-count:
     get:
       tags: [human-tasks]
@@ -377,7 +467,7 @@ paths:
       operationId: countPendingHumanTasks
       parameters:
         - {name: taskQueue, in: query, schema: {type: string}}
-        - {name: all, in: query, schema: {type: boolean}, description: "Count every pending task, not only the caller's"}
+        - {name: all, in: query, schema: {type: boolean}, description: "Count every pending task, not only the caller's; requires the workflow manage scope"}
       responses:
         "200":
           description: The count
@@ -724,9 +814,27 @@ components:
         users: {type: array, items: {type: string}}
         excludedUsers: {type: array, items: {type: string}}
         excludedRoles: {type: array, items: {type: string}}
+        administratorRoles: {type: array, items: {type: string}}
+        administratorUsers: {type: array, items: {type: string}}
         completedBy: {type: string, nullable: true}
         completedAt: {type: string, format: date-time, nullable: true}
+        completedAs: {type: string, nullable: true, enum: [audience, administrator]}
         canComplete: {type: boolean}
+        canAdminister: {type: boolean}
+    TaskAudience:
+      type: object
+      properties:
+        userRoles: {type: array, items: {type: string}}
+        users: {type: array, items: {type: string}}
+        excludedUsers: {type: array, items: {type: string}}
+        excludedRoles: {type: array, items: {type: string}}
+    TaskAdministration:
+      type: object
+      properties:
+        success: {type: boolean}
+        action: {type: string, enum: [reassign, extendDeadline]}
+        administeredBy: {type: string}
+        administeredAt: {type: string, format: date-time}
     HumanTaskSummary:
       allOf:
         - {$ref: "#/components/schemas/TaskSummary"}
@@ -748,7 +856,7 @@ components:
             createdAt: {type: string, format: date-time}
             formSchema: {type: string, nullable: true}
             taskInput: {type: object, nullable: true}
-            result: {type: object, nullable: true, description: "The value submitted on completion, as JSON"}
+            result: {description: "The value submitted on completion: any JSON value, null while pending"}
     ReviewActivitySummary:
       allOf:
         - {$ref: "#/components/schemas/TaskSummary"}

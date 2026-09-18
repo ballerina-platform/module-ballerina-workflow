@@ -40,14 +40,30 @@ import java.util.Map;
  * @param users         user ids that may act
  * @param excludedUsers user ids that may not act, whatever their roles
  * @param excludedRoles roles that may not act
+ * @param administratorRoles roles that administer the task
+ * @param administratorUsers user ids that administer the task
  */
 public record TaskAssignment(List<String> userRoles, List<String> users, List<String> excludedUsers,
-                             List<String> excludedRoles) {
+                             List<String> excludedRoles, List<String> administratorRoles,
+                             List<String> administratorUsers) {
+
+    /** What a caller may do with a task: nothing, act as its audience, or administer it. */
+    public enum Access { NONE, AUDIENCE, ADMINISTRATOR }
+
+    public static TaskAssignment audienceOnly(List<String> userRoles, List<String> users, List<String> excludedUsers,
+                                              List<String> excludedRoles) {
+        return new TaskAssignment(userRoles, users, excludedUsers, excludedRoles, List.of(), List.of());
+    }
+
+    public static TaskAssignment empty() {
+        return new TaskAssignment(List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+    }
 
     // Throws when userRoles is present but undecodable: a completion must not proceed on an unreadable audience.
     public static TaskAssignment fromMemo(DataConverter dc, Map<String, Payload> memo) {
         return new TaskAssignment(strings(dc, memo, TaskKeys.USER_ROLES), strings(dc, memo, TaskKeys.USERS),
-                strings(dc, memo, TaskKeys.EXCLUDED_USERS), strings(dc, memo, TaskKeys.EXCLUDED_ROLES));
+                strings(dc, memo, TaskKeys.EXCLUDED_USERS), strings(dc, memo, TaskKeys.EXCLUDED_ROLES),
+                strings(dc, memo, TaskKeys.ADMINISTRATOR_ROLES), strings(dc, memo, TaskKeys.ADMINISTRATOR_USERS));
     }
 
     // Readers list a task whose audience they cannot decode rather than dropping it; only a completion must fail.
@@ -55,8 +71,27 @@ public record TaskAssignment(List<String> userRoles, List<String> users, List<St
         try {
             return fromMemo(dc, memo);
         } catch (Exception e) {
-            return new TaskAssignment(List.of(), List.of(), List.of(), List.of());
+            return empty();
         }
+    }
+
+    // Administration is a static grant beside the audience; exclusions narrow the audience, not this.
+    public boolean administers(List<String> roles, String userId) {
+        if (roles != null && roles.stream().anyMatch(administratorRoles::contains)) {
+            return true;
+        }
+        return userId != null && administratorUsers.contains(userId);
+    }
+
+    /**
+     * The one answer every read and write uses: the audience rule first, administration second.
+     * A caller with no identity at all is an internal path and gets AUDIENCE, as {@link #denial} lets it through.
+     */
+    public Access access(List<String> roles, String userId) {
+        if (denial(roles, userId, "") == null) {
+            return Access.AUDIENCE;
+        }
+        return administers(roles, userId) ? Access.ADMINISTRATOR : Access.NONE;
     }
 
     public boolean namesAnyone() {
@@ -68,6 +103,8 @@ public record TaskAssignment(List<String> userRoles, List<String> users, List<St
         record.put(StringUtils.fromString(TaskKeys.USERS), array(users));
         record.put(StringUtils.fromString(TaskKeys.EXCLUDED_USERS), array(excludedUsers));
         record.put(StringUtils.fromString(TaskKeys.EXCLUDED_ROLES), array(excludedRoles));
+        record.put(StringUtils.fromString(TaskKeys.ADMINISTRATOR_ROLES), array(administratorRoles));
+        record.put(StringUtils.fromString(TaskKeys.ADMINISTRATOR_USERS), array(administratorUsers));
     }
 
     private static BArray array(List<String> values) {

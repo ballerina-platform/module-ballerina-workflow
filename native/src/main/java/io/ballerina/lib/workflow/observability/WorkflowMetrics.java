@@ -54,6 +54,11 @@ public final class WorkflowMetrics {
     private static final String TAG_TASK_QUEUE = "task_queue";
     private static final String TAG_HOST = "host";
     private static final String MODULE_VALUE = "workflow";
+
+    // Whoever deploys the runtime identifies it with `observe:addTag`, and every metric recorded through
+    // an observation carries that tag. These are recorded straight into the registry, so they have to
+    // read it themselves — without it a consumer cannot tell which runtime a sample came from.
+    static final String TAG_RUNTIME_ID = "icp.runtimeId";
     private static final String TYPE_CLIENT = "client";
     private static final String TYPE_WORKER = "worker";
 
@@ -315,6 +320,10 @@ public final class WorkflowMetrics {
     // Identity tags every sample carries: module, client/worker, engine endpoint, task queue, host.
     private static Set<Tag> identityTags(String type) {
         Set<Tag> tags = new HashSet<>();
+        String runtimeId = runtimeId();
+        if (runtimeId != null) {
+            tags.add(Tag.of(TAG_RUNTIME_ID, runtimeId));
+        }
         tags.add(Tag.of(TAG_MODULE, MODULE_VALUE));
         tags.add(Tag.of(TAG_TYPE, type));
         String url = WorkflowWorkerNative.getServerUrl();
@@ -323,6 +332,16 @@ public final class WorkflowMetrics {
         tags.add(Tag.of(TAG_TASK_QUEUE, queue == null || queue.isEmpty() ? NONE : queue));
         tags.add(Tag.of(TAG_HOST, HOST_NAME));
         return tags;
+    }
+
+    // The tag as registered, or null when nothing registered one.
+    static String runtimeId() {
+        try {
+            String id = ObserveUtils.getCustomTag(TAG_RUNTIME_ID);
+            return id == null || id.isEmpty() ? null : id;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static String resolveHostName() {

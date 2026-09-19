@@ -94,6 +94,12 @@ public final class ObservabilityTestNatives {
         };
     }
 
+    // The identity a sample would carry, as registered by the deployment; empty when nothing registered one.
+    public static BString sampleRuntimeId() {
+        String id = WorkflowMetrics.runtimeId();
+        return StringUtils.fromString(id == null ? "" : id);
+    }
+
     // The task kind and task name a workflow type resolves to.
     public static BArray deriveTaskDimensions(BString workflowType) {
         String type = workflowType.getValue();

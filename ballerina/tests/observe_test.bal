@@ -200,6 +200,18 @@ function testAgentStepsShareOneVocabulary() {
 @test:Config {
     groups: ["observe"]
 }
+function testSamplesCarryTheRegisteredRuntimeIdentity() returns error? {
+    // Whoever deploys the runtime names it with `observe:addTag`, and every metric recorded through an
+    // observation carries that tag. Samples and the registry are written directly, so they read it back
+    // themselves — without it a consumer cannot tell which runtime a sample describes.
+    check observability:addTag("icp.runtimeId", "runtime-under-test");
+    test:assertEquals(sampleRuntimeId(), "runtime-under-test",
+            "a sample carries the runtime identity the deployment registered");
+}
+
+@test:Config {
+    groups: ["observe"]
+}
 function testTaskDimensionsDeriveFromWorkflowTypes() {
     test:assertEquals(deriveTaskDimensions("humantask-expenseFlow.approve"),
             ["HUMAN_TASK", "expenseFlow.approve"],
@@ -211,6 +223,11 @@ function testTaskDimensionsDeriveFromWorkflowTypes() {
     test:assertEquals(deriveTaskDimensions("workflow-orderFlow"), ["none", "none"],
             "an ordinary workflow carries the sentinel in both task dimensions");
 }
+
+isolated function sampleRuntimeId() returns string = @java:Method {
+    'class: "io.ballerina.lib.workflow.observability.ObservabilityTestNatives",
+    name: "sampleRuntimeId"
+} external;
 
 isolated function deriveTaskDimensions(string workflowType) returns string[] = @java:Method {
     'class: "io.ballerina.lib.workflow.observability.ObservabilityTestNatives",

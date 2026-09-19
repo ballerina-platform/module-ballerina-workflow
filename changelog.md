@@ -30,6 +30,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   a review could be administered through the human-task resource. Each administration route now
   serves one kind of task, the guard the read paths have carried since
   ballerina-library#8894. ([#134](https://github.com/ballerina-platform/module-ballerina-workflow/pull/134))
+- `tasks.reassign` and `tasks.extendDeadline` passed an unrecognized `kind` through unchecked, so
+  a value such as `OTHER` skipped the kind guard entirely instead of constraining the id. An
+  unsupported `kind` is now refused. ([#136](https://github.com/ballerina-platform/module-ballerina-workflow/pull/136))
 
 ## [0.10.0] - 2026-09-18
 

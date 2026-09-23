@@ -201,11 +201,18 @@ function testAgentStepsShareOneVocabulary() {
     groups: ["observe"]
 }
 function testSamplesCarryTheRegisteredRuntimeIdentity() returns error? {
+    // `addTag` stores nothing unless observability is on, and a GraalVM run builds without it.
+    if !observability:isTracingEnabled() {
+        return;
+    }
     // Whoever deploys the runtime names it with `observe:addTag`, and every metric recorded through an
     // observation carries that tag. Samples and the registry are written directly, so they read it back
     // themselves — without it a consumer cannot tell which runtime a sample describes.
     check observability:addTag("icp.runtimeId", "runtime-under-test");
-    test:assertEquals(sampleRuntimeId(), "runtime-under-test",
+    string registered = sampleRuntimeId();
+    // The tag lives in a process-wide map: drop it before asserting, so it cannot leak into the rest of the suite.
+    clearRuntimeId();
+    test:assertEquals(registered, "runtime-under-test",
             "a sample carries the runtime identity the deployment registered");
 }
 
@@ -227,6 +234,11 @@ function testTaskDimensionsDeriveFromWorkflowTypes() {
 isolated function sampleRuntimeId() returns string = @java:Method {
     'class: "io.ballerina.lib.workflow.observability.ObservabilityTestNatives",
     name: "sampleRuntimeId"
+} external;
+
+isolated function clearRuntimeId() = @java:Method {
+    'class: "io.ballerina.lib.workflow.observability.ObservabilityTestNatives",
+    name: "clearRuntimeId"
 } external;
 
 isolated function deriveTaskDimensions(string workflowType) returns string[] = @java:Method {

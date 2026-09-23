@@ -76,9 +76,11 @@ included). Token counts are not on these metrics — `ballerina/ai`'s own `ai.ob
 record them from inside the `llmChat` activity when tracing is on.
 
 Every metric also carries the identity tags `module="workflow"`, `type` (`client` or
-`worker`), `remote_url`, `task_queue`, and `host`, and every increment carries the same
-label keys — a dimension that does not apply holds `none`, so `sum by (...)` never splits
-a series.
+`worker`), `remote_url`, `task_queue`, `host`, and `icp.runtimeId` — the identity a
+deployment registers with `observe:addTag("icp.runtimeId", …)`, read once at the first
+increment and held for the life of the process. Every increment carries the same label
+keys — a dimension that does not apply holds `none`, so `sum by (...)` never splits a
+series.
 
 ## Traces with Jaeger
 
@@ -131,6 +133,13 @@ Integration Control Plane) can index the module's structured samples — one rec
 workflow event under `logger="workflow-metrics"`, the control operations and the agent
 steps included (`agent.model_called`, `agent.tool_called`, …, with the same fields as the
 registry tags) — and the human-decision **audit entries**, which are ordinary
-`ballerina/log` output written whether or not any observability is enabled. See the proposal in
+`ballerina/log` output written whether or not any observability is enabled.
+
+The samples carry `icp.runtimeId` only when the integration is built with observability
+enabled (`--observability-included`, and metrics, tracing or metrics-logs on): the tag
+lives in the observability layer, and `observe:addTag` stores nothing when that layer is
+off. The samples themselves are published either way, under `publishMetricSamples`.
+
+See the proposal in
 [`proposals/observability-integration.md`](proposals/observability-integration.md) for the
 full vocabulary and the content-capture switches.

@@ -59,6 +59,7 @@ public final class WorkflowMetrics {
     // an observation carries that tag. These are recorded straight into the registry, so they have to
     // read it themselves — without it a consumer cannot tell which runtime a sample came from.
     static final String TAG_RUNTIME_ID = "icp.runtimeId";
+
     private static final String TYPE_CLIENT = "client";
     private static final String TYPE_WORKER = "worker";
 
@@ -320,10 +321,7 @@ public final class WorkflowMetrics {
     // Identity tags every sample carries: module, client/worker, engine endpoint, task queue, host.
     private static Set<Tag> identityTags(String type) {
         Set<Tag> tags = new HashSet<>();
-        String runtimeId = runtimeId();
-        if (runtimeId != null) {
-            tags.add(Tag.of(TAG_RUNTIME_ID, runtimeId));
-        }
+        tags.add(Tag.of(TAG_RUNTIME_ID, metricRuntimeId()));
         tags.add(Tag.of(TAG_MODULE, MODULE_VALUE));
         tags.add(Tag.of(TAG_TYPE, type));
         String url = WorkflowWorkerNative.getServerUrl();
@@ -332,6 +330,20 @@ public final class WorkflowMetrics {
         tags.add(Tag.of(TAG_TASK_QUEUE, queue == null || queue.isEmpty() ? NONE : queue));
         tags.add(Tag.of(TAG_HOST, HOST_NAME));
         return tags;
+    }
+
+    // The label value, resolved once for the process. Re-read per record, a tag registered after the first
+    // increment would give one metric name a second label-key set, which a Prometheus-backed registry refuses.
+    private static volatile String metricRuntimeId;
+
+    private static String metricRuntimeId() {
+        String value = metricRuntimeId;
+        if (value == null) {
+            String id = runtimeId();
+            value = id == null ? NONE : id;
+            metricRuntimeId = value;
+        }
+        return value;
     }
 
     // The tag as registered, or null when nothing registered one.

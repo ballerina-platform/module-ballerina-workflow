@@ -23,6 +23,7 @@ import io.ballerina.runtime.api.creators.ValueCreator;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BArray;
 import io.ballerina.runtime.api.values.BString;
+import io.ballerina.runtime.observability.ObserveUtils;
 import io.ballerina.runtime.observability.metrics.MetricRegistry;
 import io.ballerina.runtime.observability.metrics.noop.NoOpMetricProvider;
 import io.temporal.failure.ApplicationFailure;
@@ -98,6 +99,11 @@ public final class ObservabilityTestNatives {
     public static BString sampleRuntimeId() {
         String id = WorkflowMetrics.runtimeId();
         return StringUtils.fromString(id == null ? "" : id);
+    }
+
+    // Drops the identity again: custom tags sit in a process-wide map, and a test must leave none behind.
+    public static void clearRuntimeId() {
+        ObserveUtils.removeCustomTag(WorkflowMetrics.TAG_RUNTIME_ID);
     }
 
     // The task kind and task name a workflow type resolves to.

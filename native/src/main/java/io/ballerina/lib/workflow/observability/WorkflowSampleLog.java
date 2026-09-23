@@ -132,8 +132,8 @@ public final class WorkflowSampleLog {
             all.put("logger", LOGGER_TAG);
             all.put("sample", sample);
             all.putAll(fields);
-            // The same runtime identity every other metric line carries; a sample nobody can attribute
-            // to a runtime is not worth much to whoever reads these.
+            // The runtime identity every other metric line carries. It is there only when the build enabled
+            // observability — `observe:addTag` stores nothing otherwise — while the samples publish either way.
             String runtimeId = WorkflowMetrics.runtimeId();
             if (runtimeId != null) {
                 all.put(WorkflowMetrics.TAG_RUNTIME_ID, runtimeId);

@@ -132,6 +132,12 @@ public final class WorkflowSampleLog {
             all.put("logger", LOGGER_TAG);
             all.put("sample", sample);
             all.putAll(fields);
+            // The runtime identity every other metric line carries. It is there only when the build enabled
+            // observability — `observe:addTag` stores nothing otherwise — while the samples publish either way.
+            String runtimeId = WorkflowMetrics.runtimeId();
+            if (runtimeId != null) {
+                all.put(WorkflowMetrics.TAG_RUNTIME_ID, runtimeId);
+            }
             // An empty message and the fields as the record's one parameter: the module's formatter
             // renders a Map parameter as top-level key=value pairs, as ballerina/log would.
             LogRecord entry = new LogRecord(Level.INFO, "");

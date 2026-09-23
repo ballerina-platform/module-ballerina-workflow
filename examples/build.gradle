@@ -75,7 +75,7 @@ observabilityIncluded = true
         def nativeVersion = project.version.toString()
         def tomlVersion = nativeVersion.replace("-SNAPSHOT", "")
         toml += """
-[[platform.java21.dependency]]
+[[platform.java25.dependency]]
 groupId = "io.ballerina.lib"
 artifactId = "workflow-native"
 version = "${tomlVersion}"

@@ -1,12 +1,12 @@
 [package]
 org = "ballerina"
 name = "workflow_tests"
-version = "0.9.1"
+version = "0.12.0"
 
 [[dependency]]
 org = "ballerina"
 name = "workflow"
-version = "0.9.1"
+version = "0.12.0"
 
 [build-options]
 observabilityIncluded = true
@@ -14,14 +14,14 @@ observabilityIncluded = true
 # GreenMail SMTP fixture jars for the builtin sendEmail integration test.
 # The `integration-tests:prepareIntegrationTestLibs` Gradle task downloads these
 # artifacts from Maven Central into integration-tests/libs/ before `bal test`.
-[[platform.java21.dependency]]
+[[platform.java25.dependency]]
 path = "./libs/greenmail-1.5.11.jar"
 
-[[platform.java21.dependency]]
+[[platform.java25.dependency]]
 path = "./libs/javax.mail-1.6.2.jar"
 
 # Workflow native jar (version-stable name) staged by prepareIntegrationTestLibs.
 # Needed so agent integration tests can bind mock ai:ModelProvider.generate and
 # the agent final-response probe to its classes.
-[[platform.java21.dependency]]
+[[platform.java25.dependency]]
 path = "./libs/workflow-native-tests.jar"

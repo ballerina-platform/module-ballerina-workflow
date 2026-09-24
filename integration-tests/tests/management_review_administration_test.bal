@@ -90,6 +90,15 @@ function testAdministrationRouteServesOneTaskKind() returns error? {
     test:assertTrue(asHumanTask is management:Error,
             "a review id must be refused by the human-task administration route");
 
+    // A kind the route does not serve is refused rather than waved through unchecked.
+    json|management:Error asUnknownKind = management:executeCommand({
+        operation: management:REASSIGN_TASK,
+        params: {taskId: review.taskId, userRoles: ["other-approver"], kind: "OTHER"},
+        identity: {userId: "dana", roles: ["ops-lead"]}
+    });
+    test:assertTrue(asUnknownKind is management:InvalidRequestError,
+            "an unsupported kind must be refused");
+
     // Its own route accepts it.
     json|management:Error asReview = management:executeCommand({
         operation: management:REASSIGN_TASK,

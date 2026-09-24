@@ -94,7 +94,7 @@ function obsRecoverableStep(string mode) returns string|error {
 @workflow:Workflow
 function observabilityApprovalFlow(workflow:Context ctx, ObservabilityInput input) returns string|error {
     ObsDecision decision = check ctx->awaitHumanTask("obsApprove", {name: input.name},
-            userRoles = "OBS_APPROVER", title = "Observe this approval");
+            userRoles = "OBS_APPROVER", administratorRoles = "OBS_OPS", title = "Observe this approval");
     return decision.approved ? "obs:approved" : "obs:declined";
 }
 

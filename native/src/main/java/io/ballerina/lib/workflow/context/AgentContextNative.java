@@ -1289,6 +1289,9 @@ public final class AgentContextNative {
         Object data;
         try {
             data = awaitSignalUnrecorded(info, eventName);
+        } catch (NonDeterministicException e) {
+            AgentStepTelemetry.abandon(span, e);
+            throw e;
         } catch (io.temporal.failure.TemporalFailure e) {
             AgentStepTelemetry.record(AgentStep.eventReceived(Workflow.getInfo().getWorkflowType(), eventName,
                     Workflow.currentTimeMillis() - startedAt, WorkflowMetrics.errorTypeOf(e)), span);
@@ -1409,6 +1412,9 @@ public final class AgentContextNative {
                     StringUtils.fromString(meta.title()), StringUtils.fromString(meta.description()),
                     meta.timeout(), meta.resultType(),
                     StringUtils.fromString(AGENT_TASK_SITE_PREFIX + taskName.getValue()));
+        } catch (NonDeterministicException e) {
+            AgentStepTelemetry.abandon(span, e);
+            throw e;
         } catch (io.temporal.failure.TemporalFailure e) {
             String type = Workflow.getInfo().getWorkflowType();
             AgentStepTelemetry.record(AgentStep.taskAwaited(type, taskName.getValue(),
@@ -1585,6 +1591,9 @@ public final class AgentContextNative {
         ActivityOutcome outcome;
         try {
             outcome = runActivity(activityName, namedArgs, td, retryPolicy, site);
+        } catch (NonDeterministicException e) {
+            AgentStepTelemetry.abandon(span, e);
+            throw e;
         } catch (io.temporal.failure.TemporalFailure e) {
             String type = Workflow.getInfo().getWorkflowType();
             long failedAfter = Workflow.currentTimeMillis() - startedAt;

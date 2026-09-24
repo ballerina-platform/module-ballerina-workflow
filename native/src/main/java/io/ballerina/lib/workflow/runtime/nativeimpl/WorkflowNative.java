@@ -29,7 +29,6 @@ import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.creators.TypeCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
 import io.ballerina.runtime.api.types.MapType;
-import io.ballerina.runtime.api.types.PredefinedTypes;
 import io.ballerina.runtime.api.types.RecordType;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BArray;
@@ -1116,37 +1115,44 @@ public final class WorkflowNative {
                             .newBuilder().setNamespace(client.getOptions().getNamespace())
                             .setExecution(io.temporal.api.common.v1.WorkflowExecution.newBuilder()
                                     .setWorkflowId(taskId).build()).build());
+            io.temporal.api.workflow.v1.WorkflowExecutionInfo execInfo = response.getWorkflowExecutionInfo();
+            Map<String, io.temporal.api.common.v1.Payload> memoFields = execInfo.getMemo().getFieldsMap();
+            io.temporal.common.converter.DataConverter dc = client.getOptions().getDataConverter();
+            // Read before the checks below, so a refused act still joins the owning run's trace.
+            String owningRun = decodeMemoText(dc, memoFields, TaskKeys.PARENT_WORKFLOW_ID);
+            String owningRoot = decodeMemoText(dc, memoFields, TaskKeys.ROOT_WORKFLOW_ID);
             // Administration, like completion, goes to the integration serving the task's queue.
             String owningQueue = response.getExecutionConfig().getTaskQueue().getName();
             String localQueue = io.ballerina.lib.workflow.worker.WorkflowWorkerNative.getTaskQueue();
             if (localQueue == null || localQueue.isBlank()) {
-                return ErrorCreator.createError(StringUtils.fromString(
+                return TaskMemo.refusal(owningRun, owningRoot,
                         "Unauthorized: the local task queue is not configured; cannot verify that task '"
-                                + taskId + "' belongs to this integration"));
+                                + taskId + "' belongs to this integration");
             }
             if (!localQueue.equals(owningQueue)) {
-                return ErrorCreator.createError(StringUtils.fromString("Unauthorized: task '" + taskId
-                        + "' belongs to task queue '" + owningQueue + "', which is served by a different integration"));
+                return TaskMemo.refusal(owningRun, owningRoot, "Unauthorized: task '" + taskId
+                        + "' belongs to task queue '" + owningQueue + "', which is served by a different integration");
             }
-            io.temporal.api.workflow.v1.WorkflowExecutionInfo execInfo = response.getWorkflowExecutionInfo();
             if (execInfo.getStatus() != WorkflowExecutionStatus.WORKFLOW_EXECUTION_STATUS_RUNNING) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Task '" + taskId + "' is not running (status=" + convertStatus(execInfo.getStatus()) + ")"));
+                return TaskMemo.refusal(owningRun, owningRoot,
+                        "Task '" + taskId + "' is not running (status=" + convertStatus(execInfo.getStatus()) + ")");
             }
-            Map<String, io.temporal.api.common.v1.Payload> memoFields = execInfo.getMemo().getFieldsMap();
-            io.temporal.common.converter.DataConverter dc = client.getOptions().getDataConverter();
             String kind = decodeMemoText(dc, memoFields, TaskKeys.KIND);
             if (!TaskRecord.HUMAN_TASK.equals(kind) && !TaskRecord.REVIEW_ACTIVITY.equals(kind)) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Invalid task: '" + taskId + "' is not a human task or review (workflowKind=" + kind + ")"));
+                return TaskMemo.refusal(owningRun, owningRoot,
+                        "Invalid task: '" + taskId + "' is not a human task or review (workflowKind=" + kind + ")");
             }
             TaskAssignment assignment = TaskAssignment.fromMemo(dc, memoFields);
             List<String> roles = TaskAssignment.roles(callerRoles instanceof BArray ba ? ba : null);
             String caller = userId instanceof BString bs ? bs.getValue() : null;
+            // The act's receipt names the task, its owning run and its audience, as a decision's does.
+            TaskMemo memo = new TaskMemo(decodeMemoText(dc, memoFields, TaskKeys.TASK_NAME), owningRun, owningRoot,
+                                         assignment.userRoles().stream().sorted().toList(),
+                                         decodeMemoValue(dc, memoFields, TaskKeys.TASK_INPUT),
+                                         TaskAssignment.Access.ADMINISTRATOR);
             if (!assignment.administers(roles, caller)) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Unauthorized: only an administrator of task '" + taskId + "' may " + action.getValue()
-                                + " it"));
+                return memo.refusal("Unauthorized: only an administrator of task '" + taskId + "' may "
+                        + action.getValue() + " it");
             }
             Map<String, Object> act = new HashMap<>();
             act.put(WorkflowWorkerNative.ADMINISTER_ACTION, action.getValue());
@@ -1161,11 +1167,9 @@ public final class WorkflowNative {
             boolean delivered = WorkflowRuntime.getInstance().sendSignalToWorkflow(taskId,
                     WorkflowWorkerNative.TASK_ADMINISTER_SIGNAL_NAME, act);
             if (!delivered) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Failed to administer task '" + taskId + "': it was no longer running"));
+                return memo.refusal("Failed to administer task '" + taskId + "': it was no longer running");
             }
-            BMap<BString, Object> receipt =
-                    ValueCreator.createMapValue(TypeCreator.createMapType(PredefinedTypes.TYPE_ANYDATA));
+            BMap<BString, Object> receipt = memo.toReceipt();
             receipt.put(StringUtils.fromString(WorkflowWorkerNative.ADMINISTER_ACTION), action);
             receipt.put(StringUtils.fromString(WorkflowWorkerNative.ADMINISTERED_BY),
                     StringUtils.fromString(caller == null ? "unknown" : caller));
@@ -1242,8 +1246,8 @@ public final class WorkflowNative {
             // rejections (failHumanTask), which carry no result payload.
             if (!skipPayloadValidation) {
                 Object payloadError = validateCompletionPayload(dc, memoFields, result);
-                if (payloadError != null) {
-                    return payloadError;
+                if (payloadError instanceof io.ballerina.runtime.api.values.BError err) {
+                    return TaskMemo.refusal(owningRun, owningRoot, err.getMessage());
                 }
             }
 
@@ -1253,8 +1257,8 @@ public final class WorkflowNative {
                 assignment = TaskAssignment.fromMemo(dc, memoFields);
             } catch (Exception e) {
                 if (callerRolesArray != null || userId instanceof BString) {
-                    return ErrorCreator.createError(StringUtils.fromString(
-                            "Failed to decode task roles for '" + taskWorkflowId + "': " + e.getMessage()));
+                    return TaskMemo.refusal(owningRun, owningRoot,
+                            "Failed to decode task roles for '" + taskWorkflowId + "': " + e.getMessage());
                 }
                 LOGGER.debug("Could not decode assignment from memo for '{}': {}", taskWorkflowId, e.getMessage());
                 assignment = TaskAssignment.empty();

@@ -130,9 +130,10 @@ isolated class BaseSpanImp {
 }
 
 // The instance whose trace the span joins: the top of the run's tree when the receipt named it, else the run a
-// call names, else the task it decides when the run is unknown.
+// call names. A task id is never an anchor: nothing else joins a trace derived from it, so the span would stand
+// alone; with no anchor the runtime keeps the span in its caller's trace instead.
 isolated function anchorInstanceOf(map<string> tags) returns string {
-    return tags[ROOT_INSTANCE_ID] ?: tags[INSTANCE_ID] ?: tags[HUMAN_TASK_ID] ?: tags[REVIEW_ACTIVITY_ID] ?: "";
+    return tags[ROOT_INSTANCE_ID] ?: tags[INSTANCE_ID] ?: "";
 }
 
 isolated function isSpanRecordingEnabled() returns boolean {

@@ -152,6 +152,16 @@ function testHumanTaskDecisionTelemetry() returns error? {
     error? refused = workflow:completeHumanTask(taskId, {approved: true},
             callerRoles = ["OBS_BYSTANDER"], userId = "mallory");
     test:assertTrue(refused is error, "A caller outside the task's roles must be refused");
+    // A result of the wrong shape is refused too, by someone who was allowed to decide.
+    error? malformed = workflow:completeHumanTask(taskId, {approved: "yes"},
+            callerRoles = ["OBS_APPROVER"], userId = "erin");
+    test:assertTrue(malformed is error, "A completion whose payload is the wrong shape must be refused");
+
+    // An administrator moves the deadline; someone who does not administer the task is refused.
+    check management:extendTaskDeadline(taskId, 60000, callerRoles = ["OBS_OPS"], userId = "dana");
+    error? refusedAct = management:extendTaskDeadline(taskId, 60000,
+            callerRoles = ["OBS_BYSTANDER"], userId = "mallory");
+    test:assertTrue(refusedAct is error, "A caller who does not administer the task must be refused");
 
     check workflow:completeHumanTask(taskId, {approved: true}, callerRoles = ["OBS_APPROVER"], userId = "alice");
     anydata result = check workflow:getWorkflowResult(workflowId, 60);
@@ -208,6 +218,27 @@ function testHumanTaskDecisionTelemetry() returns error? {
                 "a refused decision the runtime could place still joins the run's trace");
         mock:Span runStart = check findSpan("start_workflow workflow-observabilityApprovalFlow", workflowId);
         test:assertEquals(denied.traceId, runStart.traceId, "and that trace is the run's own");
+        mock:Span malformedSpan = check findDecisionSpan("complete_human_task", "workflow.human_task.id",
+                taskId, "erin");
+        test:assertEquals(malformedSpan.tags["workflow.instance.id"], workflowId,
+                "a wrong-shape payload is refused on the run's trace, not in a trace of its own");
+        test:assertEquals(malformedSpan.traceId, runStart.traceId);
+
+        // An administrator's act is a decision on the task too: accepted or refused, the runtime read the
+        // task's memo first, so the act names the owning run and joins its trace.
+        mock:Span extended = check findDecisionSpan("administer_task", "workflow.task.id", taskId, "dana");
+        test:assertEquals(extended.tags["workflow.task.action"], "extendDeadline");
+        test:assertTrue((extended.tags["workflow.task.name"] ?: "").endsWith("obsApprove"),
+                "an accepted act's span should name the task");
+        test:assertEquals(extended.tags["workflow.instance.id"], workflowId,
+                "the act names the run that owns the task");
+        test:assertEquals(extended.traceId, runStart.traceId, "and joins that run's trace");
+        mock:Span refusedAdmin = check findDecisionSpan("administer_task", "workflow.task.id", taskId, "mallory");
+        test:assertFalse(refusedAdmin.tags.hasKey("workflow.task.name"),
+                "a refused act never touched the task, so it cannot name it");
+        test:assertEquals(refusedAdmin.tags["workflow.instance.id"], workflowId,
+                "a refused act the runtime could place still joins the run's trace");
+        test:assertEquals(refusedAdmin.traceId, runStart.traceId, "and that trace is the run's own");
     }
 }
 

@@ -2034,7 +2034,7 @@ public final class WorkflowWorkerNative {
          */
         public BallerinaWorkflowAdapter() {
             // A signal delivered in the first workflow task is handled before execute() runs, and a signal
-            // handler's thread carries the signal's own header context, not the run's: keep the run's here.
+            // handler's thread carries the start header's context, not the run span's: keep the run's here.
             runTraceContext = TraceContextPropagator.current();
             // Register a dynamic signal handler that handles all signals
             Workflow.registerListener(

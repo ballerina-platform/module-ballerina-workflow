@@ -134,14 +134,15 @@ the execution spans (`workflow <type>`, `activity <type>`, `agent.tool_call <too
 reach the request that made the call; search by `user.id` for every decision one person made.
 
 The trace's top spans name a parent that is never recorded — the anchor the instance ID
-derives — so a UI shows them as roots. A refused decision joins the run's trace whenever the
-runtime found the task at all: the refusal names the owning run, whether the caller lacked a
-role, the payload was the wrong shape, the task had already closed, or it belongs to another
-integration. A call with no run to anchor on — a task the runtime could not find, or a start that
-failed before it was given an instance ID — stays in its caller's own trace instead.
+derives — so a UI shows them as roots. A refused decision, or a refused administrator's act
+(`administer_task`), joins the run's trace whenever the runtime found the task at all: the
+refusal names the owning run, whether the caller lacked a role, the payload was the wrong shape,
+the task had already closed, or it belongs to another integration. A call with no run to anchor
+on — a task the runtime could not find, or a start that failed before it was given an instance
+ID — stays in its caller's own trace instead.
 
-A span the worker opened is lost if that worker stops before the step ends — a run that
-survives a restart shows a `workflow.closed` marker instead of one long `workflow` span,
+A span the worker opened is lost if the run leaves that worker before the step ends — a run
+that survives a restart shows a `workflow.closed` marker instead of one long `workflow` span,
 and the metrics still count every step.
 
 By default every trace is reported (the sampler is `parentbased_always_on`); for production

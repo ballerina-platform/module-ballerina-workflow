@@ -33,6 +33,7 @@ import java.util.Map;
  * @param taskId             the child workflow id
  * @param taskName           the qualified task name
  * @param parentWorkflowId   the creating workflow's id
+ * @param rootWorkflowId     the run at the top of the workflow tree, so a task joins its root's trace
  * @param parentWorkflowType the creating workflow's user-facing type
  * @param stepId             the creating call site, or null
  * @param title              inbox summary
@@ -52,7 +53,8 @@ import java.util.Map;
  * @param errorMessage       review only: the failure under review, empty for PRE_RUN
  */
 public record TaskRecord(String kind, String taskId, String taskName, String parentWorkflowId,
-                         String parentWorkflowType, String stepId, String title, String description,
+                         String rootWorkflowId, String parentWorkflowType, String stepId, String title,
+                         String description,
                          List<String> userRoles, List<String> users, List<String> excludedUsers,
                          List<String> excludedRoles, List<String> administratorRoles,
                          List<String> administratorUsers, Object taskInput, String formSchema, Long timeoutMillis,
@@ -75,6 +77,7 @@ public record TaskRecord(String kind, String taskId, String taskName, String par
         memo.put(TaskKeys.KIND, kind);
         memo.put(TaskKeys.TASK_NAME, taskName);
         memo.put(TaskKeys.PARENT_WORKFLOW_ID, parentWorkflowId);
+        putIfSet(memo, TaskKeys.ROOT_WORKFLOW_ID, rootWorkflowId);
         putIfSet(memo, TaskKeys.PARENT_WORKFLOW_TYPE, parentWorkflowType);
         memo.put(TaskKeys.TITLE, title);
         memo.put(TaskKeys.DESCRIPTION, description);
@@ -148,6 +151,7 @@ public record TaskRecord(String kind, String taskId, String taskName, String par
         private String taskId;
         private String taskName;
         private String parentWorkflowId;
+        private String rootWorkflowId;
         private String parentWorkflowType;
         private String stepId;
         private String title;
@@ -182,6 +186,11 @@ public record TaskRecord(String kind, String taskId, String taskName, String par
 
         public Builder parentWorkflowId(String value) {
             this.parentWorkflowId = value;
+            return this;
+        }
+
+        public Builder rootWorkflowId(String value) {
+            this.rootWorkflowId = value;
             return this;
         }
 
@@ -271,8 +280,8 @@ public record TaskRecord(String kind, String taskId, String taskName, String par
         }
 
         public TaskRecord build() {
-            return new TaskRecord(kind, taskId, taskName, parentWorkflowId, parentWorkflowType, stepId, title,
-                    description, userRoles, users, excludedUsers, excludedRoles, administratorRoles,
+            return new TaskRecord(kind, taskId, taskName, parentWorkflowId, rootWorkflowId, parentWorkflowType,
+                    stepId, title, description, userRoles, users, excludedUsers, excludedRoles, administratorRoles,
                     administratorUsers, taskInput, formSchema, timeoutMillis, createdAt, trigger, activityName,
                     errorMessage);
         }

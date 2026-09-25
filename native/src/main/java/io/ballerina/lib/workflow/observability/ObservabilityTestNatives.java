@@ -35,6 +35,12 @@ public final class ObservabilityTestNatives {
     private ObservabilityTestNatives() {
     }
 
+    // The trace an instance id derives, so a test can assert that separate calls about a run agree on it.
+    public static BString instanceTraceIdOf(BString instanceId) {
+        String traceId = InstanceTrace.traceIdOf(instanceId.getValue());
+        return StringUtils.fromString(traceId == null ? "" : traceId);
+    }
+
     // Drives every recorder through success, failure, filtered and unmeasured shapes; returns the error types seen.
     public static BArray exerciseMetricRecorders() {
         MetricRegistry registry = new MetricRegistry(new NoOpMetricProvider());
@@ -89,9 +95,10 @@ public final class ObservabilityTestNatives {
                                       WorkflowWorkerNative.HUMANTASK_REJECTED_FAILURE_TYPE),
                 AgentStep.eventReceived("exercisedAgent", "chat", 2000, null),
                 AgentStep.eventReceived("exercisedAgent", "approval", 2000, AgentStep.ERROR_EVENT_TIMEOUT),
-                AgentStep.slept("exercisedAgent", false, 1000),
-                AgentStep.slept("exercisedAgent", true, 250),
-                AgentStep.toolReviewed("exercisedAgent", "chargeCard", "exercisedAgent.chargeCard", "proceed", 5000),
+                AgentStep.slept("exercisedAgent", false, 1000, null),
+                AgentStep.slept("exercisedAgent", true, 250, null),
+                AgentStep.toolReviewed("exercisedAgent", "chargeCard", "exercisedAgent.chargeCard", "proceed", 5000,
+                                       null),
         };
     }
 

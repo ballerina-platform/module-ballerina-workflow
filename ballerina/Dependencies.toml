@@ -366,6 +366,21 @@ dependencies = [
 
 [[package]]
 org = "ballerina"
+name = "otel"
+version = "0.9.0"
+dependencies = [
+	{org = "ballerina", name = "io"},
+	{org = "ballerina", name = "jballerina.java"},
+	{org = "ballerina", name = "log"},
+	{org = "ballerina", name = "observe"},
+	{org = "ballerina", name = "task"}
+]
+modules = [
+	{org = "ballerina", packageName = "otel", moduleName = "otel"}
+]
+
+[[package]]
+org = "ballerina"
 name = "random"
 version = "1.7.0"
 dependencies = [
@@ -463,6 +478,7 @@ dependencies = [
 	{org = "ballerina", name = "log"},
 	{org = "ballerina", name = "mime"},
 	{org = "ballerina", name = "observe"},
+	{org = "ballerina", name = "otel"},
 	{org = "ballerina", name = "soap"},
 	{org = "ballerina", name = "test"},
 	{org = "ballerina", name = "time"}

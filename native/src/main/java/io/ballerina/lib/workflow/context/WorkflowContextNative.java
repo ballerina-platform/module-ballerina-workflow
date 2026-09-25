@@ -533,7 +533,8 @@ public final class WorkflowContextNative {
 
         TaskRecord task = TaskRecord.builder(TaskRecord.REVIEW_ACTIVITY)
                 .taskId(reviewId).taskName(qualifiedTaskName)
-                .parentWorkflowId(parentWorkflowId).parentWorkflowType(currentWorkflowDefinitionName())
+                .parentWorkflowId(parentWorkflowId).rootWorkflowId(rootWorkflowId())
+                .parentWorkflowType(currentWorkflowDefinitionName())
                 .stepId(stepId).title(title).description(description)
                 .userRoles(List.of(decl.userRoles())).users(List.of(decl.users()))
                 .excludedUsers(List.of(decl.excludedUsers())).excludedRoles(List.of(decl.excludedRoles()))
@@ -1038,7 +1039,8 @@ public final class WorkflowContextNative {
 
             TaskRecord task = TaskRecord.builder(TaskRecord.HUMAN_TASK)
                     .taskId(taskWorkflowId).taskName(qualifiedTaskName)
-                    .parentWorkflowId(parentWorkflowId).parentWorkflowType(workflowDefinitionName)
+                    .parentWorkflowId(parentWorkflowId).rootWorkflowId(rootWorkflowId())
+                    .parentWorkflowType(workflowDefinitionName)
                     .stepId(stepId instanceof BString site ? site.getValue() : null)
                     .title(title).description(description).userRoles(userRoles).users(users)
                     .excludedUsers(List.of(rolesOf(excludedUsersObj)))
@@ -1696,12 +1698,19 @@ public final class WorkflowContextNative {
      * registry. REQUEST_CANCEL (not TERMINATE) ties the child's lifecycle to the parent while letting it end as
      * CANCELED, and the memo carries the parent linkage for the management/tree views.
      */
+    // The top of the run's tree: the trace a task or child belongs to, even when created under a child workflow.
+    static String rootWorkflowId() {
+        io.temporal.workflow.WorkflowInfo info = Workflow.getInfo();
+        return info.getRootWorkflowId().orElse(info.getWorkflowId());
+    }
+
     private static ChildWorkflowStub newChildStub(String functionName, String childId, String stepId) {
         String childType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + functionName;
 
         Map<String, Object> memo = new HashMap<>();
         memo.put(TaskKeys.KIND, CHILD_WORKFLOW_KIND);
         memo.put(TaskKeys.PARENT_WORKFLOW_ID, Workflow.getInfo().getWorkflowId());
+        memo.put(TaskKeys.ROOT_WORKFLOW_ID, rootWorkflowId());
         memo.put(TaskKeys.CREATED_AT, Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString());
         if (stepId != null) {
             // Which call started this child, so two starts of the same workflow are distinguishable

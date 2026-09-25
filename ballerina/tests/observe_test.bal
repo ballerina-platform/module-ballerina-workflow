@@ -15,6 +15,7 @@
 // under the License.
 
 import ballerina/jballerina.java;
+import ballerina/lang.runtime;
 import ballerina/observe as observability;
 import ballerina/observe.mockextension as mock;
 import ballerina/test;
@@ -158,6 +159,64 @@ function testWorkflowSpanSurfaceEndToEnd() returns error? {
     test:assertEquals(sendSpan.tags["workflow.data.name"], "chat");
     mock:Span resultSpan = check findUnitSpan("get_workflow_result", "workflow.instance.id", runId);
     test:assertEquals(resultSpan.tags["module"], "workflow");
+
+    // The run's own story joins the trace its start opened: the run, the model call, the chat wait
+    // and the activity attempt are worker spans sharing the start span's trace id.
+    mock:Span startSpan = check findUnitSpan("start_workflow", "workflow.instance.id", runId);
+    // Every call about the run is in the run's trace, though each was a separate call with no context to pass.
+    test:assertEquals(sendSpan.traceId, startSpan.traceId, "sending data joins the run's trace");
+    test:assertEquals(resultSpan.traceId, startSpan.traceId, "waiting for the result joins the run's trace");
+
+    mock:Span[] story = check workerSpansOf(runId, 4);
+    test:assertTrue(hasOperation(story, "workflow workflow-chatStockAgent"), "the run itself is a span");
+    test:assertTrue(hasOperation(story, "agent.model_call llmChat"), "each model call is a span");
+    test:assertTrue(hasOperation(story, "agent.event_wait chat"), "each event wait is a span");
+    test:assertTrue(hasOperation(story, "activity llmChat"), "each activity attempt is a span");
+    foreach mock:Span span in story {
+        test:assertEquals(span.traceId, startSpan.traceId,
+                string `worker span '${span.operationName}' should join the trace that started the run`);
+        test:assertEquals(span.tags["type"], "worker");
+    }
+
+    // Sharing a trace id is what the fallback gives too; the propagated context is what nests the steps
+    // under the run, and hangs the run and its start from the same derived anchor.
+    mock:Span runSpan = check spanNamed(story, "workflow workflow-chatStockAgent");
+    test:assertEquals(runSpan.parentId, startSpan.parentId, "the run and its start hang from the same anchor");
+    foreach mock:Span span in story {
+        // A data event delivered in the run's first task is handled before the run span opens.
+        if span.spanId != runSpan.spanId && !span.operationName.startsWith("workflow.data_received") {
+            test:assertEquals(span.parentId, runSpan.spanId,
+                    string `'${span.operationName}' should nest under the run span`);
+        }
+    }
+}
+
+function spanNamed(mock:Span[] spans, string operationName) returns mock:Span|error {
+    foreach mock:Span span in spans {
+        if span.operationName == operationName {
+            return span;
+        }
+    }
+    return error(string `no span named '${operationName}'`);
+}
+
+// The worker-side spans tagged with the instance, once at least `atLeast` of them have finished.
+function workerSpansOf(string instanceId, int atLeast) returns mock:Span[]|error {
+    mock:Span[] found = [];
+    foreach int attempt in 0 ..< 20 {
+        found = from mock:Span span in mock:getFinishedSpans("workflow")
+            where span.tags["workflow.instance.id"] == instanceId && span.tags["type"] == "worker"
+            select span;
+        if found.length() >= atLeast {
+            return found;
+        }
+        runtime:sleep(0.5);
+    }
+    return error(string `only ${found.length()} worker spans finished for ${instanceId}`);
+}
+
+function hasOperation(mock:Span[] spans, string operationName) returns boolean {
+    return spans.some(span => span.operationName == operationName);
 }
 
 @test:Config {
@@ -246,7 +305,11 @@ isolated function deriveTaskDimensions(string workflowType) returns string[] = @
     name: "deriveTaskDimensions"
 } external;
 
-isolated function exerciseMetricRecorders() returns string[] = @java:Method {
+isolated function instanceTraceIdOf(string instanceId) returns string = @java:Method {
+    'class: "io.ballerina.lib.workflow.observability.ObservabilityTestNatives"
+} external;
+
+function exerciseMetricRecorders() returns string[] = @java:Method {
     'class: "io.ballerina.lib.workflow.observability.ObservabilityTestNatives",
     name: "exerciseMetricRecorders"
 } external;
@@ -262,12 +325,28 @@ isolated function exerciseBoundedDataNames(int count) returns string[] = @java:M
 } external;
 
 // ================================================================================
+@test:Config {
+    groups: ["observe"]
+}
+function testInstanceTraceIdIsDerivedFromTheInstanceId() {
+    string first = instanceTraceIdOf("wf-derived-1");
+    test:assertEquals(first.length(), 32, "a trace id is 32 hex characters");
+    // The derivation itself, so changing the digest or the domain prefix has to be deliberate:
+    // SHA-256("ballerina-workflow/instance-trace:wf-derived-1")[0..16].
+    test:assertEquals(first, "e1328957d92ea1ff1d413897d96c0c4a", "the trace id is derived, not invented");
+    test:assertEquals(instanceTraceIdOf("wf-derived-1"), first,
+            "calls that never meet agree on the trace, because the instance id is all they share");
+    test:assertNotEquals(instanceTraceIdOf("wf-derived-2"), first, "a different run is a different trace");
+    test:assertEquals(instanceTraceIdOf(""), "", "without an instance there is no trace to join");
+}
+
 // HELPERS
 // ================================================================================
 
 // Finds a finished span by its workflow.operation.name tag and one identifying tag.
 function findUnitSpan(string operationName, string idTag, string idValue) returns mock:Span|error {
-    foreach string serviceName in ["Ballerina", "Unknown Service"] {
+    // Client spans publish under the module's own service name, beside the worker's.
+    foreach string serviceName in ["workflow", "Ballerina", "Unknown Service"] {
         foreach mock:Span span in mock:getFinishedSpans(serviceName) {
             if span.tags["workflow.operation.name"] == operationName && span.tags[idTag] == idValue {
                 return span;

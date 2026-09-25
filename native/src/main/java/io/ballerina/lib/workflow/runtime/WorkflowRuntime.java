@@ -18,6 +18,8 @@
 
 package io.ballerina.lib.workflow.runtime;
 
+import io.ballerina.lib.workflow.observability.TraceContextPropagator;
+import io.ballerina.lib.workflow.observability.WorkerSpans;
 import io.ballerina.lib.workflow.observability.WorkflowMetrics;
 import io.ballerina.lib.workflow.observability.WorkflowSampleLog;
 import io.ballerina.lib.workflow.utils.CorrelationExtractor;
@@ -156,7 +158,8 @@ public final class WorkflowRuntime {
 
             // Start the workflow asynchronously with the input data. The started event is
             // counted at the worker's first execution, where every start path converges.
-            workflowStub.start(input);
+            // The run's spans open in the instance's own trace, whose ids the instance id derives.
+            TraceContextPropagator.runWith(WorkerSpans.instanceContext(workflowId), () -> workflowStub.start(input));
 
             LOGGER.debug("Started workflow: type={}, id={}", processName, workflowId);
             return workflowId;

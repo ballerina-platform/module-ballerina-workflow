@@ -480,9 +480,43 @@ public isolated function cancelWorkflow(string workflowId, string runId) returns
 # + startedBy - Optional starter user ID; stored with workflow metadata for filtering
 # + return - Handle with workflowId and runId, or an error
 public isolated function startWorkflowByType(string workflowType, json? input,
-    string? workflowId = (), int? timeoutSeconds = (), string? startedBy = ())
-    returns WorkflowHandle|error = @java:Method {
+        string? workflowId = (), int? timeoutSeconds = (), string? startedBy = ())
+        returns WorkflowHandle|error {
+    // An agent's start is `start_agent`, as `DurableAgent.run` records it; a workflow's names the type the
+    // engine registers, under its prefix.
+    if isAgentWorkflowType(workflowType) {
+        observe:StartAgentSpan span = observe:createStartAgentSpan(workflowType);
+        WorkflowHandle|error started = startWorkflowByTypeNative(workflowType, input, workflowId, timeoutSeconds,
+                startedBy);
+        if started is WorkflowHandle {
+            span.addInstanceId(started.workflowId);
+            span.close();
+        } else {
+            span.close(started);
+        }
+        return started;
+    }
+    observe:StartWorkflowSpan span = observe:createStartWorkflowSpan(string `workflow-${workflowType}`);
+    // Not `handle`: that is a type name.
+    WorkflowHandle|error started = startWorkflowByTypeNative(workflowType, input, workflowId, timeoutSeconds,
+            startedBy);
+    if started is WorkflowHandle {
+        span.addInstanceId(started.workflowId);
+        span.close();
+    } else {
+        span.close(started);
+    }
+    return started;
+}
+
+isolated function isAgentWorkflowType(string workflowType) returns boolean = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
+isolated function startWorkflowByTypeNative(string workflowType, json? input, string? workflowId,
+        int? timeoutSeconds, string? startedBy) returns WorkflowHandle|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative",
+    name: "startWorkflowByType"
 } external;
 
 # Lists workflow instances, excluding human task and review activity children.

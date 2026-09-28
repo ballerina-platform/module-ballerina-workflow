@@ -169,7 +169,7 @@ public final class WaitUtils {
     /**
      * Converts a Ballerina {@code time:Duration} record to milliseconds.
      */
-    private static long durationToMillis(BMap<BString, Object> duration) {
+    static long durationToMillis(BMap<BString, Object> duration) {
         long hours = getLongField(duration, HOURS_KEY);
         long minutes = getLongField(duration, MINUTES_KEY);
         Object secObj = duration.get(SECONDS_KEY);

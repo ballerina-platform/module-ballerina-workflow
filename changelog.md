@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `workflow:getResult(id)`, `waitForResult(id, timeout = ())` and `getStatus(id)`: a non-blocking
+  typed read, a crash-resumable wait with an optional bound, and a status read, so a service
+  reports on an instance with one call and no management import. Durable agents gain
+  `getStatus` and a `timeout` on `waitForResult`. All reads — workflow or agent, top level or
+  child — answer one vocabulary: `WorkflowInProgressError` while the instance runs or when a
+  bound passes first, `InstanceFailedError` (with the closed status in its detail) when it closed
+  without a result, `InstanceNotFoundError` for an id nothing holds; an agent's reads are scoped
+  to its own instances. The compiler refuses the reads inside a workflow body (`WORKFLOW_167`) and
+  a negative literal bound (`WORKFLOW_168`), and warns when a resource or remote function
+  `check`s a non-blocking read straight into a request failure (`WORKFLOW_169`).
+
+### Changed
+
+- `getWorkflowResult` is deprecated in favour of `waitForResult`, and answers
+  `WorkflowInProgressError` when its wait runs out instead of a plain error worded as a workflow
+  timeout. `WorkflowBusyError` and `AgentBusyError` are deprecated aliases of
+  `WorkflowInProgressError`, so existing `is` tests keep matching.
+
 ## [0.10.1]
 
 ### Added

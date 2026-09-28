@@ -57,5 +57,10 @@ public class WorkflowCodeAnalyzer extends CodeAnalyzer {
         analysisContext.addSyntaxNodeAnalysisTask(new ChildWorkflowCallValidatorTask(),
                 SyntaxKind.REMOTE_METHOD_CALL_ACTION);
 
+        // The client-side result and status reads: refused inside a workflow body, bounded by a
+        // sane timeout, and not `check`ed straight into a service failure.
+        analysisContext.addSyntaxNodeAnalysisTask(new ResultReadValidatorTask(),
+                java.util.List.of(SyntaxKind.FUNCTION_CALL, SyntaxKind.METHOD_CALL));
+
     }
 }

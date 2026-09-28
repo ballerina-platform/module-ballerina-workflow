@@ -1380,7 +1380,8 @@ public final class WorkflowContextNative {
     // waitForChildWorkflow / callWorkflow / sendDataToChildWorkflow)
     // -----------------------------------------------------------------------------------------
 
-    private static final String WORKFLOW_BUSY_ERROR = "WorkflowBusyError";
+    private static final String WORKFLOW_BUSY_ERROR =
+            io.ballerina.lib.workflow.runtime.nativeimpl.InstanceReads.IN_PROGRESS_ERROR;
     private static final String CHILD_WORKFLOW_KIND = "CHILD_WORKFLOW";
 
     /**

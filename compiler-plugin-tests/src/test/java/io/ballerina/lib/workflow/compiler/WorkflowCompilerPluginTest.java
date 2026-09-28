@@ -1210,6 +1210,27 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "invalid")
+    public void testInvalidResultReads() {
+        // The client-side reads: refused inside a workflow body, a negative literal wait bound
+        // is an error, and `check` straight on a non-blocking read in a resource or remote
+        // function is the anti-pattern warning — while a tested read, a bounded wait and a
+        // plain script's `check` pass.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_result_reads");
+        String messages = getDiagnosticMessages(diagnosticResult);
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_167").size(), 3,
+                "getResult, waitForResult and getStatus inside a workflow. Diagnostics: " + messages);
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_168").size(), 2,
+                "one negative field on each of the two literal bounds. Diagnostics: " + messages);
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_169").size(), 3,
+                "two checks in the resource function and one checkpanic in the remote function. "
+                        + "Diagnostics: " + messages);
+        Assert.assertEquals(diagnosticResult.errorCount(), 5,
+                "Only the reads inside the workflow and the negative bounds are errors. Diagnostics: " + messages);
+        Assert.assertTrue(messages.contains("ctx->waitForChildWorkflow") && messages.contains("'minutes'"),
+                "The messages name the alternative and the offending field: " + messages);
+    }
+
+    @Test(groups = "invalid")
     public void testInvalidHumanTaskNameNotConstant() {
         // Capability names drive the designer and the Temporal registration, so they must be
         // compile-time constant strings: an interpolated agent-task name and a variable

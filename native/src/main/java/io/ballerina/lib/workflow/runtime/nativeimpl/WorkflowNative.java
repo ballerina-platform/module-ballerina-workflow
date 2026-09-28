@@ -32,9 +32,11 @@ import io.ballerina.runtime.api.types.MapType;
 import io.ballerina.runtime.api.types.RecordType;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BArray;
+import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
+import io.ballerina.runtime.api.values.BTypedesc;
 import io.temporal.api.common.v1.WorkflowExecution;
 import io.temporal.api.enums.v1.EventType;
 import io.temporal.api.enums.v1.WorkflowExecutionStatus;
@@ -89,6 +91,8 @@ public final class WorkflowNative {
     private static final String ERR_GET_INFO = "Failed to get workflow info: ";
     private static final String ERR_GET_REGISTERED = "Failed to get registered workflows: ";
     private static final String ERR_CLIENT_NOT_INIT = "Workflow client not initialized";
+    /** How the built-in result activity reports a wait that ran out before the instance closed. */
+    static final String WAIT_TIMED_OUT_PREFIX = "Workflow wait timed out";
 
     private WorkflowNative() {
         // Private constructor to prevent instantiation
@@ -490,8 +494,8 @@ public final class WorkflowNative {
                 String errorMsg = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
                 return ErrorCreator.createError(StringUtils.fromString(ERR_GET_RESULT + errorMsg));
             } catch (java.util.concurrent.TimeoutException e) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        ERR_GET_RESULT + "Workflow timed out after " + timeoutSeconds + " seconds"));
+                // The instance outlived the wait: the same answer the non-blocking read gives.
+                return InstanceReads.inProgress(wfId);
             }
 
         } catch (Exception e) {
@@ -517,6 +521,9 @@ public final class WorkflowNative {
             Object result = info.get("result");
             String errorMessage = (String) info.get(TaskKeys.ERROR_MESSAGE);
 
+            if (errorMessage != null && errorMessage.startsWith(WAIT_TIMED_OUT_PREFIX)) {
+                return InstanceReads.inProgress(workflowId);
+            }
             if ("FAILED".equals(status) || "CANCELED".equals(status) || "TIMED_OUT".equals(status)) {
                 return ErrorCreator.createError(StringUtils.fromString(ERR_GET_RESULT + errorMessage));
             }
@@ -525,6 +532,78 @@ public final class WorkflowNative {
         } catch (Exception e) {
             return handleImplicitActivityError(e, ERR_GET_RESULT);
         }
+    }
+
+    /**
+     * Native implementation of {@code workflow:getResult}: the instance's result if it has closed, a
+     * {@code WorkflowInProgressError} while it runs. A client verb — inside a workflow it is refused.
+     *
+     * @param env        the Ballerina runtime environment
+     * @param instanceId the instance
+     * @param typedesc   the caller's expected result type
+     * @return the typed result or a read error
+     */
+    public static Object getResult(Environment env, BString instanceId, BTypedesc typedesc) {
+        if (isInsideWorkflow()) {
+            return clientVerbInsideWorkflow("getResult", "ctx->getChildWorkflowResult");
+        }
+        return env.yieldAndRun(() -> {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+            return InstanceReads.read(client, instanceId.getValue(), null, false, null, typedesc);
+        });
+    }
+
+    /**
+     * Native implementation of {@code workflow:waitForResult}: waits for the instance to close, up to the
+     * given duration, and answers {@code WorkflowInProgressError} when the wait runs out first.
+     *
+     * @param env        the Ballerina runtime environment
+     * @param instanceId the instance
+     * @param timeout    a {@code Duration} record, or nil for no bound
+     * @param typedesc   the caller's expected result type
+     * @return the typed result or a read error
+     */
+    public static Object waitForResult(Environment env, BString instanceId, Object timeout, BTypedesc typedesc) {
+        if (isInsideWorkflow()) {
+            return clientVerbInsideWorkflow("waitForResult", "ctx->waitForChildWorkflow");
+        }
+        Long timeoutMillis = InstanceReads.timeoutMillisOf(timeout);
+        return env.yieldAndRun(() -> {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+            return InstanceReads.read(client, instanceId.getValue(), null, true, timeoutMillis, typedesc);
+        });
+    }
+
+    /**
+     * Native implementation of {@code workflow:getStatus}: one describe, no history read.
+     *
+     * @param env        the Ballerina runtime environment
+     * @param instanceId the instance
+     * @return the status name, or an {@code InstanceNotFoundError}
+     */
+    public static Object getStatus(Environment env, BString instanceId) {
+        if (isInsideWorkflow()) {
+            return clientVerbInsideWorkflow("getStatus", "ctx->getChildWorkflowResult");
+        }
+        return env.yieldAndRun(() -> {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+            Object status = InstanceReads.statusOf(client, instanceId.getValue(), null);
+            return status instanceof String s ? StringUtils.fromString(s) : status;
+        });
+    }
+
+    private static BError clientVerbInsideWorkflow(String verb, String alternative) {
+        return ErrorCreator.createError(StringUtils.fromString("workflow:" + verb
+                + " cannot be called inside a workflow; use " + alternative + " for a child of this workflow"));
     }
 
     /**
@@ -609,7 +688,7 @@ public final class WorkflowNative {
     /**
      * Converts Temporal WorkflowExecutionStatus to a string status.
      */
-    private static String convertStatus(WorkflowExecutionStatus status) {
+    public static String convertStatus(WorkflowExecutionStatus status) {
         return switch (status) {
             case WORKFLOW_EXECUTION_STATUS_RUNNING -> "RUNNING";
             case WORKFLOW_EXECUTION_STATUS_COMPLETED -> "COMPLETED";

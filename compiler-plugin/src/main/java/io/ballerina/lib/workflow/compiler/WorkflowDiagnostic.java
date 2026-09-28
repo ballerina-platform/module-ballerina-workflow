@@ -273,7 +273,21 @@ public enum WorkflowDiagnostic {
             DiagnosticSeverity.ERROR),
     WORKFLOW_164("WORKFLOW_164",
             "A review definition must name who may decide it: give 'userRoles', 'users', or both",
-            DiagnosticSeverity.ERROR);
+            DiagnosticSeverity.ERROR),
+    // 167-169: 165 and 166 are taken by the display-name and instance-id changes.
+    WORKFLOW_167("WORKFLOW_167",
+            "'workflow:%s' cannot be called inside a workflow function: it reads the engine from outside, "
+                    + "which is not deterministic. Use '%s' for a child of this workflow",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_168("WORKFLOW_168",
+            "The 'timeout' of '%s' has a negative '%s'. A wait bound is a length of time, so every field "
+                    + "must be zero or more",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_169("WORKFLOW_169",
+            "'check' on '%s' turns a still-running instance into a failure of this %s: the read answers "
+                    + "'WorkflowInProgressError' while the instance runs. Test for it and report progress "
+                    + "instead, or wait with 'waitForResult'",
+            DiagnosticSeverity.WARNING);
 
     private final String code;
     private final String message;

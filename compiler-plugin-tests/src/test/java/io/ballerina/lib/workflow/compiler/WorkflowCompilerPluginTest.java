@@ -1233,7 +1233,7 @@ public class WorkflowCompilerPluginTest {
                 "a mistyped input at the third position. Errors: " + messages);
         Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_132").size(), 1,
                 "an input for a no-input workflow. Errors: " + messages);
-        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_165").size(), 4,
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_166").size(), 4,
                 "blank, reserved-prefix and over-long ids, plus the agent's blank id. Errors: " + messages);
         Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_154").size(), 1,
                 "the agent's mistyped payload at the third position. Errors: " + messages);

@@ -274,7 +274,8 @@ public enum WorkflowDiagnostic {
     WORKFLOW_164("WORKFLOW_164",
             "A review definition must name who may decide it: give 'userRoles', 'users', or both",
             DiagnosticSeverity.ERROR),
-    WORKFLOW_165("WORKFLOW_165",
+    // 166, not 165: the display-names change allocated 165 while this branch was open.
+    WORKFLOW_166("WORKFLOW_166",
             "The instance id given to '%s' is not acceptable: %s. An instance id is the correlation key "
                     + "a caller looks the instance up by, so the runtime would refuse this start",
             DiagnosticSeverity.ERROR);

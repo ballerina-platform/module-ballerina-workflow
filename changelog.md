@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   default, or `USE_EXISTING`, the idempotent submit) and `ifClosed` (`ALLOW_DUPLICATE`, the
   default, `ALLOW_DUPLICATE_FAILED_ONLY`, `REJECT_DUPLICATE`). A held id the policies refuse is
   an `InstanceAlreadyExistsError` carrying the holder's status; a blank, over-long or
-  reserved-prefix id is refused at compile time for a literal (`WORKFLOW_165`) and at start
+  reserved-prefix id is refused at compile time for a literal (`WORKFLOW_166`) and at start
   otherwise.
 - `management:startInstance(workflowType, input, *StartOptions)` replaces `startWorkflowByType`
   (kept, deprecated) and adds the same policies, plus `TERMINATE_EXISTING` for `ifRunning`.

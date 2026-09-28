@@ -450,7 +450,7 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                     .constantStringValue(idArg);
             String problem = literal == null ? null : RunCallValidatorTask.instanceIdProblem(literal);
             if (problem != null) {
-                report(WorkflowDiagnostic.WORKFLOW_165, idArg.location(), agentName + "." + RUN_WITH_ID_METHOD,
+                report(WorkflowDiagnostic.WORKFLOW_166, idArg.location(), agentName + "." + RUN_WITH_ID_METHOD,
                         problem);
             }
         }

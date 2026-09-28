@@ -112,7 +112,7 @@ public class RunCallValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCont
         }
         String problem = instanceIdProblem(literal);
         if (problem != null) {
-            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_165, idExpr.location(),
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_166, idExpr.location(),
                     "workflow:" + WorkflowConstants.RUN_WITH_ID_FUNCTION, problem);
         }
     }

@@ -42,11 +42,11 @@ public function startWorkflows() returns error? {
     string wf2 = check workflow:runWithId(recordInputWorkflow, "id-2", "not a record");
     // ERROR WORKFLOW_132: an input for a workflow that declares none.
     string wf3 = check workflow:runWithId(noInputWorkflow, "id-3", {unexpected: true});
-    // ERROR WORKFLOW_165 x3: blank, reserved prefix, too long.
+    // ERROR WORKFLOW_166 x3: blank, reserved prefix, too long.
     string wf4 = check workflow:runWithId(noInputWorkflow, "");
     string wf5 = check workflow:runWithId(noInputWorkflow, "humantask-1");
     string wf6 = check workflow:runWithId(noInputWorkflow, instanceId = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
-    // ERROR WORKFLOW_165: a blank agent id; ERROR WORKFLOW_154: a mistyped agent payload at the third position.
+    // ERROR WORKFLOW_166: a blank agent id; ERROR WORKFLOW_154: a mistyped agent payload at the third position.
     string ag1 = check orderAgent.runWithId(" ", "hello", {orderId: "ORD-1", quantity: 1});
     string ag2 = check orderAgent.runWithId("agent-1", "hello", "not an order");
     _ = [wf1, wf2, wf3, wf4, wf5, wf6, ag1, ag2];

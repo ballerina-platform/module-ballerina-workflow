@@ -50,6 +50,12 @@ public final class DescriptorFields {
     // ── Shared ────────────────────────────────────────────────────────────────
     /** Name of a workflow, activity, task, event, agent, or tool. */
     public static final String NAME = "name";
+    /** Human-readable name from a {@code @display} annotation; never an identity. */
+    public static final String DISPLAY_NAME = "displayName";
+    /** Icon path from a {@code @display} annotation, for consoles; never sent to the engine. */
+    public static final String ICON = "icon";
+    /** A human task's constant title, its display name. */
+    public static final String TITLE = "title";
     /** Version of a package or module. */
     public static final String VERSION = "version";
     /** WORKFLOW or AGENT. */

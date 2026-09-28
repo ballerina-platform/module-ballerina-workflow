@@ -940,6 +940,9 @@ public final class WorkflowNative {
         BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                       "ActivityInvocation");
         record.put(StringUtils.fromString(TaskKeys.ACTIVITY_NAME), StringUtils.fromString(activityName));
+        String displayName = DisplayNames.ofActivity(activityName).label();
+        record.put(StringUtils.fromString("displayName"),
+                   displayName != null ? StringUtils.fromString(displayName) : null);
         record.put(StringUtils.fromString("input"), ValueCreator.createArrayValue(new BString[0]));
         record.put(StringUtils.fromString("output"), null);
         record.put(StringUtils.fromString("status"), StringUtils.fromString(status));

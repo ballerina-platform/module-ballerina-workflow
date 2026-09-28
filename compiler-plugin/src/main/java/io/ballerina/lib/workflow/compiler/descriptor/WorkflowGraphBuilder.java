@@ -836,22 +836,26 @@ public final class WorkflowGraphBuilder {
             String methodName = remoteCall.methodName().name().text();
             switch (methodName) {
                 case WorkflowConstants.CALL_ACTIVITY_FUNCTION -> {
-                    String target = activityTargetOf(remoteCall.arguments());
-                    if (target != null) {
-                        Item activity = addCallSite(KIND_ACTIVITY, target, remoteCall);
-                        addReviewNode(activity.stepId, target, remoteCall);
+                    Symbol target = activityTargetOf(remoteCall.arguments());
+                    String name = nameOf(target);
+                    if (name != null) {
+                        Item activity = addCallSite(KIND_ACTIVITY, name, displayLabelOf(target), remoteCall);
+                        addReviewNode(activity.stepId, name, remoteCall);
                     }
                 }
                 case WorkflowConstants.CALL_HUMAN_TASK_METHOD -> {
                     String target = constantTaskNameOf(remoteCall.arguments());
                     if (target != null) {
-                        addCallSite(KIND_HUMAN_TASK, target, remoteCall);
+                        // A task's constant title is its display name.
+                        addCallSite(KIND_HUMAN_TASK, target, WorkflowDescriptorBuilder.constantNamedArgOf(
+                                remoteCall.arguments(), WorkflowConstants.ARG_TITLE), remoteCall);
                     }
                 }
                 case WorkflowConstants.CALL_WORKFLOW_METHOD, WorkflowConstants.RUN_CHILD_WORKFLOW_METHOD -> {
-                    String target = functionNameOf(remoteCall.arguments());
-                    if (target != null) {
-                        addCallSite(KIND_CHILD_WORKFLOW, target, remoteCall);
+                    Symbol target = functionNameOf(remoteCall.arguments());
+                    String name = nameOf(target);
+                    if (name != null) {
+                        addCallSite(KIND_CHILD_WORKFLOW, name, displayLabelOf(target), remoteCall);
                     }
                 }
                 default -> {
@@ -870,7 +874,8 @@ public final class WorkflowGraphBuilder {
                 if (WorkflowPluginUtils.hasWorkflowAnnotation(fnSymbol, WorkflowConstants.ACTIVITY_ANNOTATION)) {
                     // A direct call to an @Activity function: the descriptor lists it among the
                     // workflow's activities, so the graph shows it as a step too.
-                    fnSymbol.getName().ifPresent(name -> addNode(KIND_ACTIVITY, name, name, null, callNode));
+                    fnSymbol.getName().ifPresent(name -> addNode(KIND_ACTIVITY, name, name,
+                            displayLabelOf(fnSymbol), callNode));
                 } else {
                     addWorkflowModuleStep(fnSymbol, callNode);
                 }
@@ -958,8 +963,8 @@ public final class WorkflowGraphBuilder {
          * becomes the node's identity; the ordinal is consumed either way, so naming one call of
          * an activity does not renumber the others.
          */
-        private Item addCallSite(String kind, String target, RemoteMethodCallActionNode source) {
-            Item item = addNode(kind, target, target, null, source, chosenStepId(source));
+        private Item addCallSite(String kind, String target, String label, RemoteMethodCallActionNode source) {
+            Item item = addNode(kind, target, target, label, source, chosenStepId(source));
             sites.add(new CallSite(item.stepId, kind, target, source.location().lineRange()));
             return item;
         }
@@ -1089,22 +1094,32 @@ public final class WorkflowGraphBuilder {
 
         // ── Argument reading ──────────────────────────────────────────────
 
+        /** The target's {@code @display} label — what a diagram shows instead of its identity. */
+        private static String displayLabelOf(Symbol target) {
+            return target == null ? null : WorkflowPluginUtils.displayOf(target).label();
+        }
+
+        private static String nameOf(Symbol symbol) {
+            return symbol == null ? null : symbol.getName().orElse(null);
+        }
+
         /**
          * The activity function of a {@code callActivity} — the first positional argument,
          * or the {@code activityFunction} named argument (a caller who names it must still
          * produce a graph node and a {@code CallSite}, or the call vanishes from the
          * descriptor and never receives its step id).
          */
-        private String activityTargetOf(SeparatedNodeList<FunctionArgumentNode> args) {
+        private Symbol activityTargetOf(SeparatedNodeList<FunctionArgumentNode> args) {
             return callTargetOf(args, "activityFunction");
         }
 
         /** The child workflow of a {@code runChildWorkflow}/{@code callWorkflow} — positional or named. */
-        private String functionNameOf(SeparatedNodeList<FunctionArgumentNode> args) {
+        private Symbol functionNameOf(SeparatedNodeList<FunctionArgumentNode> args) {
             return callTargetOf(args, "childWorkflow");
         }
 
-        private String callTargetOf(SeparatedNodeList<FunctionArgumentNode> args, String paramName) {
+        /** The function symbol a call names — positional or named — or {@code null}. */
+        private Symbol callTargetOf(SeparatedNodeList<FunctionArgumentNode> args, String paramName) {
             ExpressionNode expression = null;
             if (!args.isEmpty() && args.get(0) instanceof PositionalArgumentNode posArg) {
                 expression = posArg.expression();
@@ -1124,7 +1139,7 @@ public final class WorkflowGraphBuilder {
             if (symbol.isEmpty() || symbol.get().kind() != SymbolKind.FUNCTION) {
                 return null;
             }
-            return symbol.get().getName().orElse(null);
+            return symbol.get();
         }
 
         /** The constant task name of an {@code awaitHumanTask} call, named or positional. */

@@ -147,6 +147,11 @@ public final class WorkflowRuntime {
                     .setWorkflowId(workflowId)
                     .setTaskQueue(taskQueue)
                     .setMemo(memo);
+            // The @display label, as user metadata the Temporal UI shows; replay never compares it.
+            String displayName = io.ballerina.lib.workflow.runtime.nativeimpl.DisplayNames.workflowLabel(processName);
+            if (displayName != null) {
+                optionsBuilder.setStaticSummary(displayName);
+            }
             if (WorkflowWorkerNative.isKindSearchAttributeReady()) {
                 optionsBuilder.setTypedSearchAttributes(io.temporal.common.SearchAttributes.newBuilder()
                         .set(WorkflowWorkerNative.WORKFLOW_KIND_KEY, kind).build());

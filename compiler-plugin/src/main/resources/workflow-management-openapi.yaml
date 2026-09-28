@@ -744,6 +744,8 @@ components:
       properties:
         workflowType: {type: string}
         kind: {type: string, enum: [WORKFLOW, AGENT]}
+        displayName: {type: string, nullable: true, description: "The @display label; for people, never an identity"}
+        icon: {type: string, nullable: true, description: "The @display icon path"}
         inputSchema: {type: string, nullable: true, description: "JSON schema of the input, as a string"}
         isActive: {type: boolean}
         workerCount: {type: integer}
@@ -763,6 +765,7 @@ components:
       type: object
       properties:
         activityName: {type: string}
+        displayName: {type: string, nullable: true, description: "The activity's @display label"}
         input: {type: array, items: {}}
         output: {description: "Any JSON value; null unless the activity returned one"}
         status: {type: string}
@@ -932,6 +935,7 @@ components:
         failure: {type: object, nullable: true}
         attempt: {type: integer}
         stepId: {type: string, nullable: true}
+        displayName: {type: string, nullable: true, description: "An activity's @display label or a human task's title"}
         children:
           type: array
           nullable: true

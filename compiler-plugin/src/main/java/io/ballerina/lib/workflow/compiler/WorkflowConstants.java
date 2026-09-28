@@ -89,6 +89,7 @@ public final class WorkflowConstants {
 
     /** {@code awaitHumanTask(taskName = ...)}. */
     public static final String ARG_TASK_NAME = "taskName";
+    public static final String ARG_TITLE = "title";
     /** {@code callActivity(args = ...)} — the activity's named-argument map. */
     public static final String ARG_ARGS = "args";
     /** The field that tells a {@code HumanReview} from an {@code AutoRetry}, and names a task's deciders. */

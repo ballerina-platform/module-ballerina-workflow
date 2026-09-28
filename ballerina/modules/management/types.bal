@@ -29,11 +29,15 @@
 #                 start envelope, where `input` carries the declared `inputType`'s own
 #                 schema and is absent when the agent declares no payload.
 #                 `()` when the schema is unavailable
+# + displayName - The `@display` label of the declaration, or `()`; for people, never an identity
+# + icon - The `@display` icon path, or `()`
 # + isActive - Whether this workflow type has an active registered worker
 # + workerCount - Number of workers currently registered for this workflow type
 public type WorkflowDefinition record {|
     string workflowType;
     string kind = "WORKFLOW";
+    string? displayName = ();
+    string? icon = ();
     string? inputSchema;
     boolean isActive;
     int workerCount;
@@ -63,6 +67,7 @@ public type WorkflowExecutionInfo record {
 
 # Information about an activity invocation (for testing/introspection).
 # + activityName - The name of the activity that was invoked
+# + displayName - The activity's `@display` label, or `()`
 # + input - The arguments passed to the activity
 # + output - The result returned by the activity (nil if not yet completed or failed)
 # + status - The status of the activity execution ("COMPLETED", "FAILED", "RUNNING", "PENDING")
@@ -70,6 +75,7 @@ public type WorkflowExecutionInfo record {
 # + attempt - The attempt number for this invocation (1-based; values greater than 1 indicate a retry)
 public type ActivityInvocation record {
     string activityName;
+    string? displayName = ();
     anydata[] input;
     anydata? output;
     string status;
@@ -505,6 +511,9 @@ public type ActivityTreeNode record {|
     # For a review: its own node in the descriptor graph (`<reviewedStep>#review`). Nil for
     # other node kinds
     string? reviewStepId = ();
+    # The step's name for people: an activity's `@display` label or a human task's title. Nil
+    # when none was declared — show `name`
+    string? displayName = ();
     ActivityTreeNode[]? children;
 |};
 

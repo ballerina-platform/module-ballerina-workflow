@@ -273,6 +273,10 @@ public enum WorkflowDiagnostic {
             DiagnosticSeverity.ERROR),
     WORKFLOW_164("WORKFLOW_164",
             "A review definition must name who may decide it: give 'userRoles', 'users', or both",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_165("WORKFLOW_165",
+            "The display label of '%s' is blank. A '@display' label is what consoles show in place "
+                    + "of the name, so it must say something — give it a label, or drop the annotation",
             DiagnosticSeverity.ERROR);
 
     private final String code;

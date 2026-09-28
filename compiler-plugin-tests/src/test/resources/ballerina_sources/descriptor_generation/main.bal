@@ -20,9 +20,12 @@ type OrderEvents record {|
     future<ApprovalDecision> approval;
 |};
 
+// A display label is a console's name for the workflow; it is published, never used as identity.
+@display {label: "Expense approval", iconPath: "icons/expense.svg"}
 @workflow:Workflow
 function expenseApproval(workflow:Context ctx, ExpenseRequest expense) returns error? {
-    ApprovalDecision decision = check ctx->awaitHumanTask("managerApproval", {}, userRoles = "MANAGER");
+    ApprovalDecision decision = check ctx->awaitHumanTask("managerApproval", {}, userRoles = "MANAGER",
+        title = "Manager approval");
     if decision.approved {
         PostingResult|error posting = ctx->callActivity(postToLedger,
             {"expense": expense}, retryPolicy = {userRoles: "FINANCE"});
@@ -46,6 +49,7 @@ function orderFlow(workflow:Context ctx, OrderEvents events) returns error? {
     return;
 }
 
+@display {label: "Post to ledger"}
 @workflow:Activity
 function postToLedger(ExpenseRequest expense, int retries = 1) returns PostingResult|error {
     return {ref: expense.id, sequence: retries};

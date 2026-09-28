@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- The language's `@display {label, iconPath}` annotation is read on `@workflow:Workflow` and
+  `@workflow:Activity` functions and on a `workflow:DurableAgent` variable, and published as
+  `displayName`/`icon` in the workflow descriptor, the metadata document, `WorkflowDefinition`,
+  `ActivityTreeNode`, `ActivityInvocation` and the execution graph's labels; a human task's
+  constant `title` is published as its display name the same way. The label is also set as the
+  execution's static summary for the Temporal UI. A display name is never an identity — a rename
+  is a rebuild, with no migration — and a blank label is rejected (`WORKFLOW_165`).
+
 ## [0.10.1]
 
 ### Added

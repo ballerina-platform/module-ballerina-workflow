@@ -113,6 +113,7 @@ public final class WorkflowMetadataNative {
             def.put(MetadataFields.WORKFLOW_TYPE, StringUtils.fromString(displayType));
             def.put(MetadataFields.KIND, DurableAgentNative.getAgentDecl(displayType) != null
                     ? MetadataFields.KIND_AGENT : MetadataFields.KIND_WORKFLOW);
+            putDisplay(def, DisplayNames.ofWorkflow(displayType));
             String inputSchema = ManagementNative.deriveWorkflowInputSchema(entry.getValue());
             def.put(MetadataFields.INPUT_SCHEMA,
                     inputSchema != null ? StringUtils.fromString(inputSchema) : null);
@@ -136,6 +137,8 @@ public final class WorkflowMetadataNative {
     private static BMap<BString, Object> buildHumanTaskEntry(String displayName, Type resultType) {
         BMap<BString, Object> task = ValueCreator.createMapValue(JSON_MAP_TYPE);
         task.put(MetadataFields.NAME, StringUtils.fromString(displayName));
+        String title = DisplayNames.humanTaskTitle(displayName);
+        task.put(MetadataFields.TITLE, title != null ? StringUtils.fromString(title) : null);
         // The registry knows the result type once the task has executed (lazy registration in
         // awaitHumanTask); before that, the completion-form schema comes from the packed
         // workflow descriptor, which the compiler plugin generated at build time.
@@ -219,6 +222,7 @@ public final class WorkflowMetadataNative {
                 activity.put(MetadataFields.WORKFLOW_TYPE, StringUtils.fromString(
                         stripPrefix(owner, WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX)));
                 activity.put(MetadataFields.NAME, StringUtils.fromString(activityName));
+                putDisplay(activity, DisplayNames.ofActivity(activityName));
                 activity.put(MetadataFields.INPUT_SCHEMA,
                         inputSchema != null ? StringUtils.fromString(inputSchema) : null);
                 activities.append(activity);
@@ -265,6 +269,7 @@ public final class WorkflowMetadataNative {
         for (DurableAgentNative.AgentDecl decl : declRegistry.values()) {
             BMap<BString, Object> agent = ValueCreator.createMapValue(JSON_MAP_TYPE);
             agent.put(MetadataFields.NAME, StringUtils.fromString(decl.agentName()));
+            putDisplay(agent, DisplayNames.ofWorkflow(decl.agentName()));
             agent.put(MetadataFields.EVENTS, toJsonStringArray(decl.events().keySet()));
             List<String> toolNames = new ArrayList<>(decl.activities().keySet());
             toolNames.addAll(decl.tools().keySet());
@@ -277,6 +282,12 @@ public final class WorkflowMetadataNative {
             agents.append(agent);
         }
         return agents;
+    }
+
+    private static void putDisplay(BMap<BString, Object> entry, DisplayNames.Display display) {
+        entry.put(MetadataFields.DISPLAY_NAME,
+                display.label() != null ? StringUtils.fromString(display.label()) : null);
+        entry.put(MetadataFields.ICON, display.icon() != null ? StringUtils.fromString(display.icon()) : null);
     }
 
     private static BArray toJsonStringArray(Iterable<String> values) {

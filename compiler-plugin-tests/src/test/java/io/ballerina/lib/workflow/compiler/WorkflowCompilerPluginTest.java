@@ -1210,6 +1210,24 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "invalid")
+    public void testInvalidDisplayLabelBlank() {
+        // A @display label is published as the declaration's console name, so a blank one on a
+        // workflow, an activity or a durable agent is an error; an unrelated function is not
+        // the descriptor's business and passes.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_display_label_blank");
+        List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_165");
+        Assert.assertEquals(diags.size(), 3,
+                "Expected 3 WORKFLOW_165 errors — the workflow, the activity and the agent. Errors: "
+                        + diagnosticResult.errors());
+        Assert.assertEquals(diagnosticResult.errorCount(), 3,
+                "Expected the blank labels to be the only compiler errors. Errors: "
+                        + diagnosticResult.errors());
+        String messages = getDiagnosticMessages(diagnosticResult);
+        Assert.assertTrue(messages.contains("'expenseApproval'") && messages.contains("'makePayment'")
+                && messages.contains("'expenseAgent'"), "Each message names its declaration: " + messages);
+    }
+
+    @Test(groups = "invalid")
     public void testInvalidHumanTaskNameNotConstant() {
         // Capability names drive the designer and the Temporal registration, so they must be
         // compile-time constant strings: an interpolated agent-task name and a variable

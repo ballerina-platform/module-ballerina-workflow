@@ -119,6 +119,10 @@ public final class ManagementNative {
 
     private static final String RESERVED_EVENT_NAME_ERROR = "Failed to send data: reserved event name: ";
 
+    private static final String DISPLAY_NAME_KEY = "displayName";
+    private static final BString DISPLAY_NAME_FIELD = StringUtils.fromString(DISPLAY_NAME_KEY);
+    private static final BString ICON_FIELD = StringUtils.fromString("icon");
+
     private ManagementNative() {
         // Utility class — prevent instantiation
     }
@@ -259,6 +263,9 @@ public final class ManagementNative {
                                                                            "WorkflowDefinition");
                 def.put(StringUtils.fromString("workflowType"), StringUtils.fromString(displayType));
                 def.put(StringUtils.fromString("kind"), StringUtils.fromString(agentType ? "AGENT" : "WORKFLOW"));
+                DisplayNames.Display display = DisplayNames.ofWorkflow(workflowType);
+                def.put(DISPLAY_NAME_FIELD, display.label() != null ? StringUtils.fromString(display.label()) : null);
+                def.put(ICON_FIELD, display.icon() != null ? StringUtils.fromString(display.icon()) : null);
                 def.put(StringUtils.fromString("inputSchema"),
                         inputSchema != null ? StringUtils.fromString(inputSchema) : null);
                 // All registered workflow types have an active worker (this worker)
@@ -1749,6 +1756,10 @@ public final class ManagementNative {
                 memo.put("startedBy", starter.getValue());
             }
             optBuilder.setMemo(memo);
+            String displayName = DisplayNames.workflowLabel(type);
+            if (displayName != null) {
+                optBuilder.setStaticSummary(displayName);
+            }
             if (WorkflowWorkerNative.isKindSearchAttributeReady()) {
                 // The indexed copy, so visibility queries can filter by kind. Only when the
                 // cluster confirmed the attribute — an unknown attribute fails the start.
@@ -2237,6 +2248,7 @@ public final class ManagementNative {
                     case EVENT_TYPE_ACTIVITY_TASK_SCHEDULED -> {
                         var attrs = event.getActivityTaskScheduledEventAttributes();
                         var node = newNode(eid, attrs.getActivityType().getName(), "ACTIVITY", ts);
+                        node.put(DISPLAY_NAME_KEY, DisplayNames.ofActivity(attrs.getActivityType().getName()).label());
                         node.put("input", decodeFirstPayload(attrs.getInput(), dc));
                         // Which call site scheduled this activity — the identity that places the
                         // execution on the descriptor's graph. Absent for executions started
@@ -2310,6 +2322,10 @@ public final class ManagementNative {
                                 .getMemo()
                                 .getFieldsMap(), TaskKeys.TASK_NAME, childType) : shortTaskName(childType);
                         var node = newNode(eid, nodeName, nodeType, ts);
+                        if (!isReviewActivityType(childType)) {
+                            node.put(DISPLAY_NAME_KEY, decodeMemoString(dc, attrs.getMemo().getFieldsMap(),
+                                    TaskKeys.TITLE, null));
+                        }
                         node.put("childWorkflowId", childId);
                         node.put("input", decodeFirstPayload(attrs.getInput(), dc));
                         node.put("stepId", decodeMemoString(dc, attrs.getMemo().getFieldsMap(),
@@ -2556,6 +2572,8 @@ public final class ManagementNative {
 
                 String id = ((BString) treeNode.get(StringUtils.fromString("id"))).getValue();
                 String name = ((BString) treeNode.get(StringUtils.fromString("name"))).getValue();
+                // The label is for eyes: the display name when there is one, else the identity.
+                String label = treeNode.get(DISPLAY_NAME_FIELD) instanceof BString display ? display.getValue() : name;
                 String type = ((BString) treeNode.get(StringUtils.fromString("type"))).getValue();
                 String status = ((BString) treeNode.get(StringUtils.fromString("status"))).getValue();
 
@@ -2578,7 +2596,7 @@ public final class ManagementNative {
                 BMap<BString, Object> gn = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                           "GraphNode");
                 gn.put(StringUtils.fromString("id"), StringUtils.fromString(id));
-                gn.put(StringUtils.fromString("label"), StringUtils.fromString(name));
+                gn.put(StringUtils.fromString("label"), StringUtils.fromString(label));
                 gn.put(StringUtils.fromString("type"), StringUtils.fromString(type));
                 gn.put(StringUtils.fromString("status"), StringUtils.fromString(status));
                 gn.put(StringUtils.fromString("metadata"), metadata);
@@ -2826,6 +2844,8 @@ public final class ManagementNative {
         node.put(StringUtils.fromString("attempt"), (long) attempt);
         String stepId = (String) data.get("stepId");
         node.put(StringUtils.fromString("stepId"), stepId != null ? StringUtils.fromString(stepId) : null);
+        String displayName = (String) data.get(DISPLAY_NAME_KEY);
+        node.put(DISPLAY_NAME_FIELD, displayName != null ? StringUtils.fromString(displayName) : null);
         node.put(StringUtils.fromString("children"), null);
         return node;
     }

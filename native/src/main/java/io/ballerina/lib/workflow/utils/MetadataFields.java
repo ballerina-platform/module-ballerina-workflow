@@ -62,6 +62,9 @@ public final class MetadataFields {
     public static final BString INPUT_SCHEMA = StringUtils.fromString("inputSchema");
     /** Name of a human task, activity, or agent. */
     public static final BString NAME = StringUtils.fromString("name");
+    public static final BString DISPLAY_NAME = StringUtils.fromString("displayName");
+    public static final BString ICON = StringUtils.fromString("icon");
+    public static final BString TITLE = StringUtils.fromString("title");
     /** JSON Schema of a human task's completion form, serialized as a string. */
     public static final BString RESULT_SCHEMA = StringUtils.fromString("resultSchema");
     /** An agent's declared event channel names. */

@@ -590,14 +590,62 @@ public type WorkflowInstancePage record {|
     boolean hasMore;
 |};
 
-# Handle returned when a new workflow is started.
+# Handle returned when a workflow is started.
 #
 # + workflowId - Unique ID of the started workflow instance
 # + runId - Temporal run ID
+# + started - `true` when this start created the run; `false` when `ifRunning = USE_EXISTING`
+#             joined an instance already running under the id
 public type WorkflowHandle record {|
     string workflowId;
     string runId;
+    boolean started = true;
 |};
+
+# What a start does when its caller-chosen instance id is held by a RUNNING instance.
+#
+# + FAIL - Refuse with a `ConflictError` (the default)
+# + USE_EXISTING - Return the running instance's handle and leave it as it is; the new input is
+#                  not delivered. The idempotent submit: a retried request joins the first
+# + TERMINATE_EXISTING - Terminate the running instance and start a new run under the id. An
+#                        administrative option: the old run's work is abandoned
+public enum RunningInstancePolicy {
+    FAIL,
+    USE_EXISTING,
+    TERMINATE_EXISTING
+}
+
+# What a start does when its caller-chosen instance id was held by an instance that has CLOSED.
+#
+# + ALLOW_DUPLICATE - Start a new run under the same id, whatever the old outcome (the default)
+# + ALLOW_DUPLICATE_FAILED_ONLY - Start a new run only if the old one failed, was cancelled,
+#                                 terminated or timed out; refuse after a completed one
+# + REJECT_DUPLICATE - Refuse: the id is used once, ever
+public enum ClosedInstancePolicy {
+    ALLOW_DUPLICATE,
+    ALLOW_DUPLICATE_FAILED_ONLY,
+    REJECT_DUPLICATE
+}
+
+# Options of `startInstance`. Open, so a later option is a field, not a parameter.
+#
+# + instanceId - The instance id to start under — a business key that doubles as the
+#                correlation key. Omit for a generated UUID v7. Must not be blank, longer than
+#                255 characters, or start with a reserved prefix (`humantask-`,
+#                `reviewactivity-`, `childwf-`, `childagent-`)
+# + ifRunning - What to do when an instance with this id is running; only meaningful with
+#               `instanceId`
+# + ifClosed - What to do when an instance with this id has closed; only meaningful with
+#              `instanceId`
+# + timeoutSeconds - Whole-execution timeout in seconds, or `()` for none
+# + startedBy - Starter user id, stored with the instance for filtering
+public type StartOptions record {
+    string instanceId?;
+    RunningInstancePolicy ifRunning = FAIL;
+    ClosedInstancePolicy ifClosed = ALLOW_DUPLICATE;
+    int? timeoutSeconds = ();
+    string? startedBy = ();
+};
 
 // ================================================================================
 // PAGINATED TASK TYPES

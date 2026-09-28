@@ -150,12 +150,12 @@ public enum WorkflowDiagnostic {
             "The first argument of 'workflow:%s' must be a function with the @Workflow annotation",
             DiagnosticSeverity.ERROR),
     WORKFLOW_131("WORKFLOW_131",
-            "Input type mismatch in 'workflow:run': workflow function '%s' expects input of type "
+            "Input type mismatch in 'workflow:%s': workflow function '%s' expects input of type "
                     + "'%s', but found '%s'",
             DiagnosticSeverity.ERROR),
     WORKFLOW_132("WORKFLOW_132",
             "Workflow function '%s' does not declare an input parameter, but an input argument "
-                    + "was provided to 'workflow:run'",
+                    + "was provided to 'workflow:%s'",
             DiagnosticSeverity.ERROR),
     WORKFLOW_133("WORKFLOW_133",
             "Workflow function '%s' does not declare an events record parameter, so "
@@ -273,6 +273,10 @@ public enum WorkflowDiagnostic {
             DiagnosticSeverity.ERROR),
     WORKFLOW_164("WORKFLOW_164",
             "A review definition must name who may decide it: give 'userRoles', 'users', or both",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_165("WORKFLOW_165",
+            "The instance id given to '%s' is not acceptable: %s. An instance id is the correlation key "
+                    + "a caller looks the instance up by, so the runtime would refuse this start",
             DiagnosticSeverity.ERROR);
 
     private final String code;

@@ -41,6 +41,39 @@ isolated function runNative(function processFunction, anydata input) returns str
     name: "run"
 } external;
 
+# Starts a workflow instance under an id the caller chooses — a business key such as an order
+# number — so the id doubles as the correlation key. The policies say what happens when the id is
+# already held: `ifRunning = USE_EXISTING` makes a retried submit join the instance it already
+# started instead of failing. The id must not be blank, longer than 255 characters, or start with
+# a reserved prefix (`humantask-`, `reviewactivity-`, `childwf-`, `childagent-`).
+#
+# + processFunction - The workflow function (must have `@Workflow`)
+# + instanceId - The instance id to start under
+# + input - Optional input data for the workflow, as for `run`
+# + ifRunning - What to do when an instance with this id is running
+# + ifClosed - What to do when an instance with this id has closed
+# + return - The instance id (the same string), an `InstanceAlreadyExistsError` when the id is
+#            held and the policy refused, or an error
+public isolated function runWithId(function processFunction, string instanceId, anydata input = (),
+        RunningInstancePolicy ifRunning = FAIL, ClosedInstancePolicy ifClosed = ALLOW_DUPLICATE)
+        returns string|InstanceAlreadyExistsError|error {
+    observe:StartWorkflowSpan span = observe:createStartWorkflowSpan(observe:workflowTypeNameOf(processFunction));
+    string|error result = runWithIdNative(processFunction, instanceId, input, ifRunning, ifClosed);
+    if result is string {
+        span.addInstanceId(result);
+        span.close();
+    } else {
+        span.close(result);
+    }
+    return result;
+}
+
+isolated function runWithIdNative(function processFunction, string instanceId, anydata input,
+        string ifRunning, string ifClosed) returns string|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
+    name: "runWithId"
+} external;
+
 # Sends data to a running workflow's events record.
 #
 # + workflow - The workflow function (must have `@Workflow`)

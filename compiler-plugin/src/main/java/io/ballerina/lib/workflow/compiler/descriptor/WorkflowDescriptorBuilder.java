@@ -1067,7 +1067,7 @@ public final class WorkflowDescriptorBuilder {
     }
 
     /** A compile-time constant string: a plain literal or a template without interpolations. */
-    static String constantStringValue(Node expression) {
+    public static String constantStringValue(Node expression) {
         if (expression instanceof BasicLiteralNode literal
                 && literal.kind() == SyntaxKind.STRING_LITERAL) {
             String raw = literal.literalToken().text();

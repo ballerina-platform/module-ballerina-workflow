@@ -145,6 +145,12 @@ public final class WorkflowConstants {
     // Function names for validation
     public static final String SEND_DATA_FUNCTION = "sendData";
     public static final String RUN_FUNCTION = "run";
+    public static final String RUN_WITH_ID_FUNCTION = "runWithId";
+    /** The longest instance id `runWithId` accepts; mirrors the runtime's check. */
+    public static final int MAX_INSTANCE_ID_LENGTH = 255;
+    /** Prefixes older executions issued to children; a chosen id must not wear one. */
+    public static final java.util.List<String> RESERVED_INSTANCE_ID_PREFIXES =
+            java.util.List.of("humantask-", "reviewactivity-", "childwf-", "childagent-");
     public static final String AWAIT_METHOD = "await";
     public static final String RUN_CHILD_WORKFLOW_METHOD = "runChildWorkflow";
     public static final String CALL_WORKFLOW_METHOD = "callWorkflow";

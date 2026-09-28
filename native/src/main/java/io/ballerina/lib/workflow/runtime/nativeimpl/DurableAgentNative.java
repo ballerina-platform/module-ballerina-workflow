@@ -20,6 +20,7 @@ package io.ballerina.lib.workflow.runtime.nativeimpl;
 
 import io.ballerina.lib.workflow.ModuleUtils;
 import io.ballerina.lib.workflow.context.WorkflowContextNative;
+import io.ballerina.lib.workflow.runtime.StartOptions;
 import io.ballerina.lib.workflow.runtime.WorkflowRuntime;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
@@ -641,6 +642,48 @@ public final class DurableAgentNative {
                         "Failed to start durable agent '" + agentName + "': " + e.getMessage()));
             }
         });
+    }
+
+    /**
+     * Native implementation of {@code DurableAgent.runWithId}: a top-level start under the caller's id. Inside
+     * a workflow it is refused — a child agent's id is the parent's to issue.
+     *
+     * @param env        the Ballerina runtime environment
+     * @param self       the DurableAgent object
+     * @param instanceId the caller-chosen instance id
+     * @param query      the user turn
+     * @param input      optional structured input
+     * @param ifRunning  policy name when the id is held by a running instance
+     * @param ifClosed   policy name when the id is held by a closed instance
+     * @return the instance id, an {@code InstanceAlreadyExistsError}, or an error
+     */
+    public static Object runAgentWithId(Environment env, BObject self, BString instanceId, BString query,
+                                        Object input, BString ifRunning, BString ifClosed) {
+        String agentName = boundAgentName(self);
+        if (agentName == null) {
+            return unboundAgentError("runWithId");
+        }
+        AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName);
+        if (decl == null) {
+            return unknownAgentError(agentName);
+        }
+        Object validatedInput = validateRunInput(decl, input);
+        if (validatedInput instanceof BError) {
+            return validatedInput;
+        }
+        String errorPrefix = "Failed to start durable agent '" + agentName + "': ";
+        if (isInsideWorkflow()) {
+            return ErrorCreator.createError(StringUtils.fromString(errorPrefix
+                    + "runWithId cannot be called inside a workflow; use run(), which starts a child agent"));
+        }
+        String workflowType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + agentName;
+        Map<String, Object> runInput = new HashMap<>();
+        runInput.put(RUN_AGENT_NAME, agentName);
+        runInput.put(RUN_QUERY, query.getValue());
+        runInput.put(RUN_INPUT, validatedInput == null ? null : TypesUtil.convertBallerinaToJavaType(validatedInput));
+        StartOptions options = new StartOptions(instanceId.getValue(), ifRunning.getValue(), ifClosed.getValue(),
+                null, null);
+        return env.yieldAndRun(() -> WorkflowNative.startWithOptions(workflowType, runInput, options, errorPrefix));
     }
 
     /**

@@ -22,7 +22,9 @@ import io.ballerina.compiler.api.SemanticModel;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
+import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionCallExpressionNode;
+import io.ballerina.lib.workflow.compiler.descriptor.WorkflowDescriptorBuilder;
 import io.ballerina.projects.plugins.AnalysisTask;
 import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
 import io.ballerina.tools.diagnostics.DiagnosticFactory;
@@ -50,6 +52,9 @@ public class RunCallValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCont
 
     private static final String INPUT_PARAM_NAME = "input";
     private static final String PROCESS_FUNCTION_PARAM_NAME = "processFunction";
+    private static final String INSTANCE_ID_PARAM_NAME = "instanceId";
+    private static final int RUN_INPUT_POSITION = 1;
+    private static final int RUN_WITH_ID_INPUT_POSITION = 2;
 
     @Override
     public void perform(SyntaxNodeAnalysisContext context) {
@@ -66,8 +71,14 @@ public class RunCallValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCont
             return;
         }
 
-        if (!WorkflowFunctionCallUtils.isWorkflowModuleFunctionCall(callNode, semanticModel,
+        String function;
+        if (WorkflowFunctionCallUtils.isWorkflowModuleFunctionCall(callNode, semanticModel,
                 WorkflowConstants.RUN_FUNCTION)) {
+            function = WorkflowConstants.RUN_FUNCTION;
+        } else if (WorkflowFunctionCallUtils.isWorkflowModuleFunctionCall(callNode, semanticModel,
+                WorkflowConstants.RUN_WITH_ID_FUNCTION)) {
+            function = WorkflowConstants.RUN_WITH_ID_FUNCTION;
+        } else {
             return;
         }
 
@@ -75,10 +86,60 @@ public class RunCallValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCont
         // with ctx->runChildWorkflow so it becomes a true Temporal child workflow.
         if (WorkflowPluginUtils.isInsideWorkflowFunction(callNode, semanticModel)) {
             reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_138, callNode.location(),
-                    WorkflowConstants.RUN_FUNCTION, WorkflowConstants.RUN_CHILD_WORKFLOW_METHOD);
+                    function, WorkflowConstants.RUN_CHILD_WORKFLOW_METHOD);
             return;
         }
-        validateRunCall(callNode, context);
+        boolean withId = WorkflowConstants.RUN_WITH_ID_FUNCTION.equals(function);
+        if (withId) {
+            validateInstanceId(callNode, context);
+        }
+        validateRunCall(callNode, context, function, withId ? RUN_WITH_ID_INPUT_POSITION : RUN_INPUT_POSITION);
+    }
+
+    /**
+     * Checks a literal instance id the way the runtime will, so the refusal is a compile error
+     * rather than a start that fails. A non-literal id is the runtime's to check.
+     */
+    private void validateInstanceId(FunctionCallExpressionNode callNode, SyntaxNodeAnalysisContext context) {
+        ExpressionNode idExpr = WorkflowFunctionCallUtils.getArgumentExpression(callNode.arguments(), 1,
+                INSTANCE_ID_PARAM_NAME);
+        if (idExpr == null) {
+            return;
+        }
+        String literal = WorkflowDescriptorBuilder.constantStringValue(idExpr);
+        if (literal == null) {
+            return;
+        }
+        String problem = instanceIdProblem(literal);
+        if (problem != null) {
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_165, idExpr.location(),
+                    "workflow:" + WorkflowConstants.RUN_WITH_ID_FUNCTION, problem);
+        }
+    }
+
+    /**
+     * Why a literal instance id would be refused, or {@code null} when it is acceptable.
+     *
+     * @param id the literal
+     * @return the reason, phrased for a diagnostic
+     */
+    public static String instanceIdProblem(String id) {
+        if (id.isBlank()) {
+            return "it is blank";
+        }
+        if (!id.strip().equals(id)) {
+            return "it has leading or trailing whitespace";
+        }
+        if (id.length() > WorkflowConstants.MAX_INSTANCE_ID_LENGTH) {
+            return "it is " + id.length() + " characters long, and the limit is "
+                    + WorkflowConstants.MAX_INSTANCE_ID_LENGTH;
+        }
+        for (String prefix : WorkflowConstants.RESERVED_INSTANCE_ID_PREFIXES) {
+            if (id.startsWith(prefix)) {
+                return "the prefix '" + prefix + "' is reserved for the runtime's own child instances";
+            }
+        }
+        return null;
     }
 
     /**
@@ -97,27 +158,29 @@ public class RunCallValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCont
     }
 
     /**
-     * Validates a {@code workflow:run(processFunction, input)} call.
+     * Validates a {@code workflow:run(processFunction, input)} or
+     * {@code workflow:runWithId(processFunction, instanceId, input)} call.
      */
-    private void validateRunCall(FunctionCallExpressionNode callNode, SyntaxNodeAnalysisContext context) {
+    private void validateRunCall(FunctionCallExpressionNode callNode, SyntaxNodeAnalysisContext context,
+                                 String function, int inputPosition) {
         WorkflowPluginUtils.validateWorkflowCallInput(callNode.arguments(), PROCESS_FUNCTION_PARAM_NAME,
-                INPUT_PARAM_NAME, context.semanticModel(), false,
+                INPUT_PARAM_NAME, inputPosition, context.semanticModel(), false,
                 new WorkflowPluginUtils.WorkflowCallInputListener() {
                     @Override
                     public void onNonWorkflowTarget(Location location) {
-                        reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_130, location,
-                                WorkflowConstants.RUN_FUNCTION);
+                        reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_130, location, function);
                     }
 
                     @Override
                     public void onUnexpectedInput(Location location, String workflowName) {
-                        reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_132, location, workflowName);
+                        reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_132, location, workflowName,
+                                function);
                     }
 
                     @Override
                     public void onInputTypeMismatch(Location location, String workflowName,
                                                     String declaredTypeSignature, String actualDescription) {
-                        reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_131, location,
+                        reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_131, location, function,
                                 workflowName, declaredTypeSignature, actualDescription);
                     }
                 });

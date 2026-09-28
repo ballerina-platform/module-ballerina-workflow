@@ -276,6 +276,42 @@ public type PendingAgentEvent record {|
 # the child completes.
 public type WorkflowBusyError distinct error;
 
+# What a start does when its caller-chosen instance id is held by a RUNNING instance.
+#
+# + FAIL - Refuse with an `InstanceAlreadyExistsError` (the default)
+# + USE_EXISTING - Return the running instance's id and leave it as it is; the new input is not
+#                  delivered. This is the idempotent submit: a retried request joins the first
+public enum RunningInstancePolicy {
+    FAIL,
+    USE_EXISTING
+}
+
+# What a start does when its caller-chosen instance id was held by an instance that has CLOSED.
+#
+# + ALLOW_DUPLICATE - Start a new run under the same id, whatever the old outcome (the default)
+# + ALLOW_DUPLICATE_FAILED_ONLY - Start a new run only if the old one failed, was cancelled,
+#                                 terminated or timed out; refuse after a completed one
+# + REJECT_DUPLICATE - Refuse: the id is used once, ever
+public enum ClosedInstancePolicy {
+    ALLOW_DUPLICATE,
+    ALLOW_DUPLICATE_FAILED_ONLY,
+    REJECT_DUPLICATE
+}
+
+# Detail fields carried by an `InstanceAlreadyExistsError`.
+#
+# + instanceId - The id the start asked for
+# + status - Status of the instance holding it — `RUNNING`, or a closed status such as
+#            `COMPLETED` or `FAILED`
+public type InstanceAlreadyExistsDetail record {|
+    string instanceId;
+    string status;
+|};
+
+# Returned by `runWithId` (and `DurableAgent.runWithId`) when the id is held by an instance the
+# policies did not let the start replace or join.
+public type InstanceAlreadyExistsError distinct error<InstanceAlreadyExistsDetail>;
+
 # Any JSON object.
 public type JsonObject map<json>;
 

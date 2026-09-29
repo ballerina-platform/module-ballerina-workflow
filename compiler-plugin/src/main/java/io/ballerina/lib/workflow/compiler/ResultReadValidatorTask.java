@@ -65,7 +65,8 @@ public class ResultReadValidatorTask implements AnalysisTask<SyntaxNodeAnalysisC
     // A child has no status read: its result read says whether it has finished.
     private static final String CHILD_STATUS_ALTERNATIVE = "ctx->getChildWorkflowResult, which answers "
             + "WorkflowInProgressError while the child runs (a child has no separate status read)";
-    private static final int WAIT_TIMEOUT_POSITION = 1;
+    // After the typedesc: a positional bound would land in the typedesc slot and fail to compile anyway.
+    private static final int WAIT_TIMEOUT_POSITION = 2;
 
     @Override
     public void perform(SyntaxNodeAnalysisContext context) {

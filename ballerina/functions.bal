@@ -94,10 +94,10 @@ public isolated function getResult(string instanceId, typedesc<anydata> T = <>)
 # made again after a restart.
 #
 # + instanceId - The instance id `run` returned
-# + timeout - The longest to wait, or `()` for as long as it takes
 # + T - Expected result type (inferred from context)
+# + timeout - The longest to wait, or `()` for as long as it takes; give it by name
 # + return - The result as `T`, or one of the read errors
-public isolated function waitForResult(string instanceId, Duration? timeout = (), typedesc<anydata> T = <>)
+public isolated function waitForResult(string instanceId, typedesc<anydata> T = <>, Duration? timeout = ())
         returns T|WorkflowInProgressError|InstanceFailedError|InstanceNotFoundError|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
     name: "waitForResult"

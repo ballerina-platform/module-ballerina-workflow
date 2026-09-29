@@ -566,7 +566,7 @@ public final class WorkflowNative {
      * @param typedesc   the caller's expected result type
      * @return the typed result or a read error
      */
-    public static Object waitForResult(Environment env, BString instanceId, Object timeout, BTypedesc typedesc) {
+    public static Object waitForResult(Environment env, BString instanceId, BTypedesc typedesc, Object timeout) {
         if (isInsideWorkflow()) {
             return clientVerbInsideWorkflow("waitForResult", "ctx->waitForChildWorkflow");
         }

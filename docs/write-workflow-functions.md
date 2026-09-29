@@ -246,7 +246,7 @@ resource function get orders/[string id]() returns json|error {
 
 Writing `check workflow:getResult(id)` in a resource or remote function turns a running instance
 into a failure of the request; the compiler warns about it (`WORKFLOW_169`). To block for a
-bounded time instead, use `waitForResult(id, {seconds: 5})`. Inside a workflow these are not
+bounded time instead, use `waitForResult(id, timeout = {seconds: 5})`. Inside a workflow these are not
 available — read a child with `ctx->getChildWorkflowResult` or `ctx->waitForChildWorkflow`
 (`WORKFLOW_167`).
 

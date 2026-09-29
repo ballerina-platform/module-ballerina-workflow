@@ -44,7 +44,7 @@ service /orders on new http:Listener(9090) {
             return {id, status: "IN_PROGRESS"};
         }
         // OK: a bounded wait is the caller's choice to block.
-        string waited = check workflow:waitForResult(id, {seconds: 5});
+        string waited = check workflow:waitForResult(id, timeout = {seconds: 5});
         return {result, agentResult, heldResult, waited};
     }
 }
@@ -59,11 +59,11 @@ service class StatusService {
 
 public function script() returns error? {
     // ERROR WORKFLOW_168 x2: negative fields in a literal wait bound, for a workflow and an agent.
-    string _ = check workflow:waitForResult("id", {seconds: -1});
+    string _ = check workflow:waitForResult("id", timeout = {seconds: -1});
     string _ = check helpAgent.waitForResult("id", timeout = {minutes: -2, seconds: 3});
     // ERROR WORKFLOW_168 x2: a parenthesised negative, and a negative through a field-held agent.
-    string _ = check workflow:waitForResult("id", {seconds: (-1)});
-    string _ = check holder.agent.waitForResult("id", {hours: -1});
+    string _ = check workflow:waitForResult("id", timeout = {seconds: (-1)});
+    string _ = check holder.agent.waitForResult("id", timeout = {hours: -1});
     // OK outside a service: `check` is a plain script's choice.
     string _ = check workflow:getResult("id");
 }

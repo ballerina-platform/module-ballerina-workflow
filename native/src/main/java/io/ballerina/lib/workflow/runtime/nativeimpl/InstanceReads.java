@@ -71,6 +71,15 @@ public final class InstanceReads {
     }
 
     /**
+     * What one describe said about the run holding an id.
+     *
+     * @param status the run's status name
+     * @param runId  which run it was
+     */
+    private record RunStatus(String status, String runId) {
+    }
+
+    /**
      * The instance's status as the management API reports it, {@code SUSPENDED} included.
      *
      * @param client       the Temporal client
@@ -79,6 +88,12 @@ public final class InstanceReads {
      * @return the status name, or an {@code InstanceNotFoundError}
      */
     public static Object statusOf(WorkflowClient client, String instanceId, String expectedType) {
+        Object described = describe(client, instanceId, expectedType);
+        return described instanceof RunStatus run ? run.status() : described;
+    }
+
+    // The status and run id of the latest run under the id, or a read error.
+    private static Object describe(WorkflowClient client, String instanceId, String expectedType) {
         try {
             WorkflowExecutionInfo info = client.newUntypedWorkflowStub(instanceId).describe()
                     .getWorkflowExecutionInfo();
@@ -97,7 +112,7 @@ public final class InstanceReads {
                 return ErrorCreator.createError(StringUtils.fromString("The status of instance '" + instanceId
                         + "' is not known: the engine reported " + status));
             }
-            return status;
+            return new RunStatus(status, info.getExecution().getRunId());
         } catch (Exception e) {
             return isNotFound(e) ? notFound(instanceId)
                     : ErrorCreator.createError(StringUtils.fromString("Failed to get the status of instance '"
@@ -120,16 +135,19 @@ public final class InstanceReads {
      */
     public static Object read(WorkflowClient client, String instanceId, String expectedType, boolean blocking,
                               Long timeoutMillis, BTypedesc typedesc) {
-        Object status = statusOf(client, instanceId, expectedType);
-        if (status instanceof BError) {
-            return status;
+        Object described = describe(client, instanceId, expectedType);
+        if (described instanceof BError error) {
+            return error;
         }
-        String current = (String) status;
-        if (!blocking && isOpen(current)) {
+        RunStatus run = (RunStatus) described;
+        if (!blocking && isOpen(run.status())) {
             return inProgress(instanceId);
         }
         try {
-            WorkflowStub stub = client.newUntypedWorkflowStub(instanceId);
+            // Pinned to the run the describe saw: an id reused for a new run between the two calls
+            // must not turn a non-blocking read of a closed run into a wait on the new one.
+            WorkflowStub stub = client.newUntypedWorkflowStub(instanceId, java.util.Optional.of(run.runId()),
+                    java.util.Optional.empty());
             Object raw = blocking && timeoutMillis != null
                     ? stub.getResult(timeoutMillis, TimeUnit.MILLISECONDS, Object.class)
                     : stub.getResult(Object.class);

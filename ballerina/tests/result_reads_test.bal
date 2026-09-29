@@ -67,17 +67,17 @@ function testGetResultWhileRunningIsInProgress() returns error? {
 function testWaitForResultBoundedAnswersInProgress() returns error? {
     string id = check run(readParkedWorkflow, "a");
 
-    string|error bounded = waitForResult(id, {seconds: 1});
+    string|error bounded = waitForResult(id, timeout = {seconds: 1});
     test:assertTrue(bounded is WorkflowInProgressError,
         "A bounded wait the instance outlives answers in-progress, the same as getResult");
 
-    string|error monthly = waitForResult(id, {months: 1});
+    string|error monthly = waitForResult(id, timeout = {months: 1});
     test:assertTrue(monthly is error && monthly !is WorkflowInProgressError
         && monthly.message().includes("months"), "A month-long bound has no fixed length and is refused");
 
     check sendData(readParkedWorkflow, id, "go", "b");
     // A bound in days is a real bound, not zero: the completed result comes back.
-    string result = check waitForResult(id, {days: 1});
+    string result = check waitForResult(id, timeout = {days: 1});
     test:assertEquals(result, "a/b");
 }
 
@@ -104,7 +104,7 @@ function testGetResultOfTerminatedInstance() returns error? {
     test:assertEquals(info.status, "RUNNING");
     check management:terminateWorkflow(id, "", "test");
 
-    string|error read = waitForResult(id, {seconds: 10});
+    string|error read = waitForResult(id, timeout = {seconds: 10});
     test:assertTrue(read is InstanceFailedError, "A terminated instance closed without a result");
     if read is InstanceFailedError {
         test:assertEquals(read.detail().status, TERMINATED);
@@ -119,7 +119,7 @@ function testReadsOfUnknownInstance() {
     if read is InstanceNotFoundError {
         test:assertEquals(read.detail().instanceId, "no-such-instance");
     }
-    string|error waited = waitForResult("no-such-instance", {seconds: 1});
+    string|error waited = waitForResult("no-such-instance", timeout = {seconds: 1});
     test:assertTrue(waited is InstanceNotFoundError);
     test:assertTrue(getStatus("no-such-instance") is InstanceNotFoundError);
 }
@@ -139,7 +139,7 @@ function testDeprecatedGetWorkflowResultAnswersInProgressOnTimeout() returns err
 @test:Config {groups: ["unit"], dependsOn: [testObjectModelRunnerEndToEnd]}
 function testAgentReadsShareTheVocabulary() returns error? {
     string id = check runnerCoverageAgent.run("Is the laptop in stock?");
-    string answer = check runnerCoverageAgent.waitForResult(id, {seconds: 30});
+    string answer = check runnerCoverageAgent.waitForResult(id, timeout = {seconds: 30});
     test:assertEquals(answer, "Stock check result: laptop is in stock");
     test:assertEquals(check runnerCoverageAgent.getStatus(id), COMPLETED);
     string again = check runnerCoverageAgent.getResult(id);

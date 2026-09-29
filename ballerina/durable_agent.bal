@@ -288,10 +288,11 @@ public isolated class DurableAgent {
     # bounded and a `WorkflowInProgressError` says the instance outlived it.
     #
     # + instanceId - The agent instance ID returned by `run`
-    # + timeout - The longest to wait, or `()` for as long as it takes (ignored inside a workflow)
     # + T - Expected result type (inferred from context)
+    # + timeout - The longest to wait, or `()` for as long as it takes (ignored inside a workflow);
+    #             give it by name
     # + return - The result as `T`, or one of the read errors
-    public isolated function waitForResult(string instanceId, Duration? timeout = (), typedesc<anydata> T = <>)
+    public isolated function waitForResult(string instanceId, typedesc<anydata> T = <>, Duration? timeout = ())
             returns T|WorkflowInProgressError|InstanceFailedError|InstanceNotFoundError|error = @java:Method {
         'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
         name: "waitForResult"

@@ -889,8 +889,8 @@ public final class DurableAgentNative {
      * @param typedesc   the expected result type descriptor
      * @return the typed result, or a BError
      */
-    public static Object waitForResult(Environment env, BObject self, BString instanceId, Object timeout,
-                                       BTypedesc typedesc) {
+    public static Object waitForResult(Environment env, BObject self, BString instanceId, BTypedesc typedesc,
+                                       Object timeout) {
         if (isInsideWorkflow()) {
             return WorkflowContextNative.readDurableAgentChildResult(instanceId.getValue(), typedesc, true);
         }

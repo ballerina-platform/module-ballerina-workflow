@@ -128,6 +128,25 @@ isolated client class TalkativeLoopingMockModelProvider {
 
 final TalkativeLoopingMockModelProvider talkativeLoopingAgentModel = new;
 
+// Neither text nor tool calls: a reply that ends the turn with nothing to say.
+isolated client class SilentMockModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        return {role: ai:ASSISTANT};
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final SilentMockModelProvider silentAgentModel = new;
+
 isolated client class UnknownToolMockModelProvider {
     *ai:ModelProvider;
 
@@ -245,6 +264,13 @@ function talkativeLoopingChatAgent(handle ctx, AgentOrderInput input) returns er
     check registerAgentEvent(ctx, "chat", string, string);
     check buildAndRun(ctx, systemPrompt = {role: "", instructions: "Talkative looping chat agent."},
             model = talkativeLoopingAgentModel, maxIter = 2, interaction = MULTI_EVENT);
+}
+
+function silentChatAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerActivity(ctx, checkStock);
+    check registerAgentEvent(ctx, "chat", string, string);
+    check buildAndRun(ctx, systemPrompt = {role: "", instructions: "Silent chat agent."},
+            model = silentAgentModel, maxIter = 2, interaction = MULTI_EVENT);
 }
 
 function unknownToolAgent(handle ctx, AgentOrderInput input) returns error? {
@@ -850,6 +876,7 @@ function setupAgentTests() returns error? {
     _ = check registerAgentWorkflowForTest(loopingAgent, "loopingAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(loopingChatAgent, "loopingChatAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(talkativeLoopingChatAgent, "talkativeLoopingChatAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(silentChatAgent, "silentChatAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(unknownToolAgent, "unknownToolAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(flakyModelAgent, "flakyModelAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(priceAgent, "priceAgent", agentActivities);
@@ -966,6 +993,24 @@ function testAgentTextBesideToolCallsIsNotTheTurnsAnswer() returns error? {
     }
     management:WorkflowExecutionInfo info = check management:getWorkflowInfo(agentId);
     test:assertEquals(info.status, "RUNNING");
+    // The recorded latest response agrees with what the waiter was told, not the interim text.
+    string? latest = getAgentFinalResponse(agentId);
+    test:assertTrue(latest is string && latest.includes("maximum number of iterations"),
+            "The latest response is the overrun, got: " + (latest ?: "()"));
+    check management:terminateWorkflow(agentId, "", "test done");
+}
+
+@test:Config {groups: ["unit"]}
+function testAgentTurnWithoutAResponseIsNotAnsweredWithAnOldOne() returns error? {
+    // A reply with neither text nor tool calls ends the turn with nothing said: the waiter is
+    // told so, rather than handed an earlier turn's text.
+    map<anydata> input = {id: "agent-silent-001", request: "unused"};
+    string agentId = check run(silentChatAgent, input);
+    anydata|error turn = updateAgentTurn(agentId, "chat", "anything there?");
+    test:assertTrue(turn is error && turn.message().includes("without a response"),
+            "A silent turn is reported as such: " + (turn is error ? turn.message() : turn.toString()));
+    management:WorkflowExecutionInfo info = check management:getWorkflowInfo(agentId);
+    test:assertEquals(info.status, "RUNNING", "A silent turn does not end the conversation");
     check management:terminateWorkflow(agentId, "", "test done");
 }
 

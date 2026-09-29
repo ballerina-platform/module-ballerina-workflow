@@ -219,8 +219,10 @@ isolated function runAgentLoop(handle ctxHandle, string agentName, ai:SystemProm
                 return error(overrun);
             }
             // A conversation outlives one bad turn: the turn's waiter gets the failure, the
-            // history records it, and the loop goes back to waiting for the next event.
+            // history and the recorded latest response say so (not the interim text a reply may
+            // have carried beside its tool calls), and the loop goes back to waiting.
             check failAgentTurn(ctxHandle, overrun);
+            check setAgentResponse(ctxHandle, overrun);
             history.push(<AgentAssistantMessage>{content: overrun});
             publishTranscript(ctxHandle, history);
         } else if !autoContinue {

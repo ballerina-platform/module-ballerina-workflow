@@ -228,6 +228,8 @@ public final class AgentContextNative {
         // The responder of the updateAgent request whose message the agent most recently
         // consumed; completed with the next recorded response (the turn's answer).
         private CompletablePromise<Object> pendingResponder = null;
+        // Whether the turn in progress has recorded a response of its own.
+        private boolean turnResponded = false;
         // Set when the agent is finishing: new updates are answered immediately from
         // finalResponse / closingFailure instead of being enqueued (nobody would consume them).
         private boolean closing = false;
@@ -1013,6 +1015,7 @@ public final class AgentContextNative {
     public static Object setResponse(BHandle handle, BString response) {
         AgentContextInfo info = (AgentContextInfo) handle.getValue();
         info.finalResponse = response.getValue();
+        info.turnResponded = true;
         AgentResponseStore.put(info.workflowId, response.getValue());
         // The turn's waiter is answered by completeTurn, once the turn has actually finished: a
         // reply that carries text beside tool calls is not yet the turn's outcome.
@@ -1040,9 +1043,17 @@ public final class AgentContextNative {
     public static Object completeTurn(BHandle handle) {
         AgentContextInfo info = (AgentContextInfo) handle.getValue();
         if (info.pendingResponder != null && !info.pendingResponder.isCompleted()) {
-            info.pendingResponder.complete(info.finalResponse);
+            if (info.turnResponded) {
+                info.pendingResponder.complete(info.finalResponse);
+            } else {
+                // A reply with neither text nor tool calls: an earlier turn's text is not this
+                // turn's answer, so the waiter is told there was none.
+                info.pendingResponder.completeExceptionally(ApplicationFailure.newNonRetryableFailure(
+                        "The agent ended the turn without a response", "error"));
+            }
         }
         info.pendingResponder = null;
+        info.turnResponded = false;
         return null;
     }
 
@@ -1062,6 +1073,7 @@ public final class AgentContextNative {
                     ApplicationFailure.newNonRetryableFailure(reason.getValue(), "error"));
         }
         info.pendingResponder = null;
+        info.turnResponded = false;
         return null;
     }
 

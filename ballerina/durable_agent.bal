@@ -128,9 +128,9 @@ public type PeerDecl record {
 #                events, human tasks, and peers: a name claimed twice is rejected
 #                when the agent registers, so the program fails at startup
 # + peers - Peer durable agents advertised as delegable tools
-# + maxIter - Hard cap on reasoning iterations per turn. A single-event agent that overruns it fails;
-#             a `MULTI_EVENT` agent ends that turn with a failure for its waiter and goes on to the
-#             next event, so one bad turn does not end the conversation
+# + maxIter - Hard cap on reasoning iterations per turn. An agent that overruns it fails, except a
+#             `MULTI_EVENT` agent with a `chat` event: it ends that turn with a failure for its waiter
+#             and goes on to the next chat message, so one bad turn does not end the conversation
 # + eventTimeout - Maximum wait per event-channel wait (each chat turn, each event).
 #                  Omit to wait indefinitely — a conversation stays open as long as it
 #                  takes, and `maxEventWaits` remains the runaway backstop. On a timeout

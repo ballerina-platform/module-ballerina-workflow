@@ -570,7 +570,12 @@ public final class WorkflowNative {
         if (isInsideWorkflow()) {
             return clientVerbInsideWorkflow("waitForResult", "ctx->waitForChildWorkflow");
         }
-        Long timeoutMillis = InstanceReads.timeoutMillisOf(timeout);
+        Long timeoutMillis;
+        try {
+            timeoutMillis = InstanceReads.timeoutMillisOf(timeout);
+        } catch (IllegalArgumentException e) {
+            return ErrorCreator.createError(StringUtils.fromString(e.getMessage()));
+        }
         return env.yieldAndRun(() -> {
             WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
             if (client == null) {

@@ -71,8 +71,13 @@ function testWaitForResultBoundedAnswersInProgress() returns error? {
     test:assertTrue(bounded is WorkflowInProgressError,
         "A bounded wait the instance outlives answers in-progress, the same as getResult");
 
+    string|error monthly = waitForResult(id, {months: 1});
+    test:assertTrue(monthly is error && monthly !is WorkflowInProgressError
+        && monthly.message().includes("months"), "A month-long bound has no fixed length and is refused");
+
     check sendData(readParkedWorkflow, id, "go", "b");
-    string result = check waitForResult(id, {seconds: 30});
+    // A bound in days is a real bound, not zero: the completed result comes back.
+    string result = check waitForResult(id, {days: 1});
     test:assertEquals(result, "a/b");
 }
 

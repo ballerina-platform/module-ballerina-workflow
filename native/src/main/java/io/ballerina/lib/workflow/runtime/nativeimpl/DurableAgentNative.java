@@ -894,7 +894,13 @@ public final class DurableAgentNative {
         if (isInsideWorkflow()) {
             return WorkflowContextNative.readDurableAgentChildResult(instanceId.getValue(), typedesc, true);
         }
-        return clientRead(env, self, instanceId.getValue(), typedesc, true, InstanceReads.timeoutMillisOf(timeout));
+        Long timeoutMillis;
+        try {
+            timeoutMillis = InstanceReads.timeoutMillisOf(timeout);
+        } catch (IllegalArgumentException e) {
+            return ErrorCreator.createError(StringUtils.fromString(e.getMessage()));
+        }
+        return clientRead(env, self, instanceId.getValue(), typedesc, true, timeoutMillis);
     }
 
     /**

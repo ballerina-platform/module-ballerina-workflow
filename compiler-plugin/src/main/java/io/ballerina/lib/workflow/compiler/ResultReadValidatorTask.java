@@ -17,7 +17,10 @@
 package io.ballerina.lib.workflow.compiler;
 
 import io.ballerina.compiler.api.SemanticModel;
+import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
+import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.syntax.tree.BasicLiteralNode;
+import io.ballerina.compiler.syntax.tree.BracedExpressionNode;
 import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
 import io.ballerina.compiler.syntax.tree.FunctionCallExpressionNode;
@@ -59,6 +62,9 @@ public class ResultReadValidatorTask implements AnalysisTask<SyntaxNodeAnalysisC
             WorkflowConstants.GET_DATA_RESULT_METHOD);
     private static final String CHILD_RESULT_ALTERNATIVE = "ctx->getChildWorkflowResult";
     private static final String CHILD_WAIT_ALTERNATIVE = "ctx->waitForChildWorkflow";
+    // A child has no status read: its result read says whether it has finished.
+    private static final String CHILD_STATUS_ALTERNATIVE = "ctx->getChildWorkflowResult, which answers "
+            + "WorkflowInProgressError while the child runs (a child has no separate status read)";
     private static final int WAIT_TIMEOUT_POSITION = 1;
 
     @Override
@@ -71,9 +77,7 @@ public class ResultReadValidatorTask implements AnalysisTask<SyntaxNodeAnalysisC
                 return;
             }
             if (WorkflowPluginUtils.isInsideWorkflowFunction(call, semanticModel)) {
-                report(context, WorkflowDiagnostic.WORKFLOW_167, call.location(), name,
-                        WorkflowConstants.WAIT_FOR_RESULT_FUNCTION.equals(name)
-                                ? CHILD_WAIT_ALTERNATIVE : CHILD_RESULT_ALTERNATIVE);
+                report(context, WorkflowDiagnostic.WORKFLOW_167, call.location(), name, alternativeOf(name));
                 return;
             }
             if (WorkflowConstants.WAIT_FOR_RESULT_FUNCTION.equals(name)) {
@@ -81,13 +85,13 @@ public class ResultReadValidatorTask implements AnalysisTask<SyntaxNodeAnalysisC
             }
             warnOnChecked(context, call, "workflow:" + name, NON_BLOCKING_READS.contains(name));
         } else if (context.node() instanceof MethodCallExpressionNode methodCall) {
-            if (!(methodCall.expression() instanceof SimpleNameReferenceNode receiver)
-                    || !DurableAgentDeclAnalysisTask.isDurableAgentSymbol(
-                            semanticModel.symbol(receiver).orElse(null))) {
+            // By the receiver's type, so an agent reached through a field or a call counts too.
+            ExpressionNode receiver = methodCall.expression();
+            if (!semanticModel.typeOf(receiver).map(ResultReadValidatorTask::isDurableAgentType).orElse(false)) {
                 return;
             }
             String name = methodCall.methodName().toSourceCode().strip();
-            String qualified = receiver.name().text() + "." + name;
+            String qualified = receiver.toSourceCode().strip() + "." + name;
             if (WorkflowConstants.WAIT_FOR_RESULT_FUNCTION.equals(name)) {
                 validateTimeout(context, methodCall.arguments(), qualified);
             }
@@ -115,9 +119,27 @@ public class ResultReadValidatorTask implements AnalysisTask<SyntaxNodeAnalysisC
     }
 
     private static boolean isNegativeLiteral(ExpressionNode expression) {
-        return expression instanceof UnaryExpressionNode unary
+        ExpressionNode inner = expression;
+        while (inner instanceof BracedExpressionNode braced) {
+            inner = braced.expression();
+        }
+        return inner instanceof UnaryExpressionNode unary
                 && unary.unaryOperator().kind() == SyntaxKind.MINUS_TOKEN
                 && unary.expression() instanceof BasicLiteralNode;
+    }
+
+    private static String alternativeOf(String read) {
+        return switch (read) {
+            case WorkflowConstants.WAIT_FOR_RESULT_FUNCTION -> CHILD_WAIT_ALTERNATIVE;
+            case WorkflowConstants.GET_STATUS_FUNCTION -> CHILD_STATUS_ALTERNATIVE;
+            default -> CHILD_RESULT_ALTERNATIVE;
+        };
+    }
+
+    private static boolean isDurableAgentType(TypeSymbol type) {
+        return type instanceof TypeReferenceTypeSymbol ref
+                && ref.getName().map(WorkflowConstants.DURABLE_AGENT_TYPE::equals).orElse(false)
+                && ref.getModule().map(WorkflowPluginUtils::isWorkflowModule).orElse(false);
     }
 
     // `check` straight on a non-blocking read in a resource or remote function: a running instance

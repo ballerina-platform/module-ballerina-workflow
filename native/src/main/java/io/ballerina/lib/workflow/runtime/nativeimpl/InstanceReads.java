@@ -59,6 +59,13 @@ public final class InstanceReads {
     private static final BString STATUS = StringUtils.fromString("status");
     public static final String STATUS_RUNNING = "RUNNING";
     public static final String STATUS_SUSPENDED = "SUSPENDED";
+    private static final String STATUS_FAILED = "FAILED";
+    private static final String CONTINUED_AS_NEW = "CONTINUED_AS_NEW";
+    // The members of the Ballerina InstanceStatus enum: nothing else may cross the boundary.
+    private static final java.util.Set<String> INSTANCE_STATUSES = java.util.Set.of(STATUS_RUNNING,
+            STATUS_SUSPENDED, "COMPLETED", STATUS_FAILED, "CANCELED", "TERMINATED", "TIMED_OUT");
+    private static final java.util.Set<String> CLOSED_FAILURES = java.util.Set.of(STATUS_FAILED, "CANCELED",
+            "TERMINATED", "TIMED_OUT");
 
     private InstanceReads() {
     }
@@ -79,8 +86,16 @@ public final class InstanceReads {
                 return notFound(instanceId);
             }
             String status = WorkflowNative.convertStatus(info.getStatus());
+            if (CONTINUED_AS_NEW.equals(status)) {
+                // A run that continued is, to a caller, still running.
+                status = STATUS_RUNNING;
+            }
             if (STATUS_RUNNING.equals(status) && WorkflowWorkerNative.isSuspendedMemo(client, info)) {
                 status = STATUS_SUSPENDED;
+            }
+            if (!INSTANCE_STATUSES.contains(status)) {
+                return ErrorCreator.createError(StringUtils.fromString("The status of instance '" + instanceId
+                        + "' is not known: the engine reported " + status));
             }
             return status;
         } catch (Exception e) {
@@ -124,7 +139,9 @@ public final class InstanceReads {
             return inProgress(instanceId);
         } catch (WorkflowFailedException e) {
             Object closed = statusOf(client, instanceId, null);
-            return failed(instanceId, closed instanceof String s ? s : "FAILED", failureMessage(e));
+            // Only a closed status can explain a failed read; anything else is reported as FAILED.
+            return failed(instanceId, closed instanceof String s && CLOSED_FAILURES.contains(s) ? s : STATUS_FAILED,
+                    failureMessage(e));
         } catch (Exception e) {
             if (isNotFound(e)) {
                 return notFound(instanceId);
@@ -178,8 +195,7 @@ public final class InstanceReads {
     }
 
     private static boolean isOpen(String status) {
-        return STATUS_RUNNING.equals(status) || STATUS_SUSPENDED.equals(status)
-                || "CONTINUED_AS_NEW".equals(status);
+        return STATUS_RUNNING.equals(status) || STATUS_SUSPENDED.equals(status);
     }
 
     private static String describeClosed(String status) {

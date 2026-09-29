@@ -9,6 +9,12 @@ final workflow:DurableAgent helpAgent = check new ({
     model: agentModel
 });
 
+type AgentHolder record {|
+    workflow:DurableAgent agent;
+|};
+
+final AgentHolder holder = {agent: helpAgent};
+
 @workflow:Workflow
 function orderFlow(workflow:Context ctx, string input) returns string|error {
     return input;
@@ -30,6 +36,8 @@ service /orders on new http:Listener(9090) {
         // WARNING WORKFLOW_169 x2: `check` straight on a non-blocking read in a resource function.
         string result = check workflow:getResult(id);
         string agentResult = check helpAgent.getResult(id);
+        // WARNING WORKFLOW_169: the agent reached through a field is still an agent.
+        string heldResult = check holder.agent.getResult(id);
         // OK: tested for progress first.
         string|error read = workflow:getResult(id);
         if read is workflow:WorkflowInProgressError {
@@ -37,7 +45,7 @@ service /orders on new http:Listener(9090) {
         }
         // OK: a bounded wait is the caller's choice to block.
         string waited = check workflow:waitForResult(id, {seconds: 5});
-        return {result, agentResult, waited};
+        return {result, agentResult, heldResult, waited};
     }
 }
 
@@ -53,6 +61,9 @@ public function script() returns error? {
     // ERROR WORKFLOW_168 x2: negative fields in a literal wait bound, for a workflow and an agent.
     string _ = check workflow:waitForResult("id", {seconds: -1});
     string _ = check helpAgent.waitForResult("id", timeout = {minutes: -2, seconds: 3});
+    // ERROR WORKFLOW_168 x2: a parenthesised negative, and a negative through a field-held agent.
+    string _ = check workflow:waitForResult("id", {seconds: (-1)});
+    string _ = check holder.agent.waitForResult("id", {hours: -1});
     // OK outside a service: `check` is a plain script's choice.
     string _ = check workflow:getResult("id");
 }

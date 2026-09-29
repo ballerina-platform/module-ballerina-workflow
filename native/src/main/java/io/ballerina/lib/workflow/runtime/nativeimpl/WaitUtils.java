@@ -54,6 +54,10 @@ public final class WaitUtils {
 
     private static final Logger LOGGER = Workflow.getLogger(WaitUtils.class);
 
+    private static final BString YEARS_KEY = StringUtils.fromString("years");
+    private static final BString MONTHS_KEY = StringUtils.fromString("months");
+    private static final BString WEEKS_KEY = StringUtils.fromString("weeks");
+    private static final BString DAYS_KEY = StringUtils.fromString("days");
     private static final BString HOURS_KEY = StringUtils.fromString("hours");
     private static final BString MINUTES_KEY = StringUtils.fromString("minutes");
     private static final BString SECONDS_KEY = StringUtils.fromString("seconds");
@@ -123,7 +127,12 @@ public final class WaitUtils {
         // During replay this condition is immediately true — no blocking occurs.
         boolean conditionMet;
         if (timeout instanceof BMap<?, ?> timeoutMap) {
-            long timeoutMillis = durationToMillis((BMap<BString, Object>) timeoutMap);
+            long timeoutMillis;
+            try {
+                timeoutMillis = durationToMillis((BMap<BString, Object>) timeoutMap);
+            } catch (IllegalArgumentException e) {
+                return ErrorCreator.createError(StringUtils.fromString(e.getMessage()));
+            }
             conditionMet = Workflow.await(java.time.Duration.ofMillis(timeoutMillis),
                                           () -> countDone(lambdaFutures) >= lambdaRequired);
         } else {
@@ -170,6 +179,12 @@ public final class WaitUtils {
      * Converts a Ballerina {@code time:Duration} record to milliseconds.
      */
     static long durationToMillis(BMap<BString, Object> duration) {
+        if (getLongField(duration, YEARS_KEY) != 0 || getLongField(duration, MONTHS_KEY) != 0) {
+            // As the human-task deadline does: a month has no fixed length.
+            throw new IllegalArgumentException("A wait bound does not support months or years");
+        }
+        long weeks = getLongField(duration, WEEKS_KEY);
+        long days = getLongField(duration, DAYS_KEY);
         long hours = getLongField(duration, HOURS_KEY);
         long minutes = getLongField(duration, MINUTES_KEY);
         Object secObj = duration.get(SECONDS_KEY);
@@ -181,7 +196,8 @@ public final class WaitUtils {
         } else if (secObj instanceof io.ballerina.runtime.api.values.BDecimal secDec) {
             secondsMillis = secDec.decimalValue().multiply(java.math.BigDecimal.valueOf(1000)).longValue();
         }
-        return (hours * 3600_000L) + (minutes * 60_000L) + secondsMillis;
+        return (weeks * 604_800_000L) + (days * 86_400_000L) + (hours * 3600_000L) + (minutes * 60_000L)
+                + secondsMillis;
     }
 
     private static long getLongField(BMap<BString, Object> map, BString key) {

@@ -182,10 +182,10 @@ isolated function runAgentLoop(handle ctxHandle, string agentName, ai:SystemProm
 
             AgentFunctionCall[]? toolCalls = assistant.toolCalls;
             if toolCalls is () || toolCalls.length() == 0 {
-                // The turn is over: only now does its waiter get the answer, so a turn that
-                // runs out of iterations after a text-and-tools reply reports the failure instead.
+                // The turn is over: only now does its waiter get the answer, and only the text of
+                // this closing reply counts. Text beside an earlier tool call was not the answer.
                 turnAnswered = true;
-                check completeAgentTurn(ctxHandle);
+                check completeAgentTurn(ctxHandle, contentRecorded);
                 break;
             }
 
@@ -609,8 +609,9 @@ isolated function awaitAgentHumanTask(handle nativeContext, string taskName, jso
     name: "awaitHumanTask"
 } external;
 
-// Ends the current turn with its latest recorded response for its waiter.
-isolated function completeAgentTurn(handle nativeContext) returns error? = @java:Method {
+// Ends the current turn for its waiter: with the latest recorded response when the closing reply
+// carried text, otherwise with a "no response" failure.
+isolated function completeAgentTurn(handle nativeContext, boolean answered) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "completeTurn"
 } external;

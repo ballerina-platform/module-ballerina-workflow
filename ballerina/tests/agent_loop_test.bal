@@ -177,6 +177,30 @@ isolated client class OverrunThenSilentMockModelProvider {
 
 final OverrunThenSilentMockModelProvider overrunThenSilentAgentModel = new;
 
+// Says "let me check" beside a tool call, then closes the turn with nothing: the interim text must
+// not be handed to the waiter as the answer.
+isolated client class InterimThenSilentMockModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        if messages is ai:ChatMessage[] && messages[messages.length() - 1] is ai:ChatFunctionMessage {
+            return {role: ai:ASSISTANT};
+        }
+        return {role: ai:ASSISTANT, content: "Let me check that for you.",
+            toolCalls: [{name: "checkStock", arguments: {"item": "interim"}}]};
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final InterimThenSilentMockModelProvider interimThenSilentAgentModel = new;
+
 isolated client class UnknownToolMockModelProvider {
     *ai:ModelProvider;
 
@@ -308,6 +332,13 @@ function overrunThenSilentChatAgent(handle ctx, AgentOrderInput input) returns e
     check registerAgentEvent(ctx, "chat", string, string);
     check buildAndRun(ctx, systemPrompt = {role: "", instructions: "Overrun then silent chat agent."},
             model = overrunThenSilentAgentModel, maxIter = 2, interaction = MULTI_EVENT);
+}
+
+function interimThenSilentChatAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerActivity(ctx, checkStock);
+    check registerAgentEvent(ctx, "chat", string, string);
+    check buildAndRun(ctx, systemPrompt = {role: "", instructions: "Interim then silent chat agent."},
+            model = interimThenSilentAgentModel, maxIter = 3, interaction = MULTI_EVENT);
 }
 
 function unknownToolAgent(handle ctx, AgentOrderInput input) returns error? {
@@ -915,6 +946,7 @@ function setupAgentTests() returns error? {
     _ = check registerAgentWorkflowForTest(talkativeLoopingChatAgent, "talkativeLoopingChatAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(silentChatAgent, "silentChatAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(overrunThenSilentChatAgent, "overrunThenSilentChatAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(interimThenSilentChatAgent, "interimThenSilentChatAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(unknownToolAgent, "unknownToolAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(flakyModelAgent, "flakyModelAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(priceAgent, "priceAgent", agentActivities);
@@ -1065,6 +1097,21 @@ function testASilentTurnAfterAnOverrunIsNotAnsweredWithTheOverrun() returns erro
     test:assertTrue(second is error && second.message().includes("without a response"),
             "The silent turn is reported as silent: "
                 + (second is error ? second.message() : second.toString()));
+    check management:terminateWorkflow(agentId, "", "test done");
+}
+
+@test:Config {groups: ["unit"]}
+function testInterimTextBeforeASilentReplyIsNotTheTurnsAnswer() returns error? {
+    // Within one turn: text beside a tool call, then a reply with neither text nor tool calls.
+    // The turn closed without an answer, so the waiter is told so, not handed the interim text.
+    map<anydata> input = {id: "agent-interim-then-silent-001", request: "unused"};
+    string agentId = check run(interimThenSilentChatAgent, input);
+    anydata|error turn = updateAgentTurn(agentId, "chat", "check please");
+    test:assertTrue(turn is error && turn.message().includes("without a response"),
+            "Interim text is not the turn's answer: "
+                + (turn is error ? turn.message() : turn.toString()));
+    management:WorkflowExecutionInfo info = check management:getWorkflowInfo(agentId);
+    test:assertEquals(info.status, "RUNNING", "A silent turn does not end the conversation");
     check management:terminateWorkflow(agentId, "", "test done");
 }
 

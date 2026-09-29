@@ -108,6 +108,26 @@ isolated client class LoopingMockModelProvider {
 
 final LoopingMockModelProvider loopingAgentModel = new;
 
+// Text beside every tool call: what a chatty model does, and what must not count as the answer.
+isolated client class TalkativeLoopingMockModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        return {role: ai:ASSISTANT, content: "Let me check that for you.",
+            toolCalls: [{name: "checkStock", arguments: {"item": "loop"}}]};
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final TalkativeLoopingMockModelProvider talkativeLoopingAgentModel = new;
+
 isolated client class UnknownToolMockModelProvider {
     *ai:ModelProvider;
 
@@ -218,6 +238,13 @@ function loopingChatAgent(handle ctx, AgentOrderInput input) returns error? {
     // A conversation: no initial prompt, MULTI_EVENT, and a model that never stops calling tools.
     check buildAndRun(ctx, systemPrompt = {role: "", instructions: "Looping chat agent."},
             model = loopingAgentModel, maxIter = 2, interaction = MULTI_EVENT);
+}
+
+function talkativeLoopingChatAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerActivity(ctx, checkStock);
+    check registerAgentEvent(ctx, "chat", string, string);
+    check buildAndRun(ctx, systemPrompt = {role: "", instructions: "Talkative looping chat agent."},
+            model = talkativeLoopingAgentModel, maxIter = 2, interaction = MULTI_EVENT);
 }
 
 function unknownToolAgent(handle ctx, AgentOrderInput input) returns error? {
@@ -822,6 +849,7 @@ function setupAgentTests() returns error? {
     _ = check registerAgentWorkflowForTest(chatStockAgent, "chatStockAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(loopingAgent, "loopingAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(loopingChatAgent, "loopingChatAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(talkativeLoopingChatAgent, "talkativeLoopingChatAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(unknownToolAgent, "unknownToolAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(flakyModelAgent, "flakyModelAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(priceAgent, "priceAgent", agentActivities);
@@ -921,6 +949,23 @@ function testAgentMaxIterationsEndsTheTurnNotTheConversation() returns error? {
     anydata|error second = updateAgentTurn(agentId, "chat", "loop again");
     test:assertTrue(second is error && second.message().includes("maximum number of iterations"),
             "The next turn is taken, and judged on its own");
+    check management:terminateWorkflow(agentId, "", "test done");
+}
+
+@test:Config {groups: ["unit"]}
+function testAgentTextBesideToolCallsIsNotTheTurnsAnswer() returns error? {
+    // The model says "let me check" beside every tool call and never stops: the waiter must
+    // get the overrun, not the interim text recorded before the tools ran.
+    map<anydata> input = {id: "agent-maxiter-talkative-001", request: "unused"};
+    string agentId = check run(talkativeLoopingChatAgent, input);
+    anydata|error turn = updateAgentTurn(agentId, "chat", "loop");
+    test:assertTrue(turn is error, "An interim text reply is not the turn's answer");
+    if turn is error {
+        test:assertTrue(turn.message().includes("maximum number of iterations"),
+                "The waiter learns the turn overran: " + turn.message());
+    }
+    management:WorkflowExecutionInfo info = check management:getWorkflowInfo(agentId);
+    test:assertEquals(info.status, "RUNNING");
     check management:terminateWorkflow(agentId, "", "test done");
 }
 

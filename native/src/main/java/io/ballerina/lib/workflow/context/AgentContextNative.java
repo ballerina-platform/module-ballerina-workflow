@@ -1014,11 +1014,8 @@ public final class AgentContextNative {
         AgentContextInfo info = (AgentContextInfo) handle.getValue();
         info.finalResponse = response.getValue();
         AgentResponseStore.put(info.workflowId, response.getValue());
-        // Answer the updateAgent request whose message this turn consumed, if any.
-        if (info.pendingResponder != null && !info.pendingResponder.isCompleted()) {
-            info.pendingResponder.complete(response.getValue());
-        }
-        info.pendingResponder = null;
+        // The turn's waiter is answered by completeTurn, once the turn has actually finished: a
+        // reply that carries text beside tool calls is not yet the turn's outcome.
         // Surface the (latest) response cross-process via the workflow memo, so
         // management:getAgentResponse works from any process. Best-effort: some test
         // environments may not support memo upserts; the in-JVM store remains the fallback.
@@ -1030,6 +1027,22 @@ public final class AgentContextNative {
         } catch (Exception e) {
             // Ignore — response remains available via AgentResponseStore in this JVM.
         }
+        return null;
+    }
+
+    /**
+     * Ends the current turn with its answer: the updateAgent request whose message the turn consumed, if any,
+     * receives the latest recorded response.
+     *
+     * @param handle the agent context handle
+     * @return null
+     */
+    public static Object completeTurn(BHandle handle) {
+        AgentContextInfo info = (AgentContextInfo) handle.getValue();
+        if (info.pendingResponder != null && !info.pendingResponder.isCompleted()) {
+            info.pendingResponder.complete(info.finalResponse);
+        }
+        info.pendingResponder = null;
         return null;
     }
 

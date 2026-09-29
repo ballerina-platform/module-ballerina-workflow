@@ -126,7 +126,7 @@ function waitForReviewAudience(string taskId, string role, decimal timeoutSecs =
     decimal elapsed = 0.0d;
     while elapsed < timeoutSecs {
         management:ReviewActivityInfo info = check management:getReviewActivityInfo(taskId);
-        string[] roles = info.userRoles ?: [];
+        string[] roles = info.userRoles;
         if roles.indexOf(role) is int {
             return;
         }

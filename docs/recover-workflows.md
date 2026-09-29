@@ -54,7 +54,7 @@ A resend is the caller repeating a request because it does not know whether the 
 | `completeHumanTask`, `failHumanTask`, review decisions | Safe: the second call returns an error because the task is already closed. |
 | `resetWorkflowExecution` | Safe: the request carries an idempotency key, so a repeated reset is a no-op. |
 
-To make an unsafe resend safe, either check first — read the instance with `management:getWorkflowInfo` and confirm the earlier request was not already accepted — or put an idempotency key in the payload and have the workflow ignore a key it has already recorded.
+To make a data event safe to resend, put an idempotency key in the payload and have the workflow ignore a key it has already recorded. Checking the instance first with `management:getWorkflowInfo` is not enough: a request that timed out may still be in flight, so the check can pass and both deliveries still land. A key in `run`'s input does not help either, because each call starts a new instance that sees the key once; deduplicate before calling `run`.
 
 A durable agent returns a correlation token for each `sendData` turn. After a crash, call `workflow:getPendingAgentEvents` to find the turns that were accepted but not yet answered, instead of resending them.
 

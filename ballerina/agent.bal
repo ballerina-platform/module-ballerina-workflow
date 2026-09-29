@@ -211,9 +211,16 @@ isolated function runAgentLoop(handle ctxHandle, string agentName, ai:SystemProm
             }
         }
         if !turnAnswered {
-            return error(string `Agent exceeded the maximum number of iterations per turn (${maxIterations})`);
-        }
-        if !autoContinue {
+            string overrun = string `Agent exceeded the maximum number of iterations per turn (${maxIterations})`;
+            if !autoContinue {
+                return error(overrun);
+            }
+            // A conversation outlives one bad turn: the turn's waiter gets the failure, the
+            // history records it, and the loop goes back to waiting for the next event.
+            check failAgentTurn(ctxHandle, overrun);
+            history.push(<AgentAssistantMessage>{content: overrun});
+            publishTranscript(ctxHandle, history);
+        } else if !autoContinue {
             return;
         }
         // Conversational agent: keep the conversation open — wait durably for the
@@ -594,6 +601,12 @@ isolated function awaitAgentHumanTask(handle nativeContext, string taskName, jso
         returns anydata|error = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "awaitHumanTask"
+} external;
+
+// Ends the current turn with a failure for its waiter, leaving the agent running.
+isolated function failAgentTurn(handle nativeContext, string reason) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.AgentContextNative",
+    name: "failTurn"
 } external;
 
 // Stores the agent's final textual response for later retrieval.

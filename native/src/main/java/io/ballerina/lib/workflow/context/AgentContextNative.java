@@ -1034,6 +1034,25 @@ public final class AgentContextNative {
     }
 
     /**
+     * Ends the current turn without an answer: the updateAgent request whose message the turn consumed, if any,
+     * is failed with the reason, so its waiter learns the turn went wrong while the agent itself lives on to take
+     * the next event.
+     *
+     * @param handle the agent context handle
+     * @param reason why the turn could not be answered
+     * @return null
+     */
+    public static Object failTurn(BHandle handle, BString reason) {
+        AgentContextInfo info = (AgentContextInfo) handle.getValue();
+        if (info.pendingResponder != null && !info.pendingResponder.isCompleted()) {
+            info.pendingResponder.completeExceptionally(
+                    ApplicationFailure.newNonRetryableFailure(reason.getValue(), "error"));
+        }
+        info.pendingResponder = null;
+        return null;
+    }
+
+    /**
      * Settles all outstanding updateAgent requests when the agent finishes, so accepted updates never outlive the
      * workflow (which would fail them with "workflow completed before the update completed"). The consumed-but-
      * unanswered responder and every queued-but-unconsumed responder are completed with the agent's final response,

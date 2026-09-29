@@ -212,6 +212,14 @@ function loopingAgent(handle ctx, AgentOrderInput input) returns error? {
             maxIter = 2);
 }
 
+function loopingChatAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerActivity(ctx, checkStock);
+    check registerAgentEvent(ctx, "chat", string, string);
+    // A conversation: no initial prompt, MULTI_EVENT, and a model that never stops calling tools.
+    check buildAndRun(ctx, systemPrompt = {role: "", instructions: "Looping chat agent."},
+            model = loopingAgentModel, maxIter = 2, interaction = MULTI_EVENT);
+}
+
 function unknownToolAgent(handle ctx, AgentOrderInput input) returns error? {
     check registerActivity(ctx, checkStock);
     check buildAndRun(ctx, input.request,
@@ -813,6 +821,7 @@ function setupAgentTests() returns error? {
     _ = check registerAgentWorkflowForTest(stockAgent, "stockAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(chatStockAgent, "chatStockAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(loopingAgent, "loopingAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(loopingChatAgent, "loopingChatAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(unknownToolAgent, "unknownToolAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(flakyModelAgent, "flakyModelAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(priceAgent, "priceAgent", agentActivities);
@@ -892,6 +901,27 @@ function testAgentMaxIterationsExceeded() returns error? {
         test:assertTrue(result.message().includes("maximum number of iterations"),
                 "Error should mention the iteration limit: " + result.message());
     }
+}
+
+@test:Config {groups: ["unit"]}
+function testAgentMaxIterationsEndsTheTurnNotTheConversation() returns error? {
+    map<anydata> input = {id: "agent-maxiter-chat-001", request: "unused"};
+    string agentId = check run(loopingChatAgent, input);
+
+    // The overrun turn fails for its waiter, with the reason.
+    anydata|error first = updateAgentTurn(agentId, "chat", "loop");
+    test:assertTrue(first is error, "An overrun turn is reported to its waiter");
+    if first is error {
+        test:assertTrue(first.message().includes("maximum number of iterations"),
+                "The waiter learns why: " + first.message());
+    }
+    // The agent is still there for the next event.
+    management:WorkflowExecutionInfo info = check management:getWorkflowInfo(agentId);
+    test:assertEquals(info.status, "RUNNING", "One bad turn does not end the conversation");
+    anydata|error second = updateAgentTurn(agentId, "chat", "loop again");
+    test:assertTrue(second is error && second.message().includes("maximum number of iterations"),
+            "The next turn is taken, and judged on its own");
+    check management:terminateWorkflow(agentId, "", "test done");
 }
 
 @test:Config {groups: ["unit"]}

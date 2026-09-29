@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- A `MULTI_EVENT` durable agent whose turn exceeds `maxIter` no longer fails as a whole: the turn is
+  ended with a failure its waiter receives (`waitForDataResult` returns the reason), the overrun is
+  recorded in the conversation, and the agent goes back to waiting for the next event. A single-event
+  agent keeps failing as before. ([ballerina-library#9225](https://github.com/ballerina-platform/ballerina-library/issues/9225))
+
 ## [0.10.1]
 
 ### Added

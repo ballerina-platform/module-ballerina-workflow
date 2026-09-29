@@ -130,8 +130,9 @@ public class RunCallValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCont
         if (!id.strip().equals(id)) {
             return "it has leading or trailing whitespace";
         }
-        if (id.length() > WorkflowConstants.MAX_INSTANCE_ID_LENGTH) {
-            return "it is " + id.length() + " characters long, and the limit is "
+        int length = id.codePointCount(0, id.length());
+        if (length > WorkflowConstants.MAX_INSTANCE_ID_LENGTH) {
+            return "it is " + length + " characters long, and the limit is "
                     + WorkflowConstants.MAX_INSTANCE_ID_LENGTH;
         }
         for (String prefix : WorkflowConstants.RESERVED_INSTANCE_ID_PREFIXES) {

@@ -291,7 +291,9 @@ public enum RunningInstancePolicy {
 # + ALLOW_DUPLICATE - Start a new run under the same id, whatever the old outcome (the default)
 # + ALLOW_DUPLICATE_FAILED_ONLY - Start a new run only if the old one failed, was cancelled,
 #                                 terminated or timed out; refuse after a completed one
-# + REJECT_DUPLICATE - Refuse: the id is used once, ever
+# + REJECT_DUPLICATE - Refuse while the engine still retains the closed instance. Retention is
+#                      finite (a namespace setting, days by default), so this is not a permanent
+#                      guard against processing a business key twice — keep such a guard in the domain
 public enum ClosedInstancePolicy {
     ALLOW_DUPLICATE,
     ALLOW_DUPLICATE_FAILED_ONLY,

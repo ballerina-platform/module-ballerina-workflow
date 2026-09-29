@@ -72,9 +72,11 @@ public record StartOptions(String instanceId, String ifRunning, String ifClosed,
             if (!trimmed.equals(instanceId)) {
                 throw new InvalidStartOptionsException("instanceId must not have leading or trailing whitespace");
             }
-            if (instanceId.length() > MAX_INSTANCE_ID_LENGTH) {
+            // Characters as Ballerina counts them: code points, not UTF-16 units.
+            int length = instanceId.codePointCount(0, instanceId.length());
+            if (length > MAX_INSTANCE_ID_LENGTH) {
                 throw new InvalidStartOptionsException("instanceId must be at most " + MAX_INSTANCE_ID_LENGTH
-                        + " characters, got " + instanceId.length());
+                        + " characters, got " + length);
             }
             for (String prefix : RESERVED_PREFIXES) {
                 if (instanceId.startsWith(prefix)) {

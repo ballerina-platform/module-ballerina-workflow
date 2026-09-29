@@ -172,6 +172,18 @@ function testRunWithIdRejectsUnacceptableIds() {
         "A 256-character id is refused and the limit is named");
 }
 
+@test:Config {groups: ["unit"]}
+function testRunWithIdCountsCharactersNotUnits() returns error? {
+    // 255 characters outside the BMP are 510 UTF-16 units: the limit counts characters, as
+    // Ballerina's string length does.
+    string wide = "".'join(...from int _ in 0 ..< 255 select "😀");
+    test:assertEquals(wide.length(), 255);
+    string id = chosenId("wide-") + wide.substring(0, 255 - chosenId("wide-").length());
+    string started = check runWithId(idQuickWorkflow, id, "w");
+    test:assertEquals(started, id);
+    test:assertEquals(check getWorkflowResult(id, 15), "done: w");
+}
+
 // ── DurableAgent.runWithId ───────────────────────────────────────────────────
 
 @test:Config {groups: ["unit"], dependsOn: [testObjectModelRunnerEndToEnd]}

@@ -114,7 +114,7 @@ paths:
                 input: {description: The workflow's input value}
                 workflowId: {type: string, maxLength: 255, description: "Optional caller-chosen instance id (the correlation key); ids containing '/' or '%' must be URL-encoded in paths"}
                 ifRunning: {type: string, enum: [FAIL, USE_EXISTING, TERMINATE_EXISTING], default: FAIL, description: What to do when an instance with workflowId is running}
-                ifClosed: {type: string, enum: [ALLOW_DUPLICATE, ALLOW_DUPLICATE_FAILED_ONLY, REJECT_DUPLICATE], default: ALLOW_DUPLICATE, description: What to do when an instance with workflowId has closed}
+                ifClosed: {type: string, enum: [ALLOW_DUPLICATE, ALLOW_DUPLICATE_FAILED_ONLY, REJECT_DUPLICATE], default: ALLOW_DUPLICATE, description: "What to do when an instance with workflowId has closed; REJECT_DUPLICATE holds only while the engine retains the closed instance"}
                 timeoutSeconds: {type: integer, description: Whole-execution timeout in seconds}
       responses:
         "201":

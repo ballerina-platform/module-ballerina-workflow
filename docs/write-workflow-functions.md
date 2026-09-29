@@ -231,7 +231,7 @@ The id is the correlation key, so the policies say what happens when it is alrea
 | `ifRunning` | `USE_EXISTING` | Return the id of the instance already running; the new input is not delivered. A retried request joins the instance it already started — the idempotent submit |
 | `ifClosed` | `ALLOW_DUPLICATE` (default) | Start a new run under the id, whatever the old outcome |
 | `ifClosed` | `ALLOW_DUPLICATE_FAILED_ONLY` | Start a new run only after a failed, cancelled, terminated or timed-out one |
-| `ifClosed` | `REJECT_DUPLICATE` | Refuse: the id is used once, ever |
+| `ifClosed` | `REJECT_DUPLICATE` | Refuse while the engine still retains the closed instance — not forever: retention is a namespace setting (days by default), so a business key can be started again once its old instance has aged out |
 
 ```ballerina
 string|error id = workflow:runWithId(processOrder, order.orderId, order,

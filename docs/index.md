@@ -29,6 +29,7 @@ The Ballerina Workflow module provides durable workflow orchestration for Baller
 | &emsp;[Compensation (Saga)](patterns/error-compensation.md) | Undo committed steps when a later step fails |
 | &emsp;[Graceful Completion](patterns/graceful-completion.md) | Tolerate non-critical activity failures and complete successfully |
 | &emsp;[Forward Recovery](patterns/forward-recovery.md) | Pause for corrected data and retry a failed activity |
+| [Recover Workflows](recover-workflows.md) | Retry, resend, reset, and escalation, and when to use a message store instead |
 | [Configure the Module](configure-the-module.md) | Connection settings, TLS, namespaces, and runtime options |
 
 ## Examples

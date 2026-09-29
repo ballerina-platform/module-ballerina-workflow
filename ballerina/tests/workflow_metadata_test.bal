@@ -62,6 +62,13 @@ final json & readonly metaFixtureDescriptor = {
                     }
                 }
             ]
+        },
+        {
+            name: "metaFixtureWorkflow2",
+            kind: "WORKFLOW",
+            // The same activity name under another workflow, with a label of its own.
+            activities: [{name: "metaFixtureActivity", displayName: "Second owner's activity"}],
+            humanTasks: []
         }
     ],
     agents: []
@@ -74,6 +81,8 @@ function setPackedWorkflowDescriptor(json? descriptor) = @java:Method {
 @test:Config {groups: ["unit"]}
 function testWorkflowMetadataCompleteAtRegistration() returns error? {
     _ = check registerWorkflowForTest(metaFixtureWorkflow, "metaFixtureWorkflow",
+            {"metaFixtureActivity": metaFixtureActivity});
+    _ = check registerWorkflowForTest(metaFixtureWorkflow, "metaFixtureWorkflow2",
             {"metaFixtureActivity": metaFixtureActivity});
     _ = check registerHumanTaskForTest("metaFixtureWorkflow.approve");
     setPackedWorkflowDescriptor(metaFixtureDescriptor);
@@ -125,6 +134,12 @@ function testWorkflowMetadataCompleteAtRegistration() returns error? {
     test:assertEquals(activities.length(), 1, "The registered activity must appear in activities");
     test:assertEquals(activities[0].displayName, "Fixture activity");
     test:assertEquals(activities[0].icon, (), "No icon was declared for the activity");
+    // The same activity name under another workflow keeps that workflow's own label.
+    management:ActivityMeta[] second = meta.activities
+        .filter(a => a.workflowType == "metaFixtureWorkflow2" && a.name == "metaFixtureActivity");
+    test:assertEquals(second.length(), 1);
+    test:assertEquals(second[0].displayName, "Second owner's activity",
+        "An activity's display is looked up by its owning workflow first");
     // Parse the schema rather than matching its text: the assertion is about which
     // properties are required, not about how the document happens to be formatted.
     json activitySchema = check (activities[0].inputSchema ?: "{}").fromJsonString();

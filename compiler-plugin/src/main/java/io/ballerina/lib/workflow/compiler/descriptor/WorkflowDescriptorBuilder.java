@@ -1101,11 +1101,23 @@ public final class WorkflowDescriptorBuilder {
         }
     }
 
-    /** The constant string value of a named argument, or {@code null} when absent or not constant. */
+    /**
+     * The constant string value of a definition field at a call site: a named argument, or a field of a
+     * positionally passed definition record. {@code null} when absent or not constant.
+     */
     static String constantNamedArgOf(SeparatedNodeList<FunctionArgumentNode> args, String name) {
         for (FunctionArgumentNode arg : args) {
             if (arg instanceof NamedArgumentNode named && name.equals(named.argumentName().name().text())) {
                 return constantStringValue(named.expression());
+            }
+            if (arg instanceof PositionalArgumentNode positional
+                    && positional.expression() instanceof MappingConstructorExpressionNode record) {
+                for (MappingFieldNode field : record.fields()) {
+                    if (field instanceof SpecificFieldNode specific && specific.valueExpr().isPresent()
+                            && name.equals(fieldKeyName(specific))) {
+                        return constantStringValue(specific.valueExpr().get());
+                    }
+                }
             }
         }
         return null;

@@ -68,14 +68,18 @@ public final class DisplayNames {
     }
 
     /**
-     * The display of an activity.
+     * The display of an activity. Two workflows may declare the same activity name with different labels,
+     * so a {@code <workflow>.<name>} key answers for its owner and the bare name is the fallback.
      *
-     * @param activityType the Temporal activity type — plain, or the legacy {@code <workflowType>.<name>}
+     * @param activityType {@code <workflow>.<name>}, the plain name, or the legacy {@code <workflowType>.<name>}
      * @return the display, never null
      */
     public static Display ofActivity(String activityType) {
         ensureIndexed();
         Display display = activities.get(activityType);
+        if (display == null) {
+            display = activities.get(stripPrefix(activityType));
+        }
         if (display == null) {
             int dot = activityType.lastIndexOf('.');
             display = dot > 0 ? activities.get(activityType.substring(dot + 1)) : null;
@@ -124,7 +128,9 @@ public final class DisplayNames {
                     for (BMap<?, ?> activity : entriesOf(workflow.get(DescriptorFields.ACTIVITIES))) {
                         String activityName = stringOf(activity, DescriptorFields.NAME);
                         if (activityName != null) {
-                            act.putIfAbsent(activityName, displayOf(activity));
+                            Display display = displayOf(activity);
+                            act.put(name + "." + activityName, display);
+                            act.putIfAbsent(activityName, display);
                         }
                     }
                     indexTitles(name, workflow, titles);

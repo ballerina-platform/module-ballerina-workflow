@@ -123,6 +123,28 @@ public final class WorkflowPluginUtils {
     }
 
     /**
+     * Whether the declaration carries a {@code @display} whose {@code label} evaluates to a blank string —
+     * judged from the constant value, so {@code "\t"} and a reference to a blank constant both count.
+     *
+     * @param symbol the annotated symbol
+     * @return true when a label is given and blank
+     */
+    public static boolean hasBlankDisplayLabel(Symbol symbol) {
+        if (!(symbol instanceof Annotatable annotatable)) {
+            return false;
+        }
+        for (AnnotationAttachmentSymbol attachment : annotatable.annotAttachments()) {
+            if (!isDisplayAnnotation(attachment.typeDescriptor())) {
+                continue;
+            }
+            Map<String, Object> fields = constantMappingOf(attachment.attachmentValue().map(ConstantValue::value)
+                    .orElse(null));
+            return fields.containsKey(DISPLAY_LABEL_FIELD) && blankToNull(fields.get(DISPLAY_LABEL_FIELD)) == null;
+        }
+        return false;
+    }
+
+    /**
      * Whether the annotation is the language's {@code @display}.
      *
      * @param annotation the annotation symbol

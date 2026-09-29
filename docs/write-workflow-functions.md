@@ -34,6 +34,8 @@ lists and what the Temporal UI shows as the execution's summary — add the lang
 @display {label: "Order processing"}
 @workflow:Workflow
 function processOrder(workflow:Context ctx, OrderRequest input) returns OrderResult|error {
+    return {orderId: input.orderId, status: "COMPLETED"};
+}
 ```
 
 A human task's display name is its `title`, so no annotation is needed there.

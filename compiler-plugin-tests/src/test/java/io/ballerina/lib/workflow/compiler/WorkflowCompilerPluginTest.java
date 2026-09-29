@@ -1216,15 +1216,17 @@ public class WorkflowCompilerPluginTest {
         // the descriptor's business and passes.
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_display_label_blank");
         List<Diagnostic> diags = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_165");
-        Assert.assertEquals(diags.size(), 3,
-                "Expected 3 WORKFLOW_165 errors — the workflow, the activity and the agent. Errors: "
+        Assert.assertEquals(diags.size(), 5,
+                "Expected 5 WORKFLOW_165 errors — the workflow, the activity, the agent, an escape that "
+                        + "evaluates to whitespace and a blank constant reference. Errors: "
                         + diagnosticResult.errors());
-        Assert.assertEquals(diagnosticResult.errorCount(), 3,
+        Assert.assertEquals(diagnosticResult.errorCount(), 5,
                 "Expected the blank labels to be the only compiler errors. Errors: "
                         + diagnosticResult.errors());
         String messages = getDiagnosticMessages(diagnosticResult);
         Assert.assertTrue(messages.contains("'expenseApproval'") && messages.contains("'makePayment'")
-                && messages.contains("'expenseAgent'"), "Each message names its declaration: " + messages);
+                && messages.contains("'expenseAgent'") && messages.contains("'refund'")
+                && messages.contains("'notify'"), "Each message names its declaration: " + messages);
     }
 
     @Test(groups = "invalid")

@@ -2322,9 +2322,12 @@ public final class ManagementNative {
                                 .getMemo()
                                 .getFieldsMap(), TaskKeys.TASK_NAME, childType) : shortTaskName(childType);
                         var node = newNode(eid, nodeName, nodeType, ts);
-                        if (!isReviewActivityType(childType)) {
+                        if (isHumanTaskType(childType)) {
                             node.put(DISPLAY_NAME_KEY, decodeMemoString(dc, attrs.getMemo().getFieldsMap(),
                                     TaskKeys.TITLE, null));
+                        } else if (!isReviewActivityType(childType)) {
+                            // A child workflow or agent is named by its own declaration's label.
+                            node.put(DISPLAY_NAME_KEY, DisplayNames.workflowLabel(childType));
                         }
                         node.put("childWorkflowId", childId);
                         node.put("input", decodeFirstPayload(attrs.getInput(), dc));

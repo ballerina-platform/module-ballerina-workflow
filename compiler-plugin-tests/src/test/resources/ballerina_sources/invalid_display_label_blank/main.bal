@@ -28,6 +28,22 @@ final workflow:DurableAgent expenseAgent = check new ({
     activities: [makePayment]
 });
 
+const string EMPTY_LABEL = "";
+
+// ERROR: an escape that evaluates to whitespace.
+@display {label: "\t"}
+@workflow:Activity
+function refund(string id) returns string|error {
+    return id;
+}
+
+// ERROR: a reference to a blank constant.
+@display {label: EMPTY_LABEL}
+@workflow:Activity
+function notify(string id) returns string|error {
+    return id;
+}
+
 // OK: an unrelated function with a blank label is not the descriptor's business.
 @display {label: ""}
 function helper() {

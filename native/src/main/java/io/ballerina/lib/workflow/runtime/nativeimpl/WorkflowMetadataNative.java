@@ -222,7 +222,8 @@ public final class WorkflowMetadataNative {
                 activity.put(MetadataFields.WORKFLOW_TYPE, StringUtils.fromString(
                         stripPrefix(owner, WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX)));
                 activity.put(MetadataFields.NAME, StringUtils.fromString(activityName));
-                putDisplay(activity, DisplayNames.ofActivity(activityName));
+                putDisplay(activity, DisplayNames.ofActivity(
+                        stripPrefix(owner, WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX) + "." + activityName));
                 activity.put(MetadataFields.INPUT_SCHEMA,
                         inputSchema != null ? StringUtils.fromString(inputSchema) : null);
                 activities.append(activity);

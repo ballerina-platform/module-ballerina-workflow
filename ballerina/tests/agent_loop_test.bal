@@ -147,6 +147,36 @@ isolated client class SilentMockModelProvider {
 
 final SilentMockModelProvider silentAgentModel = new;
 
+// Overruns its first turn (text beside every tool call), then answers the next with nothing.
+isolated client class OverrunThenSilentMockModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        if messages is ai:ChatMessage[] {
+            foreach ai:ChatMessage message in messages {
+                if message is ai:ChatAssistantMessage {
+                    string? content = message.content;
+                    if content is string && content.includes("maximum number of iterations") {
+                        return {role: ai:ASSISTANT};
+                    }
+                }
+            }
+        }
+        return {role: ai:ASSISTANT, content: "Let me check that for you.",
+            toolCalls: [{name: "checkStock", arguments: {"item": "loop"}}]};
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final OverrunThenSilentMockModelProvider overrunThenSilentAgentModel = new;
+
 isolated client class UnknownToolMockModelProvider {
     *ai:ModelProvider;
 
@@ -271,6 +301,13 @@ function silentChatAgent(handle ctx, AgentOrderInput input) returns error? {
     check registerAgentEvent(ctx, "chat", string, string);
     check buildAndRun(ctx, systemPrompt = {role: "", instructions: "Silent chat agent."},
             model = silentAgentModel, maxIter = 2, interaction = MULTI_EVENT);
+}
+
+function overrunThenSilentChatAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerActivity(ctx, checkStock);
+    check registerAgentEvent(ctx, "chat", string, string);
+    check buildAndRun(ctx, systemPrompt = {role: "", instructions: "Overrun then silent chat agent."},
+            model = overrunThenSilentAgentModel, maxIter = 2, interaction = MULTI_EVENT);
 }
 
 function unknownToolAgent(handle ctx, AgentOrderInput input) returns error? {
@@ -877,6 +914,7 @@ function setupAgentTests() returns error? {
     _ = check registerAgentWorkflowForTest(loopingChatAgent, "loopingChatAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(talkativeLoopingChatAgent, "talkativeLoopingChatAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(silentChatAgent, "silentChatAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(overrunThenSilentChatAgent, "overrunThenSilentChatAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(unknownToolAgent, "unknownToolAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(flakyModelAgent, "flakyModelAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(priceAgent, "priceAgent", agentActivities);
@@ -1011,6 +1049,22 @@ function testAgentTurnWithoutAResponseIsNotAnsweredWithAnOldOne() returns error?
             "A silent turn is reported as such: " + (turn is error ? turn.message() : turn.toString()));
     management:WorkflowExecutionInfo info = check management:getWorkflowInfo(agentId);
     test:assertEquals(info.status, "RUNNING", "A silent turn does not end the conversation");
+    check management:terminateWorkflow(agentId, "", "test done");
+}
+
+@test:Config {groups: ["unit"]}
+function testASilentTurnAfterAnOverrunIsNotAnsweredWithTheOverrun() returns error? {
+    // The overrun is recorded as the latest response; a silent turn after it must still be
+    // reported as silent, not answered with the previous turn's overrun text as a success.
+    map<anydata> input = {id: "agent-overrun-then-silent-001", request: "unused"};
+    string agentId = check run(overrunThenSilentChatAgent, input);
+    anydata|error first = updateAgentTurn(agentId, "chat", "loop");
+    test:assertTrue(first is error && first.message().includes("maximum number of iterations"),
+            "The first turn overruns");
+    anydata|error second = updateAgentTurn(agentId, "chat", "and now?");
+    test:assertTrue(second is error && second.message().includes("without a response"),
+            "The silent turn is reported as silent: "
+                + (second is error ? second.message() : second.toString()));
     check management:terminateWorkflow(agentId, "", "test done");
 }
 

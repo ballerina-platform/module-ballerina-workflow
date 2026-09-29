@@ -1013,6 +1013,9 @@ function testAgentHumanTaskInputTypeChecked() returns error? {
     map<json>? taskInput = detail.taskInput;
     test:assertTrue(taskInput is map<json> && taskInput["amount"] == 42,
             "The created task must carry the corrected input, got: " + taskInput.toString());
+    // A typed read of the field must not panic: the value is a `map<json>`, as declared.
+    map<json> typedInput = check detail.taskInput.ensureType();
+    test:assertEquals(typedInput["amount"], 42);
 
     ApprovalResult decision = {approved: true, comment: "Escalation accepted"};
     check management:completeHumanTask(taskId, decision, ["APPROVER"]);

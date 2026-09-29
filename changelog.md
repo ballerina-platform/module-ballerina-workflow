@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- `HumanTaskInfo.taskInput` and `ReviewActivityInfo.taskInput` held a `map<anydata>` at run time although
+  the records declare `map<json>`, so a typed read (`map<json> input = check info.taskInput.ensureType()`)
+  panicked with a `TypeCastError` — and took the process down when it happened in a resource. The values
+  are now built as `map<json>`. ([ballerina-library#9226](https://github.com/ballerina-platform/ballerina-library/issues/9226))
+
 ## [0.10.1]
 
 ### Added

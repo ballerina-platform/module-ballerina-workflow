@@ -119,8 +119,20 @@ public final class ManagementNative {
 
     private static final String RESERVED_EVENT_NAME_ERROR = "Failed to send data: reserved event name: ";
 
+    private static final Type JSON_MAP_TYPE = TypeCreator.createMapType(PredefinedTypes.TYPE_JSON);
+
     private ManagementNative() {
         // Utility class — prevent instantiation
+    }
+
+    // A task's input as the `map<json>` its record declares: the generic conversion yields a
+    // `map<anydata>`, whose inherent type fails a typed read even when every member is JSON.
+    private static Object jsonMapOf(Object javaValue) {
+        if (javaValue == null) {
+            return null;
+        }
+        Object converted = TypesUtil.cloneWithType(TypesUtil.convertJavaToBallerinaType(javaValue), JSON_MAP_TYPE);
+        return converted instanceof BError ? null : converted;
     }
 
     /**
@@ -686,8 +698,7 @@ public final class ManagementNative {
 
             putTaskBase(record, TaskRecord.HUMAN_TASK, dc, memoFields);
 
-            Object bTaskInput = taskInputRaw != null ? TypesUtil.convertJavaToBallerinaType(taskInputRaw) : null;
-            record.put(StringUtils.fromString(TaskKeys.TASK_INPUT), bTaskInput);
+            record.put(StringUtils.fromString(TaskKeys.TASK_INPUT), jsonMapOf(taskInputRaw));
             record.put(StringUtils.fromString(TaskKeys.CREATED_AT), StringUtils.fromString(createdAt));
             record.put(StringUtils.fromString(TaskKeys.FORM_SCHEMA),
                        formSchema != null ? StringUtils.fromString(formSchema) : null);
@@ -1459,8 +1470,7 @@ public final class ManagementNative {
 
             record.put(StringUtils.fromString(TaskKeys.ERROR_MESSAGE), StringUtils.fromString(errorMessage));
 
-            Object bArgs = activityArgsRaw != null ? TypesUtil.convertJavaToBallerinaType(activityArgsRaw) : null;
-            record.put(StringUtils.fromString(TaskKeys.TASK_INPUT), bArgs);
+            record.put(StringUtils.fromString(TaskKeys.TASK_INPUT), jsonMapOf(activityArgsRaw));
             record.put(StringUtils.fromString(TaskKeys.CREATED_AT), StringUtils.fromString(createdAt));
 
             // The decision lives in history, in the signal sent before the review closes; it is

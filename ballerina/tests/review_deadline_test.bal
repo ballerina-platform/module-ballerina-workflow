@@ -45,6 +45,10 @@ function testReviewDeadlineFailsTheReviewAndTheWorkflow() returns error? {
 
     management:ReviewActivityInfo info = check management:getReviewActivityInfo(taskId);
     test:assertEquals(info.status, "FAILED", "a review that times out ends FAILED, like a human task");
+    // The reviewed arguments read as the `map<json>` the record declares, not a `map<anydata>`
+    // that fails a typed read at run time.
+    map<json> reviewed = check info.taskInput.ensureType();
+    test:assertTrue(reviewed.hasKey("orderId"), "the review carries the activity's arguments: " + reviewed.toString());
 }
 
 @test:Config {groups: ["unit"]}

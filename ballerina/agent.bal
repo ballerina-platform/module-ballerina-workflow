@@ -182,7 +182,10 @@ isolated function runAgentLoop(handle ctxHandle, string agentName, ai:SystemProm
 
             AgentFunctionCall[]? toolCalls = assistant.toolCalls;
             if toolCalls is () || toolCalls.length() == 0 {
+                // The turn is over: only now does its waiter get the answer, so a turn that
+                // runs out of iterations after a text-and-tools reply reports the failure instead.
                 turnAnswered = true;
+                check completeAgentTurn(ctxHandle);
                 break;
             }
 
@@ -211,9 +214,18 @@ isolated function runAgentLoop(handle ctxHandle, string agentName, ai:SystemProm
             }
         }
         if !turnAnswered {
-            return error(string `Agent exceeded the maximum number of iterations per turn (${maxIterations})`);
-        }
-        if !autoContinue {
+            string overrun = string `Agent exceeded the maximum number of iterations per turn (${maxIterations})`;
+            if !autoContinue {
+                return error(overrun);
+            }
+            // A conversation outlives one bad turn: the turn's waiter gets the failure, the
+            // history and the recorded latest response say so (not the interim text a reply may
+            // have carried beside its tool calls), and the loop goes back to waiting.
+            check failAgentTurn(ctxHandle, overrun);
+            check setAgentResponse(ctxHandle, overrun);
+            history.push(<AgentAssistantMessage>{content: overrun});
+            publishTranscript(ctxHandle, history);
+        } else if !autoContinue {
             return;
         }
         // Conversational agent: keep the conversation open — wait durably for the
@@ -594,6 +606,18 @@ isolated function awaitAgentHumanTask(handle nativeContext, string taskName, jso
         returns anydata|error = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "awaitHumanTask"
+} external;
+
+// Ends the current turn with its latest recorded response for its waiter.
+isolated function completeAgentTurn(handle nativeContext) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.AgentContextNative",
+    name: "completeTurn"
+} external;
+
+// Ends the current turn with a failure for its waiter, leaving the agent running.
+isolated function failAgentTurn(handle nativeContext, string reason) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.AgentContextNative",
+    name: "failTurn"
 } external;
 
 // Stores the agent's final textual response for later retrieval.

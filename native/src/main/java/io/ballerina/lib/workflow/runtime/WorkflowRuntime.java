@@ -50,6 +50,7 @@ public final class WorkflowRuntime {
 
     /** Memo key of the starter identity the management API records. */
     public static final String STARTED_BY_MEMO = "startedBy";
+    private static final String RUNNING_STATUS = "RUNNING";
 
     private static final Logger LOGGER = LoggerFactory.getLogger(WorkflowRuntime.class);
 
@@ -154,6 +155,8 @@ public final class WorkflowRuntime {
             throw new IllegalStateException("Task queue not configured.");
         }
 
+        boolean joinIfRunning = options.hasCallerId()
+                && options.conflictPolicy() == WorkflowIdConflictPolicy.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING;
         try {
             // The kind memo is how a consumer learns what an instance is without parsing its id.
             String kind = WorkflowWorkerNative.isAgentWorkflowType(processName) ? "AGENT" : "WORKFLOW";
@@ -171,8 +174,11 @@ public final class WorkflowRuntime {
                 optionsBuilder.setWorkflowExecutionTimeout(java.time.Duration.ofSeconds(options.timeoutSeconds()));
             }
             if (options.hasCallerId()) {
-                // Only a chosen id can collide, so only then are the policies sent.
-                optionsBuilder.setWorkflowIdConflictPolicy(options.conflictPolicy());
+                // Only a chosen id can collide, so only then are the policies sent. USE_EXISTING is
+                // asked of the engine as FAIL and joined here from the refusal, which names the run
+                // that holds the id — the SDK's start would not say whether it joined or created.
+                optionsBuilder.setWorkflowIdConflictPolicy(joinIfRunning
+                        ? WorkflowIdConflictPolicy.WORKFLOW_ID_CONFLICT_POLICY_FAIL : options.conflictPolicy());
                 optionsBuilder.setWorkflowIdReusePolicy(options.reusePolicy());
             }
             if (WorkflowWorkerNative.isKindSearchAttributeReady()) {
@@ -181,34 +187,21 @@ public final class WorkflowRuntime {
             }
             WorkflowStub workflowStub = client.newUntypedWorkflowStub(processName, optionsBuilder.build());
 
-            // The SDK does not say whether USE_EXISTING joined a run, so the run holding the id
-            // is noted first: getting it back means the start joined it.
-            String priorRunId = options.hasCallerId()
-                    && options.conflictPolicy() == WorkflowIdConflictPolicy.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING
-                    ? runningRunIdOf(client, workflowId) : null;
             // The started event is counted at the worker's first execution, where every start
             // path converges. The run's spans open in the instance's own trace.
             WorkflowExecution execution = TraceContextPropagator.runWith(WorkerSpans.instanceContext(workflowId),
                     () -> workflowStub.start(input));
-            boolean started = priorRunId == null || !priorRunId.equals(execution.getRunId());
-            LOGGER.debug("Started workflow: type={}, id={}, started={}", processName, workflowId, started);
-            return new StartedInstance(execution.getWorkflowId(), execution.getRunId(), started);
+            LOGGER.debug("Started workflow: type={}, id={}", processName, workflowId);
+            return new StartedInstance(execution.getWorkflowId(), execution.getRunId(), true);
         } catch (WorkflowExecutionAlreadyStarted e) {
-            throw new InstanceAlreadyExistsException(workflowId, describeStatus(client, workflowId));
+            String status = describeStatus(client, workflowId);
+            if (joinIfRunning && RUNNING_STATUS.equals(status) && e.getExecution() != null) {
+                return new StartedInstance(workflowId, e.getExecution().getRunId(), false);
+            }
+            throw new InstanceAlreadyExistsException(workflowId, status);
         } catch (Exception e) {
             LOGGER.error("Failed to start workflow {}: {}", processName, e.getMessage(), e);
             throw new IllegalStateException("Failed to start workflow: " + e.getMessage(), e);
-        }
-    }
-
-    // The run currently holding an id, or null when none is running under it.
-    private static String runningRunIdOf(WorkflowClient client, String workflowId) {
-        try {
-            var info = client.newUntypedWorkflowStub(workflowId).describe().getWorkflowExecutionInfo();
-            return info.getStatus() == io.temporal.api.enums.v1.WorkflowExecutionStatus
-                    .WORKFLOW_EXECUTION_STATUS_RUNNING ? info.getExecution().getRunId() : null;
-        } catch (Exception e) {
-            return null;
         }
     }
 

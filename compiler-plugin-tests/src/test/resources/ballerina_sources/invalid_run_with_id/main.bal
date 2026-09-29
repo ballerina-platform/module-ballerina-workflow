@@ -32,7 +32,9 @@ function notAWorkflow(string s) returns string {
 function parentWorkflow(workflow:Context ctx, string input) returns string|error {
     // ERROR WORKFLOW_138: a client verb inside a workflow body.
     string child = check workflow:runWithId(noInputWorkflow, "child-1");
-    return child;
+    // ERROR WORKFLOW_170: an agent's chosen id is a top-level start only.
+    string agentChild = check orderAgent.runWithId("agent-child-1", "hello", {orderId: "ORD-1", quantity: 1});
+    return child + agentChild;
 }
 
 public function startWorkflows() returns error? {
@@ -45,9 +47,11 @@ public function startWorkflows() returns error? {
     // ERROR WORKFLOW_166 x3: blank, reserved prefix, too long.
     string wf4 = check workflow:runWithId(noInputWorkflow, "");
     string wf5 = check workflow:runWithId(noInputWorkflow, "humantask-1");
+    // ERROR WORKFLOW_166: an escape that evaluates to a space — blank, as the runtime will see it.
+    string wf7 = check workflow:runWithId(noInputWorkflow, "\u{20}");
     string wf6 = check workflow:runWithId(noInputWorkflow, instanceId = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
     // ERROR WORKFLOW_166: a blank agent id; ERROR WORKFLOW_154: a mistyped agent payload at the third position.
     string ag1 = check orderAgent.runWithId(" ", "hello", {orderId: "ORD-1", quantity: 1});
     string ag2 = check orderAgent.runWithId("agent-1", "hello", "not an order");
-    _ = [wf1, wf2, wf3, wf4, wf5, wf6, ag1, ag2];
+    _ = [wf1, wf2, wf3, wf4, wf5, wf6, wf7, ag1, ag2];
 }

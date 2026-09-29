@@ -373,6 +373,10 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
             if (run || runWithId) {
                 // runWithId(instanceId, query, input): the id shifts the payload one place right.
                 if (runWithId) {
+                    if (WorkflowPluginUtils.isInsideWorkflowFunction(methodCall, semanticModel)) {
+                        report(WorkflowDiagnostic.WORKFLOW_170, methodCall.location(), receiver.name().text());
+                        return;
+                    }
                     validateInstanceId(methodCall, receiver.name().text());
                 }
                 validateRunInput(methodCall, receiver.name().text(), agent, runWithId ? 3 : 2);

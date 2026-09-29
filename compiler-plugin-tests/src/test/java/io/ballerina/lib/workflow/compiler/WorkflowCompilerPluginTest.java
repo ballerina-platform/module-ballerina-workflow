@@ -1233,12 +1233,15 @@ public class WorkflowCompilerPluginTest {
                 "a mistyped input at the third position. Errors: " + messages);
         Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_132").size(), 1,
                 "an input for a no-input workflow. Errors: " + messages);
-        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_166").size(), 4,
-                "blank, reserved-prefix and over-long ids, plus the agent's blank id. Errors: " + messages);
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_166").size(), 5,
+                "blank, escaped-blank, reserved-prefix and over-long ids, plus the agent's blank id. Errors: "
+                        + messages);
         Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_154").size(), 1,
                 "the agent's mistyped payload at the third position. Errors: " + messages);
-        Assert.assertEquals(diagnosticResult.errorCount(), 9,
-                "Exactly the nine misuses should be flagged. Errors: " + messages);
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_170").size(), 1,
+                "an agent's runWithId inside a workflow body. Errors: " + messages);
+        Assert.assertEquals(diagnosticResult.errorCount(), 11,
+                "Exactly the eleven misuses should be flagged. Errors: " + messages);
         Assert.assertTrue(messages.contains("'workflow:runWithId'"),
                 "The run messages name the function that was called: " + messages);
         Assert.assertTrue(messages.contains("reserved") && messages.contains("blank")

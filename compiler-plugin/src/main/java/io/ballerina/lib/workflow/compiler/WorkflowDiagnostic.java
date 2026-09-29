@@ -274,10 +274,14 @@ public enum WorkflowDiagnostic {
     WORKFLOW_164("WORKFLOW_164",
             "A review definition must name who may decide it: give 'userRoles', 'users', or both",
             DiagnosticSeverity.ERROR),
-    // 166, not 165: the display-names change allocated 165 while this branch was open.
+    // 166 and 170: 165 and 167-169 went to the display-name and result-read changes.
     WORKFLOW_166("WORKFLOW_166",
             "The instance id given to '%s' is not acceptable: %s. An instance id is the correlation key "
                     + "a caller looks the instance up by, so the runtime would refuse this start",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_170("WORKFLOW_170",
+            "'%s.runWithId' cannot be called inside a workflow function: a child agent's id is the "
+                    + "parent's to issue. Use 'run', which starts the agent as a child of this workflow",
             DiagnosticSeverity.ERROR);
 
     private final String code;

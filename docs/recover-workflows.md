@@ -22,7 +22,7 @@ string receipt = check ctx->callActivity(chargeCard, {"amount": input.amount},
         retryPolicy = {maxRetries: 3, retryDelay: 2.0, retryBackoff: 1.5});
 ```
 
-The default is `NoRetry`: the first error is returned to the workflow as a value. The module-wide default is set by `activityRetryMaximumAttempts` (see [Configure the Module](configure-the-module.md)), which is `1` — no retries — unless you change it.
+The default is `NoRetry`: the first error is returned to the workflow as a value, and no configuration changes that — a `NoRetry` call always runs once, and an `AutoRetry` record's unset fields take the record's own defaults (`maxRetries` 3, `retryDelay` 1.0, `retryBackoff` 2.0). The `activityRetry*` settings in [Configure the Module](configure-the-module.md) govern something else: the runtime's own built-in activities, through which a workflow's client calls such as `workflow:run` are made durable. They do not apply to `callActivity`.
 
 **Retries decided by a person.** Pass a `ReviewTaskDefinition` as `retryPolicy` to raise a review when the activity fails. The reviewer answers with:
 

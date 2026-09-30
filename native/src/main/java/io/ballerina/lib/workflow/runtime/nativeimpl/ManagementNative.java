@@ -136,7 +136,12 @@ public final class ManagementNative {
             return null;
         }
         Object converted = TypesUtil.cloneWithType(TypesUtil.convertJavaToBallerinaType(javaValue), JSON_MAP_TYPE);
-        return converted instanceof BError ? null : converted;
+        if (converted instanceof BError error) {
+            LOGGER.debug("A task input could not be read as map<json> and is reported as absent: {}",
+                    error.getMessage());
+            return null;
+        }
+        return converted;
     }
 
     /**

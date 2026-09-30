@@ -529,7 +529,9 @@ public type ExecutionGraph record {|
 # A node in the execution graph.
 #
 # + id - Unique node identifier
-# + label - Display label
+# + label - The step's own name — the activity, task or child workflow it is — which a consumer
+#           matches on
+# + displayName - The declared display name, as on `ActivityTreeNode`; nil when none was declared
 # + 'type - Node classification (same values as `ActivityNodeType`)
 # + status - Current status
 # + metadata - Optional extra key-value pairs for the UI: `taskId` for human tasks, and
@@ -537,6 +539,7 @@ public type ExecutionGraph record {|
 public type GraphNode record {|
     string id;
     string label;
+    string? displayName = ();
     ActivityNodeType 'type;
     string status;
     map<json>? metadata;

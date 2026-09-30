@@ -529,7 +529,8 @@ public final class WorkflowDescriptorBuilder {
             if (taskName == null || taskName.contains(".") || taskName.contains("|")) {
                 return; // non-constant / invalid names are diagnosed by the process analysis task
             }
-            String title = constantNamedArgOf(remoteCall.arguments(), WorkflowConstants.ARG_TITLE);
+            String title = blankToNull(constantNamedArgOf(remoteCall.arguments(), WorkflowConstants.ARG_TITLE,
+                    WorkflowConstants.HUMAN_TASK_DEFINITION_POSITION));
             if (title != null) {
                 humanTaskTitles.putIfAbsent(taskName, title);
             }
@@ -824,7 +825,7 @@ public final class WorkflowDescriptorBuilder {
                 } else if (WorkflowConstants.AGENT_CONFIG_RESULT_TYPE.equals(fieldName)) {
                     result = typedescSlot(semanticModel, expr, null);
                 } else if (WorkflowConstants.ARG_TITLE.equals(fieldName)) {
-                    title = constantStringValue(expr);
+                    title = blankToNull(constantStringValue(expr));
                 }
             }
             if (name == null) {
@@ -1110,12 +1111,20 @@ public final class WorkflowDescriptorBuilder {
      * The constant string value of a definition field at a call site: a named argument, or a field of a
      * positionally passed definition record. {@code null} when absent or not constant.
      */
-    static String constantNamedArgOf(SeparatedNodeList<FunctionArgumentNode> args, String name) {
+    static String constantNamedArgOf(SeparatedNodeList<FunctionArgumentNode> args, String name,
+                                     int definitionPosition) {
         for (FunctionArgumentNode arg : args) {
             if (arg instanceof NamedArgumentNode named && name.equals(named.argumentName().name().text())) {
                 return constantStringValue(named.expression());
             }
-            if (arg instanceof PositionalArgumentNode positional
+        }
+        // Only the definition's own position: the task input before it is data, whatever keys it has.
+        int position = 0;
+        for (FunctionArgumentNode arg : args) {
+            if (!(arg instanceof PositionalArgumentNode positional)) {
+                continue;
+            }
+            if (position++ == definitionPosition
                     && positional.expression() instanceof MappingConstructorExpressionNode record) {
                 for (MappingFieldNode field : record.fields()) {
                     if (field instanceof SpecificFieldNode specific && specific.valueExpr().isPresent()
@@ -1126,6 +1135,11 @@ public final class WorkflowDescriptorBuilder {
             }
         }
         return null;
+    }
+
+    // A blank title is no title: the runtime drops blank strings, so the descriptor must not carry one.
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     /** A compile-time constant string: a plain literal or a template without interpolations. */

@@ -839,8 +839,9 @@ public final class WorkflowGraphBuilder {
                     Symbol target = activityTargetOf(remoteCall.arguments());
                     String name = nameOf(target);
                     if (name != null) {
-                        Item activity = addCallSite(KIND_ACTIVITY, name, displayLabelOf(target), remoteCall);
-                        addReviewNode(activity.stepId, name, remoteCall);
+                        String label = displayLabelOf(target);
+                        Item activity = addCallSite(KIND_ACTIVITY, name, label, remoteCall);
+                        addReviewNode(activity.stepId, name, label, remoteCall);
                     }
                 }
                 case WorkflowConstants.CALL_HUMAN_TASK_METHOD -> {
@@ -848,7 +849,8 @@ public final class WorkflowGraphBuilder {
                     if (target != null) {
                         // A task's constant title is its display name.
                         addCallSite(KIND_HUMAN_TASK, target, WorkflowDescriptorBuilder.constantNamedArgOf(
-                                remoteCall.arguments(), WorkflowConstants.ARG_TITLE), remoteCall);
+                                remoteCall.arguments(), WorkflowConstants.ARG_TITLE,
+                                WorkflowConstants.HUMAN_TASK_DEFINITION_POSITION), remoteCall);
                     }
                 }
                 case WorkflowConstants.CALL_WORKFLOW_METHOD, WorkflowConstants.RUN_CHILD_WORKFLOW_METHOD -> {
@@ -974,7 +976,8 @@ public final class WorkflowGraphBuilder {
          * belongs to rather than sitting in the sequence, since on the happy path it never
          * happens. Its id is {@code <step>#review}, which is what a running review reports.
          */
-        private void addReviewNode(String reviewedStepId, String target, RemoteMethodCallActionNode source) {
+        private void addReviewNode(String reviewedStepId, String target, String label,
+                                   RemoteMethodCallActionNode source) {
             Map<String, Object> declaration = humanReviewDeclarationOf(source.arguments(), semanticModel);
             if (declaration == null) {
                 return;
@@ -986,6 +989,10 @@ public final class WorkflowGraphBuilder {
             node.put(STEP_ID, stepId);
             node.put(KIND, DescriptorFields.KIND_REVIEW);
             node.put(TARGET, target);
+            if (label != null) {
+                // The review of a labelled activity is shown under that activity's name.
+                node.put(LABEL, label);
+            }
             if (currentParent != null) {
                 node.put(PARENT, currentParent);
                 node.put(BRANCH, currentBranch);

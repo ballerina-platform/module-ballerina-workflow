@@ -47,35 +47,22 @@ public final class DisplayNames {
         static final Display NONE = new Display(null, null);
     }
 
-    private static final Object LOCK = new Object();
-    private static Object indexedDocument;
-    private static Map<String, Display> workflows = Map.of();
-    private static Map<String, Display> activities = Map.of();
-    private static Map<String, String> humanTaskTitles = Map.of();
+    // Everything a lookup reads, built once per packed descriptor and swapped in as a whole, so no lock is
+    // taken on a read and no reader sees maps from two different documents.
+    private record Index(Object document, Map<String, Display> workflows, Map<String, Display> activities,
+                         Map<String, String> titles) { }
+
+    private static volatile Index index = new Index(null, Map.of(), Map.of(), Map.of());
 
     private DisplayNames() {
     }
 
-    /**
-     * The display of a workflow or agent definition.
-     *
-     * @param workflowType the Temporal type or the bare definition name
-     * @return the display, never null
-     */
     public static Display ofWorkflow(String workflowType) {
-        ensureIndexed();
-        return workflows.getOrDefault(stripPrefix(workflowType), Display.NONE);
+        return index().workflows().getOrDefault(stripPrefix(workflowType), Display.NONE);
     }
 
-    /**
-     * The display of an activity. Two workflows may declare the same activity name with different labels,
-     * so a {@code <workflow>.<name>} key answers for its owner and the bare name is the fallback.
-     *
-     * @param activityType {@code <workflow>.<name>}, the plain name, or the legacy {@code <workflowType>.<name>}
-     * @return the display, never null
-     */
     public static Display ofActivity(String activityType) {
-        ensureIndexed();
+        Map<String, Display> activities = index().activities();
         Display display = activities.get(activityType);
         if (display == null) {
             display = activities.get(stripPrefix(activityType));
@@ -87,67 +74,66 @@ public final class DisplayNames {
         return display != null ? display : Display.NONE;
     }
 
-    /**
-     * The constant title of a human task, when the descriptor recorded one.
-     *
-     * @param qualifiedTaskName {@code <workflowOrAgent>.<task>}
-     * @return the title, or null
-     */
     public static String humanTaskTitle(String qualifiedTaskName) {
-        ensureIndexed();
-        return humanTaskTitles.get(qualifiedTaskName);
+        return index().titles().get(qualifiedTaskName);
     }
 
-    /** The display label of a workflow or agent definition, or null. */
     public static String workflowLabel(String workflowType) {
         return ofWorkflow(workflowType).label();
     }
 
     private static String stripPrefix(String workflowType) {
-        return workflowType.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX)
-                ? workflowType.substring(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length()) : workflowType;
+        return WorkflowMetadataNative.stripPrefix(workflowType, WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX);
     }
 
-    // Re-indexes whenever the packed document changes: the module's own tests swap it in and out.
-    private static void ensureIndexed() {
+    // Re-indexes whenever the packed document changes: the module's own tests swap it in and out. A racing
+    // rebuild is harmless: both produce the same snapshot.
+    private static Index index() {
         Object document = WorkflowDescriptorNative.readPackedDescriptor();
-        synchronized (LOCK) {
-            if (document == indexedDocument) {
-                return;
-            }
-            Map<String, Display> wf = new HashMap<>();
-            Map<String, Display> act = new HashMap<>();
-            Map<String, String> titles = new HashMap<>();
-            if (document instanceof BMap<?, ?> root) {
-                for (BMap<?, ?> workflow : entriesOf(root.get(DescriptorFields.WORKFLOWS))) {
-                    String name = stringOf(workflow, DescriptorFields.NAME);
-                    if (name == null) {
-                        continue;
-                    }
-                    wf.put(name, displayOf(workflow));
-                    for (BMap<?, ?> activity : entriesOf(workflow.get(DescriptorFields.ACTIVITIES))) {
-                        String activityName = stringOf(activity, DescriptorFields.NAME);
-                        if (activityName != null) {
-                            Display display = displayOf(activity);
-                            act.put(name + "." + activityName, display);
-                            act.putIfAbsent(activityName, display);
-                        }
-                    }
-                    indexTitles(name, workflow, titles);
+        Index current = index;
+        if (current.document() != document) {
+            current = build(document);
+            index = current;
+        }
+        return current;
+    }
+
+    private static Index build(Object document) {
+        Map<String, Display> wf = new HashMap<>();
+        Map<String, Display> act = new HashMap<>();
+        Map<String, String> titles = new HashMap<>();
+        if (document instanceof BMap<?, ?> root) {
+            for (BMap<?, ?> workflow : entriesOf(root.get(DescriptorFields.WORKFLOWS))) {
+                String name = stringOf(workflow, DescriptorFields.NAME);
+                if (name == null) {
+                    continue;
                 }
-                for (BMap<?, ?> agent : entriesOf(root.get(DescriptorFields.AGENTS))) {
-                    String name = stringOf(agent, DescriptorFields.NAME);
-                    if (name == null) {
-                        continue;
-                    }
-                    wf.put(name, displayOf(agent));
-                    indexTitles(name, agent, titles);
-                }
+                wf.put(name, displayOf(workflow));
+                indexActivities(name, workflow.get(DescriptorFields.ACTIVITIES), act);
+                indexTitles(name, workflow, titles);
             }
-            workflows = wf;
-            activities = act;
-            humanTaskTitles = titles;
-            indexedDocument = document;
+            for (BMap<?, ?> agent : entriesOf(root.get(DescriptorFields.AGENTS))) {
+                String name = stringOf(agent, DescriptorFields.NAME);
+                if (name == null) {
+                    continue;
+                }
+                wf.put(name, displayOf(agent));
+                // An agent's activity-backed tools are activities too: history names them by activity type.
+                indexActivities(name, agent.get(DescriptorFields.TOOLS), act);
+                indexTitles(name, agent, titles);
+            }
+        }
+        return new Index(document, Map.copyOf(wf), Map.copyOf(act), Map.copyOf(titles));
+    }
+
+    private static void indexActivities(String owner, Object entries, Map<String, Display> act) {
+        for (BMap<?, ?> activity : entriesOf(entries)) {
+            String activityName = stringOf(activity, DescriptorFields.NAME);
+            if (activityName != null) {
+                Display display = displayOf(activity);
+                act.put(owner + "." + activityName, display);
+                act.putIfAbsent(activityName, display);
+            }
         }
     }
 

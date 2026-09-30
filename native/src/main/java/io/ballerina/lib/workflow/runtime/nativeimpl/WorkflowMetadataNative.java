@@ -299,7 +299,7 @@ public final class WorkflowMetadataNative {
         return array;
     }
 
-    private static String stripPrefix(String value, String prefix) {
+    static String stripPrefix(String value, String prefix) {
         return value.startsWith(prefix) ? value.substring(prefix.length()) : value;
     }
 }

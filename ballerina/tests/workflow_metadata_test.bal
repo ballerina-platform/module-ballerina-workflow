@@ -71,12 +71,38 @@ final json & readonly metaFixtureDescriptor = {
             humanTasks: []
         }
     ],
-    agents: []
+    agents: [
+        {
+            name: "metaFixtureAgent",
+            kind: "AGENT",
+            displayName: "Meta agent",
+            // An activity only an agent uses is still an activity in history.
+            tools: [{name: "makePayment", kind: "ACTIVITY", displayName: "Make payment"}],
+            humanTasks: []
+        }
+    ]
 };
 
 function setPackedWorkflowDescriptor(json? descriptor) = @java:Method {
     'class: "io.ballerina.lib.workflow.test.TestNatives"
 } external;
+
+function activityDisplayLabel(string activityType) returns string? = @java:Method {
+    'class: "io.ballerina.lib.workflow.test.DisplayNameProbe",
+    name: "activityLabel"
+} external;
+
+@test:Config {groups: ["unit"]}
+function testAnAgentsActivityHasADisplayNameInHistoryReads() {
+    setPackedWorkflowDescriptor(metaFixtureDescriptor);
+    test:assertEquals(activityDisplayLabel("metaFixtureAgent.makePayment"), "Make payment",
+        "An activity-backed tool is indexed under its agent");
+    test:assertEquals(activityDisplayLabel("makePayment"), "Make payment",
+        "History names the activity by its plain type, which the bare key resolves");
+    test:assertEquals(activityDisplayLabel("metaFixtureWorkflow2.metaFixtureActivity"), "Second owner's activity",
+        "A workflow's own key wins over the first owner's bare key");
+    setPackedWorkflowDescriptor(());
+}
 
 @test:Config {groups: ["unit"]}
 function testWorkflowMetadataCompleteAtRegistration() returns error? {

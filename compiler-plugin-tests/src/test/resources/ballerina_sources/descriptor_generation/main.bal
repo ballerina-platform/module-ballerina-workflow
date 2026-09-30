@@ -44,8 +44,9 @@ function orderFlow(workflow:Context ctx, OrderEvents events) returns error? {
     // as a named argument (the positional form no longer exists in the signature).
     PostingResult _ = check ctx->callActivity(postToLedger, {"expense": {id: "x", amount: 1, note: ()}},
         PostingResult, retryPolicy = {userRoles: "OPS"});
-    // The definition record passed positionally: its constant title is still the task's display name.
-    ApprovalDecision _ = check ctx->awaitHumanTask("opsSignoff", {}, ApprovalDecision, (),
+    // The definition record passed positionally: its constant title is still the task's display name,
+    // and a "title" key in the task's input data is data, not the title.
+    ApprovalDecision _ = check ctx->awaitHumanTask("opsSignoff", {title: "Not the title"}, ApprovalDecision, (),
         {userRoles: "OPS", title: "Ops sign-off"});
     // The descriptor captures the events record from the signature; waits are
     // exercised by other test packages.

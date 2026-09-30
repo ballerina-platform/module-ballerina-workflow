@@ -20,7 +20,6 @@ import io.ballerina.compiler.api.SemanticModel;
 import io.ballerina.compiler.api.symbols.AnnotationSymbol;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
-import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
 import io.ballerina.compiler.api.symbols.VariableSymbol;
 import io.ballerina.compiler.syntax.tree.AnnotationNode;
 import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
@@ -97,9 +96,7 @@ public class DisplayAnnotationValidatorTask implements AnalysisTask<SyntaxNodeAn
     }
 
     private static boolean isDurableAgent(VariableSymbol varSymbol) {
-        return varSymbol.typeDescriptor() instanceof TypeReferenceTypeSymbol ref
-                && ref.getName().map(WorkflowConstants.DURABLE_AGENT_TYPE::equals).orElse(false)
-                && ref.getModule().map(WorkflowPluginUtils::isWorkflowModule).orElse(false);
+        return DurableAgentDeclAnalysisTask.isDurableAgentSymbol(varSymbol);
     }
 
     private static String keyOf(SpecificFieldNode field) {

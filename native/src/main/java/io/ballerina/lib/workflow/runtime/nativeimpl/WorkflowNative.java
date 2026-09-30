@@ -1000,6 +1000,8 @@ public final class WorkflowNative {
             Map<Long, String> scheduledActivities = new HashMap<>();
             // Map: scheduledEventId → attempt number (from STARTED events, last one wins)
             Map<Long, Integer> scheduledAttempts = new HashMap<>();
+            // The run's workflow, so an activity's display name is looked up under its owner
+            String owner = null;
 
             com.google.protobuf.ByteString nextPageToken = com.google.protobuf.ByteString.EMPTY;
 
@@ -1027,7 +1029,10 @@ public final class WorkflowNative {
                 for (HistoryEvent event : response.getHistory().getEventsList()) {
                     EventType eventType = event.getEventType();
 
-                    if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED) {
+                    if (eventType == EventType.EVENT_TYPE_WORKFLOW_EXECUTION_STARTED) {
+                        owner = WorkflowMetadataNative.stripPrefix(event.getWorkflowExecutionStartedEventAttributes()
+                                .getWorkflowType().getName(), WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX);
+                    } else if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED) {
                         String activityName =
                                 event.getActivityTaskScheduledEventAttributes().getActivityType().getName();
                         scheduledActivities.put(event.getEventId(), activityName);
@@ -1039,7 +1044,7 @@ public final class WorkflowNative {
                         long scheduledId = event.getActivityTaskCompletedEventAttributes().getScheduledEventId();
                         String name = scheduledActivities.getOrDefault(scheduledId, "unknown");
                         int attempt = scheduledAttempts.getOrDefault(scheduledId, 1);
-                        invocations.append(createActivityInvocation(name, "COMPLETED", null, attempt));
+                        invocations.append(createActivityInvocation(owner, name, "COMPLETED", null, attempt));
                     } else if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_FAILED) {
                         long scheduledId = event.getActivityTaskFailedEventAttributes().getScheduledEventId();
                         String name = scheduledActivities.getOrDefault(scheduledId, "unknown");
@@ -1048,17 +1053,18 @@ public final class WorkflowNative {
                         if (event.getActivityTaskFailedEventAttributes().hasFailure()) {
                             failMsg = event.getActivityTaskFailedEventAttributes().getFailure().getMessage();
                         }
-                        invocations.append(createActivityInvocation(name, "FAILED", failMsg, attempt));
+                        invocations.append(createActivityInvocation(owner, name, "FAILED", failMsg, attempt));
                     } else if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT) {
                         long scheduledId = event.getActivityTaskTimedOutEventAttributes().getScheduledEventId();
                         String name = scheduledActivities.getOrDefault(scheduledId, "unknown");
                         int attempt = scheduledAttempts.getOrDefault(scheduledId, 1);
-                        invocations.append(createActivityInvocation(name, "TIMED_OUT", "Activity timed out", attempt));
+                        invocations.append(createActivityInvocation(owner, name, "TIMED_OUT", "Activity timed out",
+                                attempt));
                     } else if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_CANCELED) {
                         long scheduledId = event.getActivityTaskCanceledEventAttributes().getScheduledEventId();
                         String name = scheduledActivities.getOrDefault(scheduledId, "unknown");
                         int attempt = scheduledAttempts.getOrDefault(scheduledId, 1);
-                        invocations.append(createActivityInvocation(name, "CANCELED", null, attempt));
+                        invocations.append(createActivityInvocation(owner, name, "CANCELED", null, attempt));
                     }
                 }
 
@@ -1075,12 +1081,13 @@ public final class WorkflowNative {
     /**
      * Creates a single {@code ActivityInvocation} Ballerina record using management module types.
      */
-    private static BMap<BString, Object> createActivityInvocation(String activityName, String status,
+    private static BMap<BString, Object> createActivityInvocation(String owner, String activityName, String status,
                                                                   String errorMessage, int attempt) {
         BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                       "ActivityInvocation");
         record.put(StringUtils.fromString(TaskKeys.ACTIVITY_NAME), StringUtils.fromString(activityName));
-        String displayName = DisplayNames.ofActivity(activityName).label();
+        String displayName = DisplayNames.ofActivity(owner == null ? activityName : owner + "." + activityName)
+                .label();
         record.put(StringUtils.fromString("displayName"),
                    displayName != null ? StringUtils.fromString(displayName) : null);
         record.put(StringUtils.fromString("input"), ValueCreator.createArrayValue(new BString[0]));

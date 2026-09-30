@@ -254,7 +254,9 @@ The label is published in the workflow descriptor and metadata as `displayName` 
 as `icon`), and the management API reports it beside every history node and activity
 invocation of that function. It is never an identity: renaming the label changes nothing the
 engine keys on, so no running instance is affected and no migration is needed. A blank label is
-an error (`WORKFLOW_165`).
+an error (`WORKFLOW_165`). `@display` is a source annotation, so it is read for functions in the
+package being built, in any of its modules; an activity imported from a dependency package
+carries no label.
 
 ## What's Next
 

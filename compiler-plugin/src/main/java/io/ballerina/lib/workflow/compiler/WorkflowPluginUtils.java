@@ -106,20 +106,26 @@ public final class WorkflowPluginUtils {
      * @return the display info, never {@code null}
      */
     public static DisplayInfo displayOf(Symbol symbol) {
-        if (!(symbol instanceof Annotatable annotatable)) {
+        Map<String, Object> fields = displayFieldsOf(symbol);
+        if (fields == null) {
             return DisplayInfo.NONE;
         }
-        for (AnnotationAttachmentSymbol attachment : annotatable.annotAttachments()) {
-            if (!isDisplayAnnotation(attachment.typeDescriptor())) {
-                continue;
-            }
-            Map<String, Object> fields = constantMappingOf(attachment.attachmentValue().map(ConstantValue::value)
-                    .orElse(null));
-            String label = blankToNull(fields.get(DISPLAY_LABEL_FIELD));
-            String icon = blankToNull(fields.get(DISPLAY_ICON_FIELD));
-            return label == null && icon == null ? DisplayInfo.NONE : new DisplayInfo(label, icon);
+        String label = blankToNull(fields.get(DISPLAY_LABEL_FIELD));
+        String icon = blankToNull(fields.get(DISPLAY_ICON_FIELD));
+        return label == null && icon == null ? DisplayInfo.NONE : new DisplayInfo(label, icon);
+    }
+
+    // The @display annotation's constant fields on a symbol, or null when it carries none
+    private static Map<String, Object> displayFieldsOf(Symbol symbol) {
+        if (!(symbol instanceof Annotatable annotatable)) {
+            return null;
         }
-        return DisplayInfo.NONE;
+        for (AnnotationAttachmentSymbol attachment : annotatable.annotAttachments()) {
+            if (isDisplayAnnotation(attachment.typeDescriptor())) {
+                return constantMappingOf(attachment.attachmentValue().map(ConstantValue::value).orElse(null));
+            }
+        }
+        return null;
     }
 
     /**
@@ -130,18 +136,9 @@ public final class WorkflowPluginUtils {
      * @return true when a label is given and blank
      */
     public static boolean hasBlankDisplayLabel(Symbol symbol) {
-        if (!(symbol instanceof Annotatable annotatable)) {
-            return false;
-        }
-        for (AnnotationAttachmentSymbol attachment : annotatable.annotAttachments()) {
-            if (!isDisplayAnnotation(attachment.typeDescriptor())) {
-                continue;
-            }
-            Map<String, Object> fields = constantMappingOf(attachment.attachmentValue().map(ConstantValue::value)
-                    .orElse(null));
-            return fields.containsKey(DISPLAY_LABEL_FIELD) && blankToNull(fields.get(DISPLAY_LABEL_FIELD)) == null;
-        }
-        return false;
+        Map<String, Object> fields = displayFieldsOf(symbol);
+        return fields != null && fields.containsKey(DISPLAY_LABEL_FIELD)
+                && blankToNull(fields.get(DISPLAY_LABEL_FIELD)) == null;
     }
 
     /**

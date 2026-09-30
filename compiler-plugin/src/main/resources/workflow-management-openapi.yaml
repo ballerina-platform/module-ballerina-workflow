@@ -961,6 +961,7 @@ components:
             properties:
               id: {type: string}
               label: {type: string}
+              displayName: {type: string, nullable: true}
               type: {type: string}
               status: {type: string}
               metadata: {type: object, nullable: true}

@@ -41,7 +41,7 @@ If the workflow engine itself is temporarily unavailable, API calls such as `sen
 
 ## Controlling Retries
 
-By default (`retryPolicy = NoAutomaticRetry`), errors are returned immediately as values and no automatic retries are attempted. This is a safe baseline that keeps retry intent explicit per call.
+By default (`retryPolicy = NoRetry`), errors are returned immediately as values and no automatic retries are attempted. This is a safe baseline that keeps retry intent explicit per call.
 
 Business-specific retry behavior (including delayed retries) can still be implemented in workflow logic or enabled via activity retry options when appropriate.
 
@@ -69,8 +69,10 @@ Pass an `AutoRetry` record as `callActivity`'s `retryPolicy` argument. Its field
 | `retryBackoff` | `decimal` | `2.0` | Exponential backoff multiplier |
 | `maxRetryDelay`| `decimal?`  | *(none)*| Cap on the delay between retries in seconds (optional) |
 
-Passing `NoAutomaticRetry` (the default) disables engine retries; passing a `ReviewTaskDefinition`
-instead raises a review task on failure so a person decides whether to rerun the activity.
+Passing `NoRetry` (the default) disables engine retries; passing a `ReviewTaskDefinition`
+instead raises a review task on failure so a person decides whether to rerun the activity, and a
+`RetryBeforeReview` retries automatically first and raises the review only when the retries are spent.
+See [Recover Workflows](recover-workflows.md) for how these differ from resending and resetting.
 
 ## State Transition Summary
 
@@ -350,6 +352,7 @@ This is useful during incidents when the normal data delivery path is unavailabl
 - [Compensation Pattern](patterns/error-compensation.md) — Undo committed steps with the Saga pattern
 - [Graceful Completion](patterns/graceful-completion.md) — Tolerate non-critical failures and complete successfully
 - [Forward Recovery](patterns/forward-recovery.md) — Pause for corrected data and retry a failed activity
+- [Recover Workflows](recover-workflows.md) — Retry, resend, reset, and escalate failed runs
 - [Human in the Loop](patterns/human-in-the-loop.md) — Pause for a human decision (approve or reject)
 - [Handle Data](handle-data.md) — Receiving external data and human-in-the-loop patterns
 - [Write Workflow Functions](write-workflow-functions.md) — Workflow function details

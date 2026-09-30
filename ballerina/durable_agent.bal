@@ -128,7 +128,9 @@ public type PeerDecl record {
 #                events, human tasks, and peers: a name claimed twice is rejected
 #                when the agent registers, so the program fails at startup
 # + peers - Peer durable agents advertised as delegable tools
-# + maxIter - Hard cap on reasoning iterations per turn
+# + maxIter - Hard cap on reasoning iterations per turn. An agent that overruns it fails, except a
+#             `MULTI_EVENT` agent with a `chat` event: it ends that turn with a failure for its waiter
+#             and goes on to the next chat message, so one bad turn does not end the conversation
 # + eventTimeout - Maximum wait per event-channel wait (each chat turn, each event).
 #                  Omit to wait indefinitely — a conversation stays open as long as it
 #                  takes, and `maxEventWaits` remains the runaway backstop. On a timeout
@@ -161,11 +163,12 @@ public type DurableAgentConfig record {|
     int maxEventWaits = MAX_EVENT_WAITS;
 |};
 
-# Returned by the non-blocking `getResult`/`getDataResult` reads when the agent
-# instance (or the specific turn) is still in progress — e.g. suspended on a human
-# task. Check back later, or use the blocking `waitForResult`/`waitForDataResult`
-# forms, which durably wait and are resumable across crashes.
-public type AgentBusyError distinct error;
+# Deprecated name of `WorkflowInProgressError`, which the agent's reads now return: an alias, so
+# an `is AgentBusyError` test keeps matching.
+# # Deprecated
+# Use `WorkflowInProgressError`.
+@deprecated
+public type AgentBusyError WorkflowInProgressError;
 
 # A durable AI agent declared as an object. Must be assigned to a module-level `final` variable:
 # its capabilities are registered at compile time from the constructor config, and the variable
@@ -221,6 +224,37 @@ public isolated class DurableAgent {
         name: "runAgent"
     } external;
 
+    # Starts the agent under an id the caller chooses, as `workflow:runWithId` does for a workflow:
+    # the id is the correlation key, and `ifRunning = USE_EXISTING` lets a retried start join the
+    # instance it already created. A top-level start only — inside a workflow use `run`.
+    #
+    # + instanceId - The instance id to start under
+    # + query - The user turn appended to the agent's system prompt
+    # + input - Optional structured JSON payload for the run; must match the declared `inputType`
+    # + ifRunning - What to do when an instance with this id is running
+    # + ifClosed - What to do when an instance with this id has closed
+    # + return - The instance id, an `InstanceAlreadyExistsError` when the id is held and the
+    #            policy refused, or an error
+    public isolated function runWithId(string instanceId, string query, json input = (),
+            RunningInstancePolicy ifRunning = FAIL, ClosedInstancePolicy ifClosed = ALLOW_DUPLICATE)
+            returns string|InstanceAlreadyExistsError|error {
+        observe:StartAgentSpan span = observe:createStartAgentSpan(self.getAgentName());
+        string|error result = self.runAgentWithIdNative(instanceId, query, input, ifRunning, ifClosed);
+        if result is string {
+            span.addInstanceId(result);
+            span.close();
+        } else {
+            span.close(result);
+        }
+        return result;
+    }
+
+    private isolated function runAgentWithIdNative(string instanceId, string query, json input,
+            string ifRunning, string ifClosed) returns string|error = @java:Method {
+        'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+        name: "runAgentWithId"
+    } external;
+
     private isolated function getAgentName() returns string {
         lock {
             return self.agentName;
@@ -251,27 +285,28 @@ public isolated class DurableAgent {
         name: "sendData"
     } external;
 
-    # Returns the final result of an instance if it has finished, without waiting.
-    # While the instance is still working (e.g. suspended on a human task) a
-    # `workflow:AgentBusyError` is returned — check back later, or use `waitForResult`.
+    # Returns the final result of an instance if it has finished, without waiting. While the
+    # instance is still working (e.g. suspended on a human task) a `WorkflowInProgressError` is
+    # returned — check back later, or use `waitForResult`. An instance that closed without a
+    # result answers `InstanceFailedError`; an id that is not one of this agent's instances,
+    # `InstanceNotFoundError`.
     #
     # + instanceId - The agent instance ID returned by `run`
     # + T - Expected result type (inferred from context)
-    # + return - The result as `T`, a `workflow:AgentBusyError` while in progress,
-    #            or an error
+    # + return - The result as `T`, or one of the read errors
     public isolated function getResult(string instanceId, typedesc<anydata> T = <>)
-            returns T|error = @java:Method {
+            returns T|WorkflowInProgressError|InstanceFailedError|InstanceNotFoundError|error = @java:Method {
         'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
         name: "getResult"
     } external;
 
     # Returns the response for a specific `sendData` turn if it is ready, without
-    # waiting. While the turn is unanswered a `workflow:AgentBusyError` is returned.
+    # waiting. While the turn is unanswered a `WorkflowInProgressError` is returned.
     #
     # + instanceId - The agent instance ID returned by `run`
     # + token - The correlation token returned by `sendData`
     # + T - Expected response type (inferred from context)
-    # + return - The turn's response as `T`, a `workflow:AgentBusyError` while
+    # + return - The turn's response as `T`, a `WorkflowInProgressError` while
     #            unanswered, or an error
     public isolated function getDataResult(string instanceId, string token,
             typedesc<anydata> T = <>) returns T|error = @java:Method {
@@ -282,13 +317,16 @@ public isolated class DurableAgent {
     # Waits until the instance finishes and returns its result. Inside a workflow
     # this durably suspends the caller (no thread held); from a service it blocks
     # but is resumable — if the caller crashes, calling again after restart resumes
-    # the wait, because the result lives in history.
+    # the wait, because the result lives in history. With a `timeout` the wait is
+    # bounded and a `WorkflowInProgressError` says the instance outlived it.
     #
     # + instanceId - The agent instance ID returned by `run`
     # + T - Expected result type (inferred from context)
-    # + return - The result as `T`, or an error
-    public isolated function waitForResult(string instanceId, typedesc<anydata> T = <>)
-            returns T|error = @java:Method {
+    # + timeout - The longest to wait, or `()` for as long as it takes (ignored inside a workflow);
+    #             give it by name
+    # + return - The result as `T`, or one of the read errors
+    public isolated function waitForResult(string instanceId, typedesc<anydata> T = <>, Duration? timeout = ())
+            returns T|WorkflowInProgressError|InstanceFailedError|InstanceNotFoundError|error = @java:Method {
         'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
         name: "waitForResult"
     } external;
@@ -304,6 +342,17 @@ public isolated class DurableAgent {
             typedesc<anydata> T = <>) returns T|error = @java:Method {
         'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
         name: "waitForDataResult"
+    } external;
+
+    # Returns an instance's status without waiting or reading its history.
+    #
+    # + instanceId - The agent instance ID returned by `run`
+    # + return - The status, or an `InstanceNotFoundError` when the id is not one of this
+    #            agent's instances
+    public isolated function getStatus(string instanceId) returns InstanceStatus|InstanceNotFoundError|error
+            = @java:Method {
+        'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+        name: "getStatus"
     } external;
 }
 

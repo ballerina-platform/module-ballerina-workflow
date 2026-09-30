@@ -112,13 +112,23 @@ paths:
               properties:
                 workflowType: {type: string}
                 input: {description: The workflow's input value}
-                workflowId: {type: string, description: Optional explicit instance id}
+                workflowId: {type: string, maxLength: 255, description: "Optional caller-chosen instance id (the correlation key); ids containing '/' or '%' must be URL-encoded in paths"}
+                ifRunning: {type: string, enum: [FAIL, USE_EXISTING, TERMINATE_EXISTING], default: FAIL, description: What to do when an instance with workflowId is running}
+                ifClosed: {type: string, enum: [ALLOW_DUPLICATE, ALLOW_DUPLICATE_FAILED_ONLY, REJECT_DUPLICATE], default: ALLOW_DUPLICATE, description: "What to do when an instance with workflowId has closed; REJECT_DUPLICATE holds only while the engine retains the closed instance"}
+                timeoutSeconds: {type: integer, description: Whole-execution timeout in seconds}
       responses:
-        "200":
+        "201":
           description: The started instance's handle
           content:
             application/json:
               schema: {$ref: "#/components/schemas/WorkflowHandle"}
+        "200":
+          description: "ifRunning was USE_EXISTING and an instance already running under workflowId was joined (started = false)"
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WorkflowHandle"}
+        "400": {description: The id or a policy is not acceptable}
+        "409": {description: The id is held by an instance the policies did not let this start replace or join}
         default: {$ref: "#/components/responses/Error"}
 
   /workflows/{workflowId}:
@@ -796,6 +806,7 @@ components:
       properties:
         workflowId: {type: string}
         runId: {type: string}
+        started: {type: boolean, description: "false when the start joined an instance already running under the id"}
     TaskSummary:
       type: object
       description: What every task instance reports in a list, whichever kind it is

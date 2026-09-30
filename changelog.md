@@ -15,6 +15,57 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   constant `title` is published as its display name the same way. The label is also set as the
   execution's static summary for the Temporal UI. A display name is never an identity — a rename
   is a rebuild, with no migration — and a blank label is rejected (`WORKFLOW_165`).
+- `workflow:runWithId` and `DurableAgent.runWithId` start an instance under an id the caller
+  chooses — a business key that doubles as the correlation key — with `ifRunning` (`FAIL`, the
+  default, or `USE_EXISTING`, the idempotent submit) and `ifClosed` (`ALLOW_DUPLICATE`, the
+  default, `ALLOW_DUPLICATE_FAILED_ONLY`, `REJECT_DUPLICATE`). A held id the policies refuse is
+  an `InstanceAlreadyExistsError` carrying the holder's status; a blank, over-long or
+  reserved-prefix id is refused at compile time for a literal (`WORKFLOW_166`) and at start
+  otherwise.
+- `management:startInstance(workflowType, input, *StartOptions)` replaces `startWorkflowByType`
+  (kept, deprecated) and adds the same policies, plus `TERMINATE_EXISTING` for `ifRunning`.
+  `instances.start` and `POST /workflows` take `ifRunning` and `ifClosed`; a refused id is a
+  `ConflictError` (409) instead of an execution error (500), a bad id or policy a 400, and a
+  start that joined a running instance answers 200 with `started: false` rather than 201.
+  Every start — `run`, `runWithId`, an agent's, the management API's — now goes through one
+  runtime path.
+- `workflow:getResult(id)`, `waitForResult(id, timeout = ())` and `getStatus(id)`: a non-blocking
+  typed read, a crash-resumable wait with an optional bound, and a status read, so a service
+  reports on an instance with one call and no management import. Durable agents gain
+  `getStatus` and a `timeout` on `waitForResult`. All reads — workflow or agent, top level or
+  child — answer one vocabulary: `WorkflowInProgressError` while the instance runs or when a
+  bound passes first, `InstanceFailedError` (with the closed status in its detail) when it closed
+  without a result, `InstanceNotFoundError` for an id nothing holds; an agent's reads are scoped
+  to its own instances. The compiler refuses the reads inside a workflow body (`WORKFLOW_167`) and
+  a negative literal bound (`WORKFLOW_168`), and warns when a resource or remote function
+  `check`s a non-blocking read straight into a request failure (`WORKFLOW_169`).
+
+### Changed
+
+- A `ctx->await` bound counts `weeks` and `days` and refuses `months` and `years` (which have no
+  fixed length), as `waitForResult` does; a bound that is negative or overflows is refused. Executions
+  started before this release keep the bound they recorded (hours, minutes and seconds only), so
+  their replays stay deterministic.
+- `getWorkflowResult` is deprecated in favour of `waitForResult`, and answers
+  `WorkflowInProgressError` when its wait runs out instead of a plain error worded as a workflow
+  timeout. `WorkflowBusyError` and `AgentBusyError` are deprecated aliases of
+  `WorkflowInProgressError`, so existing `is` tests keep matching.
+
+### Changed
+
+- A `MULTI_EVENT` durable agent with a `chat` event whose turn exceeds `maxIter` no longer fails as a
+  whole: the turn is ended with a failure its waiter receives (`waitForDataResult` returns the reason),
+  the overrun is recorded in the conversation, and the agent goes back to waiting for the next chat
+  message. Every other agent keeps failing as before. A turn whose closing reply carries no text is
+  reported to its waiter as having no response, even when an earlier reply in that turn carried text
+  beside its tool calls. ([ballerina-library#9225](https://github.com/ballerina-platform/ballerina-library/issues/9225))
+
+### Fixed
+
+- `HumanTaskInfo.taskInput` and `ReviewActivityInfo.taskInput` held a `map<anydata>` at run time although
+  the records declare `map<json>`, so a typed read (`map<json> input = check info.taskInput.ensureType()`)
+  panicked with a `TypeCastError` — and took the process down when it happened in a resource. The values
+  are now built as `map<json>`. ([ballerina-library#9226](https://github.com/ballerina-platform/ballerina-library/issues/9226))
 
 ## [0.10.1]
 

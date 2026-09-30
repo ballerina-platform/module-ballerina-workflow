@@ -20,6 +20,7 @@ package io.ballerina.lib.workflow.context;
 
 import io.ballerina.lib.workflow.ModuleUtils;
 import io.ballerina.lib.workflow.TaskKeys;
+import io.ballerina.lib.workflow.runtime.nativeimpl.InstanceReads;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.ActivityNaming;
 import io.ballerina.lib.workflow.worker.InstanceIdNaming;
@@ -1380,7 +1381,6 @@ public final class WorkflowContextNative {
     // waitForChildWorkflow / callWorkflow / sendDataToChildWorkflow)
     // -----------------------------------------------------------------------------------------
 
-    private static final String WORKFLOW_BUSY_ERROR = "WorkflowBusyError";
     private static final String CHILD_WORKFLOW_KIND = "CHILD_WORKFLOW";
 
     /**
@@ -1397,8 +1397,9 @@ public final class WorkflowContextNative {
      *
      * @param stub   the untyped child workflow stub
      * @param result the promise of the child's result
+     * @param workflowType the child's registered type, so an agent reads only its own children
      */
-    private record ChildWorkflowHandle(ChildWorkflowStub stub, Promise<Object> result) { }
+    private record ChildWorkflowHandle(ChildWorkflowStub stub, Promise<Object> result, String workflowType) { }
 
     /**
      * Starts a child workflow and returns its instance ID without waiting for the result. The child is a true
@@ -1424,7 +1425,8 @@ public final class WorkflowContextNative {
             // Block (durably) until the child has actually started, so a start failure (e.g. an
             // unregistered workflow type or a duplicate workflow ID) surfaces here, not at the read.
             stub.getExecution().get();
-            CHILD_HANDLES.get().put(childId, new ChildWorkflowHandle(stub, result));
+            CHILD_HANDLES.get().put(childId, new ChildWorkflowHandle(stub, result,
+                    WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + functionName));
             return StringUtils.fromString(childId);
         } catch (io.temporal.worker.NonDeterministicException e) {
             throw e;
@@ -1461,9 +1463,9 @@ public final class WorkflowContextNative {
                 return unknownChildWorkflowError(childWorkflowId.getValue());
             }
             if (!handle.result().isCompleted()) {
-                return createWorkflowBusyError(childWorkflowId.getValue());
+                return InstanceReads.inProgress(childWorkflowId.getValue());
             }
-            return readChildResult(handle, typedesc);
+            return readChildResult(childWorkflowId.getValue(), handle, typedesc);
         } catch (io.temporal.worker.NonDeterministicException e) {
             throw e;
         } catch (io.temporal.failure.TemporalFailure e) {
@@ -1491,7 +1493,7 @@ public final class WorkflowContextNative {
             if (handle == null) {
                 return unknownChildWorkflowError(childWorkflowId.getValue());
             }
-            return readChildResult(handle, typedesc);
+            return readChildResult(childWorkflowId.getValue(), handle, typedesc);
         } catch (io.temporal.worker.NonDeterministicException e) {
             throw e;
         } catch (io.temporal.failure.TemporalFailure e) {
@@ -1601,7 +1603,8 @@ public final class WorkflowContextNative {
             ChildWorkflowStub stub = newChildStub(agentName, childId, null);
             Promise<Object> result = stub.executeAsync(Object.class, runInput);
             stub.getExecution().get();
-            CHILD_HANDLES.get().put(childId, new ChildWorkflowHandle(stub, result));
+            CHILD_HANDLES.get().put(childId, new ChildWorkflowHandle(stub, result,
+                    WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + agentName));
             return StringUtils.fromString(childId);
         } catch (io.temporal.worker.NonDeterministicException e) {
             throw e;
@@ -1628,22 +1631,23 @@ public final class WorkflowContextNative {
      * @param blocking whether to durably wait for completion
      * @return the typed result, an AgentBusyError (non-blocking, still running), or a BError
      */
-    public static Object readDurableAgentChildResult(String childId, BTypedesc typedesc, boolean blocking) {
+    public static Object readDurableAgentChildResult(String agentName, String childId, BTypedesc typedesc,
+                                                     boolean blocking) {
         try {
             if (blocking) {
                 WorkflowWorkerNative.awaitWhileSuspended();
             }
             ChildWorkflowHandle handle = CHILD_HANDLES.get().get(childId);
-            if (handle == null) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Unknown durable agent instance '" + childId + "': result reads inside a workflow "
-                                + "are only available for agents started with run() in this workflow execution"));
+            // Scoped as the client read is: another agent's child, or a workflow's, is not this agent's.
+            if (handle == null || !handle.workflowType()
+                    .equals(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + agentName)) {
+                return InstanceReads.notFound(childId, ": inside a workflow, an agent reads only the instances "
+                        + "it started with run() in this execution");
             }
             if (!blocking && !handle.result().isCompleted()) {
-                return io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative
-                        .createAgentBusyError(childId);
+                return InstanceReads.inProgress(childId);
             }
-            return readChildResult(handle, typedesc);
+            return readChildResult(childId, handle, typedesc);
         } catch (io.temporal.worker.NonDeterministicException e) {
             throw e;
         } catch (io.temporal.failure.TemporalFailure e) {
@@ -1674,8 +1678,7 @@ public final class WorkflowContextNative {
                         "Unknown peer agent instance '" + childId + "'"));
             }
             if (!blocking && !handle.result().isCompleted()) {
-                return io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative
-                        .createAgentBusyError(childId);
+                return InstanceReads.inProgress(childId);
             }
             try {
                 return TypesUtil.convertJavaToBallerinaType(handle.result().get());
@@ -1734,7 +1737,7 @@ public final class WorkflowContextNative {
      * Awaits a completed (or completing) child result promise and converts it to the expected Ballerina type.
      * A failed child surfaces as a BError carrying the child's application error message.
      */
-    private static Object readChildResult(ChildWorkflowHandle handle, BTypedesc typedesc) {
+    private static Object readChildResult(String childId, ChildWorkflowHandle handle, BTypedesc typedesc) {
         try {
             Object raw = handle.result().get();
             // validateAndConvert (not cloneWithType) so a nil result against a non-nilable T
@@ -1742,8 +1745,23 @@ public final class WorkflowContextNative {
             Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(raw);
             return TypesUtil.validateAndConvert(ballerinaResult, typedesc.getDescribingType());
         } catch (ChildWorkflowFailure e) {
-            return ErrorCreator.createError(StringUtils.fromString(childFailureMessage(e)));
+            // The same typed error a client read answers, with the child's closed status in its detail.
+            return InstanceReads.failed(childId, childCloseStatus(e), childFailureMessage(e));
         }
+    }
+
+    private static String childCloseStatus(ChildWorkflowFailure e) {
+        Throwable cause = e.getCause();
+        if (cause instanceof CanceledFailure) {
+            return InstanceReads.STATUS_CANCELED;
+        }
+        if (cause instanceof io.temporal.failure.TerminatedFailure) {
+            return InstanceReads.STATUS_TERMINATED;
+        }
+        if (cause instanceof io.temporal.failure.TimeoutFailure) {
+            return InstanceReads.STATUS_TIMED_OUT;
+        }
+        return "FAILED";
     }
 
     /**
@@ -1758,24 +1776,9 @@ public final class WorkflowContextNative {
         return cause != null ? cause.getMessage() : e.getMessage();
     }
 
-    /**
-     * Builds a Ballerina {@code workflow:WorkflowBusyError} indicating the child is still running.
-     */
-    private static BError createWorkflowBusyError(String childWorkflowId) {
-        String message = "Child workflow '" + childWorkflowId + "' is still running";
-        try {
-            return ErrorCreator.createError(ModuleUtils.getModule(), WORKFLOW_BUSY_ERROR,
-                    StringUtils.fromString(message), null, null);
-        } catch (Exception e) {
-            // Fallback if the module type hasn't been initialised yet (e.g. in unit tests)
-            return ErrorCreator.createError(StringUtils.fromString(WORKFLOW_BUSY_ERROR + ": " + message));
-        }
-    }
-
     private static BError unknownChildWorkflowError(String childWorkflowId) {
-        return ErrorCreator.createError(StringUtils.fromString(
-                "Unknown child workflow ID '" + childWorkflowId + "': result reads are only available "
-                        + "for children started with runChildWorkflow in this workflow execution"));
+        return InstanceReads.notFound(childWorkflowId, ": inside a workflow, result reads are only available "
+                + "for children started with runChildWorkflow in this execution");
     }
 
     /**

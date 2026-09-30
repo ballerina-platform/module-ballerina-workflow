@@ -61,6 +61,10 @@ public class WorkflowCodeAnalyzer extends CodeAnalyzer {
         // descriptor publishes it as the declaration's name.
         analysisContext.addSyntaxNodeAnalysisTask(new DisplayAnnotationValidatorTask(),
                 java.util.List.of(SyntaxKind.FUNCTION_DEFINITION, SyntaxKind.MODULE_VAR_DECL));
+        // The client-side result and status reads: refused inside a workflow body, bounded by a
+        // sane timeout, and not `check`ed straight into a service failure.
+        analysisContext.addSyntaxNodeAnalysisTask(new ResultReadValidatorTask(),
+                java.util.List.of(SyntaxKind.FUNCTION_CALL, SyntaxKind.METHOD_CALL));
 
     }
 }

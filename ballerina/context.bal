@@ -172,12 +172,12 @@ public client class Context {
     } external;
 
     # Returns a child workflow's result if it has already completed, without waiting. While the
-    # child is still running this answers `WorkflowBusyError` — check back later, or use the
+    # child is still running this answers `WorkflowInProgressError` — check back later, or use the
     # blocking `waitForChildWorkflow`.
     #
     # + childWorkflowId - The child workflow instance ID returned by `runChildWorkflow`
     # + T - Expected result type (inferred from context)
-    # + return - The child's result as `T`, a `workflow:WorkflowBusyError` while the child
+    # + return - The child's result as `T`, a `workflow:WorkflowInProgressError` while the child
     #            is still running, or an error if the child failed
     remote isolated function getChildWorkflowResult(string childWorkflowId, typedesc<anydata> T = <>)
             returns T|error = @java:Method {

@@ -270,11 +270,100 @@ public type PendingAgentEvent record {|
 // Child workflow types
 // ---------------------------------------------------------------------------
 
-# Returned by the non-blocking `ctx->getChildWorkflowResult` read when the child
-# workflow is still running (e.g. suspended on a human task). Check back later, or
-# use the blocking `ctx->waitForChildWorkflow` form, which durably suspends until
-# the child completes.
-public type WorkflowBusyError distinct error;
+# Where an instance is in its life, as `getStatus` reports it.
+#
+# + RUNNING - Executing, or waiting on a timer, an event or a task
+# + SUSPENDED - Running but paused through the management API
+# + COMPLETED - Closed with a result
+# + FAILED - Closed with an error
+# + CANCELED - Closed by a cancellation request
+# + TERMINATED - Closed by a termination
+# + TIMED_OUT - Closed because its execution timeout passed
+public enum InstanceStatus {
+    RUNNING,
+    SUSPENDED,
+    COMPLETED,
+    FAILED,
+    CANCELED,
+    TERMINATED,
+    TIMED_OUT
+}
+
+# The instance — or the turn — has not finished. Every non-blocking read answers this while the
+# instance runs, and every bounded wait answers it when the bound passes first: `getResult`,
+# `waitForResult`, `ctx->getChildWorkflowResult`, and a durable agent's `getResult`,
+# `getDataResult`, `waitForResult` and `waitForDataResult`. Check back later, or wait.
+public type WorkflowInProgressError distinct error;
+
+# Detail fields carried by an `InstanceFailedError`.
+#
+# + instanceId - The instance
+# + status - How it closed: `FAILED`, `CANCELED`, `TERMINATED` or `TIMED_OUT`
+public type InstanceFailedDetail record {|
+    string instanceId;
+    InstanceStatus status;
+|};
+
+# Returned by a result read when the instance closed without a result: it failed, was cancelled
+# or terminated, or timed out. The message carries the instance's own error message, when it
+# had one; the detail says how it closed.
+public type InstanceFailedError distinct error<InstanceFailedDetail>;
+
+# Detail fields carried by an `InstanceNotFoundError`.
+#
+# + instanceId - The id nothing holds
+public type InstanceNotFoundDetail record {|
+    string instanceId;
+|};
+
+# Returned by a read when no instance holds the id — or, from a durable agent's method, when the
+# instance is not one of that agent's.
+public type InstanceNotFoundError distinct error<InstanceNotFoundDetail>;
+
+# Deprecated name of `WorkflowInProgressError`: an alias, so an `is WorkflowBusyError` test keeps
+# matching what the reads now return.
+# # Deprecated
+# Use `WorkflowInProgressError`.
+@deprecated
+public type WorkflowBusyError WorkflowInProgressError;
+
+# What a start does when its caller-chosen instance id is held by a RUNNING instance.
+#
+# + FAIL - Refuse with an `InstanceAlreadyExistsError` (the default)
+# + USE_EXISTING - Return the running instance's id and leave it as it is; the new input is not
+#                  delivered. This is the idempotent submit: a retried request joins the first
+public enum RunningInstancePolicy {
+    FAIL,
+    USE_EXISTING
+}
+
+# What a start does when its caller-chosen instance id was held by an instance that has CLOSED.
+#
+# + ALLOW_DUPLICATE - Start a new run under the same id, whatever the old outcome (the default)
+# + ALLOW_DUPLICATE_FAILED_ONLY - Start a new run only if the old one failed, was cancelled,
+#                                 terminated or timed out; refuse after a completed one
+# + REJECT_DUPLICATE - Refuse while the engine still retains the closed instance. Retention is
+#                      finite (a namespace setting, days by default), so this is not a permanent
+#                      guard against processing a business key twice — keep such a guard in the domain
+public enum ClosedInstancePolicy {
+    ALLOW_DUPLICATE,
+    ALLOW_DUPLICATE_FAILED_ONLY,
+    REJECT_DUPLICATE
+}
+
+# Detail fields carried by an `InstanceAlreadyExistsError`.
+#
+# + instanceId - The id the start asked for
+# + status - Status of the instance holding it — `RUNNING`, or a closed status such as
+#            `COMPLETED` or `FAILED`
+public type InstanceAlreadyExistsDetail record {|
+    string instanceId;
+    string status;
+|};
+
+# Returned by `runWithId` (and `DurableAgent.runWithId`) when the id is held by an instance the
+# policies did not let the start replace or join.
+public type InstanceAlreadyExistsError distinct error<InstanceAlreadyExistsDetail>;
 
 # Any JSON object.
 public type JsonObject map<json>;

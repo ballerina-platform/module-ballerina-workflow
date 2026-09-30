@@ -263,6 +263,11 @@ public final class WorkflowWorkerNative {
      * ({@code humantask-<workflowDefinition.taskName>}).
      */
     public static final String HUMANTASK_TYPE_PREFIX = "humantask-";
+    // Instance-id prefixes the runtime issues to the children it starts; a caller-chosen id may not wear one
+    public static final String CHILD_WORKFLOW_ID_PREFIX = "childwf-";
+    public static final String CHILD_AGENT_ID_PREFIX = "childagent-";
+    public static final java.util.List<String> RESERVED_INSTANCE_ID_PREFIXES = java.util.List.of(
+            HUMANTASK_TYPE_PREFIX, REVIEW_ACTIVITY_TYPE_PREFIX, CHILD_WORKFLOW_ID_PREFIX, CHILD_AGENT_ID_PREFIX);
 
     /**
      * Per-workflow-execution suspended flag, set by the {@code __wf_suspend}/{@code __wf_resume} signal handlers.
@@ -1177,6 +1182,15 @@ public final class WorkflowWorkerNative {
      */
     public static WorkflowClient getWorkflowClient() {
         return workflowClient;
+    }
+
+    /**
+     * The worker this process polls with, or null before it is initialized. Tests replay histories against it.
+     *
+     * @return the worker
+     */
+    public static Worker getWorker() {
+        return singletonWorker;
     }
 
     /** Set only when the WorkflowKind search attribute is confirmed on the cluster. */
@@ -2147,8 +2161,8 @@ public final class WorkflowWorkerNative {
                                         try {
                                             reply.put("response", responder.get());
                                         } catch (Exception e) {
-                                            reply.put("error", e.getMessage() != null ? e.getMessage()
-                                                    : "the agent turn failed");
+                                            reply.put("error", io.ballerina.lib.workflow.runtime.nativeimpl
+                                                    .DurableAgentNative.updateFailureMessage(e));
                                         }
                                     } finally {
                                         this.pendingAgentDataEvents.remove(token);
@@ -2222,8 +2236,8 @@ public final class WorkflowWorkerNative {
             // Register a dynamic update handler backing `workflow:updateAgent` — the
             // request-response counterpart of sendData for durable agents. The payload is
             // enqueued into the agent's event channel carrying a responder promise; the
-            // agent loop completes the responder with the answer of the turn that consumed
-            // the message, which becomes the update result. Only meaningful for durable
+            // agent loop completes the responder when the turn that consumed the message
+            // ends (with the text of its closing reply), which becomes the update result. Only meaningful for durable
             // agents: normal workflows bind incoming data imperatively, so there is no
             // framework-owned response to correlate.
             Workflow.registerListener(

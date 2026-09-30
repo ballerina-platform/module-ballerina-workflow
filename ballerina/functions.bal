@@ -41,6 +41,39 @@ isolated function runNative(function processFunction, anydata input) returns str
     name: "run"
 } external;
 
+# Starts a workflow instance under an id the caller chooses — a business key such as an order
+# number — so the id doubles as the correlation key. The policies say what happens when the id is
+# already held: `ifRunning = USE_EXISTING` makes a retried submit join the instance it already
+# started instead of failing. The id must not be blank, longer than 255 bytes in UTF-8, or start with
+# a reserved prefix (`humantask-`, `reviewactivity-`, `childwf-`, `childagent-`).
+#
+# + processFunction - The workflow function (must have `@Workflow`)
+# + instanceId - The instance id to start under
+# + input - Optional input data for the workflow, as for `run`
+# + ifRunning - What to do when an instance with this id is running
+# + ifClosed - What to do when an instance with this id has closed
+# + return - The instance id (the same string), an `InstanceAlreadyExistsError` when the id is
+#            held and the policy refused, or an error
+public isolated function runWithId(function processFunction, string instanceId, anydata input = (),
+        RunningInstancePolicy ifRunning = FAIL, ClosedInstancePolicy ifClosed = ALLOW_DUPLICATE)
+        returns string|InstanceAlreadyExistsError|error {
+    observe:StartWorkflowSpan span = observe:createStartWorkflowSpan(observe:workflowTypeNameOf(processFunction));
+    string|error result = runWithIdNative(processFunction, instanceId, input, ifRunning, ifClosed);
+    if result is string {
+        span.addInstanceId(result);
+        span.close();
+    } else {
+        span.close(result);
+    }
+    return result;
+}
+
+isolated function runWithIdNative(function processFunction, string instanceId, anydata input,
+        string ifRunning, string ifClosed) returns string|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
+    name: "runWithId"
+} external;
+
 # Sends data to a running workflow's events record.
 #
 # + workflow - The workflow function (must have `@Workflow`)
@@ -73,11 +106,57 @@ public isolated function getPendingAgentEvents(string agentId)
     name: "getPendingAgentEvents"
 } external;
 
-# Waits for a workflow to complete and returns its result.
+# Returns an instance's result if it has finished, without waiting. While the instance runs —
+# executing, or suspended on a human task — a `WorkflowInProgressError` is returned: check back
+# later, or use `waitForResult`. An instance that closed without a result answers
+# `InstanceFailedError`; an id nothing holds, `InstanceNotFoundError`.
+#
+# + instanceId - The instance id `run` returned
+# + T - Expected result type (inferred from context)
+# + return - The result as `T`, or one of the read errors
+public isolated function getResult(string instanceId, typedesc<anydata> T = <>)
+        returns T|WorkflowInProgressError|InstanceFailedError|InstanceNotFoundError|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
+    name: "getResult"
+} external;
+
+# Waits for an instance to finish and returns its result. With a `timeout` the wait is bounded,
+# and a `WorkflowInProgressError` says the instance outlived it — the same answer `getResult`
+# gives — so a caller can wait a little and then report progress. Without one the wait lasts as
+# long as the instance does. Crash-resumable: the result lives in history, so the call can be
+# made again after a restart.
+#
+# + instanceId - The instance id `run` returned
+# + T - Expected result type (inferred from context)
+# + timeout - The longest to wait, or `()` for as long as it takes; give it by name
+# + return - The result as `T`, or one of the read errors
+public isolated function waitForResult(string instanceId, typedesc<anydata> T = <>, Duration? timeout = ())
+        returns T|WorkflowInProgressError|InstanceFailedError|InstanceNotFoundError|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
+    name: "waitForResult"
+} external;
+
+# Returns an instance's status without waiting or reading its history.
+#
+# + instanceId - The instance id `run` returned
+# + return - The status, or an `InstanceNotFoundError`
+public isolated function getStatus(string instanceId) returns InstanceStatus|InstanceNotFoundError|error
+        = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative",
+    name: "getStatus"
+} external;
+
+# Waits for a workflow to complete and returns its result. When the wait runs out first the
+# answer is a `WorkflowInProgressError`.
+#
+# # Deprecated
+# Use `waitForResult`, which takes a `Duration` bound and returns a typed result, or `getResult`
+# to read without waiting.
 #
 # + workflowId - The workflow ID
 # + timeoutSeconds - Maximum wait time in seconds
 # + return - Result of the workflow as anydata, or an error
+@deprecated
 public isolated function getWorkflowResult(string workflowId, int timeoutSeconds = 30) returns anydata|error {
     observe:GetWorkflowResultSpan span = observe:createGetWorkflowResultSpan(workflowId);
     anydata|error result = getWorkflowResultNative(workflowId, timeoutSeconds);

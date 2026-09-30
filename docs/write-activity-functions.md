@@ -168,7 +168,7 @@ and `retryPolicy`, which decides what happens when the activity fails.
 
 ### Default behaviour — errors as values
 
-With no `retryPolicy` (`NoAutomaticRetry`), any error the activity returns is handed back to
+With no `retryPolicy` (`NoRetry`), any error the activity returns is handed back to
 the workflow as a value. The engine does not retry.
 
 ```ballerina
@@ -211,7 +211,17 @@ string result = check ctx->callActivity(sendEmail,
         retryPolicy = {userRoles: "OPS", title: "Resend the confirmation email"});
 ```
 
-See [Human in the Loop](patterns/human-in-the-loop.md) for how review tasks are answered.
+To retry automatically first and raise the review only when the retries are spent, add
+`maxRetries` to the review — a `RetryBeforeReview`:
+
+```ballerina
+string result = check ctx->callActivity(sendEmail,
+        {"to": email, "subject": subject},
+        retryPolicy = {maxRetries: 2, userRoles: "OPS", title: "Resend the confirmation email"});
+```
+
+See [Human in the Loop](patterns/human-in-the-loop.md) for how review tasks are answered, and
+[Recover Workflows](recover-workflows.md) for retrying, resetting, and escalating failed runs.
 
 ### Naming a step
 

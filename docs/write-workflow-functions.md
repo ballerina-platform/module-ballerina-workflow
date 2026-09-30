@@ -227,34 +227,81 @@ string workflowId = check workflow:run(processOrder, {
 
 The returned `workflowId` uniquely identifies the running workflow instance. In the current implementation it is a UUID v7 string, not a URI.
 
-## Get Workflow Results
+## Start Under Your Own Id
 
-Use `workflow:getWorkflowResult()` to wait for a workflow to complete and retrieve its result:
+`run` generates the instance id. When the caller already has a key for the work — an order
+number, a claim id — `runWithId` starts the instance under it, so the key is the id you look the
+instance up by, send data to, and see in a console:
 
 ```ballerina
-anydata result = check workflow:getWorkflowResult(workflowId);
-io:println(result.toString());  // The workflow return value
+string id = check workflow:runWithId(processOrder, order.orderId, order);
 ```
 
-`getWorkflowResult()` blocks until the workflow finishes and returns its return value as `anydata`; if the workflow failed, it returns that error. Convert the value to the workflow's declared return type with `cloneWithType` when you need a typed result:
+The id is the correlation key, so the policies say what happens when it is already held:
+
+| Parameter | Value | Behaviour |
+|---|---|---|
+| `ifRunning` | `FAIL` (default) | Refuse with `InstanceAlreadyExistsError`; its detail carries the holder's `status` |
+| `ifRunning` | `USE_EXISTING` | Return the id of the instance already running; the new input is not delivered. A retried request joins the instance it already started — the idempotent submit |
+| `ifClosed` | `ALLOW_DUPLICATE` (default) | Start a new run under the id, whatever the old outcome |
+| `ifClosed` | `ALLOW_DUPLICATE_FAILED_ONLY` | Start a new run only after a failed, cancelled, terminated or timed-out one |
+| `ifClosed` | `REJECT_DUPLICATE` | Refuse while the engine still retains the closed instance — not forever: retention is a namespace setting (days by default), so a business key can be started again once its old instance has aged out |
 
 ```ballerina
-anydata raw = check workflow:getWorkflowResult(workflowId);
-OrderResult result = check raw.cloneWithType(OrderResult);
-```
-
-To inspect a workflow's current state *without* waiting for completion, use `getWorkflowInfo()` from the `ballerina/workflow.management` module:
-
-```ballerina
-import ballerina/workflow.management;
-
-management:WorkflowExecutionInfo info = check management:getWorkflowInfo(workflowId);
-if info.status == "RUNNING" {
-    io:println("Workflow is still running");
+string|error id = workflow:runWithId(processOrder, order.orderId, order,
+        ifRunning = workflow:USE_EXISTING, ifClosed = workflow:REJECT_DUPLICATE);
+if id is workflow:InstanceAlreadyExistsError {
+    // id.detail().status is COMPLETED, FAILED, …: this order was already processed
 }
 ```
 
-`WorkflowExecutionInfo` includes the workflow ID, workflow type, status, result, error message, and recorded activity invocations.
+An id must not be blank, longer than 255 bytes in UTF-8, or start with a prefix the runtime keeps
+for its own child instances (`humantask-`, `reviewactivity-`, `childwf-`, `childagent-`); a
+literal that breaks a rule is a compile error (`WORKFLOW_166`). `DurableAgent.runWithId` takes
+the same policies. The management API's `startInstance` adds `TERMINATE_EXISTING`, which
+terminates the running holder and starts afresh — an administrative action, so it is not offered
+here.
+
+## Get Workflow Results
+
+Three reads cover a running instance, and they answer the same way for a workflow and for a
+durable agent:
+
+| Read | Waits? | While the instance runs |
+|---|---|---|
+| `workflow:getResult(id)` | no | returns `WorkflowInProgressError` |
+| `workflow:waitForResult(id, timeout = ())` | yes, crash-resumable | returns the result; with a `timeout`, `WorkflowInProgressError` when the bound passes first |
+| `workflow:getStatus(id)` | no | returns `RUNNING` or `SUSPENDED` |
+
+All three answer `InstanceFailedError` for an instance that closed without a result (its
+detail says whether it `FAILED`, was `CANCELED` or `TERMINATED`, or `TIMED_OUT`, and its message
+carries the instance's own error), and `InstanceNotFoundError` for an id nothing holds. The result
+reads are typed: the expected type is inferred from the assignment.
+
+A service that reports on an instance needs one call and no management import:
+
+```ballerina
+resource function get orders/[string id]() returns json|error {
+    OrderResult|error result = workflow:getResult(id);
+    if result is workflow:WorkflowInProgressError {
+        return {id, status: "IN_PROGRESS"};
+    }
+    if result is workflow:InstanceFailedError {
+        return {id, status: result.detail().status, reason: result.message()};
+    }
+    return {id, status: "DONE", result: check result};
+}
+```
+
+Writing `check workflow:getResult(id)` in a resource or remote function turns a running instance
+into a failure of the request; the compiler warns about it (`WORKFLOW_169`). To block for a
+bounded time instead, use `waitForResult(id, timeout = {seconds: 5})`. Inside a workflow these are not
+available — read a child with `ctx->getChildWorkflowResult` or `ctx->waitForChildWorkflow`
+(`WORKFLOW_167`).
+
+`getWorkflowResult(id, timeoutSeconds)` remains as a deprecated alias of a bounded `waitForResult`
+returning `anydata`. The `ballerina/workflow.management` module's `getWorkflowInfo()` still gives
+the richer view — recorded activity invocations, the error message, a specific run.
 
 ## Unsupported Language Features
 

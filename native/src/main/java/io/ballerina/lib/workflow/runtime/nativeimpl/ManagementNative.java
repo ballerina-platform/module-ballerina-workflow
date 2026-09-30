@@ -26,12 +26,14 @@ import io.ballerina.lib.workflow.ModuleUtils;
 import io.ballerina.lib.workflow.TaskKeys;
 import io.ballerina.lib.workflow.context.TaskRecord;
 import io.ballerina.lib.workflow.context.WorkflowContextNative;
-import io.ballerina.lib.workflow.observability.TraceContextPropagator;
-import io.ballerina.lib.workflow.observability.WorkerSpans;
 import io.ballerina.lib.workflow.observability.WorkflowMetrics;
 import io.ballerina.lib.workflow.observability.WorkflowSampleLog;
+import io.ballerina.lib.workflow.runtime.InstanceAlreadyExistsException;
+import io.ballerina.lib.workflow.runtime.InvalidStartOptionsException;
+import io.ballerina.lib.workflow.runtime.StartOptions;
+import io.ballerina.lib.workflow.runtime.StartedInstance;
+import io.ballerina.lib.workflow.runtime.UnknownProcessException;
 import io.ballerina.lib.workflow.runtime.WorkflowRuntime;
-import io.ballerina.lib.workflow.utils.CorrelationExtractor;
 import io.ballerina.lib.workflow.utils.EventExtractor;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
@@ -71,14 +73,12 @@ import io.temporal.api.workflowservice.v1.GetWorkflowExecutionHistoryReverseResp
 import io.temporal.api.workflowservice.v1.ResetWorkflowExecutionRequest;
 import io.temporal.api.workflowservice.v1.ResetWorkflowExecutionResponse;
 import io.temporal.client.WorkflowClient;
-import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import io.temporal.common.converter.DataConverter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -119,12 +119,32 @@ public final class ManagementNative {
 
     private static final String RESERVED_EVENT_NAME_ERROR = "Failed to send data: reserved event name: ";
 
+    private static final String CONFLICT_ERROR = "ConflictError";
+    private static final String INVALID_REQUEST_ERROR = "InvalidRequestError";
+    private static final String INVALID_PAYLOAD_ERROR = "InvalidPayloadError";
+    private static final String NOT_FOUND_ERROR = "NotFoundError";
+    private static final Type JSON_MAP_TYPE = TypeCreator.createMapType(PredefinedTypes.TYPE_JSON);
     private static final String DISPLAY_NAME_KEY = "displayName";
     private static final BString DISPLAY_NAME_FIELD = StringUtils.fromString(DISPLAY_NAME_KEY);
     private static final BString ICON_FIELD = StringUtils.fromString("icon");
 
     private ManagementNative() {
         // Utility class — prevent instantiation
+    }
+
+    // A task's input as the `map<json>` its record declares: the generic conversion yields a
+    // `map<anydata>`, whose inherent type fails a typed read even when every member is JSON.
+    private static Object jsonMapOf(Object javaValue) {
+        if (javaValue == null) {
+            return null;
+        }
+        Object converted = TypesUtil.cloneWithType(TypesUtil.convertJavaToBallerinaType(javaValue), JSON_MAP_TYPE);
+        if (converted instanceof BError error) {
+            LOGGER.debug("A task input could not be read as map<json> and is reported as absent: {}",
+                    error.getMessage());
+            return null;
+        }
+        return converted;
     }
 
     /**
@@ -693,8 +713,7 @@ public final class ManagementNative {
 
             putTaskBase(record, TaskRecord.HUMAN_TASK, dc, memoFields);
 
-            Object bTaskInput = taskInputRaw != null ? TypesUtil.convertJavaToBallerinaType(taskInputRaw) : null;
-            record.put(StringUtils.fromString(TaskKeys.TASK_INPUT), bTaskInput);
+            record.put(StringUtils.fromString(TaskKeys.TASK_INPUT), jsonMapOf(taskInputRaw));
             record.put(StringUtils.fromString(TaskKeys.CREATED_AT), StringUtils.fromString(createdAt));
             record.put(StringUtils.fromString(TaskKeys.FORM_SCHEMA),
                        formSchema != null ? StringUtils.fromString(formSchema) : null);
@@ -1466,8 +1485,7 @@ public final class ManagementNative {
 
             record.put(StringUtils.fromString(TaskKeys.ERROR_MESSAGE), StringUtils.fromString(errorMessage));
 
-            Object bArgs = activityArgsRaw != null ? TypesUtil.convertJavaToBallerinaType(activityArgsRaw) : null;
-            record.put(StringUtils.fromString(TaskKeys.TASK_INPUT), bArgs);
+            record.put(StringUtils.fromString(TaskKeys.TASK_INPUT), jsonMapOf(activityArgsRaw));
             record.put(StringUtils.fromString(TaskKeys.CREATED_AT), StringUtils.fromString(createdAt));
 
             // The decision lives in history, in the signal sent before the review closes; it is
@@ -1717,84 +1735,66 @@ public final class ManagementNative {
     }
 
     /**
-     * Starts a new workflow instance by its registered type name. Returns a {@code WorkflowHandle} record with
-     * {@code workflowId} and {@code runId}.
+     * Starts a workflow or durable agent by its registered type name, through the runtime's one start path.
+     * Returns a {@code WorkflowHandle} with {@code workflowId}, {@code runId} and whether this call created the
+     * run. A held id the policies refuse is a {@code ConflictError}; an unacceptable id or policy an
+     * {@code InvalidRequestError}.
      *
      * @param workflowType    registered workflow type (function name)
      * @param input           workflow input (Ballerina value, may be null)
      * @param workflowIdParam optional explicit workflow ID (BString or nil)
      * @param timeoutSeconds  optional timeout in seconds (Long or nil)
      * @param startedBy       optional starter user ID stored in workflow memo
-     * @return a Ballerina {@code WorkflowHandle} record or an error
+     * @param ifRunning       policy name when the id is held by a running instance
+     * @param ifClosed        policy name when the id is held by a closed instance
+     * @return a Ballerina {@code WorkflowHandle} record or a management error
      */
     public static Object startWorkflowByType(BString workflowType, Object input, Object workflowIdParam,
-                                             Object timeoutSeconds, Object startedBy) {
+                                             Object timeoutSeconds, Object startedBy, BString ifRunning,
+                                             BString ifClosed) {
+        String type = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + workflowType.getValue();
+        Object javaInput;
+        if (WorkflowWorkerNative.isAgentWorkflowType(type)) {
+            // Starting a durable agent goes through the same endpoint as a workflow: the posted input
+            // is mapped onto the agent's declared inputType and wrapped in the runner envelope.
+            Object envelope = DurableAgentNative.buildStartRunInput(workflowType.getValue(), input);
+            if (envelope instanceof BError inputError) {
+                return managementError(INVALID_PAYLOAD_ERROR, inputError.getMessage());
+            }
+            javaInput = envelope;
+        } else {
+            javaInput = input != null ? TypesUtil.convertBallerinaToJavaType(input) : null;
+        }
+        StartOptions options = new StartOptions(
+                workflowIdParam instanceof BString id ? id.getValue() : null,
+                ifRunning.getValue(), ifClosed.getValue(),
+                timeoutSeconds instanceof Long secs ? secs : null,
+                startedBy instanceof BString starter ? starter.getValue() : null);
         try {
-            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
-            if (client == null) {
-                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
-            }
-            String taskQueue = WorkflowWorkerNative.getTaskQueue();
-            if (taskQueue == null) {
-                return ErrorCreator.createError(StringUtils.fromString("Task queue not configured"));
-            }
-            String type = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + workflowType.getValue();
-            String wfId =
-                    workflowIdParam instanceof BString bs ? bs.getValue() : CorrelationExtractor.generateWorkflowId();
-
-            WorkflowOptions.Builder optBuilder = WorkflowOptions.newBuilder().setWorkflowId(wfId).setTaskQueue(
-                    taskQueue);
-            if (timeoutSeconds instanceof Long secs) {
-                optBuilder.setWorkflowExecutionTimeout(Duration.ofSeconds(secs));
-            }
-            // Every instance says what it is, in its memo: consumers route to the right UI by
-            // asking the instance, never by parsing its id — the prefixes stay for human eyes only.
-            String kind = WorkflowWorkerNative.isAgentWorkflowType(type) ? "AGENT" : "WORKFLOW";
-            Map<String, Object> memo = new HashMap<>();
-            memo.put(TaskKeys.KIND, kind);
-            if (startedBy instanceof BString starter && !starter.getValue().isBlank()) {
-                memo.put("startedBy", starter.getValue());
-            }
-            optBuilder.setMemo(memo);
-            String displayName = DisplayNames.workflowLabel(type);
-            if (displayName != null) {
-                optBuilder.setStaticSummary(displayName);
-            }
-            if (WorkflowWorkerNative.isKindSearchAttributeReady()) {
-                // The indexed copy, so visibility queries can filter by kind. Only when the
-                // cluster confirmed the attribute — an unknown attribute fails the start.
-                optBuilder.setTypedSearchAttributes(io.temporal.common.SearchAttributes.newBuilder()
-                        .set(WorkflowWorkerNative.WORKFLOW_KIND_KEY, kind).build());
-            }
-
-            WorkflowStub stub = client.newUntypedWorkflowStub(type, optBuilder.build());
-            Object javaInput;
-            if (WorkflowWorkerNative.isAgentWorkflowType(type)) {
-                // Starting a durable agent goes through the same endpoint as a workflow: the
-                // posted input is mapped onto the agent's declared inputType and wrapped in
-                // the runner envelope the shared runner workflow expects.
-                Object envelope = DurableAgentNative.buildStartRunInput(workflowType.getValue(), input);
-                if (envelope instanceof BError inputError) {
-                    return inputError;
-                }
-                javaInput = envelope;
-            } else {
-                javaInput = input != null ? TypesUtil.convertBallerinaToJavaType(input) : null;
-            }
-            // The started event is counted at the worker's first execution, where every
-            // start path converges.
-            Object startInput = javaInput;
-            WorkflowExecution execution = TraceContextPropagator.runWith(WorkerSpans.instanceContext(wfId),
-                                                                        () -> stub.start(startInput));
-
+            StartedInstance started = WorkflowRuntime.getInstance().createInstance(type, javaInput, options);
             BMap<BString, Object> handle = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                           "WorkflowHandle");
-            handle.put(StringUtils.fromString("workflowId"), StringUtils.fromString(execution.getWorkflowId()));
-            handle.put(StringUtils.fromString("runId"), StringUtils.fromString(execution.getRunId()));
+            handle.put(StringUtils.fromString("workflowId"), StringUtils.fromString(started.workflowId()));
+            handle.put(StringUtils.fromString("runId"), StringUtils.fromString(started.runId()));
+            handle.put(StringUtils.fromString("started"), started.started());
             return handle;
+        } catch (UnknownProcessException e) {
+            return managementError(NOT_FOUND_ERROR, "No workflow or durable agent is registered as '"
+                    + workflowType.getValue() + "'");
+        } catch (InstanceAlreadyExistsException e) {
+            return managementError(CONFLICT_ERROR, e.getMessage());
+        } catch (InvalidStartOptionsException e) {
+            return managementError(INVALID_REQUEST_ERROR, e.getMessage());
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString("Failed to start workflow: " + e.getMessage()));
         }
+    }
+
+    // A typed management error, so the command and REST layers classify it without reading its text.
+    // No fallback: a type this cannot build is a bug that must fail loudly, not a quiet 500.
+    private static BError managementError(String typeName, String message) {
+        return ErrorCreator.createError(ModuleUtils.getManagementModule(), typeName,
+                StringUtils.fromString(message), null, null);
     }
 
     /**
@@ -1914,7 +1914,7 @@ public final class ManagementNative {
                 for (WorkflowExecutionInfo wfInfo : visPage.executions()) {
                     if (hasStartedByFilter) {
                         String startedByMemo = decodeMemoString(client.getOptions().getDataConverter(),
-                                                                wfInfo.getMemo().getFieldsMap(), "startedBy", null);
+                                wfInfo.getMemo().getFieldsMap(), WorkflowRuntime.STARTED_BY_MEMO, null);
                         if (!startedByValue.equals(startedByMemo)) {
                             continue;
                         }

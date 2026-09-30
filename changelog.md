@@ -8,6 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `workflow:runWithId` and `DurableAgent.runWithId` start an instance under an id the caller
+  chooses — a business key that doubles as the correlation key — with `ifRunning` (`FAIL`, the
+  default, or `USE_EXISTING`, the idempotent submit) and `ifClosed` (`ALLOW_DUPLICATE`, the
+  default, `ALLOW_DUPLICATE_FAILED_ONLY`, `REJECT_DUPLICATE`). A held id the policies refuse is
+  an `InstanceAlreadyExistsError` carrying the holder's status; a blank, over-long or
+  reserved-prefix id is refused at compile time for a literal (`WORKFLOW_166`) and at start
+  otherwise.
+- `management:startInstance(workflowType, input, *StartOptions)` replaces `startWorkflowByType`
+  (kept, deprecated) and adds the same policies, plus `TERMINATE_EXISTING` for `ifRunning`.
+  `instances.start` and `POST /workflows` take `ifRunning` and `ifClosed`; a refused id is a
+  `ConflictError` (409) instead of an execution error (500), a bad id or policy a 400, and a
+  start that joined a running instance answers 200 with `started: false` rather than 201.
+  Every start — `run`, `runWithId`, an agent's, the management API's — now goes through one
+  runtime path.
 - `workflow:getResult(id)`, `waitForResult(id, timeout = ())` and `getStatus(id)`: a non-blocking
   typed read, a crash-resumable wait with an optional bound, and a status read, so a service
   reports on an instance with one call and no management import. Durable agents gain

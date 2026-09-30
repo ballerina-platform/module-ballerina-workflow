@@ -21,6 +21,9 @@ package io.ballerina.lib.workflow.runtime.nativeimpl;
 import io.ballerina.lib.workflow.ModuleUtils;
 import io.ballerina.lib.workflow.TaskKeys;
 import io.ballerina.lib.workflow.context.TaskRecord;
+import io.ballerina.lib.workflow.runtime.InstanceAlreadyExistsException;
+import io.ballerina.lib.workflow.runtime.StartOptions;
+import io.ballerina.lib.workflow.runtime.StartedInstance;
 import io.ballerina.lib.workflow.runtime.WorkflowRuntime;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
@@ -86,6 +89,8 @@ public final class WorkflowNative {
 
     // Error message prefixes
     private static final String ERR_START_PROCESS = "Failed to start process: ";
+    private static final String INSTANCE_ALREADY_EXISTS_ERROR = "InstanceAlreadyExistsError";
+    private static final String INSTANCE_ALREADY_EXISTS_DETAIL = "InstanceAlreadyExistsDetail";
     private static final String ERR_SEND_DATA = "Failed to send data: ";
     private static final String ERR_GET_RESULT = "Failed to get workflow result: ";
     private static final String ERR_GET_INFO = "Failed to get workflow info: ";
@@ -180,23 +185,74 @@ public final class WorkflowNative {
             return runAsImplicitActivity(processName, javaInput);
         }
 
-        // Outside workflow - use the normal async path
+        // Outside a workflow: the one start path, under a generated id
         final Object finalInput = javaInput;
-        return env.yieldAndRun(() -> {
-            CompletableFuture<Object> balFuture = new CompletableFuture<>();
+        return env.yieldAndRun(() -> startWithOptions(processName, finalInput, StartOptions.generated(),
+                ERR_START_PROCESS));
+    }
 
-            WorkflowRuntime.getInstance().getExecutor().execute(() -> {
-                try {
-                    String workflowId = WorkflowRuntime.getInstance().createInstance(processName, finalInput);
-                    balFuture.complete(StringUtils.fromString(workflowId));
-                } catch (Exception e) {
-                    balFuture.complete(
-                            ErrorCreator.createError(StringUtils.fromString(ERR_START_PROCESS + e.getMessage())));
-                }
-            });
+    /**
+     * Native implementation of {@code workflow:runWithId}: a start under the caller's id, with the caller's
+     * policies for an id that is already taken. A client verb — inside a workflow it is refused.
+     *
+     * @param env             the Ballerina runtime environment
+     * @param processFunction the workflow function
+     * @param instanceId      the caller-chosen instance id
+     * @param input           the optional input
+     * @param ifRunning       policy name when the id is held by a running instance
+     * @param ifClosed        policy name when the id is held by a closed instance
+     * @return the instance id, an {@code InstanceAlreadyExistsError}, or an error
+     */
+    public static Object runWithId(Environment env, BFunctionPointer processFunction, BString instanceId,
+                                   Object input, BString ifRunning, BString ifClosed) {
+        String processName = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + processFunction.getType().getName();
+        Object javaInput = input != null ? TypesUtil.convertBallerinaToJavaType(input) : null;
+        if (isInsideWorkflow()) {
+            return ErrorCreator.createError(StringUtils.fromString(ERR_START_PROCESS
+                    + "runWithId cannot be called inside a workflow; start a child with ctx->runChildWorkflow"));
+        }
+        StartOptions options = new StartOptions(instanceId.getValue(), ifRunning.getValue(), ifClosed.getValue(),
+                null, null);
+        return env.yieldAndRun(() -> startWithOptions(processName, javaInput, options, ERR_START_PROCESS));
+    }
 
-            return getResult(balFuture);
+    /**
+     * Runs a start on the runtime executor and maps its outcome to Ballerina: the id on success, the typed
+     * already-exists error when the policy refused, a plain error otherwise.
+     */
+    static Object startWithOptions(String processName, Object javaInput, StartOptions options, String errorPrefix) {
+        CompletableFuture<Object> balFuture = new CompletableFuture<>();
+        WorkflowRuntime.getInstance().getExecutor().execute(() -> {
+            try {
+                StartedInstance started = WorkflowRuntime.getInstance().createInstance(processName, javaInput, options);
+                balFuture.complete(StringUtils.fromString(started.workflowId()));
+            } catch (InstanceAlreadyExistsException e) {
+                balFuture.complete(createInstanceAlreadyExistsError(e));
+            } catch (Exception e) {
+                balFuture.complete(ErrorCreator.createError(StringUtils.fromString(errorPrefix + e.getMessage())));
+            }
         });
+        return getResult(balFuture);
+    }
+
+    /**
+     * Builds a {@code workflow:InstanceAlreadyExistsError} carrying the holder's id and status.
+     *
+     * @param e the refusal
+     * @return the Ballerina error
+     */
+    public static BError createInstanceAlreadyExistsError(InstanceAlreadyExistsException e) {
+        BMap<BString, Object> detail = ValueCreator.createRecordValue(ModuleUtils.getModule(),
+                INSTANCE_ALREADY_EXISTS_DETAIL);
+        detail.put(StringUtils.fromString("instanceId"), StringUtils.fromString(e.instanceId()));
+        detail.put(StringUtils.fromString("status"), StringUtils.fromString(e.status()));
+        try {
+            return ErrorCreator.createError(ModuleUtils.getModule(), INSTANCE_ALREADY_EXISTS_ERROR,
+                    StringUtils.fromString(e.getMessage()), null, detail);
+        } catch (Exception ex) {
+            return ErrorCreator.createError(StringUtils.fromString(INSTANCE_ALREADY_EXISTS_ERROR + ": "
+                    + e.getMessage()), detail);
+        }
     }
 
     /**
@@ -834,13 +890,13 @@ public final class WorkflowNative {
     }
 
     private static String kindFromIdPrefix(String workflowId) {
-        if (workflowId.startsWith("humantask-")) {
+        if (workflowId.startsWith(WorkflowWorkerNative.HUMANTASK_TYPE_PREFIX)) {
             return "HUMAN_TASK";
         }
-        if (workflowId.startsWith("reviewactivity-")) {
+        if (workflowId.startsWith(WorkflowWorkerNative.REVIEW_ACTIVITY_TYPE_PREFIX)) {
             return "REVIEW_ACTIVITY";
         }
-        if (workflowId.startsWith("childwf-")) {
+        if (workflowId.startsWith(WorkflowWorkerNative.CHILD_WORKFLOW_ID_PREFIX)) {
             return "CHILD_WORKFLOW";
         }
         return "WORKFLOW";

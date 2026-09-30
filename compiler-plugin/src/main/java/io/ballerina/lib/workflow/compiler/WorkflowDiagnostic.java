@@ -150,12 +150,12 @@ public enum WorkflowDiagnostic {
             "The first argument of 'workflow:%s' must be a function with the @Workflow annotation",
             DiagnosticSeverity.ERROR),
     WORKFLOW_131("WORKFLOW_131",
-            "Input type mismatch in 'workflow:run': workflow function '%s' expects input of type "
+            "Input type mismatch in 'workflow:%s': workflow function '%s' expects input of type "
                     + "'%s', but found '%s'",
             DiagnosticSeverity.ERROR),
     WORKFLOW_132("WORKFLOW_132",
             "Workflow function '%s' does not declare an input parameter, but an input argument "
-                    + "was provided to 'workflow:run'",
+                    + "was provided to 'workflow:%s'",
             DiagnosticSeverity.ERROR),
     WORKFLOW_133("WORKFLOW_133",
             "Workflow function '%s' does not declare an events record parameter, so "
@@ -274,7 +274,11 @@ public enum WorkflowDiagnostic {
     WORKFLOW_164("WORKFLOW_164",
             "A review definition must name who may decide it: give 'userRoles', 'users', or both",
             DiagnosticSeverity.ERROR),
-    // 167-169: 165 and 166 are taken by the display-name and instance-id changes.
+    // 165 went to the display-name change; 166 and 170 to instance ids, 167-169 to result reads.
+    WORKFLOW_166("WORKFLOW_166",
+            "The instance id given to '%s' is not acceptable: %s. An instance id is the correlation key "
+                    + "a caller looks the instance up by, so the runtime would refuse this start",
+            DiagnosticSeverity.ERROR),
     WORKFLOW_167("WORKFLOW_167",
             "'workflow:%s' cannot be called inside a workflow function: it reads the engine from outside, "
                     + "which is not deterministic. Use '%s' for a child of this workflow",
@@ -287,7 +291,11 @@ public enum WorkflowDiagnostic {
             "'check' on '%s' turns a still-running instance into a failure of this %s: the read answers "
                     + "'WorkflowInProgressError' while the instance runs. Test for it and report progress "
                     + "instead, or wait with 'waitForResult'",
-            DiagnosticSeverity.WARNING);
+            DiagnosticSeverity.WARNING),
+    WORKFLOW_170("WORKFLOW_170",
+            "'%s.runWithId' cannot be called inside a workflow function: a child agent's id is the "
+                    + "parent's to issue. Use 'run', which starts the agent as a child of this workflow",
+            DiagnosticSeverity.ERROR);
 
     private final String code;
     private final String message;

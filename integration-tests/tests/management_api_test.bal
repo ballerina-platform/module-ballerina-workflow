@@ -159,8 +159,10 @@ function testGetExecutionGraph() returns error? {
     test:assertTrue(graph.nodes.length() > 0, "Execution graph should have at least one node");
     management:GraphNode[] activities = graph.nodes.filter(n => n.'type == "ACTIVITY");
     test:assertEquals(activities.length(), 1);
-    test:assertEquals(activities[0].label, "Info test activity",
-        "A graph node is labelled with the activity's display name when it has one");
+    test:assertEquals(activities[0].label, "infoTestActivity",
+        "A graph node's label stays the activity's own name, which consumers match on");
+    test:assertEquals(activities[0].displayName, "Info test activity",
+        "The activity's display name travels beside the label");
 }
 
 @test:Config {

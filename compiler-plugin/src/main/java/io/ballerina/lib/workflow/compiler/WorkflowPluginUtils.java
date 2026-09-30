@@ -18,6 +18,8 @@
 package io.ballerina.lib.workflow.compiler;
 
 import io.ballerina.compiler.api.SemanticModel;
+import io.ballerina.compiler.api.symbols.Annotatable;
+import io.ballerina.compiler.api.symbols.AnnotationAttachmentSymbol;
 import io.ballerina.compiler.api.symbols.AnnotationSymbol;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.ModuleSymbol;
@@ -33,6 +35,7 @@ import io.ballerina.compiler.api.symbols.TypeDescKind;
 import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.api.symbols.VariableSymbol;
+import io.ballerina.compiler.api.values.ConstantValue;
 import io.ballerina.compiler.syntax.tree.AnnotationNode;
 import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
@@ -45,6 +48,7 @@ import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.tools.diagnostics.Location;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -74,6 +78,99 @@ public final class WorkflowPluginUtils {
         }
         String orgName = moduleSymbol.id().orgName();
         return WorkflowConstants.PACKAGE_ORG.equals(orgName);
+    }
+
+    /** The module that defines the language's {@code @display} annotation. */
+    private static final String LANG_ANNOTATIONS_MODULE = "lang.annotations";
+    private static final String DISPLAY_ANNOTATION = "display";
+    private static final String DISPLAY_LABEL_FIELD = "label";
+    private static final String DISPLAY_ICON_FIELD = "iconPath";
+
+    /**
+     * What a {@code @display} annotation says about a declaration: its human-readable label and
+     * an optional icon. Neither is an identity — a rename here changes nothing the engine keys on.
+     *
+     * @param label    the label, or {@code null} when the annotation is absent or has none
+     * @param iconPath the icon path, or {@code null}
+     */
+    public record DisplayInfo(String label, String iconPath) {
+        public static final DisplayInfo NONE = new DisplayInfo(null, null);
+    }
+
+    /**
+     * Reads the language's {@code @display} annotation from a function or variable symbol. The
+     * annotation is source-only, so its value is a compile-time constant the semantic model
+     * already holds; blank labels are reported as absent.
+     *
+     * @param symbol the annotated symbol
+     * @return the display info, never {@code null}
+     */
+    public static DisplayInfo displayOf(Symbol symbol) {
+        Map<String, Object> fields = displayFieldsOf(symbol);
+        if (fields == null) {
+            return DisplayInfo.NONE;
+        }
+        String label = blankToNull(fields.get(DISPLAY_LABEL_FIELD));
+        String icon = blankToNull(fields.get(DISPLAY_ICON_FIELD));
+        return label == null && icon == null ? DisplayInfo.NONE : new DisplayInfo(label, icon);
+    }
+
+    // The @display annotation's constant fields on a symbol, or null when it carries none
+    private static Map<String, Object> displayFieldsOf(Symbol symbol) {
+        if (!(symbol instanceof Annotatable annotatable)) {
+            return null;
+        }
+        for (AnnotationAttachmentSymbol attachment : annotatable.annotAttachments()) {
+            if (isDisplayAnnotation(attachment.typeDescriptor())) {
+                return constantMappingOf(attachment.attachmentValue().map(ConstantValue::value).orElse(null));
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Whether the declaration carries a {@code @display} whose {@code label} evaluates to a blank string —
+     * judged from the constant value, so {@code "\t"} and a reference to a blank constant both count.
+     *
+     * @param symbol the annotated symbol
+     * @return true when a label is given and blank
+     */
+    public static boolean hasBlankDisplayLabel(Symbol symbol) {
+        Map<String, Object> fields = displayFieldsOf(symbol);
+        return fields != null && fields.containsKey(DISPLAY_LABEL_FIELD)
+                && blankToNull(fields.get(DISPLAY_LABEL_FIELD)) == null;
+    }
+
+    /**
+     * Whether the annotation is the language's {@code @display}.
+     *
+     * @param annotation the annotation symbol
+     * @return true for {@code ballerina/lang.annotations:display}
+     */
+    public static boolean isDisplayAnnotation(AnnotationSymbol annotation) {
+        if (!annotation.getName().map(DISPLAY_ANNOTATION::equals).orElse(false)) {
+            return false;
+        }
+        Optional<ModuleSymbol> module = annotation.getModule();
+        return module.isPresent() && WorkflowConstants.PACKAGE_ORG.equals(module.get().id().orgName())
+                && LANG_ANNOTATIONS_MODULE.equals(module.get().id().moduleName());
+    }
+
+    // A constant mapping value's fields, with nested ConstantValue wrappers unwrapped.
+    private static Map<String, Object> constantMappingOf(Object value) {
+        Map<String, Object> fields = new java.util.HashMap<>();
+        if (value instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                Object fieldValue = entry.getValue() instanceof ConstantValue constant ? constant.value()
+                        : entry.getValue();
+                fields.put(String.valueOf(entry.getKey()), fieldValue);
+            }
+        }
+        return fields;
+    }
+
+    private static String blankToNull(Object value) {
+        return value instanceof String text && !text.isBlank() ? text : null;
     }
 
     /**

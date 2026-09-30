@@ -80,6 +80,9 @@ import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.CAR
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.CARDINALITY_SINGLE;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.DIRECTION;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.DIRECTION_IN;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.DISPLAY_NAME;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.ICON;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.TITLE;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.EVENTS;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.FUNCTION;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.GRAPH;
@@ -279,6 +282,7 @@ public final class WorkflowDescriptorBuilder {
         Map<String, Object> entry = new LinkedHashMap<>();
         entry.put(NAME, name);
         entry.put(KIND, KIND_WORKFLOW);
+        putDisplay(entry, WorkflowPluginUtils.displayOf(fnSymbol));
         entry.put(FUNCTION, functionRef(moduleQName, major, name));
 
         List<ParameterSymbol> inputParams = new ArrayList<>();
@@ -304,7 +308,8 @@ public final class WorkflowDescriptorBuilder {
         WorkflowBodyCollector collector = new WorkflowBodyCollector(semanticModel);
         fnDef.functionBody().accept(collector);
         entry.put(ACTIVITIES, new ArrayList<>(collector.activities.values()));
-        entry.put(HUMAN_TASKS, buildHumanTasks(collector.humanTaskResults, collector.conflictingHumanTasks));
+        entry.put(HUMAN_TASKS, buildHumanTasks(collector.humanTaskResults, collector.conflictingHumanTasks,
+                collector.humanTaskTitles));
         entry.put(REVIEW_ACTIVITIES, buildReviewActivities(collector.reviewedActivities));
         // The activity list says *what* the workflow calls; the graph says where, in what order,
         // and under which branch — the identity an execution's history is joined back to.
@@ -349,11 +354,15 @@ public final class WorkflowDescriptorBuilder {
     }
 
     private static List<Object> buildHumanTasks(Map<String, TypeSymbol> humanTaskResults,
-                                                Set<String> conflicting) {
+                                                Set<String> conflicting, Map<String, String> titles) {
         List<Object> tasks = new ArrayList<>();
         for (Map.Entry<String, TypeSymbol> entry : humanTaskResults.entrySet()) {
             Map<String, Object> task = new LinkedHashMap<>();
             task.put(NAME, entry.getKey());
+            String title = titles.get(entry.getKey());
+            if (title != null) {
+                task.put(TITLE, title);
+            }
             TypeSymbol resultType = conflicting.contains(entry.getKey()) ? null : entry.getValue();
             task.put(RESULT, DescriptorSchemaGen.slot(resultType));
             tasks.add(task);
@@ -390,6 +399,8 @@ public final class WorkflowDescriptorBuilder {
         private final SemanticModel semanticModel;
         final Map<String, Map<String, Object>> activities = new TreeMap<>();
         final Map<String, TypeSymbol> humanTaskResults = new TreeMap<>();
+        // The constant title of each task, by name — its display name; first call site wins.
+        final Map<String, String> humanTaskTitles = new TreeMap<>();
         // Task names whose call sites declared different result types. Kept apart from
         // humanTaskResults so a later call site cannot resurrect one of the conflicting
         // types: the schema stays unknown, which is the only honest answer.
@@ -518,6 +529,11 @@ public final class WorkflowDescriptorBuilder {
             if (taskName == null || taskName.contains(".") || taskName.contains("|")) {
                 return; // non-constant / invalid names are diagnosed by the process analysis task
             }
+            String title = constantNamedArgOf(remoteCall.arguments(), WorkflowConstants.ARG_TITLE,
+                    WorkflowConstants.HUMAN_TASK_DEFINITION_POSITION);
+            if (title != null) {
+                humanTaskTitles.putIfAbsent(taskName, title);
+            }
             TypeSymbol resultType = declaredResultType(remoteCall);
             if (conflictingHumanTasks.contains(taskName)) {
                 // Already known to disagree; a further call site cannot settle it.
@@ -581,6 +597,7 @@ public final class WorkflowDescriptorBuilder {
         private Map<String, Object> buildActivityEntry(String name, FunctionSymbol fnSymbol) {
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put(NAME, name);
+            putDisplay(entry, WorkflowPluginUtils.displayOf(fnSymbol));
             Optional<ModuleSymbol> moduleSymbol = fnSymbol.getModule();
             if (moduleSymbol.isPresent()) {
                 String moduleQName = moduleSymbol.get().id().orgName() + "/"
@@ -638,6 +655,8 @@ public final class WorkflowDescriptorBuilder {
 
         Map<String, Object> agent = new LinkedHashMap<>();
         agent.put(NAME, agentName);
+        WorkflowPluginUtils.DisplayInfo display = WorkflowPluginUtils.displayOf(varSymbol);
+        putDisplay(agent, display);
 
         Map<String, Object> inputSlot = defaultStringSlot();
         Map<String, Object> resultSlot = defaultNilSlot();
@@ -681,7 +700,7 @@ public final class WorkflowDescriptorBuilder {
         agent.put(EVENTS, events);
         agent.put(TOOLS, new ArrayList<>(tools.values()));
         agent.put(HUMAN_TASKS, humanTasks);
-        agent.put(GRAPH, AgentGraphBuilder.build(agentName, modelLabel, events,
+        agent.put(GRAPH, AgentGraphBuilder.build(agentName, display.label(), modelLabel, events,
                 new ArrayList<>(tools.values()), humanTasks));
         return agent;
     }
@@ -791,6 +810,7 @@ public final class WorkflowDescriptorBuilder {
             MappingConstructorExpressionNode mapping = namedEntry.config();
             String name = namedEntry.name();
             Map<String, Object> result = null;
+            String title = null;
             for (MappingFieldNode field : mapping.fields()) {
                 if (!(field instanceof SpecificFieldNode specific) || specific.valueExpr().isEmpty()) {
                     continue;
@@ -804,6 +824,8 @@ public final class WorkflowDescriptorBuilder {
                     name = constantStringValue(expr);
                 } else if (WorkflowConstants.AGENT_CONFIG_RESULT_TYPE.equals(fieldName)) {
                     result = typedescSlot(semanticModel, expr, null);
+                } else if (WorkflowConstants.ARG_TITLE.equals(fieldName)) {
+                    title = blankToNull(constantStringValue(expr));
                 }
             }
             if (name == null) {
@@ -811,6 +833,9 @@ public final class WorkflowDescriptorBuilder {
             }
             Map<String, Object> task = new LinkedHashMap<>();
             task.put(NAME, name);
+            if (title != null) {
+                task.put(TITLE, title);
+            }
             task.put(RESULT, result != null ? result : anydataSlot());
             tasks.put(name, task);
         }
@@ -879,6 +904,7 @@ public final class WorkflowDescriptorBuilder {
             }
             Map<String, Object> tool = new LinkedHashMap<>();
             tool.put(NAME, name);
+            putDisplay(tool, WorkflowPluginUtils.displayOf(fnSymbol));
             tool.put(SOURCE, SOURCE_ACTIVITY);
             tool.put(INPUT, DescriptorSchemaGen.parameterSlot(params));
             tools.put(name, tool);
@@ -1069,6 +1095,51 @@ public final class WorkflowDescriptorBuilder {
     private static String majorVersion(String version) {
         int dot = version.indexOf('.');
         return dot < 0 ? version : version.substring(0, dot);
+    }
+
+    /** Adds the display fields a {@code @display} annotation supplied, if any. */
+    static void putDisplay(Map<String, Object> entry, WorkflowPluginUtils.DisplayInfo display) {
+        if (display.label() != null) {
+            entry.put(DISPLAY_NAME, display.label());
+        }
+        if (display.iconPath() != null) {
+            entry.put(ICON, display.iconPath());
+        }
+    }
+
+    /**
+     * The constant string value of a definition field at a call site: a named argument, or a field of a
+     * positionally passed definition record. {@code null} when absent, blank or not constant.
+     */
+    static String constantNamedArgOf(SeparatedNodeList<FunctionArgumentNode> args, String name,
+                                     int definitionPosition) {
+        for (FunctionArgumentNode arg : args) {
+            if (arg instanceof NamedArgumentNode named && name.equals(named.argumentName().name().text())) {
+                return blankToNull(constantStringValue(named.expression()));
+            }
+        }
+        // Only the definition's own position: the task input before it is data, whatever keys it has.
+        int position = 0;
+        for (FunctionArgumentNode arg : args) {
+            if (!(arg instanceof PositionalArgumentNode positional)) {
+                continue;
+            }
+            if (position++ == definitionPosition
+                    && positional.expression() instanceof MappingConstructorExpressionNode record) {
+                for (MappingFieldNode field : record.fields()) {
+                    if (field instanceof SpecificFieldNode specific && specific.valueExpr().isPresent()
+                            && name.equals(fieldKeyName(specific))) {
+                        return blankToNull(constantStringValue(specific.valueExpr().get()));
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    // A blank title is no title: the runtime drops blank strings, so the descriptor must not carry one.
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     /** A compile-time constant string: a plain literal or a template without interpolations. */

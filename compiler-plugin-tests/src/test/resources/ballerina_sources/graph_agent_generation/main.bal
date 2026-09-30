@@ -24,11 +24,14 @@ isolated function validateClaim(string id) returns boolean|error {
     return id.length() > 0;
 }
 
+@display {label: "Make payment"}
 @workflow:Activity
 function makePayment(string id, decimal amount) returns string|error {
     return id;
 }
 
+// The label on the variable is the agent's display name: the variable name stays its identity.
+@display {label: "Expense agent", iconPath: "icons/agent.svg"}
 final workflow:DurableAgent expenseAgent = check new ({
     systemPrompt: {role: "Expense approval assistant", instructions: "Process expense claims."},
     model: expenseModel,
@@ -39,5 +42,5 @@ final workflow:DurableAgent expenseAgent = check new ({
     // The mapping form on purpose: the descriptor must read the primary declaration
     // style, or the agent map loses its whole inbound column.
     events: {billSubmitted: {request: string}},
-    humanTasks: {approveExpense: {userRoles: "MANAGER", resultType: ApprovalDecision}}
+    humanTasks: {approveExpense: {userRoles: "MANAGER", resultType: ApprovalDecision, title: "Approve expense"}}
 });

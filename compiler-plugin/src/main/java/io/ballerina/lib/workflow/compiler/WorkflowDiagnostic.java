@@ -274,7 +274,11 @@ public enum WorkflowDiagnostic {
     WORKFLOW_164("WORKFLOW_164",
             "A review definition must name who may decide it: give 'userRoles', 'users', or both",
             DiagnosticSeverity.ERROR),
-    // 165 went to the display-name change; 166 and 170 to instance ids, 167-169 to result reads.
+    WORKFLOW_165("WORKFLOW_165",
+            "The display label of '%s' is blank. A '@display' label is what consoles show in place "
+                    + "of the name, so it must say something — give it a label, or drop the annotation",
+            DiagnosticSeverity.ERROR),
+    // 165 is the display-name change; 166 and 170 instance ids; 167-169 result reads.
     WORKFLOW_166("WORKFLOW_166",
             "The instance id given to '%s' is not acceptable: %s. An instance id is the correlation key "
                     + "a caller looks the instance up by, so the runtime would refuse this start",

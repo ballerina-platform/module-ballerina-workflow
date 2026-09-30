@@ -89,6 +89,7 @@ public final class WorkflowConstants {
 
     /** {@code awaitHumanTask(taskName = ...)}. */
     public static final String ARG_TASK_NAME = "taskName";
+    public static final String ARG_TITLE = "title";
     /** {@code callActivity(args = ...)} — the activity's named-argument map. */
     public static final String ARG_ARGS = "args";
     /** The field that tells a {@code HumanReview} from an {@code AutoRetry}, and names a task's deciders. */
@@ -157,6 +158,8 @@ public final class WorkflowConstants {
     public static final String GET_STATUS_FUNCTION = "getStatus";
     public static final String GET_DATA_RESULT_METHOD = "getDataResult";
     public static final String ARG_TIMEOUT = "timeout";
+    // awaitHumanTask(taskName, taskInput, T, stepId, *definition): where a positional definition record sits
+    public static final int HUMAN_TASK_DEFINITION_POSITION = 4;
     public static final String AWAIT_METHOD = "await";
     public static final String RUN_CHILD_WORKFLOW_METHOD = "runChildWorkflow";
     public static final String CALL_WORKFLOW_METHOD = "callWorkflow";

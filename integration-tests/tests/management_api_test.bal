@@ -133,6 +133,17 @@ function testGetActivityTree() returns error? {
 
     management:ActivityTreeNode[] nodes = check management:getActivityTree(workflowId, "");
     test:assertTrue(nodes.length() > 0, "Completed workflow with one activity should have at least one tree node");
+    // The @display label is joined onto the node at read time; the name stays the identity.
+    management:ActivityTreeNode[] activities = nodes.filter(n => n.'type == "ACTIVITY");
+    test:assertEquals(activities.length(), 1);
+    test:assertEquals(activities[0].name, "infoTestActivity");
+    test:assertEquals(activities[0].displayName, "Info test activity");
+
+    management:WorkflowDefinition[] defs = (check management:listWorkflowDefinitions())
+        .filter(d => d.workflowType == "infoTestWorkflow");
+    test:assertEquals(defs.length(), 1);
+    test:assertEquals(defs[0].displayName, "Info test");
+    test:assertEquals(defs[0].icon, "icons/info.svg");
 }
 
 @test:Config {
@@ -146,6 +157,12 @@ function testGetExecutionGraph() returns error? {
 
     management:ExecutionGraph graph = check management:getExecutionGraph(workflowId, "");
     test:assertTrue(graph.nodes.length() > 0, "Execution graph should have at least one node");
+    management:GraphNode[] activities = graph.nodes.filter(n => n.'type == "ACTIVITY");
+    test:assertEquals(activities.length(), 1);
+    test:assertEquals(activities[0].label, "infoTestActivity",
+        "A graph node's label stays the activity's own name, which consumers match on");
+    test:assertEquals(activities[0].displayName, "Info test activity",
+        "The activity's display name travels beside the label");
 }
 
 @test:Config {

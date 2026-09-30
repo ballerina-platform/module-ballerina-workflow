@@ -57,6 +57,10 @@ public class WorkflowCodeAnalyzer extends CodeAnalyzer {
         analysisContext.addSyntaxNodeAnalysisTask(new ChildWorkflowCallValidatorTask(),
                 SyntaxKind.REMOTE_METHOD_CALL_ACTION);
 
+        // A blank @display label on a workflow, activity or durable agent is an error: the
+        // descriptor publishes it as the declaration's name.
+        analysisContext.addSyntaxNodeAnalysisTask(new DisplayAnnotationValidatorTask(),
+                java.util.List.of(SyntaxKind.FUNCTION_DEFINITION, SyntaxKind.MODULE_VAR_DECL));
         // The client-side result and status reads: refused inside a workflow body, bounded by a
         // sane timeout, and not `check`ed straight into a service failure.
         analysisContext.addSyntaxNodeAnalysisTask(new ResultReadValidatorTask(),

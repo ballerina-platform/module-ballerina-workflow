@@ -26,6 +26,20 @@ function processOrder(workflow:Context ctx, OrderRequest input) returns OrderRes
 }
 ```
 
+The function name is the workflow's identity. To give it a name for people — what a console
+lists and what the Temporal UI shows as the execution's summary — add the language's
+`@display` annotation above it, the same way as for an activity or a durable agent's variable:
+
+```ballerina
+@display {label: "Order processing"}
+@workflow:Workflow
+function processOrder(workflow:Context ctx, OrderRequest input) returns OrderResult|error {
+    return {orderId: input.orderId, status: "COMPLETED"};
+}
+```
+
+A human task's display name is its `title`, so no annotation is needed there.
+
 ## Function Signature
 
 A workflow function follows this signature pattern:

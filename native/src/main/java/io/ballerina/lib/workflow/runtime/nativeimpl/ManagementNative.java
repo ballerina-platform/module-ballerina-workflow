@@ -124,6 +124,9 @@ public final class ManagementNative {
     private static final String INVALID_PAYLOAD_ERROR = "InvalidPayloadError";
     private static final String NOT_FOUND_ERROR = "NotFoundError";
     private static final Type JSON_MAP_TYPE = TypeCreator.createMapType(PredefinedTypes.TYPE_JSON);
+    private static final String DISPLAY_NAME_KEY = "displayName";
+    private static final BString DISPLAY_NAME_FIELD = StringUtils.fromString(DISPLAY_NAME_KEY);
+    private static final BString ICON_FIELD = StringUtils.fromString("icon");
 
     private ManagementNative() {
         // Utility class — prevent instantiation
@@ -280,6 +283,9 @@ public final class ManagementNative {
                                                                            "WorkflowDefinition");
                 def.put(StringUtils.fromString("workflowType"), StringUtils.fromString(displayType));
                 def.put(StringUtils.fromString("kind"), StringUtils.fromString(agentType ? "AGENT" : "WORKFLOW"));
+                DisplayNames.Display display = DisplayNames.ofWorkflow(workflowType);
+                def.put(DISPLAY_NAME_FIELD, display.label() != null ? StringUtils.fromString(display.label()) : null);
+                def.put(ICON_FIELD, display.icon() != null ? StringUtils.fromString(display.icon()) : null);
                 def.put(StringUtils.fromString("inputSchema"),
                         inputSchema != null ? StringUtils.fromString(inputSchema) : null);
                 // All registered workflow types have an active worker (this worker)
@@ -1014,6 +1020,22 @@ public final class ManagementNative {
      * persisted retry tasks remain visible and completable through both the review activity API
      * and the deprecated retry-task API.
      */
+    // The workflow type of a run, without the runtime prefix, from its started event; null when absent.
+    private static String ownerOf(List<HistoryEvent> events) {
+        for (HistoryEvent event : events) {
+            if (event.getEventType() == EventType.EVENT_TYPE_WORKFLOW_EXECUTION_STARTED) {
+                return WorkflowMetadataNative.stripPrefix(
+                        event.getWorkflowExecutionStartedEventAttributes().getWorkflowType().getName(),
+                        WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX);
+            }
+        }
+        return null;
+    }
+
+    private static String qualified(String owner, String name) {
+        return owner == null ? name : owner + "." + name;
+    }
+
     private static boolean isReviewActivityType(String workflowType) {
         return workflowType.startsWith(WorkflowWorkerNative.REVIEW_ACTIVITY_TYPE_PREFIX)
                 || WorkflowWorkerNative.LEGACY_RETRYTASK_WORKFLOW_TYPE.equals(workflowType)
@@ -2223,6 +2245,9 @@ public final class ManagementNative {
             DataConverter dc = client.getOptions().getDataConverter();
 
             List<HistoryEvent> events = fetchFullHistory(client, wfId, rid);
+            // The workflow this run executes, so display names are looked up under their owner as the
+            // metadata document does; activity types in history carry the plain name alone.
+            String owner = ownerOf(events);
 
             // eventId → mutable node data; insertion order preserved
             LinkedHashMap<Long, LinkedHashMap<String, Object>> nodeByEventId = new LinkedHashMap<>();
@@ -2242,6 +2267,8 @@ public final class ManagementNative {
                     case EVENT_TYPE_ACTIVITY_TASK_SCHEDULED -> {
                         var attrs = event.getActivityTaskScheduledEventAttributes();
                         var node = newNode(eid, attrs.getActivityType().getName(), "ACTIVITY", ts);
+                        node.put(DISPLAY_NAME_KEY, DisplayNames.ofActivity(
+                                qualified(owner, attrs.getActivityType().getName())).label());
                         node.put("input", decodeFirstPayload(attrs.getInput(), dc));
                         // Which call site scheduled this activity — the identity that places the
                         // execution on the descriptor's graph. Absent for executions started
@@ -2315,6 +2342,17 @@ public final class ManagementNative {
                                 .getMemo()
                                 .getFieldsMap(), TaskKeys.TASK_NAME, childType) : shortTaskName(childType);
                         var node = newNode(eid, nodeName, nodeType, ts);
+                        if (isHumanTaskType(childType)) {
+                            // The declared constant title, as the descriptor graph and metadata show it; a
+                            // runtime title built from data is not a display name.
+                            node.put(DISPLAY_NAME_KEY, DisplayNames.humanTaskTitle(qualified(owner, nodeName)));
+                        } else if (isReviewActivityType(childType)) {
+                            // A review is shown under the reviewed activity's label.
+                            node.put(DISPLAY_NAME_KEY, DisplayNames.ofActivity(nodeName).label());
+                        } else {
+                            // A child workflow or agent is named by its own declaration's label.
+                            node.put(DISPLAY_NAME_KEY, DisplayNames.workflowLabel(childType));
+                        }
                         node.put("childWorkflowId", childId);
                         node.put("input", decodeFirstPayload(attrs.getInput(), dc));
                         node.put("stepId", decodeMemoString(dc, attrs.getMemo().getFieldsMap(),
@@ -2561,6 +2599,10 @@ public final class ManagementNative {
 
                 String id = ((BString) treeNode.get(StringUtils.fromString("id"))).getValue();
                 String name = ((BString) treeNode.get(StringUtils.fromString("name"))).getValue();
+                // The label stays the step's own name, which consumers match on; the display name
+                // travels beside it, as on ActivityTreeNode.
+                String label = name;
+                Object displayName = treeNode.get(DISPLAY_NAME_FIELD) instanceof BString display ? display : null;
                 String type = ((BString) treeNode.get(StringUtils.fromString("type"))).getValue();
                 String status = ((BString) treeNode.get(StringUtils.fromString("status"))).getValue();
 
@@ -2583,7 +2625,8 @@ public final class ManagementNative {
                 BMap<BString, Object> gn = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                           "GraphNode");
                 gn.put(StringUtils.fromString("id"), StringUtils.fromString(id));
-                gn.put(StringUtils.fromString("label"), StringUtils.fromString(name));
+                gn.put(StringUtils.fromString("label"), StringUtils.fromString(label));
+                gn.put(DISPLAY_NAME_FIELD, displayName);
                 gn.put(StringUtils.fromString("type"), StringUtils.fromString(type));
                 gn.put(StringUtils.fromString("status"), StringUtils.fromString(status));
                 gn.put(StringUtils.fromString("metadata"), metadata);
@@ -2831,6 +2874,8 @@ public final class ManagementNative {
         node.put(StringUtils.fromString("attempt"), (long) attempt);
         String stepId = (String) data.get("stepId");
         node.put(StringUtils.fromString("stepId"), stepId != null ? StringUtils.fromString(stepId) : null);
+        String displayName = (String) data.get(DISPLAY_NAME_KEY);
+        node.put(DISPLAY_NAME_FIELD, displayName != null ? StringUtils.fromString(displayName) : null);
         node.put(StringUtils.fromString("children"), null);
         return node;
     }

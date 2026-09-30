@@ -60,6 +60,8 @@ dependencies {
     implementation "io.grpc:grpc-util:${grpcVersion}"
 
     testImplementation group: 'org.testng', name: 'testng', version: "${testngVersion}"
+    // The compiler plugin keeps its own copy of the instance-id rules; a test holds the two equal.
+    testImplementation project(':workflow-compiler-plugin')
 }
 
 test {

@@ -150,12 +150,12 @@ public enum WorkflowDiagnostic {
             "The first argument of 'workflow:%s' must be a function with the @Workflow annotation",
             DiagnosticSeverity.ERROR),
     WORKFLOW_131("WORKFLOW_131",
-            "Input type mismatch in 'workflow:run': workflow function '%s' expects input of type "
+            "Input type mismatch in 'workflow:%s': workflow function '%s' expects input of type "
                     + "'%s', but found '%s'",
             DiagnosticSeverity.ERROR),
     WORKFLOW_132("WORKFLOW_132",
             "Workflow function '%s' does not declare an input parameter, but an input argument "
-                    + "was provided to 'workflow:run'",
+                    + "was provided to 'workflow:%s'",
             DiagnosticSeverity.ERROR),
     WORKFLOW_133("WORKFLOW_133",
             "Workflow function '%s' does not declare an events record parameter, so "
@@ -273,6 +273,15 @@ public enum WorkflowDiagnostic {
             DiagnosticSeverity.ERROR),
     WORKFLOW_164("WORKFLOW_164",
             "A review definition must name who may decide it: give 'userRoles', 'users', or both",
+            DiagnosticSeverity.ERROR),
+    // 166 and 170: 165 and 167-169 went to the display-name and result-read changes.
+    WORKFLOW_166("WORKFLOW_166",
+            "The instance id given to '%s' is not acceptable: %s. An instance id is the correlation key "
+                    + "a caller looks the instance up by, so the runtime would refuse this start",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_170("WORKFLOW_170",
+            "'%s.runWithId' cannot be called inside a workflow function: a child agent's id is the "
+                    + "parent's to issue. Use 'run', which starts the agent as a child of this workflow",
             DiagnosticSeverity.ERROR);
 
     private final String code;

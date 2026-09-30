@@ -1055,6 +1055,20 @@ public final class WorkflowDescriptorBuilder {
                 case 'r' -> out.append('\r');
                 case '\\' -> out.append('\\');
                 case '"' -> out.append('"');
+                case 'u' -> {
+                    // A Ballerina code-point escape (backslash u, braces, hex): appended as the character.
+                    int close = value.indexOf('}', i);
+                    if (i + 1 < value.length() && value.charAt(i + 1) == '{' && close > i + 2) {
+                        try {
+                            out.appendCodePoint(Integer.parseInt(value.substring(i + 2, close), 16));
+                            i = close;
+                            continue;
+                        } catch (IllegalArgumentException ignored) {
+                            // Not a hex number, or past U+10FFFF: kept as written below.
+                        }
+                    }
+                    out.append(c).append(next);
+                }
                 default -> out.append(c).append(next);
             }
         }
@@ -1067,7 +1081,7 @@ public final class WorkflowDescriptorBuilder {
     }
 
     /** A compile-time constant string: a plain literal or a template without interpolations. */
-    static String constantStringValue(Node expression) {
+    public static String constantStringValue(Node expression) {
         if (expression instanceof BasicLiteralNode literal
                 && literal.kind() == SyntaxKind.STRING_LITERAL) {
             String raw = literal.literalToken().text();

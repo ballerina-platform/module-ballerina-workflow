@@ -96,6 +96,7 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
 
     private static final String SEND_DATA_METHOD = "sendData";
     private static final String RUN_METHOD = "run";
+    private static final String RUN_WITH_ID_METHOD = "runWithId";
     /** Matches the {@code org/module:version:} prefix a {@code TypeSymbol} signature carries. */
     private static final Pattern MODULE_QUALIFIER = Pattern.compile("[\\w.]+/[\\w.]+:[\\d.]+:");
 
@@ -355,7 +356,8 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
             String method = methodCall.methodName().toSourceCode().strip();
             boolean sendData = SEND_DATA_METHOD.equals(method);
             boolean run = RUN_METHOD.equals(method);
-            if (!sendData && !run) {
+            boolean runWithId = RUN_WITH_ID_METHOD.equals(method);
+            if (!sendData && !run && !runWithId) {
                 return;
             }
             AgentSummary agent = agents.get(receiver.name().text());
@@ -368,8 +370,16 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
                     semanticModel.symbol(receiver).orElse(null))) {
                 return;
             }
-            if (run) {
-                validateRunInput(methodCall, receiver.name().text(), agent);
+            if (run || runWithId) {
+                // runWithId(instanceId, query, input): the id shifts the payload one place right.
+                if (runWithId) {
+                    if (WorkflowPluginUtils.isInsideWorkflowFunction(methodCall, semanticModel)) {
+                        report(WorkflowDiagnostic.WORKFLOW_170, methodCall.location(), receiver.name().text());
+                        return;
+                    }
+                    validateInstanceId(methodCall, receiver.name().text());
+                }
+                validateRunInput(methodCall, receiver.name().text(), agent, runWithId ? 3 : 2);
                 return;
             }
             Map<String, ChannelDecl> channels = agent.channels();
@@ -425,16 +435,40 @@ public class DurableAgentDataCallValidatorTask implements AnalysisTask<Compilati
          * agent's declared {@code inputType} (WORKFLOW_154). Omitting the argument (or
          * passing an explicit nil) always starts the run on the query alone.
          */
+        private void validateInstanceId(MethodCallExpressionNode methodCall, String agentName) {
+            ExpressionNode idArg = null;
+            for (FunctionArgumentNode arg : methodCall.arguments()) {
+                if (arg instanceof PositionalArgumentNode positionalArg) {
+                    idArg = positionalArg.expression();
+                    break;
+                } else if (arg instanceof NamedArgumentNode namedArg
+                        && "instanceId".equals(namedArg.argumentName().name().text())) {
+                    idArg = namedArg.expression();
+                    break;
+                }
+            }
+            if (idArg == null) {
+                return;
+            }
+            String literal = io.ballerina.lib.workflow.compiler.descriptor.WorkflowDescriptorBuilder
+                    .constantStringValue(idArg);
+            String problem = literal == null ? null : RunCallValidatorTask.instanceIdProblem(literal);
+            if (problem != null) {
+                report(WorkflowDiagnostic.WORKFLOW_166, idArg.location(), agentName + "." + RUN_WITH_ID_METHOD,
+                        problem);
+            }
+        }
+
         private void validateRunInput(MethodCallExpressionNode methodCall, String agentName,
-                                      AgentSummary agent) {
+                                      AgentSummary agent, int inputPosition) {
             // run(query, input): the payload is the second positional argument, or an
-            // explicit `input = ...` named argument.
+            // explicit `input = ...` named argument; runWithId(instanceId, query, input) the third.
             ExpressionNode inputArg = null;
             int positional = 0;
             for (FunctionArgumentNode arg : methodCall.arguments()) {
                 if (arg instanceof PositionalArgumentNode positionalArg) {
                     positional++;
-                    if (positional == 2) {
+                    if (positional == inputPosition) {
                         inputArg = positionalArg.expression();
                     }
                 } else if (arg instanceof NamedArgumentNode namedArg

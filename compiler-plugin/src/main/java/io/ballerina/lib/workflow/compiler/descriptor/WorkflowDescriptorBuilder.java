@@ -700,16 +700,7 @@ public final class WorkflowDescriptorBuilder {
     }
 
     private static boolean isDurableAgentType(TypeSymbol type) {
-        if (!(type instanceof io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol ref)) {
-            return false;
-        }
-        if (!ref.getName().map(WorkflowConstants.DURABLE_AGENT_TYPE::equals).orElse(false)) {
-            return false;
-        }
-        return ref.getModule()
-                .map(m -> WorkflowConstants.PACKAGE_ORG.equals(m.id().orgName())
-                        && WorkflowConstants.PACKAGE_NAME.equals(m.id().moduleName()))
-                .orElse(false);
+        return io.ballerina.lib.workflow.compiler.DurableAgentDeclAnalysisTask.isDurableAgentSymbol(type);
     }
 
     private static MappingConstructorExpressionNode agentConfigMapping(ModuleVariableDeclarationNode varDecl) {

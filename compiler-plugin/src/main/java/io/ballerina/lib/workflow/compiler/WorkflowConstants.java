@@ -152,6 +152,11 @@ public final class WorkflowConstants {
     /** Prefixes the runtime issues to children; equal to the runtime's list, which a native test asserts. */
     public static final java.util.List<String> RESERVED_INSTANCE_ID_PREFIXES =
             java.util.List.of("humantask-", "reviewactivity-", "childwf-", "childagent-");
+    public static final String GET_RESULT_FUNCTION = "getResult";
+    public static final String WAIT_FOR_RESULT_FUNCTION = "waitForResult";
+    public static final String GET_STATUS_FUNCTION = "getStatus";
+    public static final String GET_DATA_RESULT_METHOD = "getDataResult";
+    public static final String ARG_TIMEOUT = "timeout";
     public static final String AWAIT_METHOD = "await";
     public static final String RUN_CHILD_WORKFLOW_METHOD = "runChildWorkflow";
     public static final String CALL_WORKFLOW_METHOD = "callWorkflow";

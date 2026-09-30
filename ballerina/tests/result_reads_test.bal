@@ -1,0 +1,221 @@
+// Copyright (c) 2026, WSO2 LLC. (http://www.wso2.org).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+import ballerina/test;
+import ballerina/workflow.management;
+
+// The client-side reads — getResult, waitForResult, getStatus — answer one error vocabulary
+// for workflows and durable agents alike: WorkflowInProgressError while running or when a
+// bounded wait runs out, InstanceFailedError when closed without a result,
+// InstanceNotFoundError for an id nothing holds.
+
+@Workflow
+function readQuickWorkflow(Context ctx, string input) returns string|error {
+    return "done: " + input;
+}
+
+@Workflow
+function readParkedWorkflow(Context ctx, string input, record {|future<string> go;|} events)
+        returns string|error {
+    string signal = check wait events.go;
+    return input + "/" + signal;
+}
+
+@Workflow
+function readFailingWorkflow(Context ctx, string input) returns string|error {
+    return error("read fixture failed: " + input);
+}
+
+@Workflow
+function readNilWorkflow(Context ctx, string input) returns error? {
+    return;
+}
+
+// Reads its children the way a client reads top-level instances, and reports what it saw.
+@Workflow
+function readChildrenWorkflow(Context ctx, string input) returns string|error {
+    string failing = check ctx->runChildWorkflow(readFailingWorkflow, "child");
+    string|error failed = ctx->waitForChildWorkflow(failing);
+    string failedKind = failed is InstanceFailedError ? "failed:" + failed.detail().status : "other";
+
+    string parked = check ctx->runChildWorkflow(readParkedWorkflow, "p");
+    string|error early = ctx->getChildWorkflowResult(parked);
+    string earlyKind = early is WorkflowInProgressError ? "in-progress" : "other";
+    check ctx->sendDataToChildWorkflow(parked, "go", "q");
+    string late = check ctx->waitForChildWorkflow(parked);
+
+    string|error unknown = ctx->getChildWorkflowResult("no-such-child");
+    string unknownKind = unknown is InstanceNotFoundError ? "not-found" : "other";
+    return string `${failedKind};${earlyKind};${late};${unknownKind}`;
+}
+
+@test:BeforeSuite
+function setupResultReadTests() returns error? {
+    _ = check registerWorkflowForTest(readQuickWorkflow, "readQuickWorkflow");
+    _ = check registerWorkflowForTest(readParkedWorkflow, "readParkedWorkflow");
+    _ = check registerWorkflowForTest(readFailingWorkflow, "readFailingWorkflow");
+    _ = check registerWorkflowForTest(readNilWorkflow, "readNilWorkflow");
+    _ = check registerWorkflowForTest(readChildrenWorkflow, "readChildrenWorkflow");
+}
+
+@test:Config {groups: ["unit"]}
+function testBoundedWaitOnAClosedInstanceReturnsItsResult() returns error? {
+    string id = check run(readQuickWorkflow, "z");
+    string first = check waitForResult(id);
+    test:assertEquals(first, "done: z");
+    // The bound only matters while the run is open: a closed run's result comes back at once.
+    string zeroBound = check waitForResult(id, timeout = {seconds: 0});
+    test:assertEquals(zeroBound, "done: z");
+    string tinyBound = check waitForResult(id, timeout = {seconds: 0.001});
+    test:assertEquals(tinyBound, "done: z");
+}
+
+@test:Config {groups: ["unit"]}
+function testComputedNegativeBoundIsRefused() returns error? {
+    string id = check run(readQuickWorkflow, "n");
+    decimal negative = -1;
+    string|error refused = waitForResult(id, timeout = {seconds: negative});
+    test:assertTrue(refused is error && refused !is WorkflowInProgressError
+        && refused.message().includes("negative"), "A negative bound is refused as such, not reported as in-progress");
+}
+
+@test:Config {groups: ["unit"]}
+function testNilResultAgainstANonNilableTypeIsAConversionError() returns error? {
+    string id = check run(readNilWorkflow, "x");
+    anydata nothing = check waitForResult(id);
+    test:assertEquals(nothing, ());
+    string|error typed = getResult(id);
+    test:assertTrue(typed is error && typed !is WorkflowInProgressError && typed !is InstanceFailedError,
+        "A nil result cannot pass as a string: " + (typed is error ? typed.message() : typed));
+}
+
+@test:Config {groups: ["unit"]}
+function testChildReadsInsideAWorkflowShareTheVocabulary() returns error? {
+    string id = check run(readChildrenWorkflow, "x");
+    string seen = check waitForResult(id, timeout = {seconds: 30});
+    test:assertEquals(seen, "failed:FAILED;in-progress;p/q;not-found",
+        "A workflow's child reads answer the typed errors a client read answers");
+}
+
+@test:Config {groups: ["unit"]}
+function testGetResultWhileRunningIsInProgress() returns error? {
+    string id = check run(readParkedWorkflow, "a");
+
+    string|error read = getResult(id);
+    test:assertTrue(read is WorkflowInProgressError, "A running instance answers in-progress, not a failure");
+    test:assertTrue(read is WorkflowBusyError, "The deprecated alias still matches the same error");
+    test:assertEquals(check getStatus(id), RUNNING);
+
+    check sendData(readParkedWorkflow, id, "go", "b");
+    string result = check waitForResult(id);
+    test:assertEquals(result, "a/b", "waitForResult returns the typed result");
+    test:assertEquals(check getStatus(id), COMPLETED);
+    string again = check getResult(id);
+    test:assertEquals(again, "a/b", "Once closed, the non-blocking read returns the same result");
+}
+
+@test:Config {groups: ["unit"]}
+function testWaitForResultBoundedAnswersInProgress() returns error? {
+    string id = check run(readParkedWorkflow, "a");
+
+    string|error bounded = waitForResult(id, timeout = {seconds: 1});
+    test:assertTrue(bounded is WorkflowInProgressError,
+        "A bounded wait the instance outlives answers in-progress, the same as getResult");
+
+    string|error monthly = waitForResult(id, timeout = {months: 1});
+    test:assertTrue(monthly is error && monthly !is WorkflowInProgressError
+        && monthly.message().includes("months"), "A month-long bound has no fixed length and is refused");
+
+    check sendData(readParkedWorkflow, id, "go", "b");
+    // A bound in days is a real bound, not zero: the completed result comes back.
+    string result = check waitForResult(id, timeout = {days: 1});
+    test:assertEquals(result, "a/b");
+}
+
+@test:Config {groups: ["unit"]}
+function testGetResultOfFailedInstance() returns error? {
+    string id = check run(readFailingWorkflow, "x");
+    string|error waited = waitForResult(id);
+    test:assertTrue(waited is InstanceFailedError, "A failed instance answers InstanceFailedError");
+    if waited is InstanceFailedError {
+        test:assertEquals(waited.detail().status, FAILED);
+        test:assertEquals(waited.detail().instanceId, id);
+        test:assertTrue(waited.message().includes("read fixture failed: x"),
+            "The instance's own error message is carried: " + waited.message());
+    }
+    test:assertEquals(check getStatus(id), FAILED);
+    string|error read = getResult(id);
+    test:assertTrue(read is InstanceFailedError, "The non-blocking read agrees");
+}
+
+@test:Config {groups: ["unit"]}
+function testGetResultOfTerminatedInstance() returns error? {
+    string id = check run(readParkedWorkflow, "a");
+    management:WorkflowExecutionInfo info = check management:getWorkflowInfo(id);
+    test:assertEquals(info.status, "RUNNING");
+    check management:terminateWorkflow(id, "", "test");
+
+    string|error read = waitForResult(id, timeout = {seconds: 10});
+    test:assertTrue(read is InstanceFailedError, "A terminated instance closed without a result");
+    if read is InstanceFailedError {
+        test:assertEquals(read.detail().status, TERMINATED);
+    }
+    test:assertEquals(check getStatus(id), TERMINATED);
+}
+
+@test:Config {groups: ["unit"]}
+function testReadsOfUnknownInstance() {
+    string|error read = getResult("no-such-instance");
+    test:assertTrue(read is InstanceNotFoundError, "An unknown id is not found, not a failure");
+    if read is InstanceNotFoundError {
+        test:assertEquals(read.detail().instanceId, "no-such-instance");
+    }
+    string|error waited = waitForResult("no-such-instance", timeout = {seconds: 1});
+    test:assertTrue(waited is InstanceNotFoundError);
+    test:assertTrue(getStatus("no-such-instance") is InstanceNotFoundError);
+}
+
+@test:Config {groups: ["unit"]}
+function testDeprecatedGetWorkflowResultAnswersInProgressOnTimeout() returns error? {
+    string id = check run(readParkedWorkflow, "a");
+    anydata|error result = getWorkflowResult(id, 1);
+    test:assertTrue(result is WorkflowInProgressError,
+        "The deprecated read reports a wait that ran out as in-progress, not as a timeout failure");
+    check sendData(readParkedWorkflow, id, "go", "b");
+    test:assertEquals(check getWorkflowResult(id, 15), "a/b");
+}
+
+// ── Durable agents: the same vocabulary ───────────────────────────────────────
+
+@test:Config {groups: ["unit"], dependsOn: [testObjectModelRunnerEndToEnd]}
+function testAgentReadsShareTheVocabulary() returns error? {
+    string id = check runnerCoverageAgent.run("Is the laptop in stock?");
+    string answer = check runnerCoverageAgent.waitForResult(id, timeout = {seconds: 30});
+    test:assertEquals(answer, "Stock check result: laptop is in stock");
+    test:assertEquals(check runnerCoverageAgent.getStatus(id), COMPLETED);
+    string again = check runnerCoverageAgent.getResult(id);
+    test:assertEquals(again, answer);
+
+    // A workflow's id is not one of this agent's instances.
+    string workflowId = check run(readQuickWorkflow, "w");
+    string _ = check waitForResult(workflowId);
+    string|error foreign = runnerCoverageAgent.getResult(workflowId);
+    test:assertTrue(foreign is InstanceNotFoundError, "An agent's read is scoped to its own instances");
+    test:assertTrue(runnerCoverageAgent.getStatus(workflowId) is InstanceNotFoundError);
+    test:assertTrue(runnerCoverageAgent.getStatus("no-such-agent") is InstanceNotFoundError);
+    string|error unknown = runnerCoverageAgent.getResult("no-such-agent");
+    test:assertTrue(unknown is InstanceNotFoundError);
+}

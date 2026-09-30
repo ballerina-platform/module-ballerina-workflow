@@ -54,9 +54,17 @@ public final class WaitUtils {
 
     private static final Logger LOGGER = Workflow.getLogger(WaitUtils.class);
 
+    private static final BString YEARS_KEY = StringUtils.fromString("years");
+    private static final BString MONTHS_KEY = StringUtils.fromString("months");
+    private static final BString WEEKS_KEY = StringUtils.fromString("weeks");
+    private static final BString DAYS_KEY = StringUtils.fromString("days");
     private static final BString HOURS_KEY = StringUtils.fromString("hours");
     private static final BString MINUTES_KEY = StringUtils.fromString("minutes");
     private static final BString SECONDS_KEY = StringUtils.fromString("seconds");
+    private static final BString MILLISECONDS_KEY = StringUtils.fromString("milliSeconds");
+    // Marks executions started once ctx->await bounds count weeks and days and refuse months and years
+    private static final String WAIT_BOUND_UNITS_CHANGE_ID = "wait-bound-units";
+    private static final int WAIT_BOUND_ALL_UNITS = 1;
 
     private WaitUtils() {
         // Utility class
@@ -123,7 +131,17 @@ public final class WaitUtils {
         // During replay this condition is immediately true — no blocking occurs.
         boolean conditionMet;
         if (timeout instanceof BMap<?, ?> timeoutMap) {
-            long timeoutMillis = durationToMillis((BMap<BString, Object>) timeoutMap);
+            long timeoutMillis;
+            try {
+                // Executions whose history predates the change keep the bound they recorded: weeks
+                // and days ignored, months and years too. Newer executions get every unit.
+                boolean allUnits = Workflow.getVersion(WAIT_BOUND_UNITS_CHANGE_ID, Workflow.DEFAULT_VERSION,
+                        WAIT_BOUND_ALL_UNITS) != Workflow.DEFAULT_VERSION;
+                timeoutMillis = allUnits ? durationToMillis((BMap<BString, Object>) timeoutMap)
+                        : legacyDurationToMillis((BMap<BString, Object>) timeoutMap);
+            } catch (IllegalArgumentException e) {
+                return ErrorCreator.createError(StringUtils.fromString(e.getMessage()));
+            }
             conditionMet = Workflow.await(java.time.Duration.ofMillis(timeoutMillis),
                                           () -> countDone(lambdaFutures) >= lambdaRequired);
         } else {
@@ -167,21 +185,49 @@ public final class WaitUtils {
     }
 
     /**
-     * Converts a Ballerina {@code time:Duration} record to milliseconds.
+     * Converts a Ballerina {@code time:Duration} record to a wait bound in milliseconds: weeks down to
+     * milliseconds, no months or years (they have no fixed length), never negative, never overflowing.
+     *
+     * @param duration the duration record
+     * @return the bound in milliseconds
+     * @throws IllegalArgumentException when the duration is not a bound
      */
-    private static long durationToMillis(BMap<BString, Object> duration) {
-        long hours = getLongField(duration, HOURS_KEY);
-        long minutes = getLongField(duration, MINUTES_KEY);
-        Object secObj = duration.get(SECONDS_KEY);
-        long secondsMillis = 0;
-        if (secObj instanceof Long secLong) {
-            secondsMillis = secLong * 1000L;
-        } else if (secObj instanceof Double secDouble) {
-            secondsMillis = (long) (secDouble * 1000.0);
-        } else if (secObj instanceof io.ballerina.runtime.api.values.BDecimal secDec) {
-            secondsMillis = secDec.decimalValue().multiply(java.math.BigDecimal.valueOf(1000)).longValue();
+    static long durationToMillis(BMap<BString, Object> duration) {
+        if (getLongField(duration, YEARS_KEY) != 0 || getLongField(duration, MONTHS_KEY) != 0) {
+            throw new IllegalArgumentException("A wait bound does not support months or years");
         }
-        return (hours * 3600_000L) + (minutes * 60_000L) + secondsMillis;
+        long millis;
+        try {
+            millis = Math.addExact(Math.multiplyExact(getLongField(duration, WEEKS_KEY), 604_800_000L),
+                    Math.multiplyExact(getLongField(duration, DAYS_KEY), 86_400_000L));
+            millis = Math.addExact(millis, Math.multiplyExact(getLongField(duration, HOURS_KEY), 3_600_000L));
+            millis = Math.addExact(millis, Math.multiplyExact(getLongField(duration, MINUTES_KEY), 60_000L));
+            millis = Math.addExact(millis, secondsToMillis(duration.get(SECONDS_KEY)));
+            millis = Math.addExact(millis, getLongField(duration, MILLISECONDS_KEY));
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException("A wait bound is too large to represent in milliseconds");
+        }
+        if (millis < 0) {
+            throw new IllegalArgumentException("A wait bound must not be negative, got " + millis + " ms");
+        }
+        return millis;
+    }
+
+    // The bound as executions before the units change recorded it: hours, minutes and seconds only.
+    private static long legacyDurationToMillis(BMap<BString, Object> duration) {
+        return (getLongField(duration, HOURS_KEY) * 3600_000L) + (getLongField(duration, MINUTES_KEY) * 60_000L)
+                + secondsToMillis(duration.get(SECONDS_KEY));
+    }
+
+    private static long secondsToMillis(Object seconds) {
+        if (seconds instanceof Long secLong) {
+            return Math.multiplyExact(secLong, 1000L);
+        } else if (seconds instanceof Double secDouble) {
+            return (long) (secDouble * 1000.0);
+        } else if (seconds instanceof io.ballerina.runtime.api.values.BDecimal secDec) {
+            return secDec.decimalValue().multiply(java.math.BigDecimal.valueOf(1000)).longValue();
+        }
+        return 0L;
     }
 
     private static long getLongField(BMap<BString, Object> map, BString key) {

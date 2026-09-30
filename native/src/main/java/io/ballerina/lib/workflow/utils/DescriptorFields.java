@@ -37,6 +37,14 @@ public final class DescriptorFields {
     public static final BString WORKFLOWS = StringUtils.fromString("workflows");
     /** Name of a workflow, activity, or human task. */
     public static final BString NAME = StringUtils.fromString("name");
+    /** Human-readable name from a {@code @display} annotation; never an identity. */
+    public static final BString DISPLAY_NAME = StringUtils.fromString("displayName");
+    /** Icon path from a {@code @display} annotation, for consoles only. */
+    public static final BString ICON = StringUtils.fromString("icon");
+    /** A human task's constant title, its display name. */
+    public static final BString TITLE = StringUtils.fromString("title");
+    public static final BString AGENTS = StringUtils.fromString("agents");
+    public static final BString TOOLS = StringUtils.fromString("tools");
     /** The implementation binding: the module-level function the runtime resolves. */
     public static final BString FUNCTION = StringUtils.fromString("function");
     /** Qualified module name of a function binding. */

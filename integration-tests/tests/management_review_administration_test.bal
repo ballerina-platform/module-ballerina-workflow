@@ -20,6 +20,7 @@
 // A review reports the same `canComplete` / `canAdminister` answers a human task
 // does, and each administration route serves one kind of task only.
 
+import ballerina/lang.runtime;
 import ballerina/test;
 import ballerina/workflow;
 import ballerina/workflow.management as management;
@@ -107,11 +108,30 @@ function testAdministrationRouteServesOneTaskKind() returns error? {
     });
     test:assertTrue(asReview !is management:Error, "the review route should reassign the review");
 
-    // The reassignment took effect: the new audience decides it.
+    // The reassignment is applied by the review's own run, after the command returns: wait until
+    // the review reports its new audience before deciding as that audience.
+    check waitForReviewAudience(review.taskId, "other-approver");
     json _ = check management:executeCommand({
         operation: management:DECIDE_REVIEW_ACTIVITY,
         params: {taskId: review.taskId, action: "proceed-with-input", input: {mode: "ok"}},
         identity: {userId: "erin", roles: ["other-approver"]}
     });
     _ = check workflow:getWorkflowResult(workflowId, 60);
+}
+
+// Polls a review until the given role is in its audience: a reassignment is a signal the
+// review's run applies on its next workflow task, so the memo the read comes from can lag the
+// command that requested it.
+function waitForReviewAudience(string taskId, string role, decimal timeoutSecs = 12) returns error? {
+    decimal elapsed = 0.0d;
+    while elapsed < timeoutSecs {
+        management:ReviewActivityInfo info = check management:getReviewActivityInfo(taskId);
+        string[] roles = info.userRoles;
+        if roles.indexOf(role) is int {
+            return;
+        }
+        runtime:sleep(0.3d);
+        elapsed += 0.3d;
+    }
+    return error(string `Timed out waiting for review ${taskId} to be reassigned to '${role}'`);
 }

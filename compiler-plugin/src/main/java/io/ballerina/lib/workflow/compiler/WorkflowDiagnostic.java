@@ -274,11 +274,28 @@ public enum WorkflowDiagnostic {
     WORKFLOW_164("WORKFLOW_164",
             "A review definition must name who may decide it: give 'userRoles', 'users', or both",
             DiagnosticSeverity.ERROR),
-    // 166 and 170: 165 and 167-169 went to the display-name and result-read changes.
+    WORKFLOW_165("WORKFLOW_165",
+            "The display label of '%s' is blank. A '@display' label is what consoles show in place "
+                    + "of the name, so it must say something — give it a label, or drop the annotation",
+            DiagnosticSeverity.ERROR),
+    // 165 is the display-name change; 166 and 170 instance ids; 167-169 result reads.
     WORKFLOW_166("WORKFLOW_166",
             "The instance id given to '%s' is not acceptable: %s. An instance id is the correlation key "
                     + "a caller looks the instance up by, so the runtime would refuse this start",
             DiagnosticSeverity.ERROR),
+    WORKFLOW_167("WORKFLOW_167",
+            "'workflow:%s' cannot be called inside a workflow function: it reads the engine from outside, "
+                    + "which is not deterministic. Use '%s' for a child of this workflow",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_168("WORKFLOW_168",
+            "The 'timeout' of '%s' has a negative '%s'. A wait bound is a length of time, so every field "
+                    + "must be zero or more",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_169("WORKFLOW_169",
+            "'check' on '%s' turns a still-running instance into a failure of this %s: the read answers "
+                    + "'WorkflowInProgressError' while the instance runs. Test for it and report progress "
+                    + "instead, or wait with 'waitForResult'",
+            DiagnosticSeverity.WARNING),
     WORKFLOW_170("WORKFLOW_170",
             "'%s.runWithId' cannot be called inside a workflow function: a child agent's id is the "
                     + "parent's to issue. Use 'run', which starts the agent as a child of this workflow",

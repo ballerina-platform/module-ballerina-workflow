@@ -76,7 +76,6 @@ public final class DurableAgentNative {
     private static final String SCHEMA_PROPERTIES = "properties";
     private static final String SCHEMA_REQUIRED = "required";
     private static final String SCHEMA_DESCRIPTION = "description";
-    private static final String AGENT_BUSY_ERROR = "AgentBusyError";
     private static final String RUN_SPEC_RECORD = "DurableAgentRunSpec";
     private static final String ACTIVITY_SPEC_RECORD = "DurableAgentActivitySpec";
     private static final String TOOL_SPEC_RECORD = "DurableAgentToolSpec";
@@ -871,9 +870,38 @@ public final class DurableAgentNative {
      */
     public static Object getResult(Environment env, BObject self, BString instanceId, BTypedesc typedesc) {
         if (isInsideWorkflow()) {
-            return WorkflowContextNative.readDurableAgentChildResult(instanceId.getValue(), typedesc, false);
+            return readChildInWorkflow(self, instanceId.getValue(), typedesc, false, "getResult");
         }
-        return clientRead(env, instanceId.getValue(), typedesc, false);
+        return clientRead(env, self, instanceId.getValue(), typedesc, false, null);
+    }
+
+    /**
+     * Native implementation of {@code DurableAgent.getStatus}: the instance's status, for an instance of
+     * this agent; any other id is not found.
+     *
+     * @param env        the Ballerina runtime environment
+     * @param self       the DurableAgent object
+     * @param instanceId the instance
+     * @return the status name, or an {@code InstanceNotFoundError}
+     */
+    public static Object getStatus(Environment env, BObject self, BString instanceId) {
+        String agentName = boundAgentName(self);
+        if (agentName == null) {
+            return unboundAgentError("getStatus");
+        }
+        if (isInsideWorkflow()) {
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "getStatus cannot be called inside a workflow; read the child's result instead"));
+        }
+        return env.yieldAndRun(() -> {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString("Workflow client not initialized"));
+            }
+            Object status = InstanceReads.statusOf(client, instanceId.getValue(),
+                    WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + agentName);
+            return status instanceof String s ? StringUtils.fromString(s) : status;
+        });
     }
 
     /**
@@ -888,51 +916,47 @@ public final class DurableAgentNative {
      * @param typedesc   the expected result type descriptor
      * @return the typed result, or a BError
      */
-    public static Object waitForResult(Environment env, BObject self, BString instanceId, BTypedesc typedesc) {
+    public static Object waitForResult(Environment env, BObject self, BString instanceId, BTypedesc typedesc,
+                                       Object timeout) {
         if (isInsideWorkflow()) {
-            return WorkflowContextNative.readDurableAgentChildResult(instanceId.getValue(), typedesc, true);
+            return readChildInWorkflow(self, instanceId.getValue(), typedesc, true, "waitForResult");
         }
-        return clientRead(env, instanceId.getValue(), typedesc, true);
+        Long timeoutMillis;
+        try {
+            timeoutMillis = InstanceReads.timeoutMillisOf(timeout);
+        } catch (IllegalArgumentException e) {
+            return ErrorCreator.createError(StringUtils.fromString(e.getMessage()));
+        }
+        return clientRead(env, self, instanceId.getValue(), typedesc, true, timeoutMillis);
+    }
+
+    // Inside a workflow the agent reads the children it started there, scoped to its own instances
+    private static Object readChildInWorkflow(BObject self, String instanceId, BTypedesc typedesc,
+                                              boolean blocking, String method) {
+        String agentName = boundAgentName(self);
+        if (agentName == null) {
+            return unboundAgentError(method);
+        }
+        return WorkflowContextNative.readDurableAgentChildResult(agentName, instanceId, typedesc, blocking);
     }
 
     /**
-     * Client-side (outside-workflow) result read shared by getResult/waitForResult.
+     * Client-side (outside-workflow) result read shared by getResult/waitForResult: the shared instance
+     * read, scoped to instances of this agent so a workflow's id or another agent's is not found.
      */
-    private static Object clientRead(Environment env, String instanceId, BTypedesc typedesc, boolean blocking) {
+    private static Object clientRead(Environment env, BObject self, String instanceId, BTypedesc typedesc,
+                                     boolean blocking, Long timeoutMillis) {
+        String agentName = boundAgentName(self);
+        if (agentName == null) {
+            return unboundAgentError(blocking ? "waitForResult" : "getResult");
+        }
         return env.yieldAndRun(() -> {
-            try {
-                WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
-                if (client == null) {
-                    return ErrorCreator.createError(StringUtils.fromString("Workflow client not initialized"));
-                }
-                WorkflowStub stub = client.newUntypedWorkflowStub(instanceId);
-                Object raw;
-                if (blocking) {
-                    raw = stub.getResult(Object.class);
-                } else {
-                    // A tiny getResult timeout is unreliable for completed runs (the server
-                    // round trip alone exceeds it), so check the execution status instead:
-                    // still running means busy, any closed status has its result available.
-                    io.temporal.api.enums.v1.WorkflowExecutionStatus status = stub.describe().getStatus();
-                    if (status == io.temporal.api.enums.v1.WorkflowExecutionStatus
-                                .WORKFLOW_EXECUTION_STATUS_RUNNING
-                            || status == io.temporal.api.enums.v1.WorkflowExecutionStatus
-                                .WORKFLOW_EXECUTION_STATUS_CONTINUED_AS_NEW) {
-                        return createAgentBusyError(instanceId);
-                    }
-                    raw = stub.getResult(Object.class);
-                }
-                Object ballerinaResult = TypesUtil.convertJavaToBallerinaType(raw);
-                return TypesUtil.cloneWithType(ballerinaResult, typedesc.getDescribingType());
-            } catch (io.temporal.client.WorkflowFailedException e) {
-                String message = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Durable agent instance '" + instanceId + "' failed: " + message));
-            } catch (Exception e) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Failed to read the result of durable agent instance '" + instanceId + "': "
-                                + e.getMessage()));
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString("Workflow client not initialized"));
             }
+            return InstanceReads.read(client, instanceId, WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + agentName,
+                    blocking, timeoutMillis, typedesc);
         });
     }
 
@@ -1422,14 +1446,30 @@ public final class DurableAgentNative {
                 if (isTimeout(e)) {
                     return createAgentBusyError(instanceId);
                 }
-                Throwable cause = e.getCause();
-                String message = cause != null && cause.getMessage() != null ? cause.getMessage()
-                        : e.getMessage();
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Failed to read the event result for token '" + token + "' of agent instance '"
-                                + instanceId + "': " + message));
+                                + instanceId + "': " + updateFailureMessage(e)));
             }
         });
+    }
+
+    /**
+     * The reason a turn failed, as the agent gave it: the application failure under the SDK's
+     * update-exception wrappers, whose own messages only name the execution.
+     *
+     * @param e the failure a turn's waiter received
+     * @return the agent's own message
+     */
+    public static String updateFailureMessage(Throwable e) {
+        Throwable current = e;
+        while (current != null) {
+            if (current instanceof io.temporal.failure.ApplicationFailure failure) {
+                return failure.getOriginalMessage();
+            }
+            current = current.getCause();
+        }
+        Throwable cause = e.getCause();
+        return cause != null && cause.getMessage() != null ? cause.getMessage() : e.getMessage();
     }
 
     private static boolean isTimeout(Throwable e) {
@@ -1465,13 +1505,7 @@ public final class DurableAgentNative {
      * in progress.
      */
     public static BError createAgentBusyError(String instanceId) {
-        String message = "Durable agent instance '" + instanceId + "' is still working";
-        try {
-            return ErrorCreator.createError(ModuleUtils.getModule(), AGENT_BUSY_ERROR,
-                    StringUtils.fromString(message), null, null);
-        } catch (Exception e) {
-            return ErrorCreator.createError(StringUtils.fromString(AGENT_BUSY_ERROR + ": " + message));
-        }
+        return InstanceReads.inProgress(instanceId);
     }
 
     private static Object unboundAgentError(String method) {

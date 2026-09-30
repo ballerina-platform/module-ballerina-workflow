@@ -168,7 +168,7 @@ and `retryPolicy`, which decides what happens when the activity fails.
 
 ### Default behaviour — errors as values
 
-With no `retryPolicy` (`NoAutomaticRetry`), any error the activity returns is handed back to
+With no `retryPolicy` (`NoRetry`), any error the activity returns is handed back to
 the workflow as a value. The engine does not retry.
 
 ```ballerina
@@ -211,7 +211,17 @@ string result = check ctx->callActivity(sendEmail,
         retryPolicy = {userRoles: "OPS", title: "Resend the confirmation email"});
 ```
 
-See [Human in the Loop](patterns/human-in-the-loop.md) for how review tasks are answered.
+To retry automatically first and raise the review only when the retries are spent, add
+`maxRetries` to the review — a `RetryBeforeReview`:
+
+```ballerina
+string result = check ctx->callActivity(sendEmail,
+        {"to": email, "subject": subject},
+        retryPolicy = {maxRetries: 2, userRoles: "OPS", title: "Resend the confirmation email"});
+```
+
+See [Human in the Loop](patterns/human-in-the-loop.md) for how review tasks are answered, and
+[Recover Workflows](recover-workflows.md) for retrying, resetting, and escalating failed runs.
 
 ### Naming a step
 
@@ -226,6 +236,27 @@ string result = check ctx->callActivity(sendEmail,
 
 `stepId` must be a constant string (`WORKFLOW_161`). If two steps ask for the same id, the
 second is given a numeric suffix and the compiler warns (`WORKFLOW_160`).
+
+### Giving a step a display name
+
+A step's identity is its function name and its `stepId`. To give consoles a friendlier name,
+annotate the activity with the language's `@display` annotation:
+
+```ballerina
+@display {label: "Send confirmation email", iconPath: "icons/email.svg"}
+@workflow:Activity
+function sendEmail(string to, string subject) returns string|error {
+    // ...
+}
+```
+
+The label is published in the workflow descriptor and metadata as `displayName` (and the icon
+as `icon`), and the management API reports it beside every history node and activity
+invocation of that function. It is never an identity: renaming the label changes nothing the
+engine keys on, so no running instance is affected and no migration is needed. A blank label is
+an error (`WORKFLOW_165`). `@display` is a source annotation, so it is read for functions in the
+package being built, in any of its modules; an activity imported from a dependency package
+carries no label.
 
 ## What's Next
 

@@ -421,6 +421,16 @@ public class WorkflowGraphTest {
         Assert.assertEquals(nodeAt(graph, "tool:makePayment").get("source"), "ACTIVITY",
                 "An activity-backed tool is drawn differently from an AI tool");
         Assert.assertEquals(nodeAt(graph, "tool:validateClaim").get("source"), "AI_TOOL");
+
+        // @display labels ride on the display-only `label` slot; `target` stays the identity.
+        Assert.assertEquals(nodeAt(graph, "agent").get("label"), "Expense agent",
+                "The agent variable's @display label names the agent node");
+        Assert.assertEquals(nodeAt(graph, "tool:makePayment").get("label"), "Make payment",
+                "An activity's @display label names its tool node");
+        Assert.assertEquals(nodeAt(graph, "task:approveExpense").get("label"), "Approve expense",
+                "A human task's constant title names its node");
+        Assert.assertNull(nodeAt(graph, "tool:validateClaim").get("label"),
+                "A tool without a label has none — the console falls back to the target");
     }
 
     // ── The runtime gets the same ids ─────────────────────────────────────────

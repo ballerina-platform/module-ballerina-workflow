@@ -26,6 +26,20 @@ function processOrder(workflow:Context ctx, OrderRequest input) returns OrderRes
 }
 ```
 
+The function name is the workflow's identity. To give it a name for people — what a console
+lists and what the Temporal UI shows as the execution's summary — add the language's
+`@display` annotation above it, the same way as for an activity or a durable agent's variable:
+
+```ballerina
+@display {label: "Order processing"}
+@workflow:Workflow
+function processOrder(workflow:Context ctx, OrderRequest input) returns OrderResult|error {
+    return {orderId: input.orderId, status: "COMPLETED"};
+}
+```
+
+A human task's display name is its `title`, so no annotation is needed there.
+
 ## Function Signature
 
 A workflow function follows this signature pattern:
@@ -250,32 +264,44 @@ here.
 
 ## Get Workflow Results
 
-Use `workflow:getWorkflowResult()` to wait for a workflow to complete and retrieve its result:
+Three reads cover a running instance, and they answer the same way for a workflow and for a
+durable agent:
+
+| Read | Waits? | While the instance runs |
+|---|---|---|
+| `workflow:getResult(id)` | no | returns `WorkflowInProgressError` |
+| `workflow:waitForResult(id, timeout = ())` | yes, crash-resumable | returns the result; with a `timeout`, `WorkflowInProgressError` when the bound passes first |
+| `workflow:getStatus(id)` | no | returns `RUNNING` or `SUSPENDED` |
+
+All three answer `InstanceFailedError` for an instance that closed without a result (its
+detail says whether it `FAILED`, was `CANCELED` or `TERMINATED`, or `TIMED_OUT`, and its message
+carries the instance's own error), and `InstanceNotFoundError` for an id nothing holds. The result
+reads are typed: the expected type is inferred from the assignment.
+
+A service that reports on an instance needs one call and no management import:
 
 ```ballerina
-anydata result = check workflow:getWorkflowResult(workflowId);
-io:println(result.toString());  // The workflow return value
-```
-
-`getWorkflowResult()` blocks until the workflow finishes and returns its return value as `anydata`; if the workflow failed, it returns that error. Convert the value to the workflow's declared return type with `cloneWithType` when you need a typed result:
-
-```ballerina
-anydata raw = check workflow:getWorkflowResult(workflowId);
-OrderResult result = check raw.cloneWithType(OrderResult);
-```
-
-To inspect a workflow's current state *without* waiting for completion, use `getWorkflowInfo()` from the `ballerina/workflow.management` module:
-
-```ballerina
-import ballerina/workflow.management;
-
-management:WorkflowExecutionInfo info = check management:getWorkflowInfo(workflowId);
-if info.status == "RUNNING" {
-    io:println("Workflow is still running");
+resource function get orders/[string id]() returns json|error {
+    OrderResult|error result = workflow:getResult(id);
+    if result is workflow:WorkflowInProgressError {
+        return {id, status: "IN_PROGRESS"};
+    }
+    if result is workflow:InstanceFailedError {
+        return {id, status: result.detail().status, reason: result.message()};
+    }
+    return {id, status: "DONE", result: check result};
 }
 ```
 
-`WorkflowExecutionInfo` includes the workflow ID, workflow type, status, result, error message, and recorded activity invocations.
+Writing `check workflow:getResult(id)` in a resource or remote function turns a running instance
+into a failure of the request; the compiler warns about it (`WORKFLOW_169`). To block for a
+bounded time instead, use `waitForResult(id, timeout = {seconds: 5})`. Inside a workflow these are not
+available — read a child with `ctx->getChildWorkflowResult` or `ctx->waitForChildWorkflow`
+(`WORKFLOW_167`).
+
+`getWorkflowResult(id, timeoutSeconds)` remains as a deprecated alias of a bounded `waitForResult`
+returning `anydata`. The `ballerina/workflow.management` module's `getWorkflowInfo()` still gives
+the richer view — recorded activity invocations, the error message, a specific run.
 
 ## Unsupported Language Features
 

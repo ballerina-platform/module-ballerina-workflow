@@ -30,23 +30,29 @@ import ballerina/jballerina.java;
 #
 # + workflowType - Registered workflow function (or durable agent) name
 # + kind - `WORKFLOW` for a `@workflow:Workflow` function, `AGENT` for a durable agent
+# + displayName - The `@display` label of the declaration, or `()`; a name for people, never an identity
+# + icon - The `@display` icon path, or `()`
 # + inputSchema - JSON Schema of the workflow's input type as a string, or `()` when
 #                 the workflow takes no data input
 public type WorkflowDefinitionMeta record {|
     string workflowType;
     string kind;
+    string? displayName = ();
+    string? icon = ();
     string? inputSchema;
 |};
 
 # Describes one human task type for metadata publishing.
 #
 # + name - Qualified task name (`<workflowType>.<taskName>`)
+# + title - The task's constant title — its display name — or `()` when not declared statically
 # + resultSchema - JSON Schema of the task's completion form as a string, or `()` when
 #                  the result type is not yet known in this process (it is registered at
 #                  module init when the compiler plugin can determine it statically, and
 #                  lazily at first execution otherwise)
 public type HumanTaskMeta record {|
     string name;
+    string? title = ();
     string? resultSchema;
 |};
 
@@ -55,22 +61,30 @@ public type HumanTaskMeta record {|
 #
 # + workflowType - The workflow definition the activity is registered under
 # + name - The activity function name
+# + displayName - The activity's `@display` label, or `()`
+# + icon - The activity's `@display` icon path, or `()`
 # + inputSchema - JSON Schema of the activity's data parameters as a string, or `()`
 #                 when it cannot be derived
 public type ActivityMeta record {|
     string workflowType;
     string name;
+    string? displayName = ();
+    string? icon = ();
     string? inputSchema;
 |};
 
 # Describes one declared durable agent for metadata publishing.
 #
 # + name - The agent name (its module-level variable name)
+# + displayName - The `@display` label on the agent's variable, or `()`
+# + icon - The `@display` icon path, or `()`
 # + events - Declared event channel names
 # + tools - Tool names advertised to the model (declared activities and tools)
 # + humanTasks - Qualified names (`<agent>.<task>`) of the agent's declared human tasks
 public type AgentMeta record {|
     string name;
+    string? displayName = ();
+    string? icon = ();
     string[] events;
     string[] tools;
     string[] humanTasks;

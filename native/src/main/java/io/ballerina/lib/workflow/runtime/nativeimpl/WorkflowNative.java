@@ -39,6 +39,7 @@ import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
+import io.ballerina.runtime.api.values.BTypedesc;
 import io.temporal.api.common.v1.WorkflowExecution;
 import io.temporal.api.enums.v1.EventType;
 import io.temporal.api.enums.v1.WorkflowExecutionStatus;
@@ -95,6 +96,8 @@ public final class WorkflowNative {
     private static final String ERR_GET_INFO = "Failed to get workflow info: ";
     private static final String ERR_GET_REGISTERED = "Failed to get registered workflows: ";
     private static final String ERR_CLIENT_NOT_INIT = "Workflow client not initialized";
+    /** How the built-in result activity reports a wait that ran out before the instance closed. */
+    static final String WAIT_TIMED_OUT_PREFIX = "Workflow wait timed out";
 
     private WorkflowNative() {
         // Private constructor to prevent instantiation
@@ -547,8 +550,8 @@ public final class WorkflowNative {
                 String errorMsg = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
                 return ErrorCreator.createError(StringUtils.fromString(ERR_GET_RESULT + errorMsg));
             } catch (java.util.concurrent.TimeoutException e) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        ERR_GET_RESULT + "Workflow timed out after " + timeoutSeconds + " seconds"));
+                // The instance outlived the wait: the same answer the non-blocking read gives.
+                return InstanceReads.inProgress(wfId);
             }
 
         } catch (Exception e) {
@@ -574,6 +577,9 @@ public final class WorkflowNative {
             Object result = info.get("result");
             String errorMessage = (String) info.get(TaskKeys.ERROR_MESSAGE);
 
+            if (errorMessage != null && errorMessage.startsWith(WAIT_TIMED_OUT_PREFIX)) {
+                return InstanceReads.inProgress(workflowId);
+            }
             if ("FAILED".equals(status) || "CANCELED".equals(status) || "TIMED_OUT".equals(status)) {
                 return ErrorCreator.createError(StringUtils.fromString(ERR_GET_RESULT + errorMessage));
             }
@@ -582,6 +588,83 @@ public final class WorkflowNative {
         } catch (Exception e) {
             return handleImplicitActivityError(e, ERR_GET_RESULT);
         }
+    }
+
+    /**
+     * Native implementation of {@code workflow:getResult}: the instance's result if it has closed, a
+     * {@code WorkflowInProgressError} while it runs. A client verb — inside a workflow it is refused.
+     *
+     * @param env        the Ballerina runtime environment
+     * @param instanceId the instance
+     * @param typedesc   the caller's expected result type
+     * @return the typed result or a read error
+     */
+    public static Object getResult(Environment env, BString instanceId, BTypedesc typedesc) {
+        if (isInsideWorkflow()) {
+            return clientVerbInsideWorkflow("getResult", "ctx->getChildWorkflowResult");
+        }
+        return env.yieldAndRun(() -> {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+            return InstanceReads.read(client, instanceId.getValue(), null, false, null, typedesc);
+        });
+    }
+
+    /**
+     * Native implementation of {@code workflow:waitForResult}: waits for the instance to close, up to the
+     * given duration, and answers {@code WorkflowInProgressError} when the wait runs out first.
+     *
+     * @param env        the Ballerina runtime environment
+     * @param instanceId the instance
+     * @param timeout    a {@code Duration} record, or nil for no bound
+     * @param typedesc   the caller's expected result type
+     * @return the typed result or a read error
+     */
+    public static Object waitForResult(Environment env, BString instanceId, BTypedesc typedesc, Object timeout) {
+        if (isInsideWorkflow()) {
+            return clientVerbInsideWorkflow("waitForResult", "ctx->waitForChildWorkflow");
+        }
+        Long timeoutMillis;
+        try {
+            timeoutMillis = InstanceReads.timeoutMillisOf(timeout);
+        } catch (IllegalArgumentException e) {
+            return ErrorCreator.createError(StringUtils.fromString(e.getMessage()));
+        }
+        return env.yieldAndRun(() -> {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+            return InstanceReads.read(client, instanceId.getValue(), null, true, timeoutMillis, typedesc);
+        });
+    }
+
+    /**
+     * Native implementation of {@code workflow:getStatus}: one describe, no history read.
+     *
+     * @param env        the Ballerina runtime environment
+     * @param instanceId the instance
+     * @return the status name, or an {@code InstanceNotFoundError}
+     */
+    public static Object getStatus(Environment env, BString instanceId) {
+        if (isInsideWorkflow()) {
+            return clientVerbInsideWorkflow("getStatus", "ctx->getChildWorkflowResult");
+        }
+        return env.yieldAndRun(() -> {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+            Object status = InstanceReads.statusOf(client, instanceId.getValue(), null);
+            return status instanceof String s ? StringUtils.fromString(s) : status;
+        });
+    }
+
+    private static BError clientVerbInsideWorkflow(String verb, String alternative) {
+        return ErrorCreator.createError(StringUtils.fromString("workflow:" + verb
+                + " cannot be called inside a workflow; use " + alternative + " for a child of this workflow"));
     }
 
     /**
@@ -917,6 +1000,8 @@ public final class WorkflowNative {
             Map<Long, String> scheduledActivities = new HashMap<>();
             // Map: scheduledEventId → attempt number (from STARTED events, last one wins)
             Map<Long, Integer> scheduledAttempts = new HashMap<>();
+            // The run's workflow, so an activity's display name is looked up under its owner
+            String owner = null;
 
             com.google.protobuf.ByteString nextPageToken = com.google.protobuf.ByteString.EMPTY;
 
@@ -944,7 +1029,10 @@ public final class WorkflowNative {
                 for (HistoryEvent event : response.getHistory().getEventsList()) {
                     EventType eventType = event.getEventType();
 
-                    if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED) {
+                    if (eventType == EventType.EVENT_TYPE_WORKFLOW_EXECUTION_STARTED) {
+                        owner = WorkflowMetadataNative.stripPrefix(event.getWorkflowExecutionStartedEventAttributes()
+                                .getWorkflowType().getName(), WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX);
+                    } else if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED) {
                         String activityName =
                                 event.getActivityTaskScheduledEventAttributes().getActivityType().getName();
                         scheduledActivities.put(event.getEventId(), activityName);
@@ -956,7 +1044,7 @@ public final class WorkflowNative {
                         long scheduledId = event.getActivityTaskCompletedEventAttributes().getScheduledEventId();
                         String name = scheduledActivities.getOrDefault(scheduledId, "unknown");
                         int attempt = scheduledAttempts.getOrDefault(scheduledId, 1);
-                        invocations.append(createActivityInvocation(name, "COMPLETED", null, attempt));
+                        invocations.append(createActivityInvocation(owner, name, "COMPLETED", null, attempt));
                     } else if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_FAILED) {
                         long scheduledId = event.getActivityTaskFailedEventAttributes().getScheduledEventId();
                         String name = scheduledActivities.getOrDefault(scheduledId, "unknown");
@@ -965,17 +1053,18 @@ public final class WorkflowNative {
                         if (event.getActivityTaskFailedEventAttributes().hasFailure()) {
                             failMsg = event.getActivityTaskFailedEventAttributes().getFailure().getMessage();
                         }
-                        invocations.append(createActivityInvocation(name, "FAILED", failMsg, attempt));
+                        invocations.append(createActivityInvocation(owner, name, "FAILED", failMsg, attempt));
                     } else if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT) {
                         long scheduledId = event.getActivityTaskTimedOutEventAttributes().getScheduledEventId();
                         String name = scheduledActivities.getOrDefault(scheduledId, "unknown");
                         int attempt = scheduledAttempts.getOrDefault(scheduledId, 1);
-                        invocations.append(createActivityInvocation(name, "TIMED_OUT", "Activity timed out", attempt));
+                        invocations.append(createActivityInvocation(owner, name, "TIMED_OUT", "Activity timed out",
+                                attempt));
                     } else if (eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_CANCELED) {
                         long scheduledId = event.getActivityTaskCanceledEventAttributes().getScheduledEventId();
                         String name = scheduledActivities.getOrDefault(scheduledId, "unknown");
                         int attempt = scheduledAttempts.getOrDefault(scheduledId, 1);
-                        invocations.append(createActivityInvocation(name, "CANCELED", null, attempt));
+                        invocations.append(createActivityInvocation(owner, name, "CANCELED", null, attempt));
                     }
                 }
 
@@ -992,11 +1081,15 @@ public final class WorkflowNative {
     /**
      * Creates a single {@code ActivityInvocation} Ballerina record using management module types.
      */
-    private static BMap<BString, Object> createActivityInvocation(String activityName, String status,
+    private static BMap<BString, Object> createActivityInvocation(String owner, String activityName, String status,
                                                                   String errorMessage, int attempt) {
         BMap<BString, Object> record = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                       "ActivityInvocation");
         record.put(StringUtils.fromString(TaskKeys.ACTIVITY_NAME), StringUtils.fromString(activityName));
+        String displayName = DisplayNames.ofActivity(owner == null ? activityName : owner + "." + activityName)
+                .label();
+        record.put(StringUtils.fromString("displayName"),
+                   displayName != null ? StringUtils.fromString(displayName) : null);
         record.put(StringUtils.fromString("input"), ValueCreator.createArrayValue(new BString[0]));
         record.put(StringUtils.fromString("output"), null);
         record.put(StringUtils.fromString("status"), StringUtils.fromString(status));

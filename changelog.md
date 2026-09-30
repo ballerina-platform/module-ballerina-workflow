@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `workflow:runWithId` and `DurableAgent.runWithId` start an instance under an id the caller
+  chooses — a business key that doubles as the correlation key — with `ifRunning` (`FAIL`, the
+  default, or `USE_EXISTING`, the idempotent submit) and `ifClosed` (`ALLOW_DUPLICATE`, the
+  default, `ALLOW_DUPLICATE_FAILED_ONLY`, `REJECT_DUPLICATE`). A held id the policies refuse is
+  an `InstanceAlreadyExistsError` carrying the holder's status; a blank, over-long or
+  reserved-prefix id is refused at compile time for a literal (`WORKFLOW_166`) and at start
+  otherwise. ([#141](https://github.com/ballerina-platform/module-ballerina-workflow/pull/141))
+
 - `management:startInstance(workflowType, input, *StartOptions)` replaces `startWorkflowByType`
   (kept, deprecated) and adds the same policies, plus `TERMINATE_EXISTING` for `ifRunning`.
   `instances.start` and `POST /workflows` take `ifRunning` and `ifClosed`; a refused id is a
@@ -165,8 +173,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   standard Ballerina observability pipeline (`observabilityIncluded = true`):
   - Tracing: a new exported `workflow.observe` submodule records client-side spans for
     `run`, `sendData`, `getWorkflowResult`, the three task decisions, `DurableAgent.run` and
-    `DurableAgent.sendData`, nesting into the caller's existing request trace. Spans are suppressed inside workflow bodies (replay safety) and
-    record structural identifiers — and, on a decision, who made it.
+    `DurableAgent.sendData`, nesting into the caller's existing request trace. Spans are
+    suppressed inside workflow bodies (replay safety) and record structural identifiers —
+    and, on a decision, who made it.
   - Metrics, following the Ballerina integration observability standard: one
     `workflow_events_total` counter carries every lifecycle event (`started`, `closed`,
     `activity_executed`, `data_sent`, `task_decided`), recorded replay-safely; logical
@@ -251,6 +260,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `ballerina/ai` moves to 1.15.0. ([#111](https://github.com/ballerina-platform/module-ballerina-workflow/pull/111))
 - The README follows the connector store's package layout and carries the `Type/Library`
   keyword. ([#109](https://github.com/ballerina-platform/module-ballerina-workflow/pull/109))
+- The README's keywords and layout follow the connector store's discoverability guidance.
+  ([ballerina-library#9132](https://github.com/ballerina-platform/ballerina-library/issues/9132))
 
 ### Removed
 
@@ -293,8 +304,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ## [0.9.0] - 2026-09-07
 
 ### Changed
-
-- [[#9132] Updated Keywords and Reformat README for Connector Store Discoverability](https://github.com/ballerina-platform/ballerina-library/issues/9132)
 
 - **Breaking**: the management HTTP API moved from `ballerina/workflow.management`
   to the new `ballerina/workflow.management.rest` module. `workflow.management` is

@@ -20,9 +20,12 @@ type OrderEvents record {|
     future<ApprovalDecision> approval;
 |};
 
+// A display label is a console's name for the workflow; it is published, never used as identity.
+@display {label: "Expense approval", iconPath: "icons/expense.svg"}
 @workflow:Workflow
 function expenseApproval(workflow:Context ctx, ExpenseRequest expense) returns error? {
-    ApprovalDecision decision = check ctx->awaitHumanTask("managerApproval", {}, userRoles = "MANAGER");
+    ApprovalDecision decision = check ctx->awaitHumanTask("managerApproval", {}, userRoles = "MANAGER",
+        title = "Manager approval");
     if decision.approved {
         PostingResult|error posting = ctx->callActivity(postToLedger,
             {"expense": expense}, retryPolicy = {userRoles: "FINANCE"});
@@ -41,11 +44,16 @@ function orderFlow(workflow:Context ctx, OrderEvents events) returns error? {
     // as a named argument (the positional form no longer exists in the signature).
     PostingResult _ = check ctx->callActivity(postToLedger, {"expense": {id: "x", amount: 1, note: ()}},
         PostingResult, retryPolicy = {userRoles: "OPS"});
+    // The definition record passed positionally: its constant title is still the task's display name,
+    // and a "title" key in the task's input data is data, not the title.
+    ApprovalDecision _ = check ctx->awaitHumanTask("opsSignoff", {title: "Not the title"}, ApprovalDecision, (),
+        {userRoles: "OPS", title: "Ops sign-off"});
     // The descriptor captures the events record from the signature; waits are
     // exercised by other test packages.
     return;
 }
 
+@display {label: "Post to ledger"}
 @workflow:Activity
 function postToLedger(ExpenseRequest expense, int retries = 1) returns PostingResult|error {
     return {ref: expense.id, sequence: retries};

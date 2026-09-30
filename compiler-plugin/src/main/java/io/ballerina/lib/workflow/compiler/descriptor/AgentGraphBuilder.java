@@ -23,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.DISPLAY_NAME;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.EDGES;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.FROM;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.KIND;
@@ -37,6 +38,7 @@ import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.NOD
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SOURCE;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.STEP_ID;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.TARGET;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.TITLE;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.TO;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.WHEN;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.WHEN_IN;
@@ -73,18 +75,20 @@ public final class AgentGraphBuilder {
      * Builds the graph for one agent declaration.
      *
      * @param agentName  the agent's name
+     * @param agentLabel the agent's display name, or {@code null}
      * @param modelLabel the source reference of the configured model, or {@code null}
      * @param events     the agent's described data events
      * @param tools      the agent's described tools
      * @param humanTasks the agent's described human tasks
      * @return the {@code graph} object for the descriptor
      */
-    public static Map<String, Object> build(String agentName, String modelLabel, List<Object> events,
+    public static Map<String, Object> build(String agentName, String agentLabel, String modelLabel,
+                                            List<Object> events,
                                             List<Object> tools, List<Object> humanTasks) {
         List<Object> nodes = new ArrayList<>();
         List<Object> edges = new ArrayList<>();
 
-        nodes.add(node(AGENT_ID, KIND_AGENT_NODE, agentName, null, null));
+        nodes.add(node(AGENT_ID, KIND_AGENT_NODE, agentName, agentLabel, null));
 
         // Inbound: what reaches the agent from outside.
         for (Object event : events) {
@@ -97,7 +101,7 @@ public final class AgentGraphBuilder {
         for (Object task : humanTasks) {
             String name = nameOf(task);
             if (name != null) {
-                nodes.add(node(TASK_ID_PREFIX + name, KIND_HUMAN_TASK, name, null, null));
+                nodes.add(node(TASK_ID_PREFIX + name, KIND_HUMAN_TASK, name, stringOf(task, TITLE), null));
                 edges.add(edge(TASK_ID_PREFIX + name, AGENT_ID, WHEN_IN));
             }
         }
@@ -110,7 +114,8 @@ public final class AgentGraphBuilder {
         for (Object tool : tools) {
             String name = nameOf(tool);
             if (name != null) {
-                nodes.add(node(TOOL_ID_PREFIX + name, KIND_TOOL, name, null, sourceOf(tool)));
+                nodes.add(node(TOOL_ID_PREFIX + name, KIND_TOOL, name, stringOf(tool, DISPLAY_NAME),
+                        sourceOf(tool)));
                 edges.add(edge(AGENT_ID, TOOL_ID_PREFIX + name, WHEN_OUT));
             }
         }
@@ -153,5 +158,9 @@ public final class AgentGraphBuilder {
 
     private static String sourceOf(Object entry) {
         return entry instanceof Map<?, ?> map && map.get(SOURCE) instanceof String source ? source : null;
+    }
+
+    private static String stringOf(Object entry, String field) {
+        return entry instanceof Map<?, ?> map && map.get(field) instanceof String value ? value : null;
     }
 }

@@ -1726,6 +1726,11 @@ public final class WorkflowContextNative {
                 .setParentClosePolicy(
                         io.temporal.api.enums.v1.ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL)
                 .setMemo(memo);
+        // The @display label, as the child's summary in the Temporal UI, exactly as a top-level start sets it.
+        String displayName = io.ballerina.lib.workflow.runtime.nativeimpl.DisplayNames.workflowLabel(childType);
+        if (displayName != null) {
+            optionsBuilder.setStaticSummary(displayName);
+        }
         if (WorkflowWorkerNative.isKindSearchAttributeReady()) {
             optionsBuilder.setTypedSearchAttributes(io.temporal.common.SearchAttributes.newBuilder()
                     .set(WorkflowWorkerNative.WORKFLOW_KIND_KEY, CHILD_WORKFLOW_KIND).build());

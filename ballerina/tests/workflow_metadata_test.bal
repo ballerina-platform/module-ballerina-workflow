@@ -45,9 +45,13 @@ final json & readonly metaFixtureDescriptor = {
         {
             name: "metaFixtureWorkflow",
             kind: "WORKFLOW",
+            displayName: "Meta fixture",
+            icon: "icons/meta.svg",
+            activities: [{name: "metaFixtureActivity", displayName: "Fixture activity"}],
             humanTasks: [
                 {
                     name: "approve",
+                    title: "Approve the request",
                     result: {
                         'type: "MetaApproval",
                         schema: {
@@ -58,18 +62,53 @@ final json & readonly metaFixtureDescriptor = {
                     }
                 }
             ]
+        },
+        {
+            name: "metaFixtureWorkflow2",
+            kind: "WORKFLOW",
+            // The same activity name under another workflow, with a label of its own.
+            activities: [{name: "metaFixtureActivity", displayName: "Second owner's activity"}],
+            humanTasks: []
         }
     ],
-    agents: []
+    agents: [
+        {
+            name: "metaFixtureAgent",
+            kind: "AGENT",
+            displayName: "Meta agent",
+            // An activity only an agent uses is still an activity in history.
+            tools: [{name: "makePayment", kind: "ACTIVITY", displayName: "Make payment"}],
+            humanTasks: []
+        }
+    ]
 };
 
 function setPackedWorkflowDescriptor(json? descriptor) = @java:Method {
     'class: "io.ballerina.lib.workflow.test.TestNatives"
 } external;
 
+function activityDisplayLabel(string activityType) returns string? = @java:Method {
+    'class: "io.ballerina.lib.workflow.test.DisplayNameProbe",
+    name: "activityLabel"
+} external;
+
+@test:Config {groups: ["unit"]}
+function testAnAgentsActivityHasADisplayNameInHistoryReads() {
+    setPackedWorkflowDescriptor(metaFixtureDescriptor);
+    test:assertEquals(activityDisplayLabel("metaFixtureAgent.makePayment"), "Make payment",
+        "An activity-backed tool is indexed under its agent");
+    test:assertEquals(activityDisplayLabel("makePayment"), "Make payment",
+        "History names the activity by its plain type, which the bare key resolves");
+    test:assertEquals(activityDisplayLabel("metaFixtureWorkflow2.metaFixtureActivity"), "Second owner's activity",
+        "A workflow's own key wins over the first owner's bare key");
+    setPackedWorkflowDescriptor(());
+}
+
 @test:Config {groups: ["unit"]}
 function testWorkflowMetadataCompleteAtRegistration() returns error? {
     _ = check registerWorkflowForTest(metaFixtureWorkflow, "metaFixtureWorkflow",
+            {"metaFixtureActivity": metaFixtureActivity});
+    _ = check registerWorkflowForTest(metaFixtureWorkflow, "metaFixtureWorkflow2",
             {"metaFixtureActivity": metaFixtureActivity});
     _ = check registerHumanTaskForTest("metaFixtureWorkflow.approve");
     setPackedWorkflowDescriptor(metaFixtureDescriptor);
@@ -88,6 +127,14 @@ function testWorkflowMetadataCompleteAtRegistration() returns error? {
             meta.definitions.filter(d => d.workflowType == "metaFixtureWorkflow");
     test:assertEquals(defs.length(), 1, "The registered workflow must appear in definitions");
     test:assertEquals(defs[0].kind, "WORKFLOW");
+    // Display fields come from the descriptor's @display labels, joined by name at read time.
+    test:assertEquals(defs[0].displayName, "Meta fixture");
+    test:assertEquals(defs[0].icon, "icons/meta.svg");
+    management:WorkflowDefinition[] listed = (check management:listWorkflowDefinitions())
+        .filter(d => d.workflowType == "metaFixtureWorkflow");
+    test:assertEquals(listed.length(), 1);
+    test:assertEquals(listed[0].displayName, "Meta fixture",
+        "The definition listing must carry the same display name as the metadata document");
     string defSchema = defs[0].inputSchema ?: "";
     test:assertTrue(defSchema.includes("requestId") && defSchema.includes("amount"),
         "The definition input schema must describe the workflow's data parameter, got: " + defSchema);
@@ -97,6 +144,7 @@ function testWorkflowMetadataCompleteAtRegistration() returns error? {
     management:HumanTaskMeta[] tasks =
             meta.humanTasks.filter(t => t.name == "metaFixtureWorkflow.approve");
     test:assertEquals(tasks.length(), 1, "The registered human task must appear in humanTasks");
+    test:assertEquals(tasks[0].title, "Approve the request", "A task's constant title is its display name");
     string resultSchema = tasks[0].resultSchema ?: "";
     test:assertTrue(resultSchema.includes("approved"),
         "The completion-form schema must come from the packed descriptor, got: " + resultSchema);
@@ -110,6 +158,14 @@ function testWorkflowMetadataCompleteAtRegistration() returns error? {
     management:ActivityMeta[] activities = meta.activities
         .filter(a => a.workflowType == "metaFixtureWorkflow" && a.name == "metaFixtureActivity");
     test:assertEquals(activities.length(), 1, "The registered activity must appear in activities");
+    test:assertEquals(activities[0].displayName, "Fixture activity");
+    test:assertEquals(activities[0].icon, (), "No icon was declared for the activity");
+    // The same activity name under another workflow keeps that workflow's own label.
+    management:ActivityMeta[] second = meta.activities
+        .filter(a => a.workflowType == "metaFixtureWorkflow2" && a.name == "metaFixtureActivity");
+    test:assertEquals(second.length(), 1);
+    test:assertEquals(second[0].displayName, "Second owner's activity",
+        "An activity's display is looked up by its owning workflow first");
     // Parse the schema rather than matching its text: the assertion is about which
     // properties are required, not about how the document happens to be formatted.
     json activitySchema = check (activities[0].inputSchema ?: "{}").fromJsonString();

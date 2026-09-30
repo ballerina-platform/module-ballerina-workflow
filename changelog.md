@@ -40,6 +40,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   to its own instances. The compiler refuses the reads inside a workflow body (`WORKFLOW_167`) and
   a negative literal bound (`WORKFLOW_168`), and warns when a resource or remote function
   `check`s a non-blocking read straight into a request failure (`WORKFLOW_169`).
+- `jwtAuthHeader` in `[ballerina.workflow.management.rest]` names the header that carries the
+  JWT, defaulting to the standard `Authorization` header. Set it (e.g. `X-JWT-Assertion`) when a
+  gateway keeps `Authorization` for its own credential and forwards the caller's JWT in another
+  header, as a bare token or `Bearer <token>`. The gateway interceptor then validates that token
+  with the same issuer, audience and JWKS configuration before the caller identity is read from
+  it, and validates basic auth too when `enableBasicAuth = true`, so either credential admits a
+  request; a request presenting an invalid credential is refused. With `enableOAuth = true`,
+  every request must additionally carry the OAuth2 token in `Authorization`.
 
 ### Changed
 

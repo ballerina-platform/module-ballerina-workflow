@@ -52,7 +52,7 @@ A resend is the caller repeating a request because it does not know whether the 
 | `workflow:run` | Starts **two** workflow instances. |
 | `workflow:sendData`, `management:sendDataToWorkflow` | Delivers the event twice. Safe only when the workflow waits on the channel once and later deliveries are ignored — the [Alternative Wait](patterns/alternative-wait.md) pattern. A workflow that reads the same channel more than once, or advances step by step on events, can move forward twice. |
 | `completeHumanTask`, `failHumanTask`, review decisions | Safe: the second call returns an error because the task is already closed. |
-| `resetWorkflowExecution` | Safe: the request carries an idempotency key, so a repeated reset is a no-op. |
+| `resetWorkflowExecution` | Safe when the request carries an idempotency key, so a repeated reset is a no-op. Without one, only an identical repeat is a no-op: a retry that resolves `latest` to a different run resets again. |
 
 To make a data event safe to resend, put an idempotency key in the payload and have the workflow ignore a key it has already recorded. Checking the instance first with `management:getWorkflowInfo` is not enough: a request that timed out may still be in flight, so the check can pass and both deliveries still land. A key in `run`'s input does not help either, because each call starts a new instance that sees the key once; deduplicate before calling `run`.
 

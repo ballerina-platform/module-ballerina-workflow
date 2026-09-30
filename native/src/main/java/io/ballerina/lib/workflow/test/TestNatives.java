@@ -224,57 +224,6 @@ public final class TestNatives {
      * @param typedesc the expected return type
      * @return the fixed value coerced to {@code typedesc}, or an error
      */
-    /**
-     * The full event history of an instance as JSON, so a test can keep it as a replay fixture.
-     *
-     * @param workflowId the instance
-     * @return the history JSON, or an error
-     */
-    public static Object exportHistoryJson(BString workflowId) {
-        try {
-            return StringUtils.fromString(io.ballerina.lib.workflow.worker.WorkflowWorkerNative.getWorkflowClient()
-                    .fetchHistory(workflowId.getValue()).toJson(true));
-        } catch (Exception e) {
-            return io.ballerina.runtime.api.creators.ErrorCreator.createError(StringUtils.fromString(
-                    "Failed to export the history of '" + workflowId.getValue() + "': " + e.getMessage()));
-        }
-    }
-
-    /**
-     * Replays a history JSON file against this process's worker: the workflow code registered now must make
-     * the same decisions the history records, or the replay fails as a real worker would after a restart.
-     *
-     * @param path the JSON file, relative to the working directory
-     * @return null when the history replays, or an error naming the divergence
-     */
-    public static Object replayHistoryFile(BString path) {
-        try {
-            String json = java.nio.file.Files.readString(java.nio.file.Path.of(path.getValue()));
-            return replayHistoryJson(StringUtils.fromString(json));
-        } catch (java.io.IOException e) {
-            return io.ballerina.runtime.api.creators.ErrorCreator.createError(StringUtils.fromString(
-                    "Failed to read the history file '" + path.getValue() + "': " + e.getMessage()));
-        }
-    }
-
-    /**
-     * Replays a history JSON against this process's worker.
-     *
-     * @param json the history as exported by {@link #exportHistoryJson}
-     * @return null when the history replays, or an error naming the divergence
-     */
-    public static Object replayHistoryJson(BString json) {
-        try {
-            io.temporal.testing.WorkflowReplayer.replayWorkflowExecution(
-                    io.temporal.common.WorkflowExecutionHistory.fromJson(json.getValue()),
-                    io.ballerina.lib.workflow.worker.WorkflowWorkerNative.getWorker());
-            return null;
-        } catch (Exception e) {
-            return io.ballerina.runtime.api.creators.ErrorCreator.createError(StringUtils.fromString(
-                    "The history does not replay against the current code: " + e.getMessage()));
-        }
-    }
-
     public static Object mockGenerate(BObject self, BObject prompt, BTypedesc typedesc) {
         Map<String, Object> fixed = new HashMap<>();
         fixed.put("summary", "generated summary");

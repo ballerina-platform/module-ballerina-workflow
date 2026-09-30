@@ -10,22 +10,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
-- The language's `@display {label, iconPath}` annotation is read on `@workflow:Workflow` and
-  `@workflow:Activity` functions and on a `workflow:DurableAgent` variable, and published as
-  `displayName`/`icon` in the workflow descriptor, the metadata document, `WorkflowDefinition`,
-  `ActivityTreeNode`, `ActivityInvocation` and the execution graph (a new `displayName` beside
-  `label`, which stays the step's own name); a human task's
-  constant `title` is published as its display name the same way. The label is also set as the
-  static summary of the execution, top level or child, for the Temporal UI. A display name is never an identity — a rename
-  is a rebuild, with no migration — and a blank label is rejected (`WORKFLOW_165`).
-- `workflow:runWithId` and `DurableAgent.runWithId` start an instance under an id the caller
-  chooses — a business key that doubles as the correlation key — with `ifRunning` (`FAIL`, the
-  default, or `USE_EXISTING`, the idempotent submit) and `ifClosed` (`ALLOW_DUPLICATE`, the
-  default, `ALLOW_DUPLICATE_FAILED_ONLY`, `REJECT_DUPLICATE`). A held id the policies refuse is
-  an `InstanceAlreadyExistsError` carrying the holder's status; a blank, over-long or
-  reserved-prefix id is refused at compile time for a literal (`WORKFLOW_166`) and at start
-  otherwise. ([#141](https://github.com/ballerina-platform/module-ballerina-workflow/pull/141))
-
 - `management:startInstance(workflowType, input, *StartOptions)` replaces `startWorkflowByType`
   (kept, deprecated) and adds the same policies, plus `TERMINATE_EXISTING` for `ifRunning`.
   `instances.start` and `POST /workflows` take `ifRunning` and `ifClosed`; a refused id is a
@@ -48,20 +32,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - The language's `@display {label, iconPath}` annotation is read on `@workflow:Workflow` and
   `@workflow:Activity` functions and on a `workflow:DurableAgent` variable, and published as
   `displayName`/`icon` in the workflow descriptor, the metadata document, `WorkflowDefinition`,
-  `ActivityTreeNode`, `ActivityInvocation` and the execution graph's labels; a human task's
+  `ActivityTreeNode`, `ActivityInvocation` and the execution graph (a new `displayName` beside
+  `label`, which stays the step's own name); a human task's
   constant `title` is published as its display name the same way. The label is also set as the
-  execution's static summary for the Temporal UI. A display name is never an identity — a rename
+  static summary of the execution, top level or child, for the Temporal UI. A display name is never an identity — a rename
   is a rebuild, with no migration — and a blank label is rejected (`WORKFLOW_165`). ([#140](https://github.com/ballerina-platform/module-ballerina-workflow/pull/140))
 
 - `jwtAuthHeader` in `[ballerina.workflow.management.rest]` names the header that carries the
   JWT, defaulting to the standard `Authorization` header. Set it (e.g. `X-JWT-Assertion`) when a
   gateway keeps `Authorization` for its own credential and forwards the caller's JWT in another
-  header, as a bare token or `Bearer <token>`. The token is then validated by the gateway
-  interceptor with the same issuer, audience and JWKS configuration before the caller identity is
-  read from it, and a request carrying an invalid token in that header is refused. The schemes
-  configured through `@http:ServiceConfig` still run on `Authorization` afterwards, so set
-  `enableBasicAuth = false` (it defaults to `true`) unless `Authorization` also carries a
-  credential they accept. ([#149](https://github.com/ballerina-platform/module-ballerina-workflow/pull/149))
+  header, as a bare token or `Bearer <token>`. The gateway interceptor then validates that token
+  with the same issuer, audience and JWKS configuration before the caller identity is read from
+  it, and validates basic auth too when `enableBasicAuth = true`, so either credential admits a
+  request; a request presenting an invalid credential is refused. With `enableOAuth = true`,
+  every request must additionally carry the OAuth2 token in `Authorization`. ([#149](https://github.com/ballerina-platform/module-ballerina-workflow/pull/149))
 
 - **One trace per instance.** A trace's ID is derived from the instance ID, so calls that
   never meet agree on it without a context to pass: the client spans of `workflow.observe`

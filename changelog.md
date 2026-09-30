@@ -26,8 +26,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   JWT, defaulting to the standard `Authorization` header. Set it (e.g. `X-JWT-Assertion`) when a
   gateway keeps `Authorization` for its own credential and forwards the caller's JWT in another
   header, as a bare token or `Bearer <token>`. The token is then validated by the gateway
-  interceptor with the same issuer, audience and JWKS configuration, and the caller identity is
-  read from it.
+  interceptor with the same issuer, audience and JWKS configuration before the caller identity is
+  read from it, and a request carrying an invalid token in that header is refused. The schemes
+  configured through `@http:ServiceConfig` still run on `Authorization` afterwards, so set
+  `enableBasicAuth = false` (it defaults to `true`) unless `Authorization` also carries a
+  credential they accept.
 
 ## [0.10.1]
 

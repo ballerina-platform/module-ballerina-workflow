@@ -177,6 +177,70 @@ isolated client class OverrunThenSilentMockModelProvider {
 
 final OverrunThenSilentMockModelProvider overrunThenSilentAgentModel = new;
 
+// Acknowledges each approval beside a wait for the next one, and closes after the second.
+isolated client class TwoApprovalsMockModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        int approvals = 0;
+        string last = "none";
+        if messages is ai:ChatMessage[] {
+            foreach ai:ChatMessage message in messages {
+                if message is ai:ChatFunctionMessage && message.name == "awaitEvent_approval" {
+                    approvals += 1;
+                    last = message.content ?: "";
+                }
+            }
+        }
+        if approvals >= 2 {
+            return {role: ai:ASSISTANT, content: "All done after " + last};
+        }
+        return {role: ai:ASSISTANT, content: "Noted: " + last,
+            toolCalls: [{name: "awaitEvent_approval", arguments: {}}]};
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final TwoApprovalsMockModelProvider twoApprovalsAgentModel = new;
+
+// Answers the first turn, then ends the conversation on "bye" with neither text nor farewell.
+isolated client class SilentGoodbyeMockModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        string lastChat = "";
+        if messages is ai:ChatMessage[] {
+            foreach ai:ChatMessage message in messages {
+                if message is ai:ChatUserMessage {
+                    string|ai:Prompt content = message.content;
+                    lastChat = content is string ? content : "";
+                }
+            }
+        }
+        if lastChat.includes("bye") {
+            return {role: ai:ASSISTANT, toolCalls: [{name: "endConversation", arguments: {}}]};
+        }
+        return {role: ai:ASSISTANT, content: "Turn 1 answer"};
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final SilentGoodbyeMockModelProvider silentGoodbyeAgentModel = new;
+
 // Says "let me check" beside a tool call, then closes the turn with nothing: the interim text must
 // not be handed to the waiter as the answer.
 isolated client class InterimThenSilentMockModelProvider {
@@ -339,6 +403,28 @@ function interimThenSilentChatAgent(handle ctx, AgentOrderInput input) returns e
     check registerAgentEvent(ctx, "chat", string, string);
     check buildAndRun(ctx, systemPrompt = {role: "", instructions: "Interim then silent chat agent."},
             model = interimThenSilentAgentModel, maxIter = 3, interaction = MULTI_EVENT);
+}
+
+function twoApprovalsAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerActivity(ctx, checkStock);
+    check registerAgentEvent(ctx, "approval", string, string);
+    // One turn, two duplex events: MULTI_EVENT without a chat event never re-arms a chat wait.
+    check buildAndRun(ctx, input.request, systemPrompt = {role: "", instructions: "Two approvals agent."},
+            model = twoApprovalsAgentModel, maxIter = 5, interaction = MULTI_EVENT);
+}
+
+function silentGoodbyeChatAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerAgentEvent(ctx, "chat", string, string);
+    check buildAndRun(ctx, systemPrompt = {role: "", instructions: "Silent goodbye chat agent."},
+            model = silentGoodbyeAgentModel, interaction = MULTI_EVENT);
+}
+
+function loopingThenQuietChatAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerActivity(ctx, checkStock);
+    check registerAgentEvent(ctx, "chat", string, string);
+    // After the overrun the chat wait times out, so the conversation ends quietly.
+    check buildAndRun(ctx, systemPrompt = {role: "", instructions: "Looping then quiet chat agent."},
+            model = loopingAgentModel, maxIter = 2, interaction = MULTI_EVENT, eventTimeout = {seconds: 3});
 }
 
 function unknownToolAgent(handle ctx, AgentOrderInput input) returns error? {
@@ -947,6 +1033,9 @@ function setupAgentTests() returns error? {
     _ = check registerAgentWorkflowForTest(silentChatAgent, "silentChatAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(overrunThenSilentChatAgent, "overrunThenSilentChatAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(interimThenSilentChatAgent, "interimThenSilentChatAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(twoApprovalsAgent, "twoApprovalsAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(silentGoodbyeChatAgent, "silentGoodbyeChatAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(loopingThenQuietChatAgent, "loopingThenQuietChatAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(unknownToolAgent, "unknownToolAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(flakyModelAgent, "flakyModelAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(priceAgent, "priceAgent", agentActivities);
@@ -1063,10 +1152,10 @@ function testAgentTextBesideToolCallsIsNotTheTurnsAnswer() returns error? {
     }
     management:WorkflowExecutionInfo info = check management:getWorkflowInfo(agentId);
     test:assertEquals(info.status, "RUNNING");
-    // The recorded latest response agrees with what the waiter was told, not the interim text.
+    // The overrun is not recorded as the response: it would become the agent's result.
     string? latest = getAgentFinalResponse(agentId);
-    test:assertTrue(latest is string && latest.includes("maximum number of iterations"),
-            "The latest response is the overrun, got: " + (latest ?: "()"));
+    test:assertFalse(latest is string && latest.includes("maximum number of iterations"),
+            "The overrun is reported to the waiter, never recorded as the response: " + (latest ?: "()"));
     check management:terminateWorkflow(agentId, "", "test done");
 }
 
@@ -1113,6 +1202,50 @@ function testInterimTextBeforeASilentReplyIsNotTheTurnsAnswer() returns error? {
     management:WorkflowExecutionInfo info = check management:getWorkflowInfo(agentId);
     test:assertEquals(info.status, "RUNNING", "A silent turn does not end the conversation");
     check management:terminateWorkflow(agentId, "", "test done");
+}
+
+@test:Config {groups: ["unit"]}
+function testAnEarlierEventsWaiterGetsTheTextRecordedSinceIt() returns error? {
+    // One turn consumes two duplex events. The first event's waiter is answered when the
+    // second event is consumed, with the text recorded since the first ("Noted: a1"); the
+    // second event's waiter gets the reply that closes the turn.
+    map<anydata> input = {id: "agent-two-approvals-001", request: "start"};
+    string agentId = check run(twoApprovalsAgent, input);
+    runtime:sleep(2);
+    string t1 = check agentTurnDriver.sendData(agentId, "approval", "a1");
+    string t2 = check agentTurnDriver.sendData(agentId, "approval", "a2");
+    string first = check agentTurnDriver.waitForDataResult(agentId, t1);
+    test:assertEquals(first, "Noted: a1", "The first waiter gets the text recorded after its event");
+    string second = check agentTurnDriver.waitForDataResult(agentId, t2);
+    test:assertEquals(second, "All done after a2", "The second waiter gets the closing reply");
+    _ = check getWorkflowResult(agentId, 30);
+}
+
+@test:Config {groups: ["unit"]}
+function testAGoodbyeWithoutTextIsNotAnsweredWithAnOldTurn() returns error? {
+    map<anydata> input = {id: "agent-silent-goodbye-001", request: "unused"};
+    string agentId = check run(silentGoodbyeChatAgent, input);
+    string first = check updateAgentTurn(agentId, "chat", "hello");
+    test:assertEquals(first, "Turn 1 answer");
+    string|error bye = updateAgentTurn(agentId, "chat", "bye");
+    test:assertTrue(bye is error && bye.message().includes("without a response"),
+            "A closing turn with neither text nor farewell has no answer: "
+                + (bye is error ? bye.message() : bye));
+    _ = check getWorkflowResult(agentId, 30);
+}
+
+@test:Config {groups: ["unit"]}
+function testAnOverrunIsNotTheAgentsResult() returns error? {
+    map<anydata> input = {id: "agent-overrun-quiet-001", request: "unused"};
+    string agentId = check run(loopingThenQuietChatAgent, input);
+    string|error turn = updateAgentTurn(agentId, "chat", "loop");
+    test:assertTrue(turn is error && turn.message().includes("maximum number of iterations"));
+    // The chat wait times out and the run ends: its result must not be the overrun text.
+    anydata result = check getWorkflowResult(agentId, 30);
+    string? latest = getAgentFinalResponse(agentId);
+    test:assertFalse(result is string && result.includes("maximum number of iterations"),
+            "The overrun is not the result: " + result.toString());
+    test:assertFalse(latest is string && latest.includes("maximum number of iterations"));
 }
 
 @test:Config {groups: ["unit"]}

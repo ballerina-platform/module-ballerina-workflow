@@ -1401,9 +1401,14 @@ public final class DurableAgentNative {
         });
     }
 
-    // The reason a turn failed, as the agent gave it: the application failure under the SDK's
-    // update-exception wrappers, whose own messages only name the execution.
-    private static String updateFailureMessage(Throwable e) {
+    /**
+     * The reason a turn failed, as the agent gave it: the application failure under the SDK's
+     * update-exception wrappers, whose own messages only name the execution.
+     *
+     * @param e the failure a turn's waiter received
+     * @return the agent's own message
+     */
+    public static String updateFailureMessage(Throwable e) {
         Throwable current = e;
         while (current != null) {
             if (current instanceof io.temporal.failure.ApplicationFailure failure) {

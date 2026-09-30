@@ -390,7 +390,7 @@ isolated function dispatchAgentTool(handle ctxHandle, string agentName, AgentFun
         anydata correlationId = args["correlationId"];
         result = correlationId is string ? collectPeerResult(correlationId)
             : error("collectPeerResult needs the correlation id a delegation returned");
-        if result is AgentBusyError {
+        if result is WorkflowInProgressError {
             return "The peer is still working; collect its result later.";
         }
     } else if kind == "replycaller" {

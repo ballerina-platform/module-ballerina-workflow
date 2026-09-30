@@ -77,7 +77,6 @@ public final class DurableAgentNative {
     private static final String SCHEMA_PROPERTIES = "properties";
     private static final String SCHEMA_REQUIRED = "required";
     private static final String SCHEMA_DESCRIPTION = "description";
-    private static final String AGENT_BUSY_ERROR = InstanceReads.IN_PROGRESS_ERROR;
     private static final String RUN_SPEC_RECORD = "DurableAgentRunSpec";
     private static final String ACTIVITY_SPEC_RECORD = "DurableAgentActivitySpec";
     private static final String TOOL_SPEC_RECORD = "DurableAgentToolSpec";
@@ -843,7 +842,7 @@ public final class DurableAgentNative {
      */
     public static Object getResult(Environment env, BObject self, BString instanceId, BTypedesc typedesc) {
         if (isInsideWorkflow()) {
-            return WorkflowContextNative.readDurableAgentChildResult(instanceId.getValue(), typedesc, false);
+            return readChildInWorkflow(self, instanceId.getValue(), typedesc, false, "getResult");
         }
         return clientRead(env, self, instanceId.getValue(), typedesc, false, null);
     }
@@ -892,7 +891,7 @@ public final class DurableAgentNative {
     public static Object waitForResult(Environment env, BObject self, BString instanceId, BTypedesc typedesc,
                                        Object timeout) {
         if (isInsideWorkflow()) {
-            return WorkflowContextNative.readDurableAgentChildResult(instanceId.getValue(), typedesc, true);
+            return readChildInWorkflow(self, instanceId.getValue(), typedesc, true, "waitForResult");
         }
         Long timeoutMillis;
         try {
@@ -901,6 +900,16 @@ public final class DurableAgentNative {
             return ErrorCreator.createError(StringUtils.fromString(e.getMessage()));
         }
         return clientRead(env, self, instanceId.getValue(), typedesc, true, timeoutMillis);
+    }
+
+    // Inside a workflow the agent reads the children it started there, scoped to its own instances
+    private static Object readChildInWorkflow(BObject self, String instanceId, BTypedesc typedesc,
+                                              boolean blocking, String method) {
+        String agentName = boundAgentName(self);
+        if (agentName == null) {
+            return unboundAgentError(method);
+        }
+        return WorkflowContextNative.readDurableAgentChildResult(agentName, instanceId, typedesc, blocking);
     }
 
     /**
@@ -1452,13 +1461,7 @@ public final class DurableAgentNative {
      * in progress.
      */
     public static BError createAgentBusyError(String instanceId) {
-        String message = "Durable agent instance '" + instanceId + "' is still working";
-        try {
-            return ErrorCreator.createError(ModuleUtils.getModule(), AGENT_BUSY_ERROR,
-                    StringUtils.fromString(message), null, null);
-        } catch (Exception e) {
-            return ErrorCreator.createError(StringUtils.fromString(AGENT_BUSY_ERROR + ": " + message));
-        }
+        return InstanceReads.inProgress(instanceId);
     }
 
     private static Object unboundAgentError(String method) {

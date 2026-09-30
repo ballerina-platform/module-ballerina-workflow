@@ -17,10 +17,9 @@
 package io.ballerina.lib.workflow.compiler;
 
 import io.ballerina.compiler.api.SemanticModel;
-import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
-import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.syntax.tree.BasicLiteralNode;
 import io.ballerina.compiler.syntax.tree.BracedExpressionNode;
+import io.ballerina.compiler.syntax.tree.ClassDefinitionNode;
 import io.ballerina.compiler.syntax.tree.ExpressionNode;
 import io.ballerina.compiler.syntax.tree.FunctionArgumentNode;
 import io.ballerina.compiler.syntax.tree.FunctionCallExpressionNode;
@@ -28,11 +27,11 @@ import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.MappingConstructorExpressionNode;
 import io.ballerina.compiler.syntax.tree.MappingFieldNode;
 import io.ballerina.compiler.syntax.tree.MethodCallExpressionNode;
-import io.ballerina.compiler.syntax.tree.NameReferenceNode;
 import io.ballerina.compiler.syntax.tree.Node;
-import io.ballerina.compiler.syntax.tree.QualifiedNameReferenceNode;
+import io.ballerina.compiler.syntax.tree.NodeList;
+import io.ballerina.compiler.syntax.tree.ObjectConstructorExpressionNode;
 import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
-import io.ballerina.compiler.syntax.tree.SimpleNameReferenceNode;
+import io.ballerina.compiler.syntax.tree.ServiceDeclarationNode;
 import io.ballerina.compiler.syntax.tree.SpecificFieldNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.compiler.syntax.tree.Token;
@@ -72,7 +71,7 @@ public class ResultReadValidatorTask implements AnalysisTask<SyntaxNodeAnalysisC
     public void perform(SyntaxNodeAnalysisContext context) {
         SemanticModel semanticModel = context.semanticModel();
         if (context.node() instanceof FunctionCallExpressionNode call) {
-            String name = simpleNameOf(call.functionName());
+            String name = WorkflowFunctionCallUtils.simpleNameOf(call.functionName());
             if (name == null || !MODULE_READS.contains(name)
                     || !WorkflowFunctionCallUtils.isWorkflowModuleFunctionCall(call, semanticModel, name)) {
                 return;
@@ -88,11 +87,20 @@ public class ResultReadValidatorTask implements AnalysisTask<SyntaxNodeAnalysisC
         } else if (context.node() instanceof MethodCallExpressionNode methodCall) {
             // By the receiver's type, so an agent reached through a field or a call counts too.
             ExpressionNode receiver = methodCall.expression();
-            if (!semanticModel.typeOf(receiver).map(ResultReadValidatorTask::isDurableAgentType).orElse(false)) {
+            if (!semanticModel.typeOf(receiver).map(DurableAgentDeclAnalysisTask::isDurableAgentSymbol)
+                    .orElse(false)) {
                 return;
             }
             String name = methodCall.methodName().toSourceCode().strip();
             String qualified = receiver.toSourceCode().strip() + "." + name;
+            // An agent's result reads inside a workflow read its children; its status read has no
+            // child form, so it is refused at compile time as the module function is.
+            if (WorkflowConstants.GET_STATUS_FUNCTION.equals(name)
+                    && WorkflowPluginUtils.isInsideWorkflowFunction(methodCall, semanticModel)) {
+                report(context, WorkflowDiagnostic.WORKFLOW_167, methodCall.location(), qualified,
+                        alternativeOf(name));
+                return;
+            }
             if (WorkflowConstants.WAIT_FOR_RESULT_FUNCTION.equals(name)) {
                 validateTimeout(context, methodCall.arguments(), qualified);
             }
@@ -137,11 +145,6 @@ public class ResultReadValidatorTask implements AnalysisTask<SyntaxNodeAnalysisC
         };
     }
 
-    private static boolean isDurableAgentType(TypeSymbol type) {
-        return type instanceof TypeReferenceTypeSymbol ref
-                && ref.getName().map(WorkflowConstants.DURABLE_AGENT_TYPE::equals).orElse(false)
-                && ref.getModule().map(WorkflowPluginUtils::isWorkflowModule).orElse(false);
-    }
 
     // `check` straight on a non-blocking read in a resource or remote function: a running instance
     // becomes the caller's failure. Only read sites that answer WorkflowInProgressError count.
@@ -150,6 +153,9 @@ public class ResultReadValidatorTask implements AnalysisTask<SyntaxNodeAnalysisC
             return;
         }
         Node parent = call.parent();
+        while (parent != null && parent.kind() == SyntaxKind.BRACED_EXPRESSION) {
+            parent = parent.parent();
+        }
         // `checkpanic` is a CHECK_EXPRESSION/ACTION with a different keyword, so both are covered.
         if (parent == null || (parent.kind() != SyntaxKind.CHECK_EXPRESSION
                 && parent.kind() != SyntaxKind.CHECK_ACTION)) {
@@ -161,11 +167,16 @@ public class ResultReadValidatorTask implements AnalysisTask<SyntaxNodeAnalysisC
         }
     }
 
-    // "resource function" or "remote function" when the call sits in one, else null.
+    // "resource function" or "remote function" when the call sits in one that serves requests (a
+    // service declaration, service class or service object), else null: a client class's remote
+    // method has no request to fail.
     private static String enclosingServiceFunctionKind(Node node) {
         Node current = node.parent();
         while (current != null) {
             if (current instanceof FunctionDefinitionNode function) {
+                if (!isInService(function)) {
+                    return null;
+                }
                 if (function.kind() == SyntaxKind.RESOURCE_ACCESSOR_DEFINITION) {
                     return "resource function";
                 }
@@ -181,11 +192,27 @@ public class ResultReadValidatorTask implements AnalysisTask<SyntaxNodeAnalysisC
         return null;
     }
 
-    private static String simpleNameOf(NameReferenceNode name) {
-        if (name instanceof QualifiedNameReferenceNode qualified) {
-            return qualified.identifier().text();
+    private static boolean isInService(FunctionDefinitionNode function) {
+        Node owner = function.parent();
+        if (owner instanceof ServiceDeclarationNode) {
+            return true;
         }
-        return name instanceof SimpleNameReferenceNode simple ? simple.name().text() : null;
+        if (owner instanceof ClassDefinitionNode classDefinition) {
+            return hasServiceQualifier(classDefinition.classTypeQualifiers());
+        }
+        if (owner instanceof ObjectConstructorExpressionNode constructor) {
+            return hasServiceQualifier(constructor.objectTypeQualifiers());
+        }
+        return false;
+    }
+
+    private static boolean hasServiceQualifier(NodeList<Token> qualifiers) {
+        for (Token qualifier : qualifiers) {
+            if (qualifier.kind() == SyntaxKind.SERVICE_KEYWORD) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void report(SyntaxNodeAnalysisContext context, WorkflowDiagnostic diagnostic, Location location,

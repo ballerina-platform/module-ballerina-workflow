@@ -21,6 +21,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- A `ctx->await` bound counts `weeks` and `days` and refuses `months` and `years` (which have no
+  fixed length), as `waitForResult` does; a bound that is negative or overflows is refused. Executions
+  started before this release keep the bound they recorded (hours, minutes and seconds only), so
+  their replays stay deterministic.
 - `getWorkflowResult` is deprecated in favour of `waitForResult`, and answers
   `WorkflowInProgressError` when its wait runs out instead of a plain error worded as a workflow
   timeout. `WorkflowBusyError` and `AgentBusyError` are deprecated aliases of

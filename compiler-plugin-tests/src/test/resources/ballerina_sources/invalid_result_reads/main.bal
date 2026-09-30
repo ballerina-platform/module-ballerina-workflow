@@ -44,6 +44,8 @@ function parentFlow(workflow:Context ctx, string input) returns string|error {
     workflow:InstanceStatus _ = check workflow:getStatus(input);
     // OK: an agent's getResult inside a workflow reads a child of this workflow.
     string|error agentRead = helpAgent.getResult(input);
+    // ERROR WORKFLOW_167: an agent's status read has no child form either.
+    workflow:InstanceStatus _ = check helpAgent.getStatus(input);
     return agentRead is string ? agentRead : input;
 }
 
@@ -54,6 +56,8 @@ service /orders on new http:Listener(9090) {
         string agentResult = check helpAgent.getResult(id);
         // WARNING WORKFLOW_169: the agent reached through a field is still an agent.
         string heldResult = check holder.agent.getResult(id);
+        // WARNING WORKFLOW_169: parentheses around the read do not hide the check.
+        string braced = check (workflow:getResult(id));
         // OK: tested for progress first.
         string|error read = workflow:getResult(id);
         if read is workflow:WorkflowInProgressError {
@@ -61,7 +65,7 @@ service /orders on new http:Listener(9090) {
         }
         // OK: a bounded wait is the caller's choice to block.
         string waited = check workflow:waitForResult(id, timeout = {seconds: 5});
-        return {result, agentResult, heldResult, waited};
+        return {result, agentResult, heldResult, braced, waited};
     }
 }
 
@@ -70,6 +74,13 @@ service class StatusService {
         // WARNING WORKFLOW_169: the same in a remote function.
         string result = checkpanic workflow:getResult(id);
         return {result};
+    }
+}
+
+client class OrderClient {
+    remote function fetch(string id) returns string|error {
+        // OK: a client class's remote method serves no request, so a running instance is its caller's to handle.
+        return check workflow:getResult(id);
     }
 }
 

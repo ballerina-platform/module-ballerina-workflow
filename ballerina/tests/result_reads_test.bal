@@ -39,11 +39,75 @@ function readFailingWorkflow(Context ctx, string input) returns string|error {
     return error("read fixture failed: " + input);
 }
 
+@Workflow
+function readNilWorkflow(Context ctx, string input) returns error? {
+    return;
+}
+
+// Reads its children the way a client reads top-level instances, and reports what it saw.
+@Workflow
+function readChildrenWorkflow(Context ctx, string input) returns string|error {
+    string failing = check ctx->runChildWorkflow(readFailingWorkflow, "child");
+    string|error failed = ctx->waitForChildWorkflow(failing);
+    string failedKind = failed is InstanceFailedError ? "failed:" + failed.detail().status : "other";
+
+    string parked = check ctx->runChildWorkflow(readParkedWorkflow, "p");
+    string|error early = ctx->getChildWorkflowResult(parked);
+    string earlyKind = early is WorkflowInProgressError ? "in-progress" : "other";
+    check ctx->sendDataToChildWorkflow(parked, "go", "q");
+    string late = check ctx->waitForChildWorkflow(parked);
+
+    string|error unknown = ctx->getChildWorkflowResult("no-such-child");
+    string unknownKind = unknown is InstanceNotFoundError ? "not-found" : "other";
+    return string `${failedKind};${earlyKind};${late};${unknownKind}`;
+}
+
 @test:BeforeSuite
 function setupResultReadTests() returns error? {
     _ = check registerWorkflowForTest(readQuickWorkflow, "readQuickWorkflow");
     _ = check registerWorkflowForTest(readParkedWorkflow, "readParkedWorkflow");
     _ = check registerWorkflowForTest(readFailingWorkflow, "readFailingWorkflow");
+    _ = check registerWorkflowForTest(readNilWorkflow, "readNilWorkflow");
+    _ = check registerWorkflowForTest(readChildrenWorkflow, "readChildrenWorkflow");
+}
+
+@test:Config {groups: ["unit"]}
+function testBoundedWaitOnAClosedInstanceReturnsItsResult() returns error? {
+    string id = check run(readQuickWorkflow, "z");
+    string first = check waitForResult(id);
+    test:assertEquals(first, "done: z");
+    // The bound only matters while the run is open: a closed run's result comes back at once.
+    string zeroBound = check waitForResult(id, timeout = {seconds: 0});
+    test:assertEquals(zeroBound, "done: z");
+    string tinyBound = check waitForResult(id, timeout = {seconds: 0.001});
+    test:assertEquals(tinyBound, "done: z");
+}
+
+@test:Config {groups: ["unit"]}
+function testComputedNegativeBoundIsRefused() returns error? {
+    string id = check run(readQuickWorkflow, "n");
+    decimal negative = -1;
+    string|error refused = waitForResult(id, timeout = {seconds: negative});
+    test:assertTrue(refused is error && refused !is WorkflowInProgressError
+        && refused.message().includes("negative"), "A negative bound is refused as such, not reported as in-progress");
+}
+
+@test:Config {groups: ["unit"]}
+function testNilResultAgainstANonNilableTypeIsAConversionError() returns error? {
+    string id = check run(readNilWorkflow, "x");
+    anydata nothing = check waitForResult(id);
+    test:assertEquals(nothing, ());
+    string|error typed = getResult(id);
+    test:assertTrue(typed is error && typed !is WorkflowInProgressError && typed !is InstanceFailedError,
+        "A nil result cannot pass as a string: " + (typed is error ? typed.message() : typed));
+}
+
+@test:Config {groups: ["unit"]}
+function testChildReadsInsideAWorkflowShareTheVocabulary() returns error? {
+    string id = check run(readChildrenWorkflow, "x");
+    string seen = check waitForResult(id, timeout = {seconds: 30});
+    test:assertEquals(seen, "failed:FAILED;in-progress;p/q;not-found",
+        "A workflow's child reads answer the typed errors a client read answers");
 }
 
 @test:Config {groups: ["unit"]}

@@ -172,7 +172,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
      * @param symbol the resolved symbol, or {@code null}
      * @return whether the symbol denotes a {@code workflow:DurableAgent}
      */
-    static boolean isDurableAgentSymbol(Symbol symbol) {
+    public static boolean isDurableAgentSymbol(Symbol symbol) {
         if (symbol == null) {
             return false;
         }

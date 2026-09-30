@@ -56,18 +56,23 @@ public final class WorkflowFunctionCallUtils {
      * @param functionName  the workflow module function name to match
      * @return true when the call resolves to the workflow module function
      */
+    /**
+     * The unqualified name a call refers to: {@code getResult} for {@code workflow:getResult} or a bare call.
+     *
+     * @param name the referenced name
+     * @return the simple name, or {@code null} for a reference of another shape
+     */
+    public static String simpleNameOf(NameReferenceNode name) {
+        if (name instanceof QualifiedNameReferenceNode qualified) {
+            return qualified.identifier().text();
+        }
+        return name instanceof SimpleNameReferenceNode simple ? simple.name().text() : null;
+    }
+
     public static boolean isWorkflowModuleFunctionCall(FunctionCallExpressionNode callNode,
                                                        SemanticModel semanticModel,
                                                        String functionName) {
-        NameReferenceNode funcName = callNode.functionName();
-
-        String simpleName = null;
-        if (funcName instanceof QualifiedNameReferenceNode qualifiedName) {
-            simpleName = qualifiedName.identifier().text();
-        } else if (funcName instanceof SimpleNameReferenceNode simpleRef) {
-            simpleName = simpleRef.name().text();
-        }
-        if (!functionName.equals(simpleName)) {
+        if (!functionName.equals(simpleNameOf(callNode.functionName()))) {
             return false;
         }
 

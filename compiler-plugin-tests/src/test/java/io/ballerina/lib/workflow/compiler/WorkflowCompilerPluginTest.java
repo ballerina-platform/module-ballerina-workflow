@@ -1217,15 +1217,17 @@ public class WorkflowCompilerPluginTest {
         // plain script's `check` pass.
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_result_reads");
         String messages = getDiagnosticMessages(diagnosticResult);
-        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_167").size(), 3,
-                "getResult, waitForResult and getStatus inside a workflow. Diagnostics: " + messages);
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_167").size(), 4,
+                "getResult, waitForResult and getStatus inside a workflow, plus the agent's getStatus. Diagnostics: "
+                        + messages);
         Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_168").size(), 4,
                 "a negative field on each literal bound, parenthesised and field-held agent included. "
                         + "Diagnostics: " + messages);
-        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_169").size(), 4,
-                "three checks in the resource function (one through a field-held agent) and one checkpanic in "
-                        + "the remote function. Diagnostics: " + messages);
-        Assert.assertEquals(diagnosticResult.errorCount(), 7,
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_169").size(), 5,
+                "four checks in the resource function (one through a field-held agent, one parenthesised) and one "
+                        + "checkpanic in the service class's remote function; none in the client class. Diagnostics: "
+                        + messages);
+        Assert.assertEquals(diagnosticResult.errorCount(), 8,
                 "Only the reads inside the workflow and the negative bounds are errors. Diagnostics: " + messages);
         Assert.assertTrue(messages.contains("ctx->waitForChildWorkflow") && messages.contains("'minutes'")
                 && messages.contains("a child has no separate status read"),

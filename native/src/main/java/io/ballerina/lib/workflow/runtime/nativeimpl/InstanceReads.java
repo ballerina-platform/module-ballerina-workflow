@@ -30,6 +30,7 @@ import io.ballerina.runtime.api.values.BString;
 import io.ballerina.runtime.api.values.BTypedesc;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import io.temporal.api.enums.v1.EventType;
 import io.temporal.api.workflow.v1.WorkflowExecutionInfo;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowFailedException;
@@ -64,8 +65,9 @@ public final class InstanceReads {
     // The members of the Ballerina InstanceStatus enum: nothing else may cross the boundary.
     private static final java.util.Set<String> INSTANCE_STATUSES = java.util.Set.of(STATUS_RUNNING,
             STATUS_SUSPENDED, "COMPLETED", STATUS_FAILED, "CANCELED", "TERMINATED", "TIMED_OUT");
-    private static final java.util.Set<String> CLOSED_FAILURES = java.util.Set.of(STATUS_FAILED, "CANCELED",
-            "TERMINATED", "TIMED_OUT");
+    public static final String STATUS_CANCELED = "CANCELED";
+    public static final String STATUS_TERMINATED = "TERMINATED";
+    public static final String STATUS_TIMED_OUT = "TIMED_OUT";
 
     private InstanceReads() {
     }
@@ -148,18 +150,20 @@ public final class InstanceReads {
             // must not turn a non-blocking read of a closed run into a wait on the new one.
             WorkflowStub stub = client.newUntypedWorkflowStub(instanceId, java.util.Optional.of(run.runId()),
                     java.util.Optional.empty());
-            Object raw = blocking && timeoutMillis != null
+            // The bound only matters while the run is open: a closed run's result is fetched outright,
+            // so a tiny bound cannot report a finished instance as still in progress.
+            Object raw = blocking && timeoutMillis != null && isOpen(run.status())
                     ? stub.getResult(timeoutMillis, TimeUnit.MILLISECONDS, Object.class)
                     : stub.getResult(Object.class);
             Object value = TypesUtil.convertJavaToBallerinaType(raw);
-            return TypesUtil.cloneWithType(value, typedesc.getDescribingType());
+            // validateAndConvert, not cloneWithType: a nil result against a non-nilable T is a
+            // conversion error, not a nil smuggled past the typed return.
+            return TypesUtil.validateAndConvert(value, typedesc.getDescribingType());
         } catch (TimeoutException e) {
             return inProgress(instanceId);
         } catch (WorkflowFailedException e) {
-            Object closed = statusOf(client, instanceId, null);
-            // Only a closed status can explain a failed read; anything else is reported as FAILED.
-            return failed(instanceId, closed instanceof String s && CLOSED_FAILURES.contains(s) ? s : STATUS_FAILED,
-                    failureMessage(e));
+            // The close event of the run that failed, not a fresh describe of whatever holds the id now.
+            return failed(instanceId, closeStatusOf(e), failureMessage(e));
         } catch (Exception e) {
             if (isNotFound(e)) {
                 return notFound(instanceId);
@@ -198,9 +202,27 @@ public final class InstanceReads {
 
     /** Builds a {@code workflow:InstanceNotFoundError}. */
     public static BError notFound(String instanceId) {
+        return notFound(instanceId, "");
+    }
+
+    public static BError notFound(String instanceId, String because) {
         BMap<BString, Object> detail = ValueCreator.createRecordValue(ModuleUtils.getModule(), NOT_FOUND_DETAIL);
         detail.put(INSTANCE_ID, StringUtils.fromString(instanceId));
-        return typed(NOT_FOUND_ERROR, "No instance with id '" + instanceId + "'", detail);
+        return typed(NOT_FOUND_ERROR, "No instance with id '" + instanceId + "'" + because, detail);
+    }
+
+    // The closed status a failed read reports, from the close event the engine attached to the failure.
+    private static String closeStatusOf(WorkflowFailedException e) {
+        EventType closeEvent = e.getWorkflowCloseEventType();
+        if (closeEvent == null) {
+            return STATUS_FAILED;
+        }
+        return switch (closeEvent) {
+            case EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED -> STATUS_TERMINATED;
+            case EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED -> STATUS_CANCELED;
+            case EVENT_TYPE_WORKFLOW_EXECUTION_TIMED_OUT -> STATUS_TIMED_OUT;
+            default -> STATUS_FAILED;
+        };
     }
 
     private static BError typed(String type, String message, BMap<BString, Object> detail) {
@@ -218,9 +240,9 @@ public final class InstanceReads {
 
     private static String describeClosed(String status) {
         return switch (status) {
-            case "CANCELED" -> "was cancelled";
-            case "TERMINATED" -> "was terminated";
-            case "TIMED_OUT" -> "timed out";
+            case STATUS_CANCELED -> "was cancelled";
+            case STATUS_TERMINATED -> "was terminated";
+            case STATUS_TIMED_OUT -> "timed out";
             default -> "failed";
         };
     }

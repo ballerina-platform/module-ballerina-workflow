@@ -223,6 +223,37 @@ public isolated class DurableAgent {
         name: "runAgent"
     } external;
 
+    # Starts the agent under an id the caller chooses, as `workflow:runWithId` does for a workflow:
+    # the id is the correlation key, and `ifRunning = USE_EXISTING` lets a retried start join the
+    # instance it already created. A top-level start only — inside a workflow use `run`.
+    #
+    # + instanceId - The instance id to start under
+    # + query - The user turn appended to the agent's system prompt
+    # + input - Optional structured JSON payload for the run; must match the declared `inputType`
+    # + ifRunning - What to do when an instance with this id is running
+    # + ifClosed - What to do when an instance with this id has closed
+    # + return - The instance id, an `InstanceAlreadyExistsError` when the id is held and the
+    #            policy refused, or an error
+    public isolated function runWithId(string instanceId, string query, json input = (),
+            RunningInstancePolicy ifRunning = FAIL, ClosedInstancePolicy ifClosed = ALLOW_DUPLICATE)
+            returns string|InstanceAlreadyExistsError|error {
+        observe:StartAgentSpan span = observe:createStartAgentSpan(self.getAgentName());
+        string|error result = self.runAgentWithIdNative(instanceId, query, input, ifRunning, ifClosed);
+        if result is string {
+            span.addInstanceId(result);
+            span.close();
+        } else {
+            span.close(result);
+        }
+        return result;
+    }
+
+    private isolated function runAgentWithIdNative(string instanceId, string query, json input,
+            string ifRunning, string ifClosed) returns string|error = @java:Method {
+        'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+        name: "runAgentWithId"
+    } external;
+
     private isolated function getAgentName() returns string {
         lock {
             return self.agentName;

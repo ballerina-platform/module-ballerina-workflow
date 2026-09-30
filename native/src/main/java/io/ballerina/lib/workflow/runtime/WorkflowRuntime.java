@@ -18,13 +18,18 @@
 
 package io.ballerina.lib.workflow.runtime;
 
+import io.ballerina.lib.workflow.TaskKeys;
 import io.ballerina.lib.workflow.observability.TraceContextPropagator;
 import io.ballerina.lib.workflow.observability.WorkerSpans;
 import io.ballerina.lib.workflow.observability.WorkflowMetrics;
 import io.ballerina.lib.workflow.observability.WorkflowSampleLog;
 import io.ballerina.lib.workflow.utils.CorrelationExtractor;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
+import io.temporal.api.common.v1.WorkflowExecution;
+import io.temporal.api.enums.v1.WorkflowIdConflictPolicy;
+import io.temporal.api.enums.v1.WorkflowIdReusePolicy;
 import io.temporal.client.WorkflowClient;
+import io.temporal.client.WorkflowExecutionAlreadyStarted;
 import io.temporal.client.WorkflowNotFoundException;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
@@ -43,6 +48,13 @@ import java.util.concurrent.Executors;
  * @since 0.1.0
  */
 public final class WorkflowRuntime {
+
+    /** Memo key of the starter identity the management API records. */
+    public static final String STARTED_BY_MEMO = "startedBy";
+    /** Memo key of the id a start stamps on the run it creates. */
+    public static final String START_REQUEST_ID_MEMO = "startRequestId";
+    private static final int DESCRIBE_ATTEMPTS = 3;
+    private static final long DESCRIBE_RETRY_DELAY_MILLIS = 200;
 
     private static final Logger LOGGER = LoggerFactory.getLogger(WorkflowRuntime.class);
 
@@ -106,67 +118,139 @@ public final class WorkflowRuntime {
     }
 
     /**
-     * Starts a new workflow process.
-     * <p>
-     * The workflow ID is generated using UUID v7 for uniqueness and sortability.
+     * Starts a new workflow process under a generated UUID v7 id, with no id policies set.
      *
      * @param processName the name of the process to start
      * @param input       the input data for the process
      * @return the workflow ID
      * @throws IllegalArgumentException if the process is not registered
-     * @throws IllegalStateException if the runtime is not properly initialized
+     * @throws IllegalStateException    if the runtime is not properly initialized
      */
     public String createInstance(String processName, Object input) {
-        // Verify the process is registered in WorkflowWorkerNative
+        return createInstance(processName, input, StartOptions.generated()).workflowId();
+    }
+
+    /**
+     * Starts a workflow process — the one start path every entry point converges on: {@code run},
+     * {@code runWithId}, a durable agent's run and the management API's start.
+     *
+     * @param processName the registered Temporal type
+     * @param input       the input data for the process
+     * @param options     the caller's id and policies; validated here
+     * @return the instance and run the caller now holds
+     * @throws UnknownProcessException        when the process is unknown
+     * @throws InvalidStartOptionsException   when the id or a policy is not acceptable
+     * @throws InstanceAlreadyExistsException when the id is held and the policy refused the start
+     * @throws IllegalStateException          when the runtime is not initialized or the engine refused
+     */
+    public StartedInstance createInstance(String processName, Object input, StartOptions options) {
         if (!WorkflowWorkerNative.getProcessRegistry().containsKey(processName)) {
-            throw new IllegalArgumentException("Process not registered: " + processName);
+            throw new UnknownProcessException(processName);
         }
+        options.validate();
+        String workflowId = options.hasCallerId() ? options.instanceId() : CorrelationExtractor.generateWorkflowId();
 
-        // Generate workflow ID using UUID v7
-        String workflowId = CorrelationExtractor.generateWorkflowId();
-
-        // Get the singleton workflow client from WorkflowWorkerNative
         WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
         if (client == null) {
             throw new IllegalStateException("Workflow client not initialized. Ensure worker is initialized.");
         }
-
         String taskQueue = WorkflowWorkerNative.getTaskQueue();
         if (taskQueue == null) {
             throw new IllegalStateException("Task queue not configured.");
         }
 
+        // A USE_EXISTING start stamps its own request id into the memo, so the run the engine hands
+        // back says which start created it — the atomic answer to "did this call join or create?"
+        boolean mayJoin = options.hasCallerId()
+                && options.conflictPolicy() == WorkflowIdConflictPolicy.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING;
+        String startRequestId = mayJoin ? java.util.UUID.randomUUID().toString() : null;
         try {
-            // Build workflow options. The kind memo is how a consumer learns what an instance
-            // is without parsing its id — same stamp the management start path writes.
+            // The kind memo is how a consumer learns what an instance is without parsing its id.
             String kind = WorkflowWorkerNative.isAgentWorkflowType(processName) ? "AGENT" : "WORKFLOW";
             java.util.Map<String, Object> memo = new java.util.HashMap<>();
-            memo.put("workflowKind", kind);
+            memo.put(TaskKeys.KIND, kind);
+            if (mayJoin) {
+                memo.put(START_REQUEST_ID_MEMO, startRequestId);
+            }
+            if (options.startedBy() != null && !options.startedBy().isBlank()) {
+                memo.put(STARTED_BY_MEMO, options.startedBy());
+            }
             WorkflowOptions.Builder optionsBuilder = WorkflowOptions
                     .newBuilder()
                     .setWorkflowId(workflowId)
                     .setTaskQueue(taskQueue)
                     .setMemo(memo);
+            if (options.timeoutSeconds() != null) {
+                optionsBuilder.setWorkflowExecutionTimeout(java.time.Duration.ofSeconds(options.timeoutSeconds()));
+            }
+            if (options.hasCallerId()) {
+                // Only a chosen id can collide, so only then are the policies sent, and only when they
+                // differ from the engine's defaults: a request carrying no policy keeps working against
+                // a server that has policy support switched off or predates it.
+                if (options.conflictPolicy() != WorkflowIdConflictPolicy.WORKFLOW_ID_CONFLICT_POLICY_FAIL) {
+                    optionsBuilder.setWorkflowIdConflictPolicy(options.conflictPolicy());
+                }
+                if (options.reusePolicy() != WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE) {
+                    optionsBuilder.setWorkflowIdReusePolicy(options.reusePolicy());
+                }
+            }
             if (WorkflowWorkerNative.isKindSearchAttributeReady()) {
                 optionsBuilder.setTypedSearchAttributes(io.temporal.common.SearchAttributes.newBuilder()
                         .set(WorkflowWorkerNative.WORKFLOW_KIND_KEY, kind).build());
             }
-            WorkflowOptions options = optionsBuilder.build();
+            WorkflowStub workflowStub = client.newUntypedWorkflowStub(processName, optionsBuilder.build());
 
-            // Create an untyped workflow stub for dynamic workflow execution
-            WorkflowStub workflowStub = client.newUntypedWorkflowStub(processName, options);
-
-            // Start the workflow asynchronously with the input data. The started event is
-            // counted at the worker's first execution, where every start path converges.
-            // The run's spans open in the instance's own trace, whose ids the instance id derives.
-            TraceContextPropagator.runWith(WorkerSpans.instanceContext(workflowId), () -> workflowStub.start(input));
-
-            LOGGER.debug("Started workflow: type={}, id={}", processName, workflowId);
-            return workflowId;
-
+            // The started event is counted at the worker's first execution, where every start
+            // path converges. The run's spans open in the instance's own trace.
+            WorkflowExecution execution = TraceContextPropagator.runWith(WorkerSpans.instanceContext(workflowId),
+                    () -> workflowStub.start(input));
+            // Only a USE_EXISTING start can have joined; its run's memo names the start that made it.
+            boolean started = !mayJoin || startRequestId.equals(startRequestIdOf(client, execution));
+            LOGGER.debug("Started workflow: type={}, id={}, started={}", processName, workflowId, started);
+            return new StartedInstance(execution.getWorkflowId(), execution.getRunId(), started);
+        } catch (WorkflowExecutionAlreadyStarted e) {
+            throw new InstanceAlreadyExistsException(workflowId, describeStatus(client, workflowId));
         } catch (Exception e) {
             LOGGER.error("Failed to start workflow {}: {}", processName, e.getMessage(), e);
             throw new IllegalStateException("Failed to start workflow: " + e.getMessage(), e);
+        }
+    }
+
+    // The request id stamped into a run's memo by the start that created it; null when the run was
+    // created by a start that stamps none. A describe that keeps failing is an error, never "joined":
+    // the caller branches on the answer, so a guess would be a wrong answer.
+    private static String startRequestIdOf(WorkflowClient client, WorkflowExecution execution) {
+        Exception last = null;
+        for (int attempt = 1; attempt <= DESCRIBE_ATTEMPTS; attempt++) {
+            try {
+                var info = client.newUntypedWorkflowStub(execution.getWorkflowId(), java.util.Optional.of(
+                        execution.getRunId()), java.util.Optional.empty()).describe().getWorkflowExecutionInfo();
+                var payload = info.getMemo().getFieldsMap().get(START_REQUEST_ID_MEMO);
+                return payload == null ? null
+                        : client.getOptions().getDataConverter().fromPayload(payload, String.class, String.class);
+            } catch (Exception e) {
+                last = e;
+                LOGGER.warn("Could not read the start request id of {} (attempt {} of {}): {}",
+                        execution.getWorkflowId(), attempt, DESCRIBE_ATTEMPTS, e.getMessage());
+                try {
+                    Thread.sleep(DESCRIBE_RETRY_DELAY_MILLIS * attempt);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        throw new IllegalStateException("Started or joined instance " + execution.getWorkflowId() + " (run "
+                + execution.getRunId() + ") but could not confirm which: " + (last == null ? "interrupted"
+                : last.getMessage()), last);
+    }
+
+    private static String describeStatus(WorkflowClient client, String workflowId) {
+        try {
+            return io.ballerina.lib.workflow.runtime.nativeimpl.WorkflowNative.convertStatus(
+                    client.newUntypedWorkflowStub(workflowId).describe().getWorkflowExecutionInfo().getStatus());
+        } catch (Exception e) {
+            return "UNKNOWN";
         }
     }
 

@@ -1209,6 +1209,46 @@ public class WorkflowCompilerPluginTest {
                 "A fixed-length array arity mismatch should report both counts. Errors: " + allMessages);
     }
 
+    @Test(groups = "valid")
+    public void testValidRunWithId() {
+        // runWithId puts the id second and the input third, positionally or by name, with
+        // either policy; every form must pass the input check that run's does.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("valid_run_with_id");
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "runWithId calls with matching inputs must compile. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidRunWithId() {
+        // The run checks apply at the shifted input position, plus the id's own check: a
+        // literal that the runtime would refuse is a compile error.
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult("invalid_run_with_id");
+        String messages = getDiagnosticMessages(diagnosticResult);
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_138").size(), 1,
+                "runWithId inside a workflow body. Errors: " + messages);
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_130").size(), 1,
+                "a non-workflow target. Errors: " + messages);
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_131").size(), 1,
+                "a mistyped input at the third position. Errors: " + messages);
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_132").size(), 1,
+                "an input for a no-input workflow. Errors: " + messages);
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_166").size(), 6,
+                "blank, escaped-blank, reserved-prefix, over-long and over-long-in-bytes ids, plus the agent's "
+                        + "blank id. Errors: " + messages);
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_154").size(), 1,
+                "the agent's mistyped payload at the third position. Errors: " + messages);
+        Assert.assertEquals(getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_170").size(), 1,
+                "an agent's runWithId inside a workflow body. Errors: " + messages);
+        Assert.assertEquals(diagnosticResult.errorCount(), 12,
+                "Exactly the twelve misuses should be flagged. Errors: " + messages);
+        Assert.assertTrue(messages.contains("'workflow:runWithId'"),
+                "The run messages name the function that was called: " + messages);
+        Assert.assertTrue(messages.contains("reserved") && messages.contains("blank")
+                && messages.contains("255") && messages.contains("256 bytes"),
+                "Each id refusal says why, and the length is counted in bytes: " + messages);
+    }
+
     @Test(groups = "invalid")
     public void testInvalidHumanTaskNameNotConstant() {
         // Capability names drive the designer and the Temporal registration, so they must be

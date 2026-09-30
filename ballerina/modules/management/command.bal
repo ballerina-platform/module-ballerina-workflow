@@ -131,7 +131,8 @@ public type Command record {|
 //   `kind` (`WORKFLOW`, `HUMAN_TASK`, `REVIEW_ACTIVITY`, `CHILD_WORKFLOW`, `AGENT`). Without a
 //   `kind` the listing excludes task and review children, as it did before kinds existed; each
 //   row reports its own `kind`, so an unfiltered listing is still self-describing.
-// - `START_INSTANCE` — `workflowType` (required), `input`, `workflowId`, `timeoutSeconds`.
+// - `START_INSTANCE` — `workflowType` (required), `input`, `workflowId`, `ifRunning`, `ifClosed`,
+//   `timeoutSeconds`. A held `workflowId` the policies refuse is a `CONFLICT`.
 // - `GET_INSTANCE`, `SUSPEND_INSTANCE`, `RESUME_INSTANCE`, `CANCEL_INSTANCE`,
 //   `GET_INSTANCE_HISTORY`, `GET_INSTANCE_ACTIVITY_TREE`, `GET_INSTANCE_EXECUTION_GRAPH` —
 //   `workflowId` (required), `runId`.
@@ -203,7 +204,7 @@ public isolated function executeCommand(Command command) returns json|Error {
         }
         START_INSTANCE => {
             // The params map carries the start request itself
-            // (workflowType, input?, workflowId?, timeoutSeconds?).
+            // (workflowType, input?, workflowId?, ifRunning?, ifClosed?, timeoutSeconds?).
             return opStartWorkflow(params, userId);
         }
         GET_INSTANCE => {
@@ -463,6 +464,8 @@ final readonly & map<string> PARAM_TYPES = {
     "taskName": "string",
     "taskQueue": "string",
     "timeoutMillis": "int",
+    "ifClosed": "string",
+    "ifRunning": "string",
     "timeoutSeconds": "int",
     "userRole": "string",
     "workflowId": "string",

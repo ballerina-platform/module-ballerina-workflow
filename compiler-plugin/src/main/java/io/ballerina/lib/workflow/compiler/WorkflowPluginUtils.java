@@ -591,6 +591,21 @@ public final class WorkflowPluginUtils {
                                                  SemanticModel semanticModel,
                                                  boolean flagOmittedRequiredInput,
                                                  WorkflowCallInputListener listener) {
+        validateWorkflowCallInput(arguments, targetParamName, inputParamName, 1, semanticModel,
+                flagOmittedRequiredInput, listener);
+    }
+
+    /**
+     * As above, for a call whose input is not the second positional argument — `runWithId` puts
+     * the instance id there and the input third.
+     *
+     * @param inputPosition the input's positional index
+     */
+    public static void validateWorkflowCallInput(SeparatedNodeList<FunctionArgumentNode> arguments,
+                                                 String targetParamName, String inputParamName,
+                                                 int inputPosition, SemanticModel semanticModel,
+                                                 boolean flagOmittedRequiredInput,
+                                                 WorkflowCallInputListener listener) {
         if (arguments.isEmpty()) {
             return;
         }
@@ -609,7 +624,7 @@ public final class WorkflowPluginUtils {
         String workflowName = workflowFunc.getName().orElse("");
 
         ExpressionNode inputExpr = WorkflowFunctionCallUtils.getArgumentExpression(
-                arguments, 1, inputParamName);
+                arguments, inputPosition, inputParamName);
         if (inputExpr == null) {
             // Omitted input reaches the target as nil. Flag it when the target declares a
             // required input parameter that nil cannot satisfy.

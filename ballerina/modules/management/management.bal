@@ -469,25 +469,25 @@ public isolated function cancelWorkflow(string workflowId, string runId) returns
 // WORKFLOW LISTING AND STARTING
 // ================================================================================
 
-# Starts a new workflow instance by its registered type name.
+# Starts a workflow or durable agent by its registered type name. With `instanceId` the id is the
+# caller's — a business key that doubles as the correlation key — and the policies say what happens
+# when it is already held: a `ConflictError` when the policy refuses, an `InvalidRequestError` for an
+# unacceptable id or policy.
 #
 # + workflowType - The registered workflow type (function name)
 # + input - Workflow input as a JSON-compatible value. A durable agent is started with
 #           its `{query, input}` envelope: `query` is the user turn, and `input` is the
 #           payload validated against the agent's declared `inputType`
-# + workflowId - Optional explicit workflow ID; a UUID-v7 is generated if omitted
-# + timeoutSeconds - Optional workflow execution timeout in seconds
-# + startedBy - Optional starter user ID; stored with workflow metadata for filtering
-# + return - Handle with workflowId and runId, or an error
-public isolated function startWorkflowByType(string workflowType, json? input,
-        string? workflowId = (), int? timeoutSeconds = (), string? startedBy = ())
+# + options - The instance id, its policies, the execution timeout and the starter
+# + return - Handle with workflowId, runId and whether this call created the run, or an error
+public isolated function startInstance(string workflowType, json? input = (), *StartOptions options)
         returns WorkflowHandle|error {
     // An agent's start is `start_agent`, as `DurableAgent.run` records it; a workflow's names the type the
     // engine registers, under its prefix.
     if isAgentWorkflowType(workflowType) {
         observe:StartAgentSpan span = observe:createStartAgentSpan(workflowType);
-        WorkflowHandle|error started = startWorkflowByTypeNative(workflowType, input, workflowId, timeoutSeconds,
-                startedBy);
+        WorkflowHandle|error started = startWorkflowByTypeNative(workflowType, input, options.instanceId,
+                options.timeoutSeconds, options.startedBy, options.ifRunning, options.ifClosed);
         if started is WorkflowHandle {
             span.addInstanceId(started.workflowId);
             span.close();
@@ -498,8 +498,8 @@ public isolated function startWorkflowByType(string workflowType, json? input,
     }
     observe:StartWorkflowSpan span = observe:createStartWorkflowSpan(string `workflow-${workflowType}`);
     // Not `handle`: that is a type name.
-    WorkflowHandle|error started = startWorkflowByTypeNative(workflowType, input, workflowId, timeoutSeconds,
-            startedBy);
+    WorkflowHandle|error started = startWorkflowByTypeNative(workflowType, input, options.instanceId,
+            options.timeoutSeconds, options.startedBy, options.ifRunning, options.ifClosed);
     if started is WorkflowHandle {
         span.addInstanceId(started.workflowId);
         span.close();
@@ -509,12 +509,35 @@ public isolated function startWorkflowByType(string workflowType, json? input,
     return started;
 }
 
+# Starts a new workflow instance by its registered type name.
+#
+# # Deprecated
+# Use `startInstance`, which also takes the policies for an id that is already held.
+#
+# + workflowType - The registered workflow type (function name)
+# + input - Workflow input, as for `startInstance`
+# + workflowId - Optional explicit workflow ID; a UUID-v7 is generated if omitted
+# + timeoutSeconds - Optional workflow execution timeout in seconds
+# + startedBy - Optional starter user ID; stored with workflow metadata for filtering
+# + return - Handle with workflowId and runId, or an error
+@deprecated
+public isolated function startWorkflowByType(string workflowType, json? input,
+        string? workflowId = (), int? timeoutSeconds = (), string? startedBy = ())
+        returns WorkflowHandle|error {
+    StartOptions options = {timeoutSeconds, startedBy};
+    if workflowId is string {
+        options.instanceId = workflowId;
+    }
+    return startInstance(workflowType, input, options);
+}
+
 isolated function isAgentWorkflowType(string workflowType) returns boolean = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 
 isolated function startWorkflowByTypeNative(string workflowType, json? input, string? workflowId,
-        int? timeoutSeconds, string? startedBy) returns WorkflowHandle|error = @java:Method {
+        int? timeoutSeconds, string? startedBy, string ifRunning, string ifClosed)
+        returns WorkflowHandle|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative",
     name: "startWorkflowByType"
 } external;

@@ -91,9 +91,36 @@ isolated function opStartWorkflow(map<json> body, string? userId)
     }
     string wfType = wfTypeJson;
     json? input = body["input"];
-    string? wfId = body["workflowId"] is string ? <string>body["workflowId"] : ();
+    json? wfIdJson = body["workflowId"];
+    if wfIdJson !is string? {
+        return invalidRequest("workflowId must be a string");
+    }
     int? timeout = body["timeoutSeconds"] is int ? <int>body["timeoutSeconds"] : ();
-    WorkflowHandle|error wfHandle = startWorkflowByType(wfType, input, wfId, timeout, userId);
+    StartOptions options = {timeoutSeconds: timeout, startedBy: userId};
+    if wfIdJson is string {
+        options.instanceId = wfIdJson;
+    }
+    json? ifRunningJson = body["ifRunning"];
+    if ifRunningJson !is () {
+        RunningInstancePolicy|error ifRunning = ifRunningJson.ensureType();
+        if ifRunning is error {
+            return invalidRequest("ifRunning must be one of FAIL, USE_EXISTING or TERMINATE_EXISTING");
+        }
+        options.ifRunning = ifRunning;
+    }
+    json? ifClosedJson = body["ifClosed"];
+    if ifClosedJson !is () {
+        ClosedInstancePolicy|error ifClosed = ifClosedJson.ensureType();
+        if ifClosed is error {
+            return invalidRequest("ifClosed must be one of ALLOW_DUPLICATE, ALLOW_DUPLICATE_FAILED_ONLY "
+                    + "or REJECT_DUPLICATE");
+        }
+        options.ifClosed = ifClosed;
+    }
+    WorkflowHandle|error wfHandle = startInstance(wfType, input, options);
+    if wfHandle is Error {
+        return wfHandle;
+    }
     if wfHandle is error {
         return executionFailed("Failed to start workflow: " + wfHandle.message());
     }

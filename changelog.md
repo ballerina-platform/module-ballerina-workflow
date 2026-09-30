@@ -8,6 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `workflow:runWithId` and `DurableAgent.runWithId` start an instance under an id the caller
+  chooses — a business key that doubles as the correlation key — with `ifRunning` (`FAIL`, the
+  default, or `USE_EXISTING`, the idempotent submit) and `ifClosed` (`ALLOW_DUPLICATE`, the
+  default, `ALLOW_DUPLICATE_FAILED_ONLY`, `REJECT_DUPLICATE`). A held id the policies refuse is
+  an `InstanceAlreadyExistsError` carrying the holder's status; a blank, over-long or
+  reserved-prefix id is refused at compile time for a literal (`WORKFLOW_166`) and at start
+  otherwise.
+- `management:startInstance(workflowType, input, *StartOptions)` replaces `startWorkflowByType`
+  (kept, deprecated) and adds the same policies, plus `TERMINATE_EXISTING` for `ifRunning`.
+  `instances.start` and `POST /workflows` take `ifRunning` and `ifClosed`; a refused id is a
+  `ConflictError` (409) instead of an execution error (500), a bad id or policy a 400, and a
+  start that joined a running instance answers 200 with `started: false` rather than 201.
+  Every start — `run`, `runWithId`, an agent's, the management API's — now goes through one
+  runtime path.
 - `jwtAuthHeader` in `[ballerina.workflow.management.rest]` names the header that carries the
   JWT, defaulting to the standard `Authorization` header. Set it (e.g. `X-JWT-Assertion`) when a
   gateway keeps `Authorization` for its own credential and forwards the caller's JWT in another

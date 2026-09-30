@@ -508,11 +508,16 @@ isolated function executeToResponse(management:Operation operation, map<json> pa
         return response;
     }
     // Starting an instance creates a resource; every other operation reads or
-    // mutates an existing one.
-    response.statusCode = operation == management:START_INSTANCE
+    // mutates an existing one. A start that joined a running instance created nothing.
+    response.statusCode = operation == management:START_INSTANCE && !joinedExisting(result)
         ? http:STATUS_CREATED : http:STATUS_OK;
     response.setJsonPayload(result);
     return response;
+}
+
+// Whether a start answered with the instance it joined rather than one it created.
+isolated function joinedExisting(json result) returns boolean {
+    return result is map<json> && result["started"] == false;
 }
 
 # Maps a reset request body to operation parameters.

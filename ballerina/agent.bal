@@ -182,7 +182,10 @@ isolated function runAgentLoop(handle ctxHandle, string agentName, ai:SystemProm
 
             AgentFunctionCall[]? toolCalls = assistant.toolCalls;
             if toolCalls is () || toolCalls.length() == 0 {
+                // The turn is over: only now does its waiter get the answer, and only the text of
+                // this closing reply counts. Text beside an earlier tool call was not the answer.
                 turnAnswered = true;
+                check completeAgentTurn(ctxHandle, contentRecorded);
                 break;
             }
 
@@ -190,14 +193,18 @@ isolated function runAgentLoop(handle ctxHandle, string agentName, ai:SystemProm
                 if toolKinds[call.name] == "end" {
                     // Explicit end of the conversation. When the model put its
                     // farewell in the tool arguments instead of the content,
-                    // record it as the final response.
+                    // record it as the final response. The closing turn is settled
+                    // like any other: its waiter gets this reply's text, or none.
+                    boolean answered = contentRecorded;
                     if !contentRecorded {
                         map<json>? endArgs = call.arguments;
                         json farewell = endArgs is map<json> ? endArgs["farewell"] : ();
                         if farewell is string && farewell != "" {
                             check setAgentResponse(ctxHandle, farewell);
+                            answered = true;
                         }
                     }
+                    check completeAgentTurn(ctxHandle, answered);
                     return;
                 }
                 string output = check dispatchAgentTool(ctxHandle, agentName, call, toolKinds[call.name],
@@ -211,9 +218,17 @@ isolated function runAgentLoop(handle ctxHandle, string agentName, ai:SystemProm
             }
         }
         if !turnAnswered {
-            return error(string `Agent exceeded the maximum number of iterations per turn (${maxIterations})`);
-        }
-        if !autoContinue {
+            string overrun = string `Agent exceeded the maximum number of iterations per turn (${maxIterations})`;
+            if !autoContinue {
+                return error(overrun);
+            }
+            // A conversation outlives one bad turn: the turn's waiter gets the failure, the
+            // history and transcript record it, and the loop goes back to waiting. It is not
+            // recorded as the response, which is the agent's result should the conversation end.
+            check failAgentTurn(ctxHandle, overrun);
+            history.push(<AgentAssistantMessage>{content: overrun});
+            publishTranscript(ctxHandle, history);
+        } else if !autoContinue {
             return;
         }
         // Conversational agent: keep the conversation open — wait durably for the
@@ -594,6 +609,19 @@ isolated function awaitAgentHumanTask(handle nativeContext, string taskName, jso
         returns anydata|error = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "awaitHumanTask"
+} external;
+
+// Ends the current turn for its waiter: with the latest recorded response when the closing reply
+// carried text, otherwise with a "no response" failure.
+isolated function completeAgentTurn(handle nativeContext, boolean answered) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.AgentContextNative",
+    name: "completeTurn"
+} external;
+
+// Ends the current turn with a failure for its waiter, leaving the agent running.
+isolated function failAgentTurn(handle nativeContext, string reason) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.AgentContextNative",
+    name: "failTurn"
 } external;
 
 // Stores the agent's final textual response for later retrieval.

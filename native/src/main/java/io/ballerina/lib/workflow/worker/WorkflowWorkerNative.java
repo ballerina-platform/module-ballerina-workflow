@@ -1184,6 +1184,15 @@ public final class WorkflowWorkerNative {
         return workflowClient;
     }
 
+    /**
+     * The worker this process polls with, or null before it is initialized. Tests replay histories against it.
+     *
+     * @return the worker
+     */
+    public static Worker getWorker() {
+        return singletonWorker;
+    }
+
     /** Set only when the WorkflowKind search attribute is confirmed on the cluster. */
     private static volatile boolean kindSearchAttributeReady = false;
 
@@ -2152,8 +2161,8 @@ public final class WorkflowWorkerNative {
                                         try {
                                             reply.put("response", responder.get());
                                         } catch (Exception e) {
-                                            reply.put("error", e.getMessage() != null ? e.getMessage()
-                                                    : "the agent turn failed");
+                                            reply.put("error", io.ballerina.lib.workflow.runtime.nativeimpl
+                                                    .DurableAgentNative.updateFailureMessage(e));
                                         }
                                     } finally {
                                         this.pendingAgentDataEvents.remove(token);
@@ -2227,8 +2236,8 @@ public final class WorkflowWorkerNative {
             // Register a dynamic update handler backing `workflow:updateAgent` — the
             // request-response counterpart of sendData for durable agents. The payload is
             // enqueued into the agent's event channel carrying a responder promise; the
-            // agent loop completes the responder with the answer of the turn that consumed
-            // the message, which becomes the update result. Only meaningful for durable
+            // agent loop completes the responder when the turn that consumed the message
+            // ends (with the text of its closing reply), which becomes the update result. Only meaningful for durable
             // agents: normal workflows bind incoming data imperatively, so there is no
             // framework-owned response to correlate.
             Workflow.registerListener(

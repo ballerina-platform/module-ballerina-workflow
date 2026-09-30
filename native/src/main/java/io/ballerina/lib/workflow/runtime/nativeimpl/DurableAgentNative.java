@@ -1446,14 +1446,30 @@ public final class DurableAgentNative {
                 if (isTimeout(e)) {
                     return createAgentBusyError(instanceId);
                 }
-                Throwable cause = e.getCause();
-                String message = cause != null && cause.getMessage() != null ? cause.getMessage()
-                        : e.getMessage();
                 return ErrorCreator.createError(StringUtils.fromString(
                         "Failed to read the event result for token '" + token + "' of agent instance '"
-                                + instanceId + "': " + message));
+                                + instanceId + "': " + updateFailureMessage(e)));
             }
         });
+    }
+
+    /**
+     * The reason a turn failed, as the agent gave it: the application failure under the SDK's
+     * update-exception wrappers, whose own messages only name the execution.
+     *
+     * @param e the failure a turn's waiter received
+     * @return the agent's own message
+     */
+    public static String updateFailureMessage(Throwable e) {
+        Throwable current = e;
+        while (current != null) {
+            if (current instanceof io.temporal.failure.ApplicationFailure failure) {
+                return failure.getOriginalMessage();
+            }
+            current = current.getCause();
+        }
+        Throwable cause = e.getCause();
+        return cause != null && cause.getMessage() != null ? cause.getMessage() : e.getMessage();
     }
 
     private static boolean isTimeout(Throwable e) {

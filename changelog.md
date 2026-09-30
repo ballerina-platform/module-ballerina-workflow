@@ -44,6 +44,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   timeout. `WorkflowBusyError` and `AgentBusyError` are deprecated aliases of
   `WorkflowInProgressError`, so existing `is` tests keep matching.
 
+### Changed
+
+- A `MULTI_EVENT` durable agent with a `chat` event whose turn exceeds `maxIter` no longer fails as a
+  whole: the turn is ended with a failure its waiter receives (`waitForDataResult` returns the reason),
+  the overrun is recorded in the conversation, and the agent goes back to waiting for the next chat
+  message. Every other agent keeps failing as before. A turn whose closing reply carries no text is
+  reported to its waiter as having no response, even when an earlier reply in that turn carried text
+  beside its tool calls. ([ballerina-library#9225](https://github.com/ballerina-platform/ballerina-library/issues/9225))
+
+### Fixed
+
+- `HumanTaskInfo.taskInput` and `ReviewActivityInfo.taskInput` held a `map<anydata>` at run time although
+  the records declare `map<json>`, so a typed read (`map<json> input = check info.taskInput.ensureType()`)
+  panicked with a `TypeCastError` — and took the process down when it happened in a resource. The values
+  are now built as `map<json>`. ([ballerina-library#9226](https://github.com/ballerina-platform/ballerina-library/issues/9226))
+
 ## [0.10.1]
 
 ### Added

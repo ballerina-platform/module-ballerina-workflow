@@ -36,6 +36,11 @@ final http:ListenerJwtAuthHandler testJwtHandler = new ({
     signatureConfig: {secret: TEST_SECRET}
 });
 
+// Reads the [[ballerina.auth.users]] entry in tests/Config.toml (ops / s3cret!).
+final http:ListenerFileUserStoreBasicAuthHandler testBasicHandler = new ({});
+const string OPS_BASIC = "Basic b3BzOnMzY3JldCE="; // ops:s3cret!
+const string OPS_BAD_BASIC = "Basic b3BzOndyb25n"; // ops:wrong
+
 isolated function signedJwt(string user, json roles, string secret = TEST_SECRET,
         map<json> extraClaims = {}) returns string {
     map<json> claims = extraClaims.clone();
@@ -49,23 +54,29 @@ isolated function signedJwt(string user, json roles, string secret = TEST_SECRET
     });
 }
 
+// The custom-header-mode gateway configuration, derived the way production derives
+// it (`authModeOf`) so the fixture cannot drift from `defaultGatewayConfig`.
 isolated function gatewayConfig(boolean basicAuthEnabled = false, boolean oauthEnabled = false,
-        boolean apiKeyEnabled = false, boolean enforceScopes = false) returns GatewayConfig => {
-    identity: {
-        basicAuthEnabled,
-        tokenAuthEnabled: oauthEnabled,
-        trustForwardedIdentity: false,
-        enforceScopes,
-        userIdClaim: "sub",
-        rolesClaim: "roles"
-    },
-    declarativeAuthEnabled: basicAuthEnabled || oauthEnabled,
-    jwtHeader: JWT_HEADER,
-    customHeaderJwtHandler: testJwtHandler,
-    apiKeyEnabled,
-    apiKeyHeader: "x-api-key",
-    apiKeyValue: API_KEY
-};
+        boolean apiKeyEnabled = false, boolean enforceScopes = false) returns GatewayConfig {
+    AuthMode mode = authModeOf(basicAuthEnabled, true, JWT_HEADER, oauthEnabled);
+    return {
+        identity: {
+            basicAuthEnabled,
+            tokenAuthEnabled: mode.authorizationBearerValidated,
+            trustForwardedIdentity: false,
+            enforceScopes,
+            userIdClaim: "sub",
+            rolesClaim: "roles"
+        },
+        declarativeAuthEnabled: mode.declarativeAuthEnabled,
+        jwtHeader: JWT_HEADER,
+        customHeaderJwtHandler: mode.customHeaderJwt ? testJwtHandler : (),
+        basicAuthHandler: mode.interceptorBasic ? testBasicHandler : (),
+        apiKeyEnabled,
+        apiKeyHeader: "x-api-key",
+        apiKeyValue: API_KEY
+    };
+}
 
 isolated function requestWith(map<string> headers) returns http:Request {
     http:Request req = new;
@@ -73,6 +84,38 @@ isolated function requestWith(map<string> headers) returns http:Request {
         req.setHeader(name, value);
     }
     return req;
+}
+
+// ── Where each scheme is enforced (the production derivation) ────────────────────
+
+@test:Config {groups: ["unit", "auth"]}
+function testAuthModeOfPlacesEachScheme() {
+    // Defaults: basic only, declarative.
+    test:assertEquals(authModeOf(true, false, "Authorization", false), <AuthMode>{
+        customHeaderJwt: false, declarativeJwt: false, interceptorBasic: false, declarativeBasic: true,
+        declarativeAuthEnabled: true, authorizationBearerValidated: false
+    });
+    // JWT on the standard header (any case): declarative, and Authorization bearers are validated.
+    test:assertEquals(authModeOf(false, true, "authorization", false), <AuthMode>{
+        customHeaderJwt: false, declarativeJwt: true, interceptorBasic: false, declarativeBasic: false,
+        declarativeAuthEnabled: true, authorizationBearerValidated: true
+    });
+    // JWT in a custom header with basic left at its default: both move to the interceptor,
+    // nothing declarative remains, and an Authorization bearer is NOT trusted.
+    test:assertEquals(authModeOf(true, true, JWT_HEADER, false), <AuthMode>{
+        customHeaderJwt: true, declarativeJwt: false, interceptorBasic: true, declarativeBasic: false,
+        declarativeAuthEnabled: false, authorizationBearerValidated: false
+    });
+    // Custom header plus OAuth2: introspection validates Authorization declaratively.
+    test:assertEquals(authModeOf(false, true, JWT_HEADER, true), <AuthMode>{
+        customHeaderJwt: true, declarativeJwt: false, interceptorBasic: false, declarativeBasic: false,
+        declarativeAuthEnabled: true, authorizationBearerValidated: true
+    });
+    // A custom header name with JWT auth OFF is inert: nothing reads that header.
+    test:assertEquals(authModeOf(true, false, JWT_HEADER, true), <AuthMode>{
+        customHeaderJwt: false, declarativeJwt: false, interceptorBasic: false, declarativeBasic: true,
+        declarativeAuthEnabled: true, authorizationBearerValidated: true
+    });
 }
 
 // ── Valid tokens ─────────────────────────────────────────────────────────────────
@@ -120,7 +163,7 @@ function testForgedCustomHeaderJwtIsRefusedDespiteValidBasicAuth() {
     // The reviewer's case: Basic auth is on (the default), the caller presents valid
     // Basic credentials plus a JWT signed with another key claiming to be admin.
     http:Request req = requestWith({
-        "Authorization": "Basic b3BzOnMzY3JldCE=", // ops:s3cret!
+        "Authorization": OPS_BASIC,
         [JWT_HEADER]: signedJwt("admin", ["admin"], FORGED_SECRET)
     });
     CallerIdentity|http:Unauthorized|http:Forbidden gate = gateRequest(req, "workflows",
@@ -147,7 +190,7 @@ function testUnsignedOrMalformedCustomHeaderJwtIsRefused() {
 
     // Not a token at all.
     http:Request garbage = requestWith({[JWT_HEADER]: "Basic b3BzOnMzY3JldCE="});
-    test:assertTrue(gateRequest(garbage, "workflows", gatewayConfig(basicAuthEnabled = true)) is http:Unauthorized);
+    test:assertTrue(gateRequest(garbage, "workflows", gatewayConfig(oauthEnabled = true)) is http:Unauthorized);
 
     // Wrong audience, signed with the right key.
     string wrongAudience = checkpanic jwt:issue({
@@ -160,6 +203,41 @@ function testUnsignedOrMalformedCustomHeaderJwtIsRefused() {
     test:assertTrue(gateRequest(other, "workflows", gatewayConfig()) is http:Unauthorized);
 }
 
+// ── Basic auth alongside a custom-header JWT ─────────────────────────────────────
+
+@test:Config {groups: ["unit", "auth"]}
+function testBasicAuthIsValidatedInTheInterceptorAlongsideACustomHeaderJwt() {
+    GatewayConfig withBasic = gatewayConfig(basicAuthEnabled = true);
+
+    // The motivating topology with the default enableBasicAuth = true: a JWT-only request passes.
+    http:Request jwtOnly = requestWith({[JWT_HEADER]: signedJwt("alice", ["approver"])});
+    test:assertEquals(gateRequest(jwtOnly, "workflows", withBasic),
+            <CallerIdentity>{userId: "alice", roles: ["approver"], identitySource: "verified"});
+
+    // Basic alone passes too, validated here against [[ballerina.auth.users]].
+    http:Request basicOnly = requestWith({"Authorization": OPS_BASIC});
+    test:assertEquals(gateRequest(basicOnly, "workflows", withBasic),
+            <CallerIdentity>{userId: "ops", roles: [], identitySource: "verified"});
+
+    // Wrong password: refused, even with a valid JWT beside it.
+    http:Request badBasic = requestWith({"Authorization": OPS_BAD_BASIC});
+    test:assertTrue(gateRequest(badBasic, "workflows", withBasic) is http:Unauthorized);
+    http:Request badBasicWithJwt = requestWith({
+        "Authorization": OPS_BAD_BASIC,
+        [JWT_HEADER]: signedJwt("alice", ["approver"])
+    });
+    test:assertTrue(gateRequest(badBasicWithJwt, "workflows", withBasic) is http:Unauthorized);
+
+    // Both valid: the JWT's claims are the identity.
+    http:Request both = requestWith({"Authorization": OPS_BASIC, [JWT_HEADER]: signedJwt("alice", ["approver"])});
+    test:assertEquals(gateRequest(both, "workflows", withBasic),
+            <CallerIdentity>{userId: "alice", roles: ["approver"], identitySource: "verified"});
+
+    // No credential at all: nothing declarative remains to admit it.
+    http:Request none = requestWith({"x-user-id": "gateway-user"});
+    test:assertTrue(gateRequest(none, "workflows", withBasic) is http:Unauthorized);
+}
+
 // ── Custom header absent ─────────────────────────────────────────────────────────
 
 @test:Config {groups: ["unit", "auth"]}
@@ -169,10 +247,10 @@ function testMissingCustomHeaderJwtIsRefusedOnlyWhenNothingElseCouldAdmit() {
     // JWT is the sole scheme: 401.
     test:assertTrue(gateRequest(req, "workflows", gatewayConfig()) is http:Unauthorized);
 
-    // Basic auth is also on: the request falls through to the declarative layer.
-    http:Request basic = requestWith({"Authorization": "Basic b3BzOnMzY3JldCE="});
-    test:assertEquals(gateRequest(basic, "workflows", gatewayConfig(basicAuthEnabled = true)),
-            <CallerIdentity>{userId: "ops", roles: [], identitySource: "verified"});
+    // OAuth2 is also on: the request falls through to the declarative layer.
+    http:Request oauth = requestWith({"x-user-id": "gateway-user"});
+    test:assertEquals(gateRequest(oauth, "workflows", gatewayConfig(oauthEnabled = true)),
+            <CallerIdentity>{userId: "gateway-user", roles: []});
 
     // API key is also on: a valid key admits, an invalid one is refused.
     http:Request keyed = requestWith({"x-api-key": API_KEY, "x-user-id": "gateway-user"});

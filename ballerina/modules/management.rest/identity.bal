@@ -104,7 +104,8 @@ const string CALLER_IDENTITY_CTX_KEY = "workflowCallerIdentity";
 # trusted-forwarding, scope enforcement) is exercisable in one test run even though
 # the configurables are fixed at module init.
 #
-# + basicAuthEnabled - Whether basic auth is enabled (drives the audit-user default)
+# + basicAuthEnabled - Whether basic auth is enabled (drives the audit-user default); the
+#                      credentials were validated declaratively or by the gateway before this runs
 # + tokenAuthEnabled - Whether a bearer token in `Authorization` is validated by the
 #                      declarative auth layer (JWT on the standard header, or OAuth2)
 # + trustForwardedIdentity - Whether forwarded x-user-* headers beat token claims
@@ -124,7 +125,7 @@ type CallerIdentityConfig record {|
 # + return - The configuration the gateway interceptor resolves identities with
 isolated function defaultIdentityConfig() returns CallerIdentityConfig => {
     basicAuthEnabled: enableBasicAuth,
-    tokenAuthEnabled: enableJwtAuth || enableOAuth,
+    tokenAuthEnabled: authMode.authorizationBearerValidated,
     trustForwardedIdentity,
     enforceScopes,
     userIdClaim,

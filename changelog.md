@@ -25,12 +25,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `jwtAuthHeader` in `[ballerina.workflow.management.rest]` names the header that carries the
   JWT, defaulting to the standard `Authorization` header. Set it (e.g. `X-JWT-Assertion`) when a
   gateway keeps `Authorization` for its own credential and forwards the caller's JWT in another
-  header, as a bare token or `Bearer <token>`. The token is then validated by the gateway
-  interceptor with the same issuer, audience and JWKS configuration before the caller identity is
-  read from it, and a request carrying an invalid token in that header is refused. The schemes
-  configured through `@http:ServiceConfig` still run on `Authorization` afterwards, so set
-  `enableBasicAuth = false` (it defaults to `true`) unless `Authorization` also carries a
-  credential they accept.
+  header, as a bare token or `Bearer <token>`. The gateway interceptor then validates that token
+  with the same issuer, audience and JWKS configuration before the caller identity is read from
+  it, and validates basic auth too when `enableBasicAuth = true`, so either credential admits a
+  request; a request presenting an invalid credential is refused. With `enableOAuth = true`,
+  every request must additionally carry the OAuth2 token in `Authorization`.
 
 ## [0.10.1]
 

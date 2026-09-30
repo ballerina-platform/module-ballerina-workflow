@@ -27,6 +27,7 @@ import io.ballerina.lib.workflow.utils.CorrelationExtractor;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
 import io.temporal.api.common.v1.WorkflowExecution;
 import io.temporal.api.enums.v1.WorkflowIdConflictPolicy;
+import io.temporal.api.enums.v1.WorkflowIdReusePolicy;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowExecutionAlreadyStarted;
 import io.temporal.client.WorkflowNotFoundException;
@@ -52,6 +53,8 @@ public final class WorkflowRuntime {
     public static final String STARTED_BY_MEMO = "startedBy";
     /** Memo key of the id a start stamps on the run it creates. */
     public static final String START_REQUEST_ID_MEMO = "startRequestId";
+    private static final int DESCRIBE_ATTEMPTS = 3;
+    private static final long DESCRIBE_RETRY_DELAY_MILLIS = 200;
 
     private static final Logger LOGGER = LoggerFactory.getLogger(WorkflowRuntime.class);
 
@@ -135,14 +138,14 @@ public final class WorkflowRuntime {
      * @param input       the input data for the process
      * @param options     the caller's id and policies; validated here
      * @return the instance and run the caller now holds
-     * @throws IllegalArgumentException       when the process is unknown
+     * @throws UnknownProcessException        when the process is unknown
      * @throws InvalidStartOptionsException   when the id or a policy is not acceptable
      * @throws InstanceAlreadyExistsException when the id is held and the policy refused the start
      * @throws IllegalStateException          when the runtime is not initialized or the engine refused
      */
     public StartedInstance createInstance(String processName, Object input, StartOptions options) {
         if (!WorkflowWorkerNative.getProcessRegistry().containsKey(processName)) {
-            throw new IllegalArgumentException("Process not registered: " + processName);
+            throw new UnknownProcessException(processName);
         }
         options.validate();
         String workflowId = options.hasCallerId() ? options.instanceId() : CorrelationExtractor.generateWorkflowId();
@@ -156,15 +159,19 @@ public final class WorkflowRuntime {
             throw new IllegalStateException("Task queue not configured.");
         }
 
-        // Every start stamps its own request id into the memo, so the run the engine hands back
-        // says which start created it — the atomic answer to "did USE_EXISTING join or create?"
-        String startRequestId = java.util.UUID.randomUUID().toString();
+        // A USE_EXISTING start stamps its own request id into the memo, so the run the engine hands
+        // back says which start created it — the atomic answer to "did this call join or create?"
+        boolean mayJoin = options.hasCallerId()
+                && options.conflictPolicy() == WorkflowIdConflictPolicy.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING;
+        String startRequestId = mayJoin ? java.util.UUID.randomUUID().toString() : null;
         try {
             // The kind memo is how a consumer learns what an instance is without parsing its id.
             String kind = WorkflowWorkerNative.isAgentWorkflowType(processName) ? "AGENT" : "WORKFLOW";
             java.util.Map<String, Object> memo = new java.util.HashMap<>();
             memo.put(TaskKeys.KIND, kind);
-            memo.put(START_REQUEST_ID_MEMO, startRequestId);
+            if (mayJoin) {
+                memo.put(START_REQUEST_ID_MEMO, startRequestId);
+            }
             if (options.startedBy() != null && !options.startedBy().isBlank()) {
                 memo.put(STARTED_BY_MEMO, options.startedBy());
             }
@@ -177,10 +184,15 @@ public final class WorkflowRuntime {
                 optionsBuilder.setWorkflowExecutionTimeout(java.time.Duration.ofSeconds(options.timeoutSeconds()));
             }
             if (options.hasCallerId()) {
-                // Only a chosen id can collide, so only then are the policies sent; the engine
-                // applies them atomically and hands back the run that holds the id.
-                optionsBuilder.setWorkflowIdConflictPolicy(options.conflictPolicy());
-                optionsBuilder.setWorkflowIdReusePolicy(options.reusePolicy());
+                // Only a chosen id can collide, so only then are the policies sent, and only when they
+                // differ from the engine's defaults: a request carrying no policy keeps working against
+                // a server that has policy support switched off or predates it.
+                if (options.conflictPolicy() != WorkflowIdConflictPolicy.WORKFLOW_ID_CONFLICT_POLICY_FAIL) {
+                    optionsBuilder.setWorkflowIdConflictPolicy(options.conflictPolicy());
+                }
+                if (options.reusePolicy() != WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE) {
+                    optionsBuilder.setWorkflowIdReusePolicy(options.reusePolicy());
+                }
             }
             if (WorkflowWorkerNative.isKindSearchAttributeReady()) {
                 optionsBuilder.setTypedSearchAttributes(io.temporal.common.SearchAttributes.newBuilder()
@@ -193,9 +205,7 @@ public final class WorkflowRuntime {
             WorkflowExecution execution = TraceContextPropagator.runWith(WorkerSpans.instanceContext(workflowId),
                     () -> workflowStub.start(input));
             // Only a USE_EXISTING start can have joined; its run's memo names the start that made it.
-            boolean started = !options.hasCallerId()
-                    || options.conflictPolicy() != WorkflowIdConflictPolicy.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING
-                    || startRequestId.equals(startRequestIdOf(client, execution));
+            boolean started = !mayJoin || startRequestId.equals(startRequestIdOf(client, execution));
             LOGGER.debug("Started workflow: type={}, id={}, started={}", processName, workflowId, started);
             return new StartedInstance(execution.getWorkflowId(), execution.getRunId(), started);
         } catch (WorkflowExecutionAlreadyStarted e) {
@@ -206,18 +216,33 @@ public final class WorkflowRuntime {
         }
     }
 
-    // The request id stamped into a run's memo by the start that created it, or null.
+    // The request id stamped into a run's memo by the start that created it; null when the run was
+    // created by a start that stamps none. A describe that keeps failing is an error, never "joined":
+    // the caller branches on the answer, so a guess would be a wrong answer.
     private static String startRequestIdOf(WorkflowClient client, WorkflowExecution execution) {
-        try {
-            var info = client.newUntypedWorkflowStub(execution.getWorkflowId(), java.util.Optional.of(
-                    execution.getRunId()), java.util.Optional.empty()).describe().getWorkflowExecutionInfo();
-            var payload = info.getMemo().getFieldsMap().get(START_REQUEST_ID_MEMO);
-            return payload == null ? null
-                    : client.getOptions().getDataConverter().fromPayload(payload, String.class, String.class);
-        } catch (Exception e) {
-            LOGGER.debug("Could not read the start request id of {}: {}", execution.getWorkflowId(), e.getMessage());
-            return null;
+        Exception last = null;
+        for (int attempt = 1; attempt <= DESCRIBE_ATTEMPTS; attempt++) {
+            try {
+                var info = client.newUntypedWorkflowStub(execution.getWorkflowId(), java.util.Optional.of(
+                        execution.getRunId()), java.util.Optional.empty()).describe().getWorkflowExecutionInfo();
+                var payload = info.getMemo().getFieldsMap().get(START_REQUEST_ID_MEMO);
+                return payload == null ? null
+                        : client.getOptions().getDataConverter().fromPayload(payload, String.class, String.class);
+            } catch (Exception e) {
+                last = e;
+                LOGGER.warn("Could not read the start request id of {} (attempt {} of {}): {}",
+                        execution.getWorkflowId(), attempt, DESCRIBE_ATTEMPTS, e.getMessage());
+                try {
+                    Thread.sleep(DESCRIBE_RETRY_DELAY_MILLIS * attempt);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
         }
+        throw new IllegalStateException("Started or joined instance " + execution.getWorkflowId() + " (run "
+                + execution.getRunId() + ") but could not confirm which: " + (last == null ? "interrupted"
+                : last.getMessage()), last);
     }
 
     private static String describeStatus(WorkflowClient client, String workflowId) {

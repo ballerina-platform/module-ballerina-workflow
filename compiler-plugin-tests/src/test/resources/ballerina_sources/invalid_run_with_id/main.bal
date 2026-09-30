@@ -66,8 +66,10 @@ public function startWorkflows() returns error? {
     // ERROR WORKFLOW_166: an escape that evaluates to a space — blank, as the runtime will see it.
     string wf7 = check workflow:runWithId(noInputWorkflow, "\u{20}");
     string wf6 = check workflow:runWithId(noInputWorkflow, instanceId = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+    // ERROR WORKFLOW_166: 64 characters but 256 UTF-8 bytes — the engine measures bytes.
+    string wf8 = check workflow:runWithId(noInputWorkflow, "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀");
     // ERROR WORKFLOW_166: a blank agent id; ERROR WORKFLOW_154: a mistyped agent payload at the third position.
     string ag1 = check orderAgent.runWithId(" ", "hello", {orderId: "ORD-1", quantity: 1});
     string ag2 = check orderAgent.runWithId("agent-1", "hello", "not an order");
-    _ = [wf1, wf2, wf3, wf4, wf5, wf6, wf7, ag1, ag2];
+    _ = [wf1, wf2, wf3, wf4, wf5, wf6, wf7, wf8, ag1, ag2];
 }

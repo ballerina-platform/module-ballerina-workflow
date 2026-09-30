@@ -147,8 +147,9 @@ public final class WorkflowConstants {
     public static final String RUN_FUNCTION = "run";
     public static final String RUN_WITH_ID_FUNCTION = "runWithId";
     /** The longest instance id `runWithId` accepts; mirrors the runtime's check. */
-    public static final int MAX_INSTANCE_ID_LENGTH = 255;
-    /** Prefixes older executions issued to children; a chosen id must not wear one. */
+    /** The engine measures an id in UTF-8 bytes; the runtime's StartOptions.MAX_INSTANCE_ID_BYTES is equal. */
+    public static final int MAX_INSTANCE_ID_BYTES = 255;
+    /** Prefixes the runtime issues to children; equal to the runtime's list, which a native test asserts. */
     public static final java.util.List<String> RESERVED_INSTANCE_ID_PREFIXES =
             java.util.List.of("humantask-", "reviewactivity-", "childwf-", "childagent-");
     public static final String AWAIT_METHOD = "await";

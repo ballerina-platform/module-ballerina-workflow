@@ -241,7 +241,7 @@ if id is workflow:InstanceAlreadyExistsError {
 }
 ```
 
-An id must not be blank, longer than 255 characters, or start with a prefix the runtime keeps
+An id must not be blank, longer than 255 bytes in UTF-8, or start with a prefix the runtime keeps
 for its own child instances (`humantask-`, `reviewactivity-`, `childwf-`, `childagent-`); a
 literal that breaks a rule is a compile error (`WORKFLOW_166`). `DurableAgent.runWithId` takes
 the same policies. The management API's `startInstance` adds `TERMINATE_EXISTING`, which

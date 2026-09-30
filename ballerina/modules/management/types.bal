@@ -633,7 +633,7 @@ public enum ClosedInstancePolicy {
 #
 # + instanceId - The instance id to start under — a business key that doubles as the
 #                correlation key. Omit for a generated UUID v7. Must not be blank, longer than
-#                255 characters, or start with a reserved prefix (`humantask-`,
+#                255 bytes in UTF-8, or start with a reserved prefix (`humantask-`,
 #                `reviewactivity-`, `childwf-`, `childagent-`)
 # + ifRunning - What to do when an instance with this id is running; only meaningful with
 #               `instanceId`

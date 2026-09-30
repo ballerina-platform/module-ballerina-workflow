@@ -21,7 +21,6 @@ package io.ballerina.lib.workflow.runtime.nativeimpl;
 import io.ballerina.lib.workflow.ModuleUtils;
 import io.ballerina.lib.workflow.context.WorkflowContextNative;
 import io.ballerina.lib.workflow.runtime.StartOptions;
-import io.ballerina.lib.workflow.runtime.WorkflowRuntime;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
 import io.ballerina.runtime.api.Environment;
@@ -51,7 +50,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
@@ -614,34 +612,27 @@ public final class DurableAgentNative {
         if (validatedInput instanceof BError) {
             return validatedInput;
         }
-        String workflowType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + agentName;
-        Map<String, Object> runInput = new HashMap<>();
-        runInput.put(RUN_AGENT_NAME, agentName);
-        runInput.put(RUN_QUERY, query.getValue());
-        runInput.put(RUN_INPUT, validatedInput == null ? null
-                : TypesUtil.convertBallerinaToJavaType(validatedInput));
-
+        Map<String, Object> runInput = runInputOf(agentName, query.getValue(),
+                validatedInput == null ? null : TypesUtil.convertBallerinaToJavaType(validatedInput));
         if (isInsideWorkflow()) {
             return WorkflowContextNative.startDurableAgentChild(agentName, runInput);
         }
-        return env.yieldAndRun(() -> {
-            CompletableFuture<Object> balFuture = new CompletableFuture<>();
-            WorkflowRuntime.getInstance().getExecutor().execute(() -> {
-                try {
-                    String workflowId = WorkflowRuntime.getInstance().createInstance(workflowType, runInput);
-                    balFuture.complete(StringUtils.fromString(workflowId));
-                } catch (Exception e) {
-                    balFuture.complete(ErrorCreator.createError(StringUtils.fromString(
-                            "Failed to start durable agent '" + agentName + "': " + e.getMessage())));
-                }
-            });
-            try {
-                return balFuture.get();
-            } catch (Exception e) {
-                return ErrorCreator.createError(StringUtils.fromString(
-                        "Failed to start durable agent '" + agentName + "': " + e.getMessage()));
-            }
-        });
+        String workflowType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + agentName;
+        return env.yieldAndRun(() -> WorkflowNative.startWithOptions(workflowType, runInput,
+                StartOptions.generated(), startErrorPrefix(agentName)));
+    }
+
+    // The envelope the agent runner unpacks: built here alone, whichever entry point starts the run.
+    private static Map<String, Object> runInputOf(String agentName, String query, Object payload) {
+        Map<String, Object> runInput = new HashMap<>();
+        runInput.put(RUN_AGENT_NAME, agentName);
+        runInput.put(RUN_QUERY, query);
+        runInput.put(RUN_INPUT, payload);
+        return runInput;
+    }
+
+    private static String startErrorPrefix(String agentName) {
+        return "Failed to start durable agent '" + agentName + "': ";
     }
 
     /**
@@ -671,16 +662,14 @@ public final class DurableAgentNative {
         if (validatedInput instanceof BError) {
             return validatedInput;
         }
-        String errorPrefix = "Failed to start durable agent '" + agentName + "': ";
+        String errorPrefix = startErrorPrefix(agentName);
         if (isInsideWorkflow()) {
             return ErrorCreator.createError(StringUtils.fromString(errorPrefix
                     + "runWithId cannot be called inside a workflow; use run(), which starts a child agent"));
         }
         String workflowType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + agentName;
-        Map<String, Object> runInput = new HashMap<>();
-        runInput.put(RUN_AGENT_NAME, agentName);
-        runInput.put(RUN_QUERY, query.getValue());
-        runInput.put(RUN_INPUT, validatedInput == null ? null : TypesUtil.convertBallerinaToJavaType(validatedInput));
+        Map<String, Object> runInput = runInputOf(agentName, query.getValue(),
+                validatedInput == null ? null : TypesUtil.convertBallerinaToJavaType(validatedInput));
         StartOptions options = new StartOptions(instanceId.getValue(), ifRunning.getValue(), ifClosed.getValue(),
                 null, null);
         return env.yieldAndRun(() -> WorkflowNative.startWithOptions(workflowType, runInput, options, errorPrefix));
@@ -780,11 +769,7 @@ public final class DurableAgentNative {
             }
             payload = TypesUtil.convertBallerinaToJavaType(converted);
         }
-        Map<String, Object> runInput = new HashMap<>();
-        runInput.put(RUN_AGENT_NAME, agentName);
-        runInput.put(RUN_QUERY, query);
-        runInput.put(RUN_INPUT, payload);
-        return runInput;
+        return runInputOf(agentName, query, payload);
     }
 
     /**

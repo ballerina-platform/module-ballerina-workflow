@@ -1063,8 +1063,8 @@ public final class WorkflowDescriptorBuilder {
                             out.appendCodePoint(Integer.parseInt(value.substring(i + 2, close), 16));
                             i = close;
                             continue;
-                        } catch (NumberFormatException ignored) {
-                            // Not a code point: kept as written below.
+                        } catch (IllegalArgumentException ignored) {
+                            // Not a hex number, or past U+10FFFF: kept as written below.
                         }
                     }
                     out.append(c).append(next);

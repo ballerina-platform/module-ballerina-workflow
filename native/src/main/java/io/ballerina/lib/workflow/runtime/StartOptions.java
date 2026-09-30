@@ -18,9 +18,11 @@
 
 package io.ballerina.lib.workflow.runtime;
 
+import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
 import io.temporal.api.enums.v1.WorkflowIdConflictPolicy;
 import io.temporal.api.enums.v1.WorkflowIdReusePolicy;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
@@ -46,12 +48,12 @@ public record StartOptions(String instanceId, String ifRunning, String ifClosed,
     public static final String REJECT_DUPLICATE = "REJECT_DUPLICATE";
 
     /** The longest id accepted, well under the server's own limit. */
-    public static final int MAX_INSTANCE_ID_LENGTH = 255;
+    // The engine measures an id in UTF-8 bytes, so this limit does too
+    public static final int MAX_INSTANCE_ID_BYTES = 255;
 
-    // Prefixes older executions issued to their children; a caller id wearing one would be
-    // misclassified by the legacy kind fallback.
-    private static final List<String> RESERVED_PREFIXES =
-            List.of("humantask-", "reviewactivity-", "childwf-", "childagent-");
+    // Prefixes the runtime issues to its children; a caller id wearing one would be misclassified
+    // by the legacy kind fallback. The compiler plugin keeps an equal copy (WORKFLOW_166).
+    public static final List<String> RESERVED_PREFIXES = WorkflowWorkerNative.RESERVED_INSTANCE_ID_PREFIXES;
 
     /** Options for a generated id: no policies set. */
     public static StartOptions generated() {
@@ -72,11 +74,10 @@ public record StartOptions(String instanceId, String ifRunning, String ifClosed,
             if (!trimmed.equals(instanceId)) {
                 throw new InvalidStartOptionsException("instanceId must not have leading or trailing whitespace");
             }
-            // Characters as Ballerina counts them: code points, not UTF-16 units.
-            int length = instanceId.codePointCount(0, instanceId.length());
-            if (length > MAX_INSTANCE_ID_LENGTH) {
-                throw new InvalidStartOptionsException("instanceId must be at most " + MAX_INSTANCE_ID_LENGTH
-                        + " characters, got " + length);
+            int length = instanceId.getBytes(StandardCharsets.UTF_8).length;
+            if (length > MAX_INSTANCE_ID_BYTES) {
+                throw new InvalidStartOptionsException("instanceId must be at most " + MAX_INSTANCE_ID_BYTES
+                        + " bytes in UTF-8, got " + length);
             }
             for (String prefix : RESERVED_PREFIXES) {
                 if (instanceId.startsWith(prefix)) {

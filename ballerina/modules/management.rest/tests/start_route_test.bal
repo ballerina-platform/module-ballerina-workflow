@@ -36,11 +36,12 @@ function testStartRouteRefusesBadIdsAndPolicies() returns error? {
             "A bad id or policy is refused as a bad request: " + body.toJsonString());
     }
 
-    // A well-formed request gets past the checks and on to the runtime, whose absence is
-    // what stops it here — never a 400.
+    // A well-formed request gets past the checks and on to the runtime, where a type nothing
+    // registered is the caller's mistake: not found, never a bad request or a server failure.
     http:Response ordinary = check mgmtClient->post("/workflow/workflows",
         {workflowType: "anything", workflowId: "order-1", ifRunning: "USE_EXISTING"});
-    test:assertNotEquals(ordinary.statusCode, 400);
+    test:assertEquals(ordinary.statusCode, 404,
+        "An unregistered workflow type is not found: " + (check ordinary.getTextPayload()));
 
     check stopManagementService();
 }

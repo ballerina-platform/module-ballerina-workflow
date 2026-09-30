@@ -263,6 +263,11 @@ public final class WorkflowWorkerNative {
      * ({@code humantask-<workflowDefinition.taskName>}).
      */
     public static final String HUMANTASK_TYPE_PREFIX = "humantask-";
+    // Instance-id prefixes the runtime issues to the children it starts; a caller-chosen id may not wear one
+    public static final String CHILD_WORKFLOW_ID_PREFIX = "childwf-";
+    public static final String CHILD_AGENT_ID_PREFIX = "childagent-";
+    public static final java.util.List<String> RESERVED_INSTANCE_ID_PREFIXES = java.util.List.of(
+            HUMANTASK_TYPE_PREFIX, REVIEW_ACTIVITY_TYPE_PREFIX, CHILD_WORKFLOW_ID_PREFIX, CHILD_AGENT_ID_PREFIX);
 
     /**
      * Per-workflow-execution suspended flag, set by the {@code __wf_suspend}/{@code __wf_resume} signal handlers.

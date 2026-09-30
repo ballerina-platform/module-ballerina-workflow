@@ -44,7 +44,7 @@ isolated function runNative(function processFunction, anydata input) returns str
 # Starts a workflow instance under an id the caller chooses — a business key such as an order
 # number — so the id doubles as the correlation key. The policies say what happens when the id is
 # already held: `ifRunning = USE_EXISTING` makes a retried submit join the instance it already
-# started instead of failing. The id must not be blank, longer than 255 characters, or start with
+# started instead of failing. The id must not be blank, longer than 255 bytes in UTF-8, or start with
 # a reserved prefix (`humantask-`, `reviewactivity-`, `childwf-`, `childagent-`).
 #
 # + processFunction - The workflow function (must have `@Workflow`)

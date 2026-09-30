@@ -182,23 +182,10 @@ public final class WorkflowNative {
             return runAsImplicitActivity(processName, javaInput);
         }
 
-        // Outside workflow - use the normal async path
+        // Outside a workflow: the one start path, under a generated id
         final Object finalInput = javaInput;
-        return env.yieldAndRun(() -> {
-            CompletableFuture<Object> balFuture = new CompletableFuture<>();
-
-            WorkflowRuntime.getInstance().getExecutor().execute(() -> {
-                try {
-                    String workflowId = WorkflowRuntime.getInstance().createInstance(processName, finalInput);
-                    balFuture.complete(StringUtils.fromString(workflowId));
-                } catch (Exception e) {
-                    balFuture.complete(
-                            ErrorCreator.createError(StringUtils.fromString(ERR_START_PROCESS + e.getMessage())));
-                }
-            });
-
-            return getResult(balFuture);
-        });
+        return env.yieldAndRun(() -> startWithOptions(processName, finalInput, StartOptions.generated(),
+                ERR_START_PROCESS));
     }
 
     /**
@@ -820,13 +807,13 @@ public final class WorkflowNative {
     }
 
     private static String kindFromIdPrefix(String workflowId) {
-        if (workflowId.startsWith("humantask-")) {
+        if (workflowId.startsWith(WorkflowWorkerNative.HUMANTASK_TYPE_PREFIX)) {
             return "HUMAN_TASK";
         }
-        if (workflowId.startsWith("reviewactivity-")) {
+        if (workflowId.startsWith(WorkflowWorkerNative.REVIEW_ACTIVITY_TYPE_PREFIX)) {
             return "REVIEW_ACTIVITY";
         }
-        if (workflowId.startsWith("childwf-")) {
+        if (workflowId.startsWith(WorkflowWorkerNative.CHILD_WORKFLOW_ID_PREFIX)) {
             return "CHILD_WORKFLOW";
         }
         return "WORKFLOW";

@@ -32,6 +32,7 @@ import io.ballerina.lib.workflow.runtime.InstanceAlreadyExistsException;
 import io.ballerina.lib.workflow.runtime.InvalidStartOptionsException;
 import io.ballerina.lib.workflow.runtime.StartOptions;
 import io.ballerina.lib.workflow.runtime.StartedInstance;
+import io.ballerina.lib.workflow.runtime.UnknownProcessException;
 import io.ballerina.lib.workflow.runtime.WorkflowRuntime;
 import io.ballerina.lib.workflow.utils.EventExtractor;
 import io.ballerina.lib.workflow.utils.TypesUtil;
@@ -121,6 +122,7 @@ public final class ManagementNative {
     private static final String CONFLICT_ERROR = "ConflictError";
     private static final String INVALID_REQUEST_ERROR = "InvalidRequestError";
     private static final String INVALID_PAYLOAD_ERROR = "InvalidPayloadError";
+    private static final String NOT_FOUND_ERROR = "NotFoundError";
 
     private ManagementNative() {
         // Utility class — prevent instantiation
@@ -1756,6 +1758,9 @@ public final class ManagementNative {
             handle.put(StringUtils.fromString("runId"), StringUtils.fromString(started.runId()));
             handle.put(StringUtils.fromString("started"), started.started());
             return handle;
+        } catch (UnknownProcessException e) {
+            return managementError(NOT_FOUND_ERROR, "No workflow or durable agent is registered as '"
+                    + workflowType.getValue() + "'");
         } catch (InstanceAlreadyExistsException e) {
             return managementError(CONFLICT_ERROR, e.getMessage());
         } catch (InvalidStartOptionsException e) {
@@ -1766,13 +1771,10 @@ public final class ManagementNative {
     }
 
     // A typed management error, so the command and REST layers classify it without reading its text.
+    // No fallback: a type this cannot build is a bug that must fail loudly, not a quiet 500.
     private static BError managementError(String typeName, String message) {
-        try {
-            return ErrorCreator.createError(ModuleUtils.getManagementModule(), typeName,
-                    StringUtils.fromString(message), null, null);
-        } catch (Exception e) {
-            return ErrorCreator.createError(StringUtils.fromString(typeName + ": " + message));
-        }
+        return ErrorCreator.createError(ModuleUtils.getManagementModule(), typeName,
+                StringUtils.fromString(message), null, null);
     }
 
     /**
@@ -1892,7 +1894,7 @@ public final class ManagementNative {
                 for (WorkflowExecutionInfo wfInfo : visPage.executions()) {
                     if (hasStartedByFilter) {
                         String startedByMemo = decodeMemoString(client.getOptions().getDataConverter(),
-                                                                wfInfo.getMemo().getFieldsMap(), "startedBy", null);
+                                wfInfo.getMemo().getFieldsMap(), WorkflowRuntime.STARTED_BY_MEMO, null);
                         if (!startedByValue.equals(startedByMemo)) {
                             continue;
                         }

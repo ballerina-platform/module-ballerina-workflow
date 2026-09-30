@@ -53,6 +53,22 @@ function setupRunWithIdTests() returns error? {
     _ = check registerWorkflowForTest(idFailingWorkflow, "idFailingWorkflow");
 }
 
+// The management module declares its own policy enums (it cannot import this module), so this
+// holds the two declarations equal: the assignments below compile only while the value sets match,
+// and the runtime check catches a member added to one side alone.
+@test:Config {groups: ["unit"]}
+function testStartPoliciesAgreeWithTheManagementModule() {
+    ClosedInstancePolicy[] closed = [ALLOW_DUPLICATE, ALLOW_DUPLICATE_FAILED_ONLY, REJECT_DUPLICATE];
+    management:ClosedInstancePolicy[] mgmtClosed = closed;
+    ClosedInstancePolicy[] back = mgmtClosed;
+    test:assertEquals(back, closed);
+    // runWithId offers FAIL and USE_EXISTING only; TERMINATE_EXISTING is the management API's.
+    RunningInstancePolicy[] running = [FAIL, USE_EXISTING];
+    management:RunningInstancePolicy[] mgmtRunning = running;
+    test:assertEquals(mgmtRunning.length(), 2);
+    test:assertTrue(management:TERMINATE_EXISTING is management:RunningInstancePolicy);
+}
+
 // ── workflow:runWithId ────────────────────────────────────────────────────────
 
 @test:Config {groups: ["unit"]}
@@ -173,15 +189,20 @@ function testRunWithIdRejectsUnacceptableIds() {
 }
 
 @test:Config {groups: ["unit"]}
-function testRunWithIdCountsCharactersNotUnits() returns error? {
-    // 255 characters outside the BMP are 510 UTF-16 units: the limit counts characters, as
-    // Ballerina's string length does.
-    string wide = "".'join(...from int _ in 0 ..< 255 select "😀");
-    test:assertEquals(wide.length(), 255);
-    string id = chosenId("wide-") + wide.substring(0, 255 - chosenId("wide-").length());
-    string started = check runWithId(idQuickWorkflow, id, "w");
-    test:assertEquals(started, id);
-    test:assertEquals(check getWorkflowResult(id, 15), "done: w");
+function testRunWithIdMeasuresTheLimitInBytes() returns error? {
+    // The engine measures an id in UTF-8 bytes: 63 four-byte characters fit beside a short
+    // prefix, while 64 of them are 256 bytes and refused, though only 64 characters long.
+    string prefix = chosenId("wide-");
+    string fits = prefix + "".'join(...from int _ in 0 ..< (255 - prefix.length()) / 4 select "😀");
+    string started = check runWithId(idQuickWorkflow, fits, "w");
+    test:assertEquals(started, fits);
+    test:assertEquals(check getWorkflowResult(fits, 15), "done: w");
+
+    string wide = "".'join(...from int _ in 0 ..< 64 select "😀");
+    test:assertEquals(wide.length(), 64);
+    string|error refused = runWithId(idQuickWorkflow, wide, "w");
+    test:assertTrue(refused is error && refused.message().includes("256") && refused.message().includes("bytes"),
+        "64 characters of 4 bytes each are over the limit: " + (refused is error ? refused.message() : refused));
 }
 
 // ── DurableAgent.runWithId ───────────────────────────────────────────────────

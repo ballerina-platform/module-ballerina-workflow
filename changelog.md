@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-30
+
 ### Added
 
 - `workflow:runWithId` and `DurableAgent.runWithId` start an instance under an id the caller
@@ -14,14 +16,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   default, `ALLOW_DUPLICATE_FAILED_ONLY`, `REJECT_DUPLICATE`). A held id the policies refuse is
   an `InstanceAlreadyExistsError` carrying the holder's status; a blank, over-long or
   reserved-prefix id is refused at compile time for a literal (`WORKFLOW_166`) and at start
-  otherwise.
+  otherwise. ([#141](https://github.com/ballerina-platform/module-ballerina-workflow/pull/141))
+
 - `management:startInstance(workflowType, input, *StartOptions)` replaces `startWorkflowByType`
   (kept, deprecated) and adds the same policies, plus `TERMINATE_EXISTING` for `ifRunning`.
   `instances.start` and `POST /workflows` take `ifRunning` and `ifClosed`; a refused id is a
   `ConflictError` (409) instead of an execution error (500), a bad id or policy a 400, and a
   start that joined a running instance answers 200 with `started: false` rather than 201.
   Every start — `run`, `runWithId`, an agent's, the management API's — now goes through one
-  runtime path.
+  runtime path. ([#141](https://github.com/ballerina-platform/module-ballerina-workflow/pull/141))
+
 - `workflow:getResult(id)`, `waitForResult(id, timeout = ())` and `getStatus(id)`: a non-blocking
   typed read, a crash-resumable wait with an optional bound, and a status read, so a service
   reports on an instance with one call and no management import. Durable agents gain
@@ -31,38 +35,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   without a result, `InstanceNotFoundError` for an id nothing holds; an agent's reads are scoped
   to its own instances. The compiler refuses the reads inside a workflow body (`WORKFLOW_167`) and
   a negative literal bound (`WORKFLOW_168`), and warns when a resource or remote function
-  `check`s a non-blocking read straight into a request failure (`WORKFLOW_169`).
+  `check`s a non-blocking read straight into a request failure (`WORKFLOW_169`). ([#142](https://github.com/ballerina-platform/module-ballerina-workflow/pull/142))
 
-### Changed
+- The language's `@display {label, iconPath}` annotation is read on `@workflow:Workflow` and
+  `@workflow:Activity` functions and on a `workflow:DurableAgent` variable, and published as
+  `displayName`/`icon` in the workflow descriptor, the metadata document, `WorkflowDefinition`,
+  `ActivityTreeNode`, `ActivityInvocation` and the execution graph's labels; a human task's
+  constant `title` is published as its display name the same way. The label is also set as the
+  execution's static summary for the Temporal UI. A display name is never an identity — a rename
+  is a rebuild, with no migration — and a blank label is rejected (`WORKFLOW_165`). ([#140](https://github.com/ballerina-platform/module-ballerina-workflow/pull/140))
 
-- A `ctx->await` bound counts `weeks` and `days` and refuses `months` and `years` (which have no
-  fixed length), as `waitForResult` does; a bound that is negative or overflows is refused. Executions
-  started before this release keep the bound they recorded (hours, minutes and seconds only), so
-  their replays stay deterministic.
-- `getWorkflowResult` is deprecated in favour of `waitForResult`, and answers
-  `WorkflowInProgressError` when its wait runs out instead of a plain error worded as a workflow
-  timeout. `WorkflowBusyError` and `AgentBusyError` are deprecated aliases of
-  `WorkflowInProgressError`, so existing `is` tests keep matching.
+- `jwtAuthHeader` in `[ballerina.workflow.management.rest]` names the header that carries the
+  JWT, defaulting to the standard `Authorization` header. Set it (e.g. `X-JWT-Assertion`) when a
+  gateway keeps `Authorization` for its own credential and forwards the caller's JWT in another
+  header, as a bare token or `Bearer <token>`. The token is then validated by the gateway
+  interceptor with the same issuer, audience and JWKS configuration before the caller identity is
+  read from it, and a request carrying an invalid token in that header is refused. The schemes
+  configured through `@http:ServiceConfig` still run on `Authorization` afterwards, so set
+  `enableBasicAuth = false` (it defaults to `true`) unless `Authorization` also carries a
+  credential they accept. ([#149](https://github.com/ballerina-platform/module-ballerina-workflow/pull/149))
 
-### Changed
-
-- A `MULTI_EVENT` durable agent with a `chat` event whose turn exceeds `maxIter` no longer fails as a
-  whole: the turn is ended with a failure its waiter receives (`waitForDataResult` returns the reason),
-  the overrun is recorded in the conversation, and the agent goes back to waiting for the next chat
-  message. Every other agent keeps failing as before. A turn whose closing reply carries no text is
-  reported to its waiter as having no response, even when an earlier reply in that turn carried text
-  beside its tool calls. ([ballerina-library#9225](https://github.com/ballerina-platform/ballerina-library/issues/9225))
-
-### Fixed
-
-- `HumanTaskInfo.taskInput` and `ReviewActivityInfo.taskInput` held a `map<anydata>` at run time although
-  the records declare `map<json>`, so a typed read (`map<json> input = check info.taskInput.ensureType()`)
-  panicked with a `TypeCastError` — and took the process down when it happened in a resource. The values
-  are now built as `map<json>`. ([ballerina-library#9226](https://github.com/ballerina-platform/ballerina-library/issues/9226))
-
-## [0.10.1]
-
-### Added
+- **One trace per instance.** A trace's ID is derived from the instance ID, so calls that
+  never meet agree on it without a context to pass: the client spans of `workflow.observe`
+  open in the instance's trace instead of nesting under the caller's request span, and so
+  does the run's execution, recorded replay-safely by the worker — the run itself
+  (`workflow <type>`), each activity attempt (`activity <type>`), each data event received
+  (`workflow.data_received <name>`) and each durable-agent step (`agent.model_call`, `agent.tool_call <tool>`,
+  `agent.event_wait <event>`, `agent.sleep`, `agent.task_wait <task>`,
+  `agent.tool_review <tool>`). A task child or a child workflow joins the trace of the run
+  that started it: every task and child memo carries `rootWorkflowId`, the decision receipt
+  returns it, and a refused decision still names the owning run in its error detail once the
+  task's memo was read. An agent step that ends in an engine failure is recorded with the
+  failure's type. Every client span carries a link to the caller's own span, which is how
+  a tracing UI gets back to the request that made the call. All of it is opened through the
+  module's own `workflow` tracer, tagged `type = client|worker`. ([#120](https://github.com/ballerina-platform/module-ballerina-workflow/pull/120))
 
 - `POST /review-activities/{taskId}/reassign` and `POST /review-activities/{taskId}/deadline`,
   so a review is administered through its own resource. `tasks.reassign` and
@@ -70,7 +76,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   the id name that kind of task; it defaults to accepting either, so existing callers are
   unaffected. ([#134](https://github.com/ballerina-platform/module-ballerina-workflow/pull/134))
 
+- Every metric sample carries `icp.runtimeId`, the identity a deployment registers with
+  `observe:addTag("icp.runtimeId", …)`, read once at the first increment and held for the life of
+  the process, so a platform can attribute a series to the runtime that published it. The label
+  is set only when the integration is built with observability enabled; otherwise it holds
+  `none`, like every other label that does not apply. ([#139](https://github.com/ballerina-platform/module-ballerina-workflow/pull/139))
+
+- `docs/recover-workflows.md` explains how a stuck or failed run is recovered — retrying or
+  failing an activity, resending a data event, resetting to a recorded point, and escalating a
+  task — and where the message store ends and the workflow begins. ([#147](https://github.com/ballerina-platform/module-ballerina-workflow/pull/147))
+
+### Changed
+
+- A `ctx->await` bound counts `weeks` and `days` and refuses `months` and `years` (which have no
+  fixed length), as `waitForResult` does; a bound that is negative or overflows is refused. Executions
+  started before this release keep the bound they recorded (hours, minutes and seconds only), so
+  their replays stay deterministic. ([#142](https://github.com/ballerina-platform/module-ballerina-workflow/pull/142))
+
+- `getWorkflowResult` is deprecated in favour of `waitForResult`, and answers
+  `WorkflowInProgressError` when its wait runs out instead of a plain error worded as a workflow
+  timeout. `WorkflowBusyError` and `AgentBusyError` are deprecated aliases of
+  `WorkflowInProgressError`, so existing `is` tests keep matching. ([#142](https://github.com/ballerina-platform/module-ballerina-workflow/pull/142))
+
+- A `MULTI_EVENT` durable agent with a `chat` event whose turn exceeds `maxIter` no longer fails as a
+  whole: the turn is ended with a failure its waiter receives (`waitForDataResult` returns the reason),
+  the overrun is recorded in the conversation, and the agent goes back to waiting for the next chat
+  message. Every other agent keeps failing as before. A turn whose closing reply carries no text is
+  reported to its waiter as having no response, even when an earlier reply in that turn carried text
+  beside its tool calls. ([ballerina-library#9225](https://github.com/ballerina-platform/ballerina-library/issues/9225), [#145](https://github.com/ballerina-platform/module-ballerina-workflow/pull/145))
+
+- The module builds on Ballerina Swan Lake Update 14 (`2201.14.0`) and Java 25; the native
+  libraries and the compiler plugin are compiled for that platform. ([#137](https://github.com/ballerina-platform/module-ballerina-workflow/pull/137))
+
+- `jackson` moves to 2.18.9 and `grpc` to 1.75.0, which clears the CVEs reported against the
+  versions the 0.10.0 native jar carried. ([#143](https://github.com/ballerina-platform/module-ballerina-workflow/pull/143))
+
 ### Fixed
+
+- `HumanTaskInfo.taskInput` and `ReviewActivityInfo.taskInput` held a `map<anydata>` at run time although
+  the records declare `map<json>`, so a typed read (`map<json> input = check info.taskInput.ensureType()`)
+  panicked with a `TypeCastError` — and took the process down when it happened in a resource. The values
+  are now built as `map<json>`. ([ballerina-library#9226](https://github.com/ballerina-platform/ballerina-library/issues/9226), [#144](https://github.com/ballerina-platform/module-ballerina-workflow/pull/144))
 
 - A review activity reported `canComplete` and `canAdminister` as `false` to every caller,
   including the audience that may decide it and the administrators that may administer it.
@@ -80,15 +126,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   actions for the very people entitled to take them. `reviewActivities.list` and
   `reviewActivities.get` now answer both from the same predicate the decision path authorizes
   with. ([#134](https://github.com/ballerina-platform/module-ballerina-workflow/pull/134))
+
 - `POST /human-tasks/{taskId}/reassign` and `/deadline` accepted a review activity's task id, so
   a review could be administered through the human-task resource. Each administration route now
   serves one kind of task, the guard the read paths have carried since
   ballerina-library#8894. ([#134](https://github.com/ballerina-platform/module-ballerina-workflow/pull/134))
+
 - `tasks.reassign` and `tasks.extendDeadline` passed an unrecognized `kind` through unchecked, so
   a value such as `OTHER` skipped the kind guard entirely instead of constraining the id. An
   unsupported `kind` is now refused. ([#136](https://github.com/ballerina-platform/module-ballerina-workflow/pull/136))
 
-## [0.10.0] - 2026-09-18
+## [0.10.0] - 2026-09-17
 
 ### Added
 
@@ -110,7 +158,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   task's own history. The management API gains `tasks.reassign` and `tasks.extendDeadline`
   (`POST /human-tasks/{taskId}/reassign` and `/deadline`), `canAdminister` and `completedAs`
   on every task record, and the caller-independent `all` parameter on the pending count and
-  the work queue. An administrator's act that arrives together with a decision is applied
+  the work queue. A review naming no audience but excluding someone is closed to the excluded
+  caller; an administrator's act that arrives together with a decision is applied
   first, and a decision by a caller no longer in the audience is dropped. ([#131](https://github.com/ballerina-platform/module-ballerina-workflow/pull/131))
 - **Peers by agent.** `PeerDecl` is `agent`, `description?` and `allowedEvents?`; the peer's
   run and each allowed event become tools named after the agent, and a delegation chooses
@@ -124,22 +173,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   standard Ballerina observability pipeline (`observabilityIncluded = true`):
   - Tracing: a new exported `workflow.observe` submodule records client-side spans for
     `run`, `sendData`, `getWorkflowResult`, the three task decisions, `DurableAgent.run` and
-    `DurableAgent.sendData`. Spans are suppressed inside workflow bodies (replay safety) and
+    `DurableAgent.sendData`, nesting into the caller's existing request trace. Spans are suppressed inside workflow bodies (replay safety) and
     record structural identifiers — and, on a decision, who made it.
-  - **One trace per instance.** A trace's ID is derived from the instance ID, so calls that
-    never meet agree on it without a context to pass: the client spans above open in the
-    instance's trace rather than under their caller, and so does the run's execution,
-    recorded replay-safely by the worker — the run itself (`workflow <type>`), each activity
-    attempt (`activity <type>`), each data event received (`workflow.data_received <name>`)
-    and each durable-agent step (`agent.model_call`, `agent.tool_call <tool>`,
-    `agent.event_wait <event>`, `agent.sleep`, `agent.task_wait <task>`,
-    `agent.tool_review <tool>`). A task child or a child workflow joins the trace of the run
-    that started it: every task and child memo carries `rootWorkflowId`, the decision receipt
-    returns it, and a refused decision still names the owning run in its error detail once the
-    task's memo was read. An agent step that ends in an engine failure is recorded with the
-    failure's type. Every client span carries a link to the caller's own span, which is how
-    a tracing UI gets back to the request that made the call. All of it is opened through the
-    module's own `workflow` tracer, tagged `type = client|worker`.
   - Metrics, following the Ballerina integration observability standard: one
     `workflow_events_total` counter carries every lifecycle event (`started`, `closed`,
     `activity_executed`, `data_sent`, `task_decided`), recorded replay-safely; logical
@@ -204,43 +239,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   spans and decision records, content included.
   See `docs/proposals/observability-integration.md` for the design.
 
-### Added
-
-- **Task administrators.** Every task definition — `awaitHumanTask`, a `retryPolicy` review,
-  an `approvalPolicy` gate and an agent's declared human task — may name `administratorRoles`
-  and `administratorUsers` beside its audience. An administrator sees the task, may reassign
-  its audience, move or clear its deadline, fail it, or complete it; a completion by an
-  administrator is recorded with `completedAs: "administrator"`, and every act travels the
-  task's own history. The management API gains `tasks.reassign` and `tasks.extendDeadline`
-  (`POST /human-tasks/{taskId}/reassign` and `/deadline`), `canAdminister` and `completedAs`
-  on every task record, and the caller-independent `all` parameter on the pending count and
-  the work queue. A review naming no audience but excluding someone is closed to the excluded
-  caller; an administrator's act arriving with a decision is applied first, and a decision by
-  a caller no longer in the audience is dropped.
-- **One task model.** `ReviewTaskDefinition` is the single shape of a review wherever one is
-  raised: `retryPolicy` is `AutoRetry | ReviewTaskDefinition | RetryBeforeReview`, and
-  `approvalPolicy: ReviewTaskDefinition | NoApproval` gates an activity, a tool or a
-  `callActivity`. A task names its audience as `userRoles` and/or `users`, minus
-  `excludedUsers` and `excludedRoles`; a definition that names nobody is a compile error
-  (`WORKFLOW_164`). Reviews get their own deadline timer and `ReviewTimeoutError`, and a
-  workflow reads `ctx.lastHumanTaskCompletion()` and `ctx.lastReviewDecision()`. A durable
-  agent may cap its event waits with `maxEventWaits` (default 50), and its human-task tool may
-  narrow a task's audience per creation with `excludedUsers`.
-- **Peers by agent.** `PeerDecl` is `agent`, `description?` and `allowedEvents?`; the peer's
-  run and each allowed event become tools named after the agent, and a delegation chooses
-  per call whether to wait or to be answered on one of the caller's events (`replyEvent`).
-
-### Removed
-
-- `requiresApproval` and `userRoles` on `ActivityDecl`, `ToolDecl` and `PeerDecl`, the peer's
-  `name`, `'wait` and `callbackChannel`, and the string and sentinel forms of `retryPolicy`
-  (`"manager"`, `ManualRetry`, `HumanReview`). Each is reported at compile time
-  (`WORKFLOW_163`) with the replacement; the VS Code designer offers the migration as a
-  quick fix. The imperative agent layer (`AgentRunConfig`, `ApprovalConfig`, `buildAndRun`) is
-  gone; the object model is the one way to declare an agent.
-
-## [0.9.1] - 2026-09-16 ([#106](https://github.com/ballerina-platform/module-ballerina-workflow/pull/106))
-
 ### Changed
 
 - **Management API task records share one shape.** `HumanTaskSummary`, `WorkItemSummary` and
@@ -267,9 +265,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `requiresApproval` and `userRoles` on `ActivityDecl`, `ToolDecl` and `PeerDecl`, the peer's
   `name`, `'wait` and `callbackChannel`, and the string and sentinel forms of `retryPolicy`
   (`"manager"`, `ManualRetry`, `HumanReview`). Each is reported at compile time
-  (`WORKFLOW_163`) with its replacement; the VS Code designer offers the migration as a
-  quick fix. The imperative agent layer (`AgentRunConfig`, `ApprovalConfig`, `buildAndRun`)
-  is gone; the object model is the one way to declare an agent. ([#129](https://github.com/ballerina-platform/module-ballerina-workflow/pull/129))
+  (`WORKFLOW_163`) with the replacement; the VS Code designer offers the migration as a
+  quick fix. The imperative agent layer (`AgentRunConfig`, `ApprovalConfig`, `buildAndRun`) is
+  gone; the object model is the one way to declare an agent.
 
 ### Fixed
 
@@ -303,9 +301,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ## [0.9.0] - 2026-09-07
 
 ### Changed
-- [[#9132] Updated Keywords and Reformat README for Connector Store Discoverability](https://github.com/ballerina-platform/ballerina-library/issues/9132)
 
-### Changed
+- [[#9132] Updated Keywords and Reformat README for Connector Store Discoverability](https://github.com/ballerina-platform/ballerina-library/issues/9132)
 
 - **Breaking**: the management HTTP API moved from `ballerina/workflow.management`
   to the new `ballerina/workflow.management.rest` module. `workflow.management` is
@@ -718,18 +715,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   ISO-8601 UTC instant. Their names are reserved alongside the other built-ins: a user capability
   registered under either name is rejected.
 
-- Declared agent activities honor `bindings`: arguments fixed at registration (typically a
-  client the model cannot supply) are carried from the declaration through to the
-  registration, so a connection-based activity can be exposed as an agent tool by binding
-  its client to a module-level variable.
-
-- Compile-time guards for durable agent declarations: a tool that declares an
-  `@ai:AgentTool` authorization requirement is rejected (durable agents do not run the
-  `ai:Agent` loop that acquires tokens and validates scopes), capability names must be
-  constant strings (the name drives both the designer rendering and the Temporal
-  registration), and an activity is rejected when a parameter the model cannot supply
-  is left without a `bindings` entry.
-
 ### Fixed
 
 - **`workflow.def.json` now reaches the built executable.** The descriptor was registered as a
@@ -778,12 +763,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   and that failed run remains recoverable with `resetInstance` once the cause is fixed.
   User-declared tools keep exactly their declared `retryPolicy`.
 
-- **A durable agent rejects a duplicate capability name at startup.** Activities, tools, events,
-  human tasks and peers share one namespace per agent; a second registration of a claimed name
-  now fails instead of replacing the first. Enforced both at module init and on the agent
-  context, so it also covers names the `WORKFLOW_150` compile-time check cannot see.
+## [0.8.3] - 2026-08-06
 
-## [0.8.1] - 2026-08-03
+### Changed
+
+- `ballerina/ai` moves to 1.13.0. ([#92](https://github.com/ballerina-platform/module-ballerina-workflow/pull/92))
+
+## [0.8.2] - 2026-08-03
+
+### Added
+
+- Declared agent activities honor `bindings`: arguments fixed at registration (typically a
+  client the model cannot supply) are carried from the declaration through to the
+  registration, so a connection-based activity can be exposed as an agent tool by binding
+  its client to a module-level variable.
+- Compile-time guards for durable agent declarations: a tool that declares an
+  `@ai:AgentTool` authorization requirement is rejected (durable agents do not run the
+  `ai:Agent` loop that acquires tokens and validates scopes), capability names must be
+  constant strings (the name drives both the designer rendering and the Temporal
+  registration), and an activity is rejected when a parameter the model cannot supply
+  is left without a `bindings` entry.
+
+### Fixed
+
+- Duplicate capability names in a durable agent now fail at startup. Activities, tools,
+  events, human tasks, and peers share one namespace per agent — the name is the tool the
+  model calls, and for a human task also the Temporal workflow type — but a second
+  registration used to replace the first silently. Registration now rejects a name that is
+  already claimed, both at module init (where the declaration registers) and on the agent
+  context (where names the compiler plugin cannot see are registered), so the conflict
+  surfaces even where the WORKFLOW_150 compile-time check cannot reach.
+
+## [0.8.1] - 2026-07-31
 
 ### Added
 
@@ -816,7 +827,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Reading a durable agent's result no longer reports the instance as permanently busy:
   the read checks the instance status instead of relying on a short result timeout.
 
-## [0.8.0] - 2026-07-24
+## [0.8.0] - 2026-07-29
 
 ### Added
 
@@ -826,25 +837,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   activity tree and execution graph render such waits as `DATA` nodes with
   status `WAITING`, completing them in place when the data arrives — so diagrams
   can show exactly where a halted workflow is waiting.
-
-### Removed
-
-- The deprecated retry-task management surface: `management:completeRetryTask`,
-  `listPendingRetryTasks`, `listAllRetryTasks`, `getRetryTaskInfo`, the
-  `RetryDecision`/`RetryTaskSummary`/`RetryTaskInfo`/`RetryTaskPage`/`RetryDecisionInfo`
-  types, and the `/workflow/retry-tasks/...` HTTP routes. Use the review-activity
-  equivalents (`completeReviewActivity`, `listPendingReviewActivities`,
-  `listAllReviewActivities`, `getReviewActivityInfo`, `ReviewDecision`,
-  `ReviewActivity*` types, and `/workflow/review-activities/...`).
-
-### Changed
-
-- Review-activity child workflows now use per-activity Temporal workflow types
-  (`reviewactivity-<workflowDefinition.activityName>`), mirroring the human-task
-  child types; the legacy shared `retrytask` type remains dispatchable for
-  pre-rename persisted executions.
-
-### Added
 
 - Added **durable AI agents** (`workflow:DurableAgent`): an LLM agent declared once as
   a module-level `final` **object** whose constructor config carries every capability —
@@ -887,6 +879,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   against the child workflow's declared input type (`WORKFLOW_140`, `WORKFLOW_141`).
   Previously `workflow:run`/`sendData` inside a workflow were routed through implicit
   activities, which started detached top-level workflows with no parent lifecycle.
+
+### Changed
+
+- Review-activity child workflows now use per-activity Temporal workflow types
+  (`reviewactivity-<workflowDefinition.activityName>`), mirroring the human-task
+  child types; the legacy shared `retrytask` type remains dispatchable for
+  pre-rename persisted executions.
+
+### Removed
+
+- The deprecated retry-task management surface: `management:completeRetryTask`,
+  `listPendingRetryTasks`, `listAllRetryTasks`, `getRetryTaskInfo`, the
+  `RetryDecision`/`RetryTaskSummary`/`RetryTaskInfo`/`RetryTaskPage`/`RetryDecisionInfo`
+  types, and the `/workflow/retry-tasks/...` HTTP routes. Use the review-activity
+  equivalents (`completeReviewActivity`, `listPendingReviewActivities`,
+  `listAllReviewActivities`, `getReviewActivityInfo`, `ReviewDecision`,
+  `ReviewActivity*` types, and `/workflow/review-activities/...`).
+
+### Fixed
+
+- The management listener is initialized only when the management API is enabled
+  (`enableManagementApi`); previously the port was opened unconditionally.
+- Starting and listing workflows and durable agents is unified in the management API:
+  agents carry `kind: "AGENT"` and a `startInputSchema`, and both start through the
+  same endpoint.
+
+## [0.7.0] - 2026-07-17
+
+### Added
 
 - Renamed the management "retry task" concept to **review activity**
   ([#8906](https://github.com/ballerina-platform/ballerina-library/issues/8906)): one
@@ -957,18 +978,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   function (instead of services) keep serving the management API after `main` returns.
   The listener is deregistered on graceful shutdown.
 
-- [#8840](https://github.com/ballerina-platform/ballerina-library/issues/8840) -
-  Widened the `ctx->await()` dependent type parameter to
-  `typedesc<anydata|error|(anydata|error)[]>` (returning `T`). The result can now be
-  destructured directly with a tuple-binding pattern
-  (`[Approval, Payment] [a, p] = check ctx->await(...)`), captured as `[T1, T2, ...]|error`
-  without a forced `check`, and use per-position error types (`[T1|error, T2|error]`). The
-  compiler plugin validates that each tuple position matches the corresponding future's type.
-- The human-task completion HTTP endpoint now returns `422 Unprocessable Entity` when the
-  submitted payload does not match the task's expected result type.
-- Made the `enableManagementApi` configurable public so the management API can be toggled from
-  application configuration.
-
 ### Fixed
 
 - [#8894](https://github.com/ballerina-platform/ballerina-library/issues/8894) -
@@ -983,6 +992,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   or child workflow) until resumed, and its status is reported as `SUSPENDED` by
   `getWorkflowInfo` and `listWorkflowInstances` (the `RUNNING` filter excludes suspended
   workflows; a `SUSPENDED` filter returns only them).
+
+## [0.6.0] - 2026-07-08
+
+### Changed
+
+- [#8840](https://github.com/ballerina-platform/ballerina-library/issues/8840) -
+  Widened the `ctx->await()` dependent type parameter to
+  `typedesc<anydata|error|(anydata|error)[]>` (returning `T`). The result can now be
+  destructured directly with a tuple-binding pattern
+  (`[Approval, Payment] [a, p] = check ctx->await(...)`), captured as `[T1, T2, ...]|error`
+  without a forced `check`, and use per-position error types (`[T1|error, T2|error]`). The
+  compiler plugin validates that each tuple position matches the corresponding future's type.
+- The human-task completion HTTP endpoint now returns `422 Unprocessable Entity` when the
+  submitted payload does not match the task's expected result type.
+- Made the `enableManagementApi` configurable public so the management API can be toggled from
+  application configuration.
+
+### Fixed
+
 - [Fix#8820](https://github.com/ballerina-platform/ballerina-library/issues/8820) -
   `workflow:sendData()` now supports all persistable `anydata` payloads — primitive types
   (`boolean`, `int`, `float`, `decimal`, `string`), `json`, `xml`, and `table` — not only
@@ -995,15 +1023,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   instead of failing the workflow ([#8866](https://github.com/ballerina-platform/ballerina-library/issues/8866)).
 - Generated JSON schemas no longer list optional record fields (declared with `?`) as
   `required`.
-
-
-### Fixed
-
-- The management listener is initialized only when the management API is enabled
-  (`enableManagementApi`); previously the port was opened unconditionally.
-- Starting and listing workflows and durable agents is unified in the management API:
-  agents carry `kind: "AGENT"` and a `startInputSchema`, and both start through the
-  same endpoint.
 
 ## [0.5.0] - 2026-06-18
 
@@ -1146,7 +1165,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   should not call this function directly; compiler-plugin-generated code may call
   `workflow.internal:registerWorkflow()` as needed.
 
-
 ## [0.2.0] - 2026-03-04
 
 ### Changed
@@ -1177,7 +1195,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Removed `Provider` enum and `TemporalParams` record type (replaced by union-based `WorkflowConfig`)
 - Removed provider-specific terminology from public API documentation
 
-## [0.1.0] - 2025-02-05
+## [0.1.0] - 2026-02-05
 
 ### Added
 

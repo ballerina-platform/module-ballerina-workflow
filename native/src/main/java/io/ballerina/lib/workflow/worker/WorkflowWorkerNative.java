@@ -1179,6 +1179,15 @@ public final class WorkflowWorkerNative {
         return workflowClient;
     }
 
+    /**
+     * The worker this process polls with, or null before it is initialized. Tests replay histories against it.
+     *
+     * @return the worker
+     */
+    public static Worker getWorker() {
+        return singletonWorker;
+    }
+
     /** Set only when the WorkflowKind search attribute is confirmed on the cluster. */
     private static volatile boolean kindSearchAttributeReady = false;
 

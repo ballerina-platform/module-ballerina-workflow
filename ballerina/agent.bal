@@ -193,14 +193,18 @@ isolated function runAgentLoop(handle ctxHandle, string agentName, ai:SystemProm
                 if toolKinds[call.name] == "end" {
                     // Explicit end of the conversation. When the model put its
                     // farewell in the tool arguments instead of the content,
-                    // record it as the final response.
+                    // record it as the final response. The closing turn is settled
+                    // like any other: its waiter gets this reply's text, or none.
+                    boolean answered = contentRecorded;
                     if !contentRecorded {
                         map<json>? endArgs = call.arguments;
                         json farewell = endArgs is map<json> ? endArgs["farewell"] : ();
                         if farewell is string && farewell != "" {
                             check setAgentResponse(ctxHandle, farewell);
+                            answered = true;
                         }
                     }
+                    check completeAgentTurn(ctxHandle, answered);
                     return;
                 }
                 string output = check dispatchAgentTool(ctxHandle, agentName, call, toolKinds[call.name],
@@ -218,11 +222,9 @@ isolated function runAgentLoop(handle ctxHandle, string agentName, ai:SystemProm
             if !autoContinue {
                 return error(overrun);
             }
-            // A conversation outlives one bad turn: the recorded latest response and the history
-            // say so (not the interim text a reply may have carried beside its tool calls), the
-            // turn's waiter gets the failure, and the loop goes back to waiting. The response is
-            // recorded first, so failing the turn leaves no response flag for the next turn.
-            check setAgentResponse(ctxHandle, overrun);
+            // A conversation outlives one bad turn: the turn's waiter gets the failure, the
+            // history and transcript record it, and the loop goes back to waiting. It is not
+            // recorded as the response, which is the agent's result should the conversation end.
             check failAgentTurn(ctxHandle, overrun);
             history.push(<AgentAssistantMessage>{content: overrun});
             publishTranscript(ctxHandle, history);

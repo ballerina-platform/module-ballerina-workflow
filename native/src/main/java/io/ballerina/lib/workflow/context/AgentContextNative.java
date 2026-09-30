@@ -73,6 +73,10 @@ import java.util.Set;
  */
 public final class AgentContextNative {
 
+    // Marks executions started once an update is answered by the reply that closes its turn
+    private static final String TURN_ANSWER_CHANGE_ID = "turn-answered-by-closing-reply";
+    private static final int TURN_ANSWERED_BY_CLOSING_REPLY = 1;
+
     private static final String CALL_CONFIG_MARKER = "__callConfig__";
     private static final String RETRY_ON_ERROR_KEY = "retryOnError";
     /** Site prefixes of an agent's graph nodes — see {@code AgentGraphBuilder}. */
@@ -226,9 +230,12 @@ public final class AgentContextNative {
         // The address of the agent that delegated this run and asked to be answered on an event, or null.
         private Object replyTo = null;
         // The responder of the updateAgent request whose message the agent most recently
-        // consumed; completed with the next recorded response (the turn's answer).
+        // consumed; completed by completeTurn / failTurn when that turn ends, or by the next
+        // event wait with the text recorded since (legacy histories: by the next setResponse).
         private CompletablePromise<Object> pendingResponder = null;
-        // Whether the turn in progress has recorded a response of its own.
+        // The latest text recorded since pendingResponder was taken, or null: what a mid-turn
+        // event wait answers the responder with before the next event takes it over.
+        private String turnText = null;
         // Set when the agent is finishing: new updates are answered immediately from
         // finalResponse / closingFailure instead of being enqueued (nobody would consume them).
         private boolean closing = false;
@@ -1015,7 +1022,14 @@ public final class AgentContextNative {
         AgentContextInfo info = (AgentContextInfo) handle.getValue();
         info.finalResponse = response.getValue();
         AgentResponseStore.put(info.workflowId, response.getValue());
-        // The turn's waiter is answered by completeTurn, once the turn has actually finished.
+        if (answersByClosingReply()) {
+            // The turn's waiter is answered by completeTurn, once the turn has actually finished.
+            info.turnText = response.getValue();
+        } else if (info.pendingResponder != null && !info.pendingResponder.isCompleted()) {
+            // A history recorded before the change completed the update at the first text.
+            info.pendingResponder.complete(response.getValue());
+            info.pendingResponder = null;
+        }
         // Surface the (latest) response cross-process via the workflow memo, so
         // management:getAgentResponse works from any process. Best-effort: some test
         // environments may not support memo upserts; the in-JVM store remains the fallback.
@@ -1040,6 +1054,10 @@ public final class AgentContextNative {
      */
     public static Object completeTurn(BHandle handle, boolean answered) {
         AgentContextInfo info = (AgentContextInfo) handle.getValue();
+        if (!answersByClosingReply()) {
+            return null; // a legacy history left a silent turn's update open until the next event
+        }
+        info.turnText = null;
         if (info.pendingResponder != null && !info.pendingResponder.isCompleted()) {
             if (answered) {
                 info.pendingResponder.complete(info.finalResponse);
@@ -1065,12 +1083,20 @@ public final class AgentContextNative {
      */
     public static Object failTurn(BHandle handle, BString reason) {
         AgentContextInfo info = (AgentContextInfo) handle.getValue();
+        info.turnText = null;
         if (info.pendingResponder != null && !info.pendingResponder.isCompleted()) {
             info.pendingResponder.completeExceptionally(
                     ApplicationFailure.newNonRetryableFailure(reason.getValue(), "error"));
         }
         info.pendingResponder = null;
         return null;
+    }
+
+    // Executions started since the change answer an update with the reply that closes the turn;
+    // a history recorded before it completed the update at the first text, and replays that way.
+    private static boolean answersByClosingReply() {
+        return Workflow.getVersion(TURN_ANSWER_CHANGE_ID, Workflow.DEFAULT_VERSION, TURN_ANSWERED_BY_CLOSING_REPLY)
+                != Workflow.DEFAULT_VERSION;
     }
 
     /**
@@ -1390,14 +1416,20 @@ public final class AgentContextNative {
 
         SignalAwaitWrapper.SignalData signalData = future.get();
         if (signalData.responder() != null) {
-            // This message came from updateAgent: its responder is completed with the
-            // answer of the turn now starting (the next recorded response).
+            // This message came from updateAgent: its responder is answered when the turn that
+            // consumes it ends. A waiter still open from an earlier message gets the text recorded
+            // since that message ("Noted, waiting for approval"), or a failure if there was none.
             if (info.pendingResponder != null && !info.pendingResponder.isCompleted()) {
-                info.pendingResponder.completeExceptionally(
-                        ApplicationFailure.newNonRetryableFailure(
-                                "The agent consumed another event before answering this update", "error"));
+                if (info.turnText != null) {
+                    info.pendingResponder.complete(info.turnText);
+                } else {
+                    info.pendingResponder.completeExceptionally(
+                            ApplicationFailure.newNonRetryableFailure(
+                                    "The agent consumed another event before answering this update", "error"));
+                }
             }
             info.pendingResponder = signalData.responder();
+            info.turnText = null;
         }
         return signalData.data();
     }

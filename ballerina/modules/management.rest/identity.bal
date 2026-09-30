@@ -36,6 +36,8 @@ import ballerina/workflow.management;
 //                           client cannot spoof another identity alongside a
 //                           valid token. `trustForwardedIdentity = true` restores
 //                           header precedence for gateway-behind-OAuth topologies.
+//                           The token is read from `jwtAuthHeader` when one is
+//                           configured, else from `Authorization`.
 //
 // Extraction happens in the request interceptor BEFORE the listener's declarative
 // auth validates the token signature — an invalid token still gets its 401 from
@@ -108,6 +110,7 @@ const string CALLER_IDENTITY_CTX_KEY = "workflowCallerIdentity";
 # + enforceScopes - Whether OAuth scopes gate operation classes
 # + userIdClaim - Claim (dotted path) holding the user ID
 # + rolesClaim - Claim (dotted path) holding the roles
+# + jwtHeader - Header carrying the JWT; read before `Authorization` when it is another header
 type CallerIdentityConfig record {|
     boolean basicAuthEnabled;
     boolean tokenAuthEnabled;
@@ -115,6 +118,7 @@ type CallerIdentityConfig record {|
     boolean enforceScopes;
     string userIdClaim;
     string rolesClaim;
+    string jwtHeader = AUTHORIZATION_HEADER;
 |};
 
 # The identity-resolution configuration built from the module's configurables.
@@ -125,7 +129,8 @@ isolated function defaultIdentityConfig() returns CallerIdentityConfig => {
     trustForwardedIdentity,
     enforceScopes,
     userIdClaim,
-    rolesClaim
+    rolesClaim,
+    jwtHeader: jwtAuthHeader
 };
 
 # Resolves the caller's identity from the request and enforces scopes. Called from
@@ -162,7 +167,7 @@ isolated function resolveCallerIdentity(http:Request req, string firstSegment,
         }
         return identity;
     }
-    string? token = bearerToken(req);
+    string? token = bearerToken(req, cfg.jwtHeader);
     if token is () {
         // A request authenticated by another enabled scheme (e.g. Basic) carries no
         // scopes. Under scope enforcement it cannot satisfy the policy, and honoring
@@ -210,6 +215,10 @@ isolated function resolveCallerIdentity(http:Request req, string firstSegment,
 
 const string USER_ID_HEADER = "x-user-id";
 const string USER_ROLES_HEADER = "x-user-roles";
+const string AUTHORIZATION_HEADER = "Authorization";
+const string BEARER_SCHEME = "Bearer";
+const string BEARER_PREFIX = BEARER_SCHEME + " ";
+const string BASIC_PREFIX = "Basic ";
 
 # Reads the identity a trusted gateway forwarded via the x-user-* headers.
 #
@@ -229,11 +238,11 @@ isolated function forwardedIdentity(http:Request req) returns CallerIdentity {
 // validates the credentials; callers gate this on basic auth being enabled and on
 // no identity having been forwarded.
 isolated function basicAuthUsername(http:Request req) returns string? {
-    string|http:HeaderNotFoundError authHeader = req.getHeader("Authorization");
-    if authHeader !is string || !authHeader.startsWith("Basic ") {
+    string|http:HeaderNotFoundError authHeader = req.getHeader(AUTHORIZATION_HEADER);
+    if authHeader !is string || !authHeader.startsWith(BASIC_PREFIX) {
         return ();
     }
-    byte[]|error rawCredentials = array:fromBase64(authHeader.substring(6).trim());
+    byte[]|error rawCredentials = array:fromBase64(authHeader.substring(BASIC_PREFIX.length()).trim());
     if rawCredentials is error {
         return ();
     }
@@ -248,11 +257,37 @@ isolated function basicAuthUsername(http:Request req) returns string? {
     return ();
 }
 
-isolated function bearerToken(http:Request req) returns string? {
-    string|http:HeaderNotFoundError authHeader = req.getHeader("Authorization");
-    if authHeader is string && authHeader.startsWith("Bearer ") {
-        string token = authHeader.substring(7).trim();
-        return token.length() > 0 ? token : ();
+# Reads the bearer token a request carries: from the configured JWT header when it is
+# not `Authorization` (bare token or `Bearer <token>`), else from `Authorization`.
+#
+# + req - The request
+# + jwtHeader - The header configured to carry the JWT
+# + return - The token, or `()` when neither header carries one
+isolated function bearerToken(http:Request req, string jwtHeader = AUTHORIZATION_HEADER) returns string? {
+    if !usesAuthorizationHeader(jwtHeader) {
+        string|http:HeaderNotFoundError custom = req.getHeader(jwtHeader);
+        string? token = custom is string ? tokenOfHeaderValue(custom, true) : ();
+        if token is string {
+            return token;
+        }
+    }
+    string|http:HeaderNotFoundError authHeader = req.getHeader(AUTHORIZATION_HEADER);
+    return authHeader is string ? tokenOfHeaderValue(authHeader, false) : ();
+}
+
+# Extracts the token from a header value of the form `Bearer <token>`, or the bare
+# token when `allowBare` is set (gateways forward backend JWTs without a scheme).
+#
+# + value - The header value
+# + allowBare - Whether a value with no scheme prefix is itself the token
+# + return - The token, or `()` when the value carries none
+isolated function tokenOfHeaderValue(string value, boolean allowBare) returns string? {
+    string[] parts = re`\s+`.split(value.trim());
+    if parts[0] == BEARER_SCHEME {
+        return parts.length() > 1 ? parts[1] : ();
+    }
+    if allowBare && parts.length() == 1 && parts[0].length() > 0 {
+        return parts[0];
     }
     return ();
 }

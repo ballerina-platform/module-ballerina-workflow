@@ -302,6 +302,98 @@ function testMissingOrEmptyBearerTokenUsesForwardedIdentity() {
     test:assertEquals(identity, <CallerIdentity>{userId: "gateway-user", roles: []});
 }
 
+// ── JWT in a custom header ───────────────────────────────────────────────────────
+
+final CallerIdentityConfig & readonly customHeaderTokenMode = {
+    basicAuthEnabled: false,
+    tokenAuthEnabled: true,
+    trustForwardedIdentity: false,
+    enforceScopes: false,
+    userIdClaim: "sub",
+    rolesClaim: "roles",
+    jwtHeader: "X-JWT-Assertion"
+};
+
+@test:Config {groups: ["unit", "auth"]}
+function testCustomHeaderJwtResolvesIdentityBareOrWithBearerScheme() {
+    string token = jwtOf({"sub": "alice", "roles": ["approver"]});
+    CallerIdentity expected = {userId: "alice", roles: ["approver"], identitySource: "verified"};
+
+    // Gateways commonly forward the backend JWT without a scheme.
+    http:Request bare = new;
+    bare.setHeader("X-JWT-Assertion", token);
+    test:assertEquals(resolveCallerIdentity(bare, "workflows", customHeaderTokenMode), expected);
+
+    // `Bearer <token>` in the custom header is accepted too.
+    http:Request prefixed = new;
+    prefixed.setHeader("X-JWT-Assertion", "Bearer " + token);
+    test:assertEquals(resolveCallerIdentity(prefixed, "workflows", customHeaderTokenMode), expected);
+
+    // Header names are case-insensitive.
+    http:Request lower = new;
+    lower.setHeader("x-jwt-assertion", token);
+    test:assertEquals(resolveCallerIdentity(lower, "workflows", customHeaderTokenMode), expected);
+}
+
+@test:Config {groups: ["unit", "auth"]}
+function testCustomHeaderJwtWinsOverAuthorization() {
+    // The gateway keeps Authorization for its own credential: identity comes from the
+    // configured header, and spoofed x-user-* headers are still discarded.
+    http:Request req = bearerRequest(jwtOf({"sub": "gateway-client", "roles": ["gateway"]}));
+    req.setHeader("X-JWT-Assertion", jwtOf({"sub": "alice", "roles": ["approver"]}));
+    req.setHeader("x-user-id", "spoofed-user");
+    CallerIdentity|http:Forbidden identity = resolveCallerIdentity(req, "workflows", customHeaderTokenMode);
+    test:assertEquals(identity, <CallerIdentity>{userId: "alice", roles: ["approver"], identitySource: "verified"});
+}
+
+@test:Config {groups: ["unit", "auth"]}
+function testCustomHeaderAbsentFallsBackToAuthorization() {
+    // Without the custom header, a bearer token in Authorization (e.g. an OAuth2
+    // access token that is also a JWT) still yields the identity.
+    http:Request req = bearerRequest(jwtOf({"sub": "bob", "roles": ["viewer"]}));
+    CallerIdentity|http:Forbidden identity = resolveCallerIdentity(req, "workflows", customHeaderTokenMode);
+    test:assertEquals(identity, <CallerIdentity>{userId: "bob", roles: ["viewer"], identitySource: "verified"});
+
+    // A custom header configured as "authorization" in another case is the standard
+    // header: the bare-token form is not accepted there.
+    CallerIdentityConfig standardInLowerCase = {
+        basicAuthEnabled: false,
+        tokenAuthEnabled: true,
+        trustForwardedIdentity: false,
+        enforceScopes: false,
+        userIdClaim: "sub",
+        rolesClaim: "roles",
+        jwtHeader: "authorization"
+    };
+    http:Request bare = new;
+    bare.setHeader("Authorization", jwtOf({"sub": "bob"}));
+    bare.setHeader("x-user-id", "gateway-user");
+    identity = resolveCallerIdentity(bare, "workflows", standardInLowerCase);
+    test:assertEquals(identity, <CallerIdentity>{userId: "gateway-user", roles: []});
+}
+
+@test:Config {groups: ["unit", "auth"]}
+function testTokenOfHeaderValue() {
+    test:assertEquals(tokenOfHeaderValue("Bearer abc.def.ghi", false), "abc.def.ghi");
+    test:assertEquals(tokenOfHeaderValue("  Bearer   abc.def.ghi  ", true), "abc.def.ghi");
+    test:assertEquals(tokenOfHeaderValue("abc.def.ghi", true), "abc.def.ghi");
+    test:assertEquals(tokenOfHeaderValue("abc.def.ghi", false), ());
+    test:assertEquals(tokenOfHeaderValue("Basic dXNlcjpwdw==", true), ());
+    test:assertEquals(tokenOfHeaderValue("Bearer ", true), ());
+    test:assertEquals(tokenOfHeaderValue("Bearer", true), ());
+    test:assertEquals(tokenOfHeaderValue("abc\tdef", true), ());
+    test:assertEquals(tokenOfHeaderValue("   ", true), ());
+}
+
+@test:Config {groups: ["unit", "auth"]}
+function testUsesAuthorizationHeaderIsCaseInsensitive() {
+    test:assertTrue(usesAuthorizationHeader("Authorization"));
+    test:assertTrue(usesAuthorizationHeader("authorization"));
+    test:assertTrue(usesAuthorizationHeader(" AUTHORIZATION "));
+    test:assertFalse(usesAuthorizationHeader("X-JWT-Assertion"));
+    test:assertFalse(usesAuthorizationHeader(""));
+}
+
 // ── Request-context hand-off ─────────────────────────────────────────────────────
 
 @test:Config {groups: ["unit", "auth"]}

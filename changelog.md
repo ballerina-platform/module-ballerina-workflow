@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `jwtAuthHeader` in `[ballerina.workflow.management.rest]` names the header that carries the
+  JWT, defaulting to the standard `Authorization` header. Set it (e.g. `X-JWT-Assertion`) when a
+  gateway keeps `Authorization` for its own credential and forwards the caller's JWT in another
+  header, as a bare token or `Bearer <token>`. The token is then validated by the gateway
+  interceptor with the same issuer, audience and JWKS configuration, and the caller identity is
+  read from it.
+
 ## [0.10.1]
 
 ### Added

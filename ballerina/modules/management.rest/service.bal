@@ -14,7 +14,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import ballerina/auth;
 import ballerina/http;
+import ballerina/jwt;
 import ballerina/lang.runtime;
 import ballerina/log;
 import ballerina/workflow.management;
@@ -97,7 +99,7 @@ configurable string[] corsAllowMethods = ["GET", "POST", "PUT", "DELETE", "OPTIO
 
 # Allowed request headers for CORS requests.
 # Defaults to common headers used by the management API.
-# If you customize `apiKeyHeader`, ensure it's included in this list.
+# If you customize `apiKeyHeader` or `jwtAuthHeader`, ensure it's included in this list.
 configurable string[] corsAllowHeaders = ["Content-Type", "x-user-id", "x-user-roles", "Authorization", "x-api-key"];
 
 # Whether to allow credentials (cookies, authorization headers) in CORS requests.
@@ -116,8 +118,28 @@ configurable boolean enableBasicAuth = true;
 # Enables JWT Bearer token authentication (`Authorization: Bearer <token>`).
 # Tokens are validated against the JWKS endpoint specified by `jwksUrl`.
 # When `true`, `jwtIssuer`, `jwtAudience`, and `jwksUrl` must all be non-empty
-# or the program panics at startup.
+# or the program panics at startup. The token is read from `jwtAuthHeader`.
 configurable boolean enableJwtAuth = false;
+
+# Name of the HTTP header that carries the JWT. Defaults to the standard
+# `Authorization` header, where the token is expected as `Bearer <token>`.
+# Set it (e.g. `X-JWT-Assertion`) when a gateway in front of the runtime keeps
+# `Authorization` for its own credential and forwards the caller's JWT in another
+# header; that header may carry the bare token or `Bearer <token>`. Header names
+# are case-insensitive. Add a custom header to `corsAllowHeaders` for browser clients.
+#
+# With a custom header, the gateway interceptor validates that JWT and, when
+# `enableBasicAuth = true`, basic auth as well, so the two remain alternatives: a
+# request passes with either credential, and a presented credential that fails is
+# refused. OAuth2 stays on `Authorization` through `@http:ServiceConfig`, so with
+# `enableOAuth = true` every request must also carry an OAuth2 token there.
+configurable string jwtAuthHeader = AUTHORIZATION_HEADER;
+
+// The configured JWT header, trimmed once so lookups match what the client sends.
+final string jwtHeaderName = jwtAuthHeader.trim();
+
+// Where each enabled scheme is enforced, derived once from the configurables.
+final AuthMode & readonly authMode = authModeOf(enableBasicAuth, enableJwtAuth, jwtHeaderName, enableOAuth);
 
 # Expected issuer (`iss`) claim value for JWT validation.
 # Required when `enableJwtAuth = true`.
@@ -175,6 +197,10 @@ isolated function validateManagementApiConfig() {
         if jwtIssuer == "" || jwtAudience == "" || jwksUrl == "" {
             panic error("workflow.management.rest: JWT auth is enabled (enableJwtAuth = true) " +
                 "but one or more of 'jwtIssuer', 'jwtAudience', 'jwksUrl' are not set.");
+        }
+        if jwtAuthHeader.trim() == "" {
+            panic error("workflow.management.rest: JWT auth is enabled (enableJwtAuth = true) " +
+                "but 'jwtAuthHeader' is blank. Set a header name or leave it at its default.");
         }
     }
 
@@ -309,9 +335,14 @@ function stopManagementService() returns error? {
 // configurables can be referenced directly in the annotation.
 //
 // BasicAuth  → Ballerina FileUserStoreConfig (credentials from [[ballerina.auth.users]])
-// JWT        → Ballerina JwtValidatorConfig  (validated against the JWKS endpoint)
+// JWT        → Ballerina JwtValidatorConfig  (validated against the JWKS endpoint) when the
+//              token travels in `Authorization`
 // OAuth2     → Ballerina OAuth2IntrospectionConfig
 // API key    → handled separately in ManagementGatewayInterceptor (no built-in HTTP support)
+//
+// The declarative layer only reads `Authorization`, so with a custom `jwtAuthHeader` the
+// JWT — and basic auth, so the two stay alternatives — are validated by the interceptor
+// with the same handler classes instead (see `authModeOf`).
 //
 // OR logic: a request passes if it satisfies any ONE of the enabled handlers.
 // An empty array (all disabled) means no auth is required — suitable for
@@ -336,18 +367,12 @@ isolated function buildCorsConfig() returns http:CorsConfig {
 isolated function buildAuthConfigs() returns http:ListenerAuthConfig[]? {
     http:ListenerAuthConfig[] configs = [];
 
-    if enableBasicAuth {
+    if authMode.declarativeBasic {
         configs.push({fileUserStoreConfig: {}});
     }
 
-    if enableJwtAuth {
-        configs.push({
-            jwtValidatorConfig: {
-                issuer: jwtIssuer,
-                audience: jwtAudience,
-                signatureConfig: {jwksConfig: {url: jwksUrl}}
-            }
-        });
+    if authMode.declarativeJwt {
+        configs.push({jwtValidatorConfig: jwtValidatorConfig()});
     }
 
     if enableOAuth {
@@ -362,6 +387,198 @@ isolated function buildAuthConfigs() returns http:ListenerAuthConfig[]? {
     return configs.length() > 0 ? configs : ();
 }
 
+isolated function jwtValidatorConfig() returns http:JwtValidatorConfig => {
+    issuer: jwtIssuer,
+    audience: jwtAudience,
+    signatureConfig: {jwksConfig: {url: jwksUrl}}
+};
+
+# Whether a header name is the standard `Authorization` header (names are case-insensitive).
+#
+# + name - The configured header name
+# + return - `true` when the name is `Authorization` in any case
+isolated function usesAuthorizationHeader(string name) returns boolean =>
+    name.trim().toLowerAscii() == AUTHORIZATION_HEADER.toLowerAscii();
+
+# Where each enabled scheme is enforced. Derived from the configurables by `authModeOf`
+# so the production derivation is unit-testable; every other decision reads this.
+#
+# + customHeaderJwt - JWT auth is on and the token travels in a custom header, validated by the interceptor
+# + declarativeJwt - JWT auth is on and the token travels in `Authorization`, validated declaratively
+# + interceptorBasic - Basic auth is on alongside a custom-header JWT, so it is validated by the
+#                      interceptor to stay an alternative to the JWT
+# + declarativeBasic - Basic auth is on and validated declaratively
+# + declarativeAuthEnabled - Whether `@http:ServiceConfig { auth }` enforces any scheme after the interceptor
+# + authorizationBearerValidated - Whether a bearer token in `Authorization` is validated by the
+#                                  declarative layer, and so may be read for identity
+type AuthMode record {|
+    boolean customHeaderJwt;
+    boolean declarativeJwt;
+    boolean interceptorBasic;
+    boolean declarativeBasic;
+    boolean declarativeAuthEnabled;
+    boolean authorizationBearerValidated;
+|};
+
+# Derives where each scheme is enforced from the auth configurables.
+#
+# + basicAuth - `enableBasicAuth`
+# + jwtAuth - `enableJwtAuth`
+# + jwtHeader - `jwtAuthHeader`, trimmed
+# + oauth - `enableOAuth`
+# + return - The auth mode
+isolated function authModeOf(boolean basicAuth, boolean jwtAuth, string jwtHeader, boolean oauth)
+        returns AuthMode & readonly {
+    boolean customHeaderJwt = jwtAuth && !usesAuthorizationHeader(jwtHeader);
+    boolean declarativeJwt = jwtAuth && !customHeaderJwt;
+    boolean interceptorBasic = basicAuth && customHeaderJwt;
+    boolean declarativeBasic = basicAuth && !customHeaderJwt;
+    return {
+        customHeaderJwt,
+        declarativeJwt,
+        interceptorBasic,
+        declarativeBasic,
+        declarativeAuthEnabled: declarativeBasic || declarativeJwt || oauth,
+        authorizationBearerValidated: declarativeJwt || oauth
+    };
+}
+
+// Validates JWTs carried in a custom `jwtAuthHeader`; `()` when the token travels in
+// `Authorization` and the declarative auth layer validates it instead.
+final http:ListenerJwtAuthHandler? customHeaderJwtHandler =
+    authMode.customHeaderJwt ? new (jwtValidatorConfig()) : ();
+
+// Validates basic auth in custom-header mode, from the same [[ballerina.auth.users]] store
+// the declarative handler reads; `()` when basic auth is off or declarative.
+final http:ListenerFileUserStoreBasicAuthHandler? interceptorBasicAuthHandler =
+    authMode.interceptorBasic ? new ({}) : ();
+
+# What the gateway interceptor admits a request with. Built from the module's
+# configurables by `defaultGatewayConfig`; tests construct it directly.
+#
+# + identity - The identity-resolution configuration
+# + declarativeAuthEnabled - Whether `@http:ServiceConfig { auth }` enforces a scheme after the interceptor
+# + jwtHeader - The custom header carrying the JWT; only read when `customHeaderJwtHandler` is set
+# + customHeaderJwtHandler - Validates the custom-header JWT; `()` when JWT auth is off or standard
+# + basicAuthHandler - Validates basic auth in custom-header mode; `()` when basic auth is off or declarative
+# + apiKeyEnabled - Whether API key auth is enabled
+# + apiKeyHeader - The header carrying the API key
+# + apiKeyValue - The expected API key
+type GatewayConfig record {|
+    CallerIdentityConfig identity;
+    boolean declarativeAuthEnabled;
+    string jwtHeader;
+    http:ListenerJwtAuthHandler? customHeaderJwtHandler;
+    http:ListenerFileUserStoreBasicAuthHandler? basicAuthHandler;
+    boolean apiKeyEnabled;
+    string apiKeyHeader;
+    string apiKeyValue;
+|};
+
+isolated function defaultGatewayConfig() returns GatewayConfig => {
+    identity: defaultIdentityConfig(),
+    declarativeAuthEnabled: authMode.declarativeAuthEnabled,
+    jwtHeader: jwtHeaderName,
+    customHeaderJwtHandler,
+    basicAuthHandler: interceptorBasicAuthHandler,
+    apiKeyEnabled: enableApiKey,
+    apiKeyHeader,
+    apiKeyValue
+};
+
+# Admits or refuses a request on behalf of the gateway interceptor: validates the
+# credentials the interceptor owns (a custom-header JWT, basic auth alongside it, the
+# API key) and resolves the caller identity. A presented credential that fails is
+# refused outright — letting another scheme admit the request would let it run under
+# an unverified identity — while an absent one defers to the schemes that remain.
+#
+# + req - The request
+# + firstSegment - The first path segment under the service base path
+# + cfg - The gateway configuration
+# + return - The identity to store in the request context, or the response refusing the request
+isolated function gateRequest(http:Request req, string firstSegment, GatewayConfig cfg)
+        returns CallerIdentity|http:Unauthorized|http:Forbidden {
+    jwt:Payload? customHeaderToken = ();
+    http:ListenerJwtAuthHandler? jwtHandler = cfg.customHeaderJwtHandler;
+    if jwtHandler is http:ListenerJwtAuthHandler {
+        string|http:HeaderNotFoundError value = req.getHeader(cfg.jwtHeader);
+        if value is string {
+            jwt:Payload|http:Unauthorized validated = validateCustomHeaderJwt(value, cfg.jwtHeader, jwtHandler);
+            if validated is jwt:Payload {
+                customHeaderToken = validated;
+            } else {
+                return <http:Unauthorized>validated;
+            }
+        }
+    }
+
+    boolean basicVerified = false;
+    http:ListenerFileUserStoreBasicAuthHandler? basicHandler = cfg.basicAuthHandler;
+    if basicHandler is http:ListenerFileUserStoreBasicAuthHandler {
+        string|http:HeaderNotFoundError authHeader = req.getHeader(AUTHORIZATION_HEADER);
+        if authHeader is string && authHeader.trim().startsWith(BASIC_PREFIX) {
+            auth:UserDetails|http:Unauthorized validated = basicHandler.authenticate(authHeader.trim());
+            if validated is auth:UserDetails {
+                basicVerified = true;
+            } else {
+                return <http:Unauthorized>{
+                    headers: {"WWW-Authenticate": string `Basic realm="workflow"`},
+                    body: errorBody("Unauthorized: invalid basic auth credentials")
+                };
+            }
+        }
+    }
+
+    CallerIdentity|http:Forbidden identity = resolveCallerIdentity(req, firstSegment, cfg.identity,
+            customHeaderToken);
+    if identity is http:Forbidden {
+        return identity;
+    }
+    if customHeaderToken is jwt:Payload || basicVerified {
+        return identity;
+    }
+    if jwtHandler is http:ListenerJwtAuthHandler && !cfg.declarativeAuthEnabled && !cfg.apiKeyEnabled {
+        return unauthorizedCustomHeaderJwt(cfg.jwtHeader, "missing");
+    }
+
+    // API key auth (no built-in Ballerina HTTP handler)
+    if cfg.apiKeyEnabled {
+        string|http:HeaderNotFoundError keyHeader = req.getHeader(cfg.apiKeyHeader);
+        if keyHeader is string && keyHeader == cfg.apiKeyValue {
+            return identity;
+        }
+        if !cfg.declarativeAuthEnabled {
+            return <http:Unauthorized>{
+                headers: {"WWW-Authenticate": string `ApiKey header="${cfg.apiKeyHeader}"`},
+                body: errorBody("Unauthorized: valid API key required")
+            };
+        }
+        // Fall through — let @http:ServiceConfig auth attempt to admit the request
+    }
+    return identity;
+}
+
+# Validates the JWT a request carries in the custom `jwtAuthHeader`.
+#
+# + value - The header's value: the bare token or `Bearer <token>`
+# + jwtHeader - The header's name, for the refusal message
+# + handler - The JWT handler built from the module's validator configuration
+# + return - The validated payload, else the `401` to answer with
+isolated function validateCustomHeaderJwt(string value, string jwtHeader, http:ListenerJwtAuthHandler handler)
+        returns jwt:Payload|http:Unauthorized {
+    string? token = tokenOfHeaderValue(value, true);
+    if token is () {
+        return unauthorizedCustomHeaderJwt(jwtHeader, "malformed");
+    }
+    jwt:Payload|http:Unauthorized validated = handler.authenticate(BEARER_PREFIX + token);
+    return validated is jwt:Payload ? validated : unauthorizedCustomHeaderJwt(jwtHeader, "invalid");
+}
+
+isolated function unauthorizedCustomHeaderJwt(string jwtHeader, string reason) returns http:Unauthorized => {
+    headers: {"WWW-Authenticate": string `Bearer realm="workflow"`},
+    body: errorBody(string `Unauthorized: a valid JWT is required in the '${jwtHeader}' header (${reason})`)
+};
+
 # Request interceptor that resolves the caller's identity and enforces API key
 # authentication (which has no built-in Ballerina HTTP handler). Registered via
 # createInterceptors on the `http:InterceptableService`. The management API
@@ -374,10 +591,18 @@ isolated function buildAuthConfigs() returns http:ListenerAuthConfig[]? {
 # validated by `@http:ServiceConfig { auth: ... }` after this interceptor, so an
 # invalid token never reaches a resource.
 #
-# **API key** — validates the configured header when `enableApiKey = true`;
-# returns `401` only when API key is the sole auth type and validation fails.
-# When other auth types are also enabled, a failed key falls through so that
-# `@http:ServiceConfig { auth: ... }` can still admit the request.
+# **JWT in a custom header** — when `jwtAuthHeader` is not `Authorization`, the
+# token's signature is validated here with the same validator configuration,
+# because the declarative auth layer only reads `Authorization`; the identity is
+# then derived from the validated payload. Basic auth, when also enabled, is
+# validated here too so that either credential admits a request. A request
+# carrying an invalid credential the interceptor owns is refused, whatever else
+# it carries.
+#
+# **API key** — validates the configured header when `enableApiKey = true`; a
+# failed or missing key returns `401` only when nothing after the interceptor
+# would, otherwise it falls through so `@http:ServiceConfig { auth: ... }` can
+# still admit the request. The decision logic lives in `gateRequest`.
 service class ManagementGatewayInterceptor {
     *http:RequestInterceptor;
 
@@ -385,30 +610,13 @@ service class ManagementGatewayInterceptor {
             http:RequestContext ctx,
             http:Request req)
             returns http:Unauthorized|http:Forbidden|http:NextService|error? {
-
-        CallerIdentity|http:Forbidden identity = resolveCallerIdentity(req,
-                path.length() > 0 ? path[0] : "", defaultIdentityConfig());
-        if identity is http:Forbidden {
-            return identity;
+        CallerIdentity|http:Unauthorized|http:Forbidden gate = gateRequest(req,
+                path.length() > 0 ? path[0] : "", defaultGatewayConfig());
+        if gate is CallerIdentity {
+            ctx.set(CALLER_IDENTITY_CTX_KEY, gate);
+            return ctx.next();
         }
-        ctx.set(CALLER_IDENTITY_CTX_KEY, identity);
-
-        // API key auth (no built-in Ballerina HTTP handler)
-        if enableApiKey {
-            string|http:HeaderNotFoundError keyHeader = req.getHeader(apiKeyHeader);
-            if keyHeader is string && keyHeader == apiKeyValue {
-                return ctx.next();
-            }
-            if !enableBasicAuth && !enableJwtAuth && !enableOAuth {
-                return <http:Unauthorized>{
-                    headers: {"WWW-Authenticate": string `ApiKey header="${apiKeyHeader}"`},
-                    body: {"error": {"message": "Unauthorized: valid API key required"}}
-                };
-            }
-            // Fall through — let @http:ServiceConfig auth attempt to admit the request
-        }
-
-        return ctx.next();
+        return gate;
     }
 }
 

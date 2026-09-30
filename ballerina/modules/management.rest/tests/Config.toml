@@ -1,0 +1,6 @@
+# A basic-auth user for the gateway tests that validate basic credentials in the
+# interceptor (custom jwtAuthHeader mode).
+[[ballerina.auth.users]]
+username = "ops"
+password = "s3cret!"
+scopes = ["ops"]

@@ -529,8 +529,8 @@ public final class WorkflowDescriptorBuilder {
             if (taskName == null || taskName.contains(".") || taskName.contains("|")) {
                 return; // non-constant / invalid names are diagnosed by the process analysis task
             }
-            String title = blankToNull(constantNamedArgOf(remoteCall.arguments(), WorkflowConstants.ARG_TITLE,
-                    WorkflowConstants.HUMAN_TASK_DEFINITION_POSITION));
+            String title = constantNamedArgOf(remoteCall.arguments(), WorkflowConstants.ARG_TITLE,
+                    WorkflowConstants.HUMAN_TASK_DEFINITION_POSITION);
             if (title != null) {
                 humanTaskTitles.putIfAbsent(taskName, title);
             }
@@ -1109,13 +1109,13 @@ public final class WorkflowDescriptorBuilder {
 
     /**
      * The constant string value of a definition field at a call site: a named argument, or a field of a
-     * positionally passed definition record. {@code null} when absent or not constant.
+     * positionally passed definition record. {@code null} when absent, blank or not constant.
      */
     static String constantNamedArgOf(SeparatedNodeList<FunctionArgumentNode> args, String name,
                                      int definitionPosition) {
         for (FunctionArgumentNode arg : args) {
             if (arg instanceof NamedArgumentNode named && name.equals(named.argumentName().name().text())) {
-                return constantStringValue(named.expression());
+                return blankToNull(constantStringValue(named.expression()));
             }
         }
         // Only the definition's own position: the task input before it is data, whatever keys it has.
@@ -1129,7 +1129,7 @@ public final class WorkflowDescriptorBuilder {
                 for (MappingFieldNode field : record.fields()) {
                     if (field instanceof SpecificFieldNode specific && specific.valueExpr().isPresent()
                             && name.equals(fieldKeyName(specific))) {
-                        return constantStringValue(specific.valueExpr().get());
+                        return blankToNull(constantStringValue(specific.valueExpr().get()));
                     }
                 }
             }

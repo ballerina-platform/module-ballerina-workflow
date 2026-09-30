@@ -119,16 +119,16 @@ function testAHistoryRecordedNowReplays() returns error? {
 }
 
 isolated function exportHistoryJson(string workflowId) returns string|error = @java:Method {
-    'class: "io.ballerina.lib.workflow.test.TestNatives",
+    'class: "io.ballerina.lib.workflow.test.HistoryReplay",
     name: "exportHistoryJson"
 } external;
 
 isolated function replayHistoryJson(string history) returns error? = @java:Method {
-    'class: "io.ballerina.lib.workflow.test.TestNatives",
+    'class: "io.ballerina.lib.workflow.test.HistoryReplay",
     name: "replayHistoryJson"
 } external;
 
 isolated function replayHistoryFile(string path) returns error? = @java:Method {
-    'class: "io.ballerina.lib.workflow.test.TestNatives",
+    'class: "io.ballerina.lib.workflow.test.HistoryReplay",
     name: "replayHistoryFile"
 } external;

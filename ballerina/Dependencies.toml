@@ -54,6 +54,9 @@ dependencies = [
 	{org = "ballerina", name = "lang.string"},
 	{org = "ballerina", name = "log"}
 ]
+modules = [
+	{org = "ballerina", packageName = "auth", moduleName = "auth"}
+]
 
 [[package]]
 org = "ballerina"
@@ -366,21 +369,6 @@ dependencies = [
 
 [[package]]
 org = "ballerina"
-name = "otel"
-version = "0.9.0"
-dependencies = [
-	{org = "ballerina", name = "io"},
-	{org = "ballerina", name = "jballerina.java"},
-	{org = "ballerina", name = "log"},
-	{org = "ballerina", name = "observe"},
-	{org = "ballerina", name = "task"}
-]
-modules = [
-	{org = "ballerina", packageName = "otel", moduleName = "otel"}
-]
-
-[[package]]
-org = "ballerina"
 name = "random"
 version = "1.7.0"
 dependencies = [
@@ -465,9 +453,10 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "workflow"
-version = "0.12.0"
+version = "1.0.0"
 dependencies = [
 	{org = "ballerina", name = "ai"},
+	{org = "ballerina", name = "auth"},
 	{org = "ballerina", name = "email"},
 	{org = "ballerina", name = "http"},
 	{org = "ballerina", name = "io"},
@@ -478,7 +467,6 @@ dependencies = [
 	{org = "ballerina", name = "log"},
 	{org = "ballerina", name = "mime"},
 	{org = "ballerina", name = "observe"},
-	{org = "ballerina", name = "otel"},
 	{org = "ballerina", name = "soap"},
 	{org = "ballerina", name = "test"},
 	{org = "ballerina", name = "time"}

@@ -25,6 +25,8 @@ abstract class BallerinaExecHelper {
     @Inject abstract ExecOperations getExecOperations()
 }
 
+apply plugin: 'java'
+
 // Map of example directory names to their Ballerina package names
 def examplePackageNames = [
     'get-started'        : 'get_started',
@@ -61,12 +63,6 @@ def generateExampleToml = { String exampleDirName, String packageName ->
 org = "ballerina_examples"
 name = "${packageName}"
 version = "0.1.0"
-distribution = "${ballerinaDistributionVersion}"
-
-[[dependency]]
-org = "ballerina"
-name = "ai"
-version = "${ballerinaAiVersion}"
 
 [build-options]
 observabilityIncluded = true
@@ -132,24 +128,7 @@ task buildExamples {
         // version over the manifest pin — whose BIR this distribution's toolchain may not
         // load. Seeding a task-scoped home with the pinned ai release keeps example
         // resolution deterministic without mutating any shared global state.
-        def examplesBalHome = new File(project.buildDir, "bal-home")
-        def pullOutput = new ByteArrayOutputStream()
-        def pullResult = execHelper.execOperations.exec {
-            ignoreExitValue = true
-            standardOutput = pullOutput
-            errorOutput = pullOutput
-            environment "BALLERINA_HOME_DIR", examplesBalHome.absolutePath
-            if (Os.isFamily(Os.FAMILY_WINDOWS)) {
-                commandLine 'cmd', '/c', "${distributionBinPath}/bal.bat", 'pull',
-                        "ballerina/ai:${ballerinaAiVersion}"
-            } else {
-                commandLine "${distributionBinPath}/bal", 'pull', "ballerina/ai:${ballerinaAiVersion}"
-            }
-        }
-        if (pullResult.exitValue != 0 && !pullOutput.toString().toLowerCase().contains('already exists')) {
-            throw new GradleException(
-                    "bal pull ballerina/ai:${ballerinaAiVersion} into the examples home failed:\n${pullOutput}")
-        }
+//        def examplesBalHome = new File(project.buildDir, "bal-home")
 
         examplesDir.eachDir { exampleDir ->
             def packageName = examplePackageNames[exampleDir.name]
@@ -183,7 +162,7 @@ task buildExamples {
             execHelper.execOperations.exec {
                 workingDir exampleDir
                 environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
-                environment "BALLERINA_HOME_DIR", examplesBalHome.absolutePath
+//                environment "BALLERINA_HOME_DIR", examplesBalHome.absolutePath
                 if (Os.isFamily(Os.FAMILY_WINDOWS)) {
                     commandLine 'cmd', '/c', "${distributionBinPath}/bal.bat ${balCommand}"
                 } else {
@@ -219,7 +198,7 @@ task runExamples {
         def ballerinaDist = "${project.rootDir}/target/ballerina-runtime"
         def distributionBinPath = "${ballerinaDist}/bin"
         // Same isolated Ballerina home as buildExamples (which seeds it with the pinned ai).
-        def examplesBalHome = new File(project.buildDir, "bal-home")
+//        def examplesBalHome = new File(project.buildDir, "bal-home")
 
         runnableExamples.each { exampleName ->
             def exampleDir = new File(project.projectDir, exampleName)
@@ -232,7 +211,7 @@ task runExamples {
             execHelper.execOperations.exec {
                 workingDir exampleDir
                 environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
-                environment "BALLERINA_HOME_DIR", examplesBalHome.absolutePath
+//                environment "BALLERINA_HOME_DIR", examplesBalHome.absolutePath
                 if (Os.isFamily(Os.FAMILY_WINDOWS)) {
                     commandLine 'cmd', '/c', "${distributionBinPath}/bal.bat run --offline"
                 } else {
@@ -245,12 +224,17 @@ task runExamples {
     }
 }
 
-task build {
-    dependsOn buildExamples
+clean {
+    description = 'Cleans all example build artifacts'
+    group = 'build'
+    doLast {
+        def examplesDir = project.projectDir
+        examplesDir.eachDir { exampleDir ->
+            delete "${projectDir}/${exampleDir}/target"
+            delete "${projectDir}/${exampleDir}/Dependencies.toml"
+        }
+    }
 }
 
-task test {
-    description = 'Tests all examples and runs main() smoke tests'
-    group = 'verification'
-    dependsOn runExamples
-}
+build.dependsOn buildExamples
+test.dependsOn runExamples

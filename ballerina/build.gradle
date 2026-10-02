@@ -123,7 +123,7 @@ task pullExternalDependencies {
     doLast {
         def balHome = "${project.projectDir}/build/jballerina-tools-${ballerinaLangVersion}"
         def balExec = Os.isFamily(Os.FAMILY_WINDOWS) ? "${balHome}/bin/bal.bat" : "${balHome}/bin/bal"
-        ["ballerina/ai:${ballerinaAiVersion}", "ballerinax/prometheus:${prometheusVersion}"].each { pkg ->
+        ["ballerinax/prometheus:${prometheusVersion}"].each { pkg ->
             def pullOutput = new ByteArrayOutputStream()
             def result = execHelper.execOperations.exec {
                 ignoreExitValue = true

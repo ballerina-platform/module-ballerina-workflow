@@ -2,12 +2,6 @@
 org = "ballerina_examples"
 name = "get_started"
 version = "0.1.0"
-distribution = "2201.14.0-20260917-124200-7f273e6a"
-
-[[dependency]]
-org = "ballerina"
-name = "ai"
-version = "1.15.0"
 
 [build-options]
 observabilityIncluded = true

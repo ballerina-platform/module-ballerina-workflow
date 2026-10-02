@@ -65,6 +65,22 @@ isolated function opListDefinitions() returns json|Error {
 # find out.
 isolated function opRuntimeInfo() returns json|Error => {taskQueue: getWorkflowTaskQueue()};
 
+# The program's workflow metadata document, exactly as `getWorkflowMetadata` builds it — the
+# document a control plane receives in heartbeats. Without this operation the descriptor (each
+# workflow's graph: the steps it can take, not only the ones a run took) reached a client only
+# through a channel that calls the function in-process, so a console that talks to the worker
+# through this API alone could draw a run's executed steps but never the steps still ahead.
+#
+# Gated like `definitions.list`, not like an instance read: it describes the program, never a
+# run's data.
+isolated function opWorkflowMetadata() returns json|Error {
+    WorkflowMetadata|error metadata = getWorkflowMetadata();
+    if metadata is error {
+        return executionFailed("Failed to read the workflow metadata: " + metadata.message());
+    }
+    return metadata.toJson();
+}
+
 // ── Workflow instances ────────────────────────────────────────────────────────
 
 isolated function opListWorkflows(string? status, string? workflowType, string? workflowId,

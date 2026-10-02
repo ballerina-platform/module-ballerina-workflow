@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `GET /metadata` and the `metadata.get` management command return the program's workflow
+  metadata document — the one `getWorkflowMetadata` builds and a control plane receives in
+  heartbeats — including the build-time descriptor with each workflow's and agent's graph. A
+  client that reaches the worker only through the Management API can now draw a workflow's
+  whole structure, the steps a run has not taken yet included, rather than only the steps its
+  history records.
+
 ## [1.0.0] - 2026-09-30
 
 ### Added

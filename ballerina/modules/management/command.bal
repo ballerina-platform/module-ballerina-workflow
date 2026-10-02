@@ -39,6 +39,8 @@ public enum Operation {
     LIST_DEFINITIONS = "definitions.list",
     # Report this worker's runtime state — currently its Temporal task queue.
     GET_RUNTIME_INFO = "runtime.info",
+    # Get this program's workflow metadata document, descriptor included.
+    GET_METADATA = "metadata.get",
     # List workflow instances.
     LIST_INSTANCES = "instances.list",
     # Start a new workflow instance. This is the only operation that creates one.
@@ -126,6 +128,7 @@ public type Command record {|
 // Parameters per operation, all optional unless stated:
 // - `LIST_DEFINITIONS` — none.
 // - `GET_RUNTIME_INFO` — none.
+// - `GET_METADATA` — none.
 // - `LIST_INSTANCES` — `status`, `workflowType`, `workflowId`, `startedBy`, `limit`,
 //   `pageToken`, `startTimeFrom`, `startTimeTo`, `closeTimeFrom`, `closeTimeTo`, `taskQueue`,
 //   `kind` (`WORKFLOW`, `HUMAN_TASK`, `REVIEW_ACTIVITY`, `CHILD_WORKFLOW`, `AGENT`). Without a
@@ -189,6 +192,9 @@ public isolated function executeCommand(Command command) returns json|Error {
     match command.operation {
         GET_RUNTIME_INFO => {
             return opRuntimeInfo();
+        }
+        GET_METADATA => {
+            return opWorkflowMetadata();
         }
         LIST_DEFINITIONS => {
             return opListDefinitions();

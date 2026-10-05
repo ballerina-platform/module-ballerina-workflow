@@ -220,6 +220,31 @@ function testCommandListDefinitions() returns error? {
     test:assertTrue(found, "The workflow registered by this suite must appear in definitions.list");
 }
 
+// ── metadata.get ─────────────────────────────────────────────────────────────
+
+@test:Config {groups: ["unit"]}
+function testCommandGetMetadataDescribesTheRegisteredProgram() returns error? {
+    // Over the command surface the document must be the one getWorkflowMetadata builds, and
+    // on a worker with registrations it must not be empty.
+    map<json> payload = check commandPayload(management:GET_METADATA);
+    test:assertEquals(payload, (check management:getWorkflowMetadata()).toJson(),
+            "metadata.get must relay the document getWorkflowMetadata builds");
+    test:assertEquals(payload["metadataVersion"], "1.0");
+
+    json[] definitions = check payload["definitions"].ensureType();
+    boolean found = false;
+    foreach json definition in definitions {
+        map<json> entry = check definition.ensureType();
+        if entry["workflowType"] == "cmdSimpleWorkflow" {
+            found = true;
+            test:assertEquals(entry["kind"], "WORKFLOW");
+        }
+    }
+    test:assertTrue(found, "The workflow registered by this suite must appear in metadata.get");
+    test:assertTrue(payload.hasKey("descriptor"),
+            "The descriptor field is always present, null when the program packed none");
+}
+
 // ── instances.start / get / list / history / activityTree / executionGraph ────
 
 @test:Config {groups: ["unit"]}

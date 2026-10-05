@@ -19,7 +19,8 @@ import ballerina/test;
 import ballerina/workflow.management;
 
 // Route coverage for GET /metadata: the program's metadata document over HTTP, as a control
-// plane receives it in heartbeats. The listener is released by `releaseManagementListener`.
+// plane receives it in heartbeats. The test stops the listener itself; the module's @AfterEach
+// only catches a run that failed before reaching that line.
 
 @test:Config {}
 function testMetadataRouteServesTheMetadataDocument() returns error? {

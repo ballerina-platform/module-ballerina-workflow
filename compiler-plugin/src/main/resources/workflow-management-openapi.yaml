@@ -770,50 +770,30 @@ components:
   schemas:
     WorkflowMetadata:
       type: object
+      description: >
+        Everything the program registered with the workflow runtime. The registrations are
+        complete at module init; a schema the plugin could not derive statically (a human
+        task's resultSchema) is null until that task first executes, so a client that caches
+        the document at startup should re-read it rather than treat null as final.
+        Every schema field is a JSON Schema document serialized as a string.
       properties:
         metadataVersion: {type: string, description: "Version of this document's shape"}
         definitions:
           type: array
-          items:
-            type: object
-            properties:
-              workflowType: {type: string}
-              kind: {type: string, enum: [WORKFLOW, AGENT]}
-              displayName: {type: string, nullable: true}
-              icon: {type: string, nullable: true}
-              inputSchema: {type: string, nullable: true, description: "JSON schema of the input, as a string"}
+          items: {$ref: "#/components/schemas/WorkflowDefinitionMeta"}
         humanTasks:
           type: array
-          items:
-            type: object
-            properties:
-              name: {type: string, description: "Qualified task name, <workflowType>.<taskName>"}
-              title: {type: string, nullable: true}
-              resultSchema: {type: string, nullable: true, description: "JSON schema of the completion form, as a string"}
+          items: {$ref: "#/components/schemas/HumanTaskMeta"}
         activities:
           type: array
-          items:
-            type: object
-            properties:
-              workflowType: {type: string}
-              name: {type: string}
-              displayName: {type: string, nullable: true}
-              icon: {type: string, nullable: true}
-              inputSchema: {type: string, nullable: true, description: "JSON schema of the data parameters, as a string"}
+          items: {$ref: "#/components/schemas/ActivityMeta"}
         reviewActions:
           type: array
           items: {type: string}
+          description: The static review-activity decision vocabulary
         agents:
           type: array
-          items:
-            type: object
-            properties:
-              name: {type: string}
-              displayName: {type: string, nullable: true}
-              icon: {type: string, nullable: true}
-              events: {type: array, items: {type: string}}
-              tools: {type: array, items: {type: string}}
-              humanTasks: {type: array, items: {type: string}}
+          items: {$ref: "#/components/schemas/AgentMeta"}
         descriptor:
           type: object
           nullable: true
@@ -823,6 +803,41 @@ components:
             docs/spec/workflow-descriptor.schema.json: `workflows[]` and `agents[]`, each named
             by `name` and carrying its `graph` of `nodes` and `edges`. Null when the program was
             built without one.
+    WorkflowDefinitionMeta:
+      type: object
+      description: One registered workflow definition, as the metadata document describes it
+      properties:
+        workflowType: {type: string}
+        kind: {type: string, enum: [WORKFLOW, AGENT]}
+        displayName: {type: string, nullable: true, description: "The @display label; for people, never an identity"}
+        icon: {type: string, nullable: true, description: "The @display icon path"}
+        inputSchema: {type: string, nullable: true, description: "JSON schema of the input, as a string"}
+    HumanTaskMeta:
+      type: object
+      description: One human task type with its completion-form schema
+      properties:
+        name: {type: string, description: "Qualified task name, <workflowType>.<taskName>"}
+        title: {type: string, nullable: true, description: "The task's constant title, its display name"}
+        resultSchema: {type: string, nullable: true, description: "JSON schema of the completion form, as a string; null until the result type is known in this process"}
+    ActivityMeta:
+      type: object
+      description: One registered activity; its input schema backs proceed-with-input forms
+      properties:
+        workflowType: {type: string}
+        name: {type: string}
+        displayName: {type: string, nullable: true, description: "The @display label"}
+        icon: {type: string, nullable: true, description: "The @display icon path"}
+        inputSchema: {type: string, nullable: true, description: "JSON schema of the data parameters, as a string"}
+    AgentMeta:
+      type: object
+      description: One declared durable agent
+      properties:
+        name: {type: string, description: "The agent's module-level variable name"}
+        displayName: {type: string, nullable: true, description: "The @display label on the agent's variable"}
+        icon: {type: string, nullable: true, description: "The @display icon path"}
+        events: {type: array, items: {type: string}, description: "Declared event channel names"}
+        tools: {type: array, items: {type: string}, description: "Tool names advertised to the model"}
+        humanTasks: {type: array, items: {type: string}, description: "Qualified names (<agent>.<task>) of the agent's human tasks"}
     WorkflowDefinition:
       type: object
       properties:

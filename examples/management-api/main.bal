@@ -16,7 +16,7 @@
 
 // Management API Example
 //
-// Demonstrates the Ballerina Workflow Management HTTP Service alongside a
+// Demonstrates the Workflow Management HTTP Service alongside a
 // realistic workflow that uses:
 //   - awaitHumanTask — pauses execution for a human approval decision
 //   - Human-review retry (a ReviewTaskDefinition) — pauses execution when an activity fails so an OPS user

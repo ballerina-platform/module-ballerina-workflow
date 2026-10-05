@@ -82,6 +82,9 @@ function testScopeRulePerOperationClass() {
     test:assertFalse(scopeAllowed("POST", "human-tasks", ["humantask:view"]));
     // Definitions and review-activities fall into the workflow class.
     test:assertTrue(scopeAllowed("GET", "definitions", ["workflow:view"]));
+    test:assertTrue(scopeAllowed("GET", "metadata", ["workflow:view"]));
+    test:assertFalse(scopeAllowed("GET", "metadata", ["humantask:view"]));
+    test:assertFalse(scopeAllowed("GET", "metadata", []));
     test:assertTrue(scopeAllowed("POST", "review-activities", ["workflow:manage"]));
     test:assertFalse(scopeAllowed("POST", "review-activities", []));
 }

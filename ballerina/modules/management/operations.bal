@@ -65,6 +65,16 @@ isolated function opListDefinitions() returns json|Error {
 # find out.
 isolated function opRuntimeInfo() returns json|Error => {taskQueue: getWorkflowTaskQueue()};
 
+# The metadata document `getWorkflowMetadata` builds, unchanged. Open like `definitions.list`:
+# it describes the program, never a run's data.
+isolated function opWorkflowMetadata() returns json|Error {
+    WorkflowMetadata|error metadata = getWorkflowMetadata();
+    if metadata is error {
+        return executionFailed("Failed to read the workflow metadata: " + metadata.message());
+    }
+    return metadata.toJson();
+}
+
 // ── Workflow instances ────────────────────────────────────────────────────────
 
 isolated function opListWorkflows(string? status, string? workflowType, string? workflowId,

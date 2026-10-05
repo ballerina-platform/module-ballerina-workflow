@@ -590,6 +590,7 @@ final Identity & readonly caseIdentity = {userId: "alice", roles: ["APPROVER", "
 isolated function commandCases() returns CommandCase[] => [
     {operation: LIST_DEFINITIONS},
     {operation: GET_RUNTIME_INFO},
+    {operation: GET_METADATA},
     {operation: LIST_INSTANCES, params: {status: "RUNNING", 'limit: 10}},
     {operation: START_INSTANCE, params: {workflowType: "someWorkflow", input: {}},
         required: ["workflowType"]},
@@ -629,7 +630,8 @@ isolated function commandCases() returns CommandCase[] => [
 // Every member of the enum. Kept explicit because Ballerina cannot enumerate an enum
 // at run time; the coverage test below fails if the case table falls behind it.
 isolated function allOperations() returns Operation[] => [
-    LIST_DEFINITIONS, GET_RUNTIME_INFO, LIST_INSTANCES, START_INSTANCE, GET_INSTANCE, SUSPEND_INSTANCE,
+    LIST_DEFINITIONS, GET_RUNTIME_INFO, GET_METADATA, LIST_INSTANCES, START_INSTANCE, GET_INSTANCE,
+    SUSPEND_INSTANCE,
     RESUME_INSTANCE, WAKE_INSTANCE, SEND_DATA_TO_INSTANCE, TERMINATE_INSTANCE, CANCEL_INSTANCE,
     GET_INSTANCE_HISTORY,
     GET_INSTANCE_ACTIVITY_TREE, GET_INSTANCE_EXECUTION_GRAPH, LIST_HUMAN_TASKS,
@@ -696,4 +698,22 @@ function testRuntimeInfoReportsTheTaskQueue() returns error? {
     map<json> body = check result.ensureType();
     test:assertEquals(body["taskQueue"], getWorkflowTaskQueue(),
         "runtime.info must report the queue this worker polls");
+}
+
+@test:Config {groups: ["unit"]}
+function testMetadataReturnsTheMetadataDocument() returns error? {
+    // The document a control plane receives in heartbeats has to be readable through the same
+    // surface as everything else, or a client that only reaches the worker through it never
+    // sees the descriptor - and with it, the steps a run has not taken yet.
+    json|Error result = executeCommand({operation: GET_METADATA});
+    test:assertFalse(result is Error, "metadata.get must succeed on a running worker");
+    test:assertEquals(result, (check getWorkflowMetadata()).toJson(),
+        "metadata.get must return the document getWorkflowMetadata builds, unchanged");
+}
+
+@test:Config {groups: ["unit"]}
+function testMetadataNeedsNoIdentity() {
+    // It describes the program, never a run's data, so it is open like definitions.list.
+    json|Error result = executeCommand({operation: GET_METADATA, identity: {}});
+    test:assertFalse(result is AccessDeniedError, "metadata.get must not require roles");
 }

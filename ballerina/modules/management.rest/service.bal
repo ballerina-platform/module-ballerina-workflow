@@ -770,6 +770,19 @@ final http:InterceptableService mgmtService = @http:ServiceConfig {
         return executeToResponse(management:LIST_DEFINITIONS, {}, ctx);
     }
 
+    // ── Metadata ─────────────────────────────────────────────────────────────
+
+    # Returns the program's workflow metadata document: its definitions, human tasks,
+    # activities and agents with their schemas, and the build-time descriptor that carries
+    # each workflow's graph.
+    #
+    # + ctx - The request context carrying the resolved caller identity
+    # + return - The `WorkflowMetadata` document
+    resource isolated function get metadata(
+            http:RequestContext ctx) returns http:Response {
+        return executeToResponse(management:GET_METADATA, {}, ctx);
+    }
+
     // ── Workflow Instances — List & Start ─────────────────────────────────────
 
     resource isolated function get workflows(

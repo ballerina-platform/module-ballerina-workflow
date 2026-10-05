@@ -68,7 +68,9 @@ public class ManagementApiArtifactExportTest {
         Assert.assertTrue(Files.exists(specPath),
                 "--export-openapi must write the management spec beside the package's own: " + specPath);
         String yaml = Files.readString(specPath, StandardCharsets.UTF_8);
-        Assert.assertTrue(yaml.contains("Workflow Management API"),
+        SwaggerParseResult exported = new OpenAPIV3Parser().readContents(yaml, null, new ParseOptions());
+        Assert.assertNotNull(exported.getOpenAPI(), "The exported spec must parse: " + exported.getMessages());
+        Assert.assertEquals(exported.getOpenAPI().getInfo().getTitle(), "Workflow Management API",
                 "The exported file is the curated management spec");
         // The artifact directory belongs to --export-endpoints; the http plugin leaves it alone too.
         Assert.assertFalse(Files.exists(artifactSpec(target)),

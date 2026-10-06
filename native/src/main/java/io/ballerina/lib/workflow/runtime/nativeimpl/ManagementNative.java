@@ -1878,8 +1878,7 @@ public final class ManagementNative {
             }
             if (kindFilter != null && WorkflowWorkerNative.isKindSearchAttributeReady()) {
                 // Tagged runs narrow on the server; untagged ones (started before the attribute) reach the memo check.
-                clauses.add("(" + WorkflowWorkerNative.WORKFLOW_KIND_ATTRIBUTE + " = '" + kindFilter + "' OR "
-                        + WorkflowWorkerNative.WORKFLOW_KIND_ATTRIBUTE + " IS NULL)");
+                clauses.add(kindTagClause(kindFilter));
             }
             if (workflowId instanceof BString wi) {
                 String safeId = wi.getValue().replace("\\", "\\\\").replace("'", "\\'");
@@ -2926,6 +2925,15 @@ public final class ManagementNative {
                     "WorkflowType STARTS_WITH '" + WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + "'";
             default -> null;
         };
+    }
+
+    // Tags that can sit on a run of this kind: a child agent started before 1.0.0 is tagged CHILD_WORKFLOW but its
+    // memo was later set to AGENT, so an AGENT listing admits that tag too and lets the memo check decide.
+    private static String kindTagClause(String kind) {
+        String attribute = WorkflowWorkerNative.WORKFLOW_KIND_ATTRIBUTE;
+        String legacyTag = InstanceKind.AGENT.equals(kind)
+                ? " OR " + attribute + " = '" + InstanceKind.CHILD_WORKFLOW + "'" : "";
+        return "(" + attribute + " = '" + kind + "'" + legacyTag + " OR " + attribute + " IS NULL)";
     }
 
     // typeClauseOfKind as a row test, for servers listed without the query API.

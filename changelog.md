@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   clusters that refuse admin calls, and on the in-memory server, with nothing to set up. An attribute
   registered by the worker or added by an operator only moves the match to the server. Listings that filter
   rows in the module (`kind`, `startedBy`, `SUSPENDED`) no longer skip rows between pages.
+  ([#156](https://github.com/ballerina-platform/module-ballerina-workflow/pull/156))
 
 ## [1.0.0] - 2026-09-30
 

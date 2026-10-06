@@ -648,7 +648,7 @@ public final class WorkflowWorkerNative {
 
             singletonWorker = workerFactory.newWorker(taskQueue, workerOptions);
 
-            // WorkflowKind is optional: with it kind filters run server-side, without it they match on the memo.
+            // WorkflowKind only tags instances for Temporal's own UI and CLI; listings match kinds on the memo.
             initWorkflowKindSearchAttribute(ns);
 
             // Parse and store global default activity retry policy
@@ -1209,7 +1209,7 @@ public final class WorkflowWorkerNative {
         return kindSearchAttributeReady;
     }
 
-    // Registers WorkflowKind, or finds one an operator added; without it, kind filters match on the memo instead.
+    // Registers WorkflowKind, or finds one an operator added; starts tag instances with it only then.
     private static void initWorkflowKindSearchAttribute(String namespace) {
         try {
             // The worker's own options, so the call carries its API key and TLS; the raw channel carries neither.
@@ -1258,8 +1258,8 @@ public final class WorkflowWorkerNative {
             LOGGER.debug("Using the existing WorkflowKind search attribute; registration was refused: {}",
                     registrationFailure);
         } catch (io.grpc.StatusRuntimeException e) {
-            LOGGER.info("The WorkflowKind search attribute is not available ({}); kind filters match on the "
-                    + "instance memo instead", registrationFailure);
+            LOGGER.debug("The WorkflowKind search attribute is not available ({}); instances are not tagged with it",
+                    registrationFailure);
         }
     }
 

@@ -295,6 +295,13 @@ function testListInstancesFiltersByKindWithoutSearchAttribute() returns error? {
         input: {reference: "kind-filter"}
     });
     string workflowId = check startHandle["workflowId"].ensureType();
+    // trap keeps a failed assertion from leaving the parked instance running for later tests.
+    error? outcome = trap assertKindListings(workflowId);
+    cleanupInstance(workflowId);
+    return outcome;
+}
+
+function assertKindListings(string workflowId) returns error? {
     _ = check awaitFirstPendingTaskId(workflowId);
 
     management:WorkflowInstancePage tasks = check management:listWorkflowInstances(kind = "HUMAN_TASK", 'limit = 100);
@@ -311,7 +318,10 @@ function testListInstancesFiltersByKindWithoutSearchAttribute() returns error? {
     management:WorkflowInstancePage agents = check management:listWorkflowInstances(workflowId = workflowId,
             kind = "AGENT");
     test:assertEquals(agents.items.length(), 0, "A workflow must not be listed under AGENT");
-    cleanupInstance(workflowId);
+
+    management:WorkflowInstancePage unknown = check management:listWorkflowInstances(kind = "NOT_A_KIND");
+    test:assertEquals(unknown.items.length(), 0, "An undocumented kind must match nothing");
+    test:assertFalse(unknown.hasMore, "An undocumented kind must not offer another page");
 }
 
 @test:Config {groups: ["unit"]}

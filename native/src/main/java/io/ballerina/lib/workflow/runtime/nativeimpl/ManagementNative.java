@@ -113,6 +113,10 @@ public final class ManagementNative {
     private static final String KIND_WORKFLOW = "WORKFLOW";
     private static final String KIND_AGENT = "AGENT";
     private static final String KIND_CHILD_WORKFLOW = "CHILD_WORKFLOW";
+    private static final String REVIEW_ACTIVITY_TYPE_CLAUSE = "(WorkflowType STARTS_WITH '"
+            + WorkflowWorkerNative.REVIEW_ACTIVITY_TYPE_PREFIX + "' OR WorkflowType = '"
+            + WorkflowWorkerNative.LEGACY_RETRYTASK_WORKFLOW_TYPE + "' OR WorkflowType STARTS_WITH '"
+            + WorkflowWorkerNative.LEGACY_RETRYTASK_WORKFLOW_TYPE + "-')";
 
     private static final long GET_INFO_DEADLINE_SECONDS = 5;
     // Reset rewrites a run's history rather than reading it, so it gets its own,
@@ -1372,9 +1376,7 @@ public final class ManagementNative {
             addTimeClause(clauses, closeTimeTo, "CloseTime", "<=");
             addTaskQueueClause(clauses, taskQueue);
             // Server-side type filter, covering the pre-0.7.0 legacy retrytask forms too.
-            clauses.add("(WorkflowType STARTS_WITH '" + WorkflowWorkerNative.REVIEW_ACTIVITY_TYPE_PREFIX
-                    + "' OR WorkflowType = '" + WorkflowWorkerNative.LEGACY_RETRYTASK_WORKFLOW_TYPE
-                    + "' OR WorkflowType STARTS_WITH '" + WorkflowWorkerNative.LEGACY_RETRYTASK_WORKFLOW_TYPE + "-')");
+            clauses.add(REVIEW_ACTIVITY_TYPE_CLAUSE);
             String query = String.join(" AND ", clauses);
             // As in listAllHumanTasks, with the loop's own type check — which covers the legacy
             // retrytask forms this query spells out — handed over as the row-level test.
@@ -1850,7 +1852,9 @@ public final class ManagementNative {
             // upserted by the suspend signal handler splits them client-side below.
             String statusFilter = status instanceof BString bs ? bs.getValue().toUpperCase(Locale.ROOT) : null;
             String kindFilter = kind instanceof BString k && !k.getValue().isBlank() ? k.getValue() : null;
-            String kindTypePrefix = kindFilter == null ? null : typePrefixOfKind(kindFilter);
+            String kindTypeClause = kindFilter == null ? null : typeClauseOfKind(kindFilter);
+            // Only the documented kinds can match; any other value would otherwise scan the whole namespace.
+            boolean unknownKind = kindFilter != null && kindTypeClause == null;
             boolean suspendedOnly = "SUSPENDED".equals(statusFilter);
             boolean runningOnly = "RUNNING".equals(statusFilter);
             if (statusFilter != null) {
@@ -1867,9 +1871,9 @@ public final class ManagementNative {
             } else if (kindFilter == null) {
                 // Without a kind, task and review children are left out.
                 clauses.add("WorkflowType STARTS_WITH 'workflow-'");
-            } else if (kindTypePrefix != null) {
-                // Built-in, so it narrows the scan on every server; the memo check below makes it exact.
-                clauses.add("WorkflowType STARTS_WITH '" + kindTypePrefix + "'");
+            } else if (kindTypeClause != null) {
+                // Built-in WorkflowType narrows the scan on every server; the memo check below makes it exact.
+                clauses.add(kindTypeClause);
             }
             if (workflowId instanceof BString wi) {
                 String safeId = wi.getValue().replace("\\", "\\\\").replace("'", "\\'");
@@ -1880,7 +1884,6 @@ public final class ManagementNative {
             addTimeClause(clauses, closeTimeFrom, "CloseTime", ">=");
             addTimeClause(clauses, closeTimeTo, "CloseTime", "<=");
             addTaskQueueClause(clauses, taskQueue);
-            addKindClause(clauses, kind);
 
             String query = String.join(" AND ", clauses);
             // The clauses above restated for a server without the query API. Suspension is not
@@ -1895,8 +1898,8 @@ public final class ManagementNative {
                 filter.typeTest(prefixedType::equals);
             } else if (kindFilter == null) {
                 filter.typeTest(type -> type.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX));
-            } else if (kindTypePrefix != null) {
-                filter.typeTest(type -> type.startsWith(kindTypePrefix));
+            } else if (kindTypeClause != null) {
+                filter.typeTest(type -> typeMatchesKind(kindFilter, type));
             }
             if (workflowId instanceof BString filterId) {
                 filter.workflowIdPrefix(filterId.getValue());
@@ -1922,9 +1925,9 @@ public final class ManagementNative {
             boolean hasStartedByFilter = startedBy instanceof BString starter && !starter.getValue().isBlank();
             String startedByValue = hasStartedByFilter ? ((BString) startedBy).getValue() : null;
             int matchedCount = 0;
-            ByteString nextToken = nextPageTokenBytes;
+            ByteString nextToken = unknownKind ? ByteString.EMPTY : nextPageTokenBytes;
 
-            while (matchedCount < pageSize) {
+            while (!unknownKind && matchedCount < pageSize) {
                 // Only the rows still missing: a fetched page then never holds more matches than fit, so the
                 // next page's token skips nothing.
                 VisibilityCompat.Page visPage = VisibilityCompat.fetchPage(client, query, filter,
@@ -2892,22 +2895,24 @@ public final class ManagementNative {
         }
     }
 
-    // The indexed copy of the kind; added only where the WorkflowKind search attribute exists.
-    private static void addKindClause(List<String> clauses, Object kind) {
-        if (kind instanceof BString value && !value.getValue().isBlank()
-                && WorkflowWorkerNative.isKindSearchAttributeReady()) {
-            clauses.add(WorkflowWorkerNative.WORKFLOW_KIND_ATTRIBUTE + " = '"
-                    + value.getValue().replace("'", "''") + "'");
-        }
+    // The WorkflowType clause every instance of a documented kind falls under, or null for any other value.
+    private static String typeClauseOfKind(String kind) {
+        return switch (kind) {
+            case TaskRecord.HUMAN_TASK ->
+                    "WorkflowType STARTS_WITH '" + WorkflowWorkerNative.HUMANTASK_TYPE_PREFIX + "'";
+            case TaskRecord.REVIEW_ACTIVITY -> REVIEW_ACTIVITY_TYPE_CLAUSE;
+            case KIND_WORKFLOW, KIND_AGENT, KIND_CHILD_WORKFLOW ->
+                    "WorkflowType STARTS_WITH '" + WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + "'";
+            default -> null;
+        };
     }
 
-    // The type prefix every instance of a kind is registered under, or null for an unknown kind.
-    private static String typePrefixOfKind(String kind) {
+    // typeClauseOfKind as a row test, for servers listed without the query API.
+    private static boolean typeMatchesKind(String kind, String type) {
         return switch (kind) {
-            case TaskRecord.HUMAN_TASK -> WorkflowWorkerNative.HUMANTASK_TYPE_PREFIX;
-            case TaskRecord.REVIEW_ACTIVITY -> WorkflowWorkerNative.REVIEW_ACTIVITY_TYPE_PREFIX;
-            case KIND_WORKFLOW, KIND_AGENT, KIND_CHILD_WORKFLOW -> WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX;
-            default -> null;
+            case TaskRecord.HUMAN_TASK -> isHumanTaskType(type);
+            case TaskRecord.REVIEW_ACTIVITY -> isReviewActivityType(type);
+            default -> type.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX);
         };
     }
 

@@ -6,19 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-### Fixed
-
-- The `kind` filter of `listWorkflowInstances` (and the `instances.list` command) no longer needs the
-  `WorkflowKind` search attribute. It matches each instance's memo kind, so it works on Temporal Cloud, on
-  clusters that refuse admin calls, and on the in-memory server, with nothing to set up. An attribute
-  registered by the worker or added by an operator only moves the match to the server. Listings that filter
-  rows in the module (`kind`, `startedBy`, `SUSPENDED`) no longer skip rows between pages.
-  ([#156](https://github.com/ballerina-platform/module-ballerina-workflow/pull/156))
-
-- The worker's `WorkflowKind` registration now sends the configured API key and TLS settings. It used the raw
-  connection, which carries neither, so on Temporal Cloud with an API key it always failed with
-  `UNAUTHENTICATED`. ([#156](https://github.com/ballerina-platform/module-ballerina-workflow/pull/156))
-
 ## [1.0.0] - 2026-09-30
 
 ### Added
@@ -135,6 +122,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   `Ballerina Workflow Management API`). ([#155](https://github.com/ballerina-platform/module-ballerina-workflow/pull/155))
 
 ### Fixed
+
+- The `kind` filter of `listWorkflowInstances` (and the `instances.list` command) no longer needs the
+  `WorkflowKind` search attribute. It narrows by the kind's built-in workflow type and matches each instance's memo
+  kind, so it works on Temporal Cloud, on clusters that refuse admin calls, and on the in-memory server, with
+  nothing to set up, and it also lists instances started before the attribute existed. An undocumented kind now
+  matches nothing instead of scanning the namespace. Listings that filter rows in the module (`kind`,
+  `startedBy`, `SUSPENDED`) no longer skip rows between pages.
+  ([#156](https://github.com/ballerina-platform/module-ballerina-workflow/pull/156))
+
+- The worker's `WorkflowKind` registration now sends the configured API key and TLS settings. It used the raw
+  connection, which carries neither, so on Temporal Cloud with an API key it always failed with
+  `UNAUTHENTICATED`. ([#156](https://github.com/ballerina-platform/module-ballerina-workflow/pull/156))
 
 - `HumanTaskInfo.taskInput` and `ReviewActivityInfo.taskInput` held a `map<anydata>` at run time although
   the records declare `map<json>`, so a typed read (`map<json> input = check info.taskInput.ensureType()`)

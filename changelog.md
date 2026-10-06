@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- The `kind` filter of `listWorkflowInstances` (and the `instances.list` command) no longer needs the
+  `WorkflowKind` search attribute. It matches each instance's memo kind, so it works on Temporal Cloud, on
+  clusters that refuse admin calls, and on the in-memory server, with nothing to set up. An attribute
+  registered by the worker or added by an operator only moves the match to the server. Listings that filter
+  rows in the module (`kind`, `startedBy`, `SUSPENDED`) no longer skip rows between pages.
+
 ## [1.0.0] - 2026-09-30
 
 ### Added

@@ -110,6 +110,10 @@ public final class ManagementNative {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ManagementNative.class);
 
+    private static final String KIND_WORKFLOW = "WORKFLOW";
+    private static final String KIND_AGENT = "AGENT";
+    private static final String KIND_CHILD_WORKFLOW = "CHILD_WORKFLOW";
+
     private static final long GET_INFO_DEADLINE_SECONDS = 5;
     // Reset rewrites a run's history rather than reading it, so it gets its own,
     // longer budget: the read deadline is sized for a describe, and a client-side
@@ -1845,6 +1849,8 @@ public final class ManagementNative {
             // RUNNING and SUSPENDED share Temporal's Running execution status; the memo flag
             // upserted by the suspend signal handler splits them client-side below.
             String statusFilter = status instanceof BString bs ? bs.getValue().toUpperCase(Locale.ROOT) : null;
+            String kindFilter = kind instanceof BString k && !k.getValue().isBlank() ? k.getValue() : null;
+            String kindTypePrefix = kindFilter == null ? null : typePrefixOfKind(kindFilter);
             boolean suspendedOnly = "SUSPENDED".equals(statusFilter);
             boolean runningOnly = "RUNNING".equals(statusFilter);
             if (statusFilter != null) {
@@ -1858,19 +1864,12 @@ public final class ManagementNative {
                 String prefixedType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + wt.getValue();
                 String safeWt = prefixedType.replace("\\", "\\\\").replace("\"", "\\\"");
                 clauses.add(String.format("WorkflowType = \"%s\"", safeWt));
-            } else if (!(kind instanceof BString k && !k.getValue().isBlank())) {
-                // The pre-kind way of excluding task and review children. A kind filter says
-                // precisely what the caller wants — including those very children — so it
-                // replaces this heuristic rather than being overridden by it.
-                //
-                // Requested-but-unsupported counts as requested. This used to keep the exclusion
-                // when the WorkflowKind attribute was unavailable, on the reasoning that dropping
-                // both would leak every child; but addKindClause drops the kind clause in that
-                // case, so `kind = "HUMAN_TASK"` came back as workflows only — the one thing the
-                // caller definitely did not ask for. addKindClause says it is listing without the
-                // filter, and this now matches that: unfiltered, and said out loud, rather than
-                // confidently wrong.
+            } else if (kindFilter == null) {
+                // Without a kind, task and review children are left out.
                 clauses.add("WorkflowType STARTS_WITH 'workflow-'");
+            } else if (kindTypePrefix != null) {
+                // Built-in, so it narrows the scan on every server; the memo check below makes it exact.
+                clauses.add("WorkflowType STARTS_WITH '" + kindTypePrefix + "'");
             }
             if (workflowId instanceof BString wi) {
                 String safeId = wi.getValue().replace("\\", "\\\\").replace("'", "\\'");
@@ -1894,8 +1893,10 @@ public final class ManagementNative {
             if (workflowType instanceof BString filterType) {
                 String prefixedType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + filterType.getValue();
                 filter.typeTest(prefixedType::equals);
-            } else if (!(kind instanceof BString filterKind && !filterKind.getValue().isBlank())) {
+            } else if (kindFilter == null) {
                 filter.typeTest(type -> type.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX));
+            } else if (kindTypePrefix != null) {
+                filter.typeTest(type -> type.startsWith(kindTypePrefix));
             }
             if (workflowId instanceof BString filterId) {
                 filter.workflowIdPrefix(filterId.getValue());
@@ -1924,10 +1925,17 @@ public final class ManagementNative {
             ByteString nextToken = nextPageTokenBytes;
 
             while (matchedCount < pageSize) {
-                VisibilityCompat.Page visPage = VisibilityCompat.fetchPage(client, query, filter, pageSize,
-                                                                           nextToken, GET_INFO_DEADLINE_SECONDS);
+                // Only the rows still missing: a fetched page then never holds more matches than fit, so the
+                // next page's token skips nothing.
+                VisibilityCompat.Page visPage = VisibilityCompat.fetchPage(client, query, filter,
+                        pageSize - matchedCount, nextToken, GET_INFO_DEADLINE_SECONDS);
 
                 for (WorkflowExecutionInfo wfInfo : visPage.executions()) {
+                    String rawType = wfInfo.getType().getName();
+                    String rowKind = rowKindOf(client, wfInfo, rawType);
+                    if (kindFilter != null && !kindFilter.equals(rowKind)) {
+                        continue;
+                    }
                     if (hasStartedByFilter) {
                         String startedByMemo = decodeMemoString(client.getOptions().getDataConverter(),
                                 wfInfo.getMemo().getFieldsMap(), WorkflowRuntime.STARTED_BY_MEMO, null);
@@ -1954,7 +1962,6 @@ public final class ManagementNative {
                                 StringUtils.fromString(wfInfo.getExecution().getWorkflowId()));
                     summary.put(StringUtils.fromString("runId"),
                                 StringUtils.fromString(wfInfo.getExecution().getRunId()));
-                    String rawType = wfInfo.getType().getName();
                     String displayType = rawType.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX) ?
                                          rawType.substring(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX.length()) :
                                          rawType;
@@ -1977,17 +1984,6 @@ public final class ManagementNative {
                         summary.put(StringUtils.fromString("closeTime"), null);
                     }
                     summary.put(StringUtils.fromString("input"), null);
-                    // The kind rides the visibility row's memo, so a listing can say what each
-                    // row is without a describe per row. Legacy rows without the memo fall back
-                    // to the type prefixes their era still used.
-                    String rowKind = decodeMemoString(client.getOptions().getDataConverter(),
-                                                      wfInfo.getMemo().getFieldsMap(), TaskKeys.KIND, null);
-                    if (rowKind == null) {
-                        rowKind = isHumanTaskType(rawType) ? "HUMAN_TASK"
-                                : isReviewActivityType(rawType) ? "REVIEW_ACTIVITY"
-                                : rawType.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX)
-                                        ? "WORKFLOW" : "CHILD_WORKFLOW";
-                    }
                     summary.put(StringUtils.fromString("kind"), StringUtils.fromString(rowKind));
                     items.append(summary);
                     matchedCount++;
@@ -2896,23 +2892,35 @@ public final class ManagementNative {
         }
     }
 
-    // Scopes a visibility query to one kind of instance — WORKFLOW, AGENT, HUMAN_TASK,
-    // REVIEW_ACTIVITY, CHILD_WORKFLOW — via the WorkflowKind search attribute the starts stamp.
-    // Only instances started after the attribute existed match; a server without the attribute
-    // rejects the query, which is the honest answer where filtering is genuinely unavailable.
+    // The indexed copy of the kind; added only where the WorkflowKind search attribute exists.
     private static void addKindClause(List<String> clauses, Object kind) {
-        if (kind instanceof BString value && !value.getValue().isBlank()) {
-            if (!WorkflowWorkerNative.isKindSearchAttributeReady()) {
-                // The clause would make the whole query fail on a server without the attribute —
-                // notably the in-memory dev server, which does not support custom search
-                // attributes. Listing unfiltered (and saying so) beats failing the listing.
-                LOGGER.warn("Kind filtering requires the WorkflowKind search attribute, which this "
-                        + "server does not provide (the in-memory dev server does not support custom "
-                        + "search attributes); listing without the kind filter.");
-                return;
-            }
-            clauses.add("WorkflowKind = '" + value.getValue().replace("'", "''") + "'");
+        if (kind instanceof BString value && !value.getValue().isBlank()
+                && WorkflowWorkerNative.isKindSearchAttributeReady()) {
+            clauses.add(WorkflowWorkerNative.WORKFLOW_KIND_ATTRIBUTE + " = '"
+                    + value.getValue().replace("'", "''") + "'");
         }
+    }
+
+    // The type prefix every instance of a kind is registered under, or null for an unknown kind.
+    private static String typePrefixOfKind(String kind) {
+        return switch (kind) {
+            case TaskRecord.HUMAN_TASK -> WorkflowWorkerNative.HUMANTASK_TYPE_PREFIX;
+            case TaskRecord.REVIEW_ACTIVITY -> WorkflowWorkerNative.REVIEW_ACTIVITY_TYPE_PREFIX;
+            case KIND_WORKFLOW, KIND_AGENT, KIND_CHILD_WORKFLOW -> WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX;
+            default -> null;
+        };
+    }
+
+    // The kind every start writes to the memo; rows from before the memo existed fall back to their type prefix.
+    private static String rowKindOf(WorkflowClient client, WorkflowExecutionInfo wfInfo, String rawType) {
+        String memoKind = decodeMemoString(client.getOptions().getDataConverter(),
+                                           wfInfo.getMemo().getFieldsMap(), TaskKeys.KIND, null);
+        if (memoKind != null) {
+            return memoKind;
+        }
+        return isHumanTaskType(rawType) ? TaskRecord.HUMAN_TASK
+                : isReviewActivityType(rawType) ? TaskRecord.REVIEW_ACTIVITY
+                : rawType.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX) ? KIND_WORKFLOW : KIND_CHILD_WORKFLOW;
     }
 
     private static void addTimeClause(List<String> clauses, Object param, String field, String op) {

@@ -560,9 +560,7 @@ isolated function startWorkflowByTypeNative(string workflowType, json? input, st
 # + kind - Optional kind filter: `WORKFLOW`, `HUMAN_TASK`, `REVIEW_ACTIVITY`, `CHILD_WORKFLOW`
 #          or `AGENT`. Without it the listing excludes task and review children, as it did
 #          before kinds existed. Each summary reports its own `kind`, so an unfiltered listing
-#          is still self-describing. Filtering needs the `WorkflowKind` search attribute; where
-#          the server has none — the in-memory dev server, which supports no custom attributes —
-#          the listing comes back unfiltered with a warning rather than failing.
+#          is still self-describing. Works on any server, with no search attribute to set up.
 # + return - Paginated list of workflow instance summaries, or an error
 public isolated function listWorkflowInstances(string? status = (), string? workflowType = (),
     string? workflowId = (), string? startedBy = (), int 'limit = 20, string? pageToken = (),

@@ -288,6 +288,33 @@ function testCommandStartAndInspectInstance() returns error? {
 }
 
 @test:Config {groups: ["unit"]}
+function testListInstancesFiltersByKindWithoutSearchAttribute() returns error? {
+    // The in-memory server has no custom search attributes, so this runs the memo-based kind filter.
+    map<json> startHandle = check commandPayload(management:START_INSTANCE, {
+        workflowType: "cmdHumanTaskWorkflow",
+        input: {reference: "kind-filter"}
+    });
+    string workflowId = check startHandle["workflowId"].ensureType();
+    _ = check awaitFirstPendingTaskId(workflowId);
+
+    management:WorkflowInstancePage tasks = check management:listWorkflowInstances(kind = "HUMAN_TASK", 'limit = 100);
+    test:assertTrue(tasks.items.length() > 0, "The parked human task must be listed under HUMAN_TASK");
+    foreach management:WorkflowInstanceSummary item in tasks.items {
+        test:assertEquals(item.kind, "HUMAN_TASK", "A HUMAN_TASK listing must hold only human tasks");
+    }
+
+    management:WorkflowInstancePage workflows = check management:listWorkflowInstances(workflowId = workflowId,
+            kind = "WORKFLOW");
+    test:assertEquals(workflows.items.length(), 1, "The parent must be listed under WORKFLOW");
+    test:assertEquals(workflows.items[0].kind, "WORKFLOW");
+
+    management:WorkflowInstancePage agents = check management:listWorkflowInstances(workflowId = workflowId,
+            kind = "AGENT");
+    test:assertEquals(agents.items.length(), 0, "A workflow must not be listed under AGENT");
+    cleanupInstance(workflowId);
+}
+
+@test:Config {groups: ["unit"]}
 function testCommandStartInstanceWithScalarInput() returns error? {
     // A workflow input is not always a record. `POST /workflows` accepted any JSON here
     // before the REST resources were routed through commands, so rejecting a scalar

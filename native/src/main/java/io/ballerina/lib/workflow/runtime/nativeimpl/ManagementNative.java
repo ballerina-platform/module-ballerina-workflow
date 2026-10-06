@@ -113,6 +113,8 @@ public final class ManagementNative {
     private static final String KIND_WORKFLOW = "WORKFLOW";
     private static final String KIND_AGENT = "AGENT";
     private static final String KIND_CHILD_WORKFLOW = "CHILD_WORKFLOW";
+    // Not in the Base64 alphabet, so a token without it is a plain server token.
+    private static final String PAGE_SKIP_SEPARATOR = "~";
     private static final String REVIEW_ACTIVITY_TYPE_CLAUSE = "(WorkflowType STARTS_WITH '"
             + WorkflowWorkerNative.REVIEW_ACTIVITY_TYPE_PREFIX + "' OR WorkflowType = '"
             + WorkflowWorkerNative.LEGACY_RETRYTASK_WORKFLOW_TYPE + "' OR WorkflowType STARTS_WITH '"
@@ -1851,7 +1853,8 @@ public final class ManagementNative {
             // RUNNING and SUSPENDED share Temporal's Running execution status; the memo flag
             // upserted by the suspend signal handler splits them client-side below.
             String statusFilter = status instanceof BString bs ? bs.getValue().toUpperCase(Locale.ROOT) : null;
-            String kindFilter = kind instanceof BString k && !k.getValue().isBlank() ? k.getValue() : null;
+            String kindFilter = kind instanceof BString k && !k.getValue().isBlank()
+                    ? k.getValue().toUpperCase(Locale.ROOT) : null;
             String kindTypeClause = kindFilter == null ? null : typeClauseOfKind(kindFilter);
             // Only the documented kinds can match; any other value would otherwise scan the whole namespace.
             boolean unknownKind = kindFilter != null && kindTypeClause == null;
@@ -1906,13 +1909,22 @@ public final class ManagementNative {
             }
             int pageSize = (int) Math.min(limit, 100);
 
-            ByteString nextPageTokenBytes = ByteString.EMPTY;
+            // A token is the server's page token, prefixed with the rows of that page already returned when non-zero.
+            ByteString fetchToken = ByteString.EMPTY;
+            int skipRows = 0;
             if (pageToken instanceof BString pt && !pt.getValue().isEmpty()) {
+                String raw = pt.getValue();
+                int separator = raw.indexOf(PAGE_SKIP_SEPARATOR);
                 try {
-                    byte[] decoded = Base64.getDecoder().decode(pt.getValue());
-                    nextPageTokenBytes = ByteString.copyFrom(decoded);
+                    if (separator > 0) {
+                        skipRows = Integer.parseInt(raw.substring(0, separator));
+                        raw = raw.substring(separator + 1);
+                    }
+                    fetchToken = ByteString.copyFrom(Base64.getDecoder().decode(raw));
                 } catch (IllegalArgumentException ignored) {
                     // Invalid token — start from beginning
+                    fetchToken = ByteString.EMPTY;
+                    skipRows = 0;
                 }
             }
 
@@ -1925,15 +1937,16 @@ public final class ManagementNative {
             boolean hasStartedByFilter = startedBy instanceof BString starter && !starter.getValue().isBlank();
             String startedByValue = hasStartedByFilter ? ((BString) startedBy).getValue() : null;
             int matchedCount = 0;
-            ByteString nextToken = unknownKind ? ByteString.EMPTY : nextPageTokenBytes;
+            String nextTokenStr = null;
 
             while (!unknownKind && matchedCount < pageSize) {
-                // Only the rows still missing: a fetched page then never holds more matches than fit, so the
-                // next page's token skips nothing.
-                VisibilityCompat.Page visPage = VisibilityCompat.fetchPage(client, query, filter,
-                        pageSize - matchedCount, nextToken, GET_INFO_DEADLINE_SECONDS);
-
-                for (WorkflowExecutionInfo wfInfo : visPage.executions()) {
+                VisibilityCompat.Page visPage = VisibilityCompat.fetchPage(client, query, filter, pageSize,
+                                                                           fetchToken, GET_INFO_DEADLINE_SECONDS);
+                List<WorkflowExecutionInfo> rows = visPage.executions();
+                int consumed = skipRows;
+                for (int i = skipRows; i < rows.size() && matchedCount < pageSize; i++) {
+                    WorkflowExecutionInfo wfInfo = rows.get(i);
+                    consumed = i + 1;
                     String rawType = wfInfo.getType().getName();
                     String rowKind = rowKindOf(client, wfInfo, rawType);
                     if (kindFilter != null && !kindFilter.equals(rowKind)) {
@@ -1990,19 +2003,24 @@ public final class ManagementNative {
                     summary.put(StringUtils.fromString("kind"), StringUtils.fromString(rowKind));
                     items.append(summary);
                     matchedCount++;
-                    if (matchedCount >= pageSize) {
-                        break;
-                    }
                 }
 
-                nextToken = visPage.nextPageToken();
-                if (nextToken.isEmpty()) {
+                if (consumed < rows.size()) {
+                    // The page filled part-way through a fetched page: resume on it, past the rows already read.
+                    nextTokenStr = consumed + PAGE_SKIP_SEPARATOR
+                            + Base64.getEncoder().encodeToString(fetchToken.toByteArray());
                     break;
                 }
+                fetchToken = visPage.nextPageToken();
+                skipRows = 0;
+                if (fetchToken.isEmpty()) {
+                    nextTokenStr = null;
+                    break;
+                }
+                nextTokenStr = Base64.getEncoder().encodeToString(fetchToken.toByteArray());
             }
 
-            boolean hasMore = !nextToken.isEmpty();
-            String nextTokenStr = hasMore ? Base64.getEncoder().encodeToString(nextToken.toByteArray()) : null;
+            boolean hasMore = nextTokenStr != null;
 
             BMap<BString, Object> page = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                         "WorkflowInstancePage");

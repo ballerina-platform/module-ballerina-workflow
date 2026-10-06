@@ -1257,8 +1257,8 @@ public final class WorkflowWorkerNative {
             kindSearchAttributeReady = true;
             LOGGER.debug("Using the existing WorkflowKind search attribute; registration was refused: {}",
                     registrationFailure);
-        } catch (io.grpc.StatusRuntimeException e) {
-            LOGGER.debug("The WorkflowKind search attribute is not available ({}); instances are not tagged with it",
+        } catch (Exception e) {
+            LOGGER.info("The WorkflowKind search attribute is not available ({}); instances are not tagged with it",
                     registrationFailure);
         }
     }

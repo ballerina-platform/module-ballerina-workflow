@@ -1212,14 +1212,12 @@ public final class WorkflowWorkerNative {
     // Registers WorkflowKind, or finds one an operator added; without it, kind filters match on the memo instead.
     private static void initWorkflowKindSearchAttribute(String namespace) {
         try {
-            io.temporal.serviceclient.OperatorServiceStubsOptions.Builder operatorOptions =
-                    io.temporal.serviceclient.OperatorServiceStubsOptions.newBuilder();
-            operatorOptions.setChannel(serviceStubs.getRawChannel());
-            // newServiceStubs refuses options built with plain build() — the validated variant is
-            // required, and the refusal is an exception this method must not let pass silently.
+            // The worker's own options, so the call carries its API key and TLS; the raw channel carries neither.
             io.temporal.serviceclient.OperatorServiceStubs operator =
                     io.temporal.serviceclient.OperatorServiceStubs.newServiceStubs(
-                            operatorOptions.validateAndBuildWithDefaults());
+                            io.temporal.serviceclient.OperatorServiceStubsOptions
+                                    .newBuilder(serviceStubs.getOptions())
+                                    .validateAndBuildWithDefaults());
             try {
                 operator.blockingStub()
                         .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)

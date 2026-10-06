@@ -15,6 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   rows in the module (`kind`, `startedBy`, `SUSPENDED`) no longer skip rows between pages.
   ([#156](https://github.com/ballerina-platform/module-ballerina-workflow/pull/156))
 
+- The worker's `WorkflowKind` registration now sends the configured API key and TLS settings. It used the raw
+  connection, which carries neither, so on Temporal Cloud with an API key it always failed with
+  `UNAUTHENTICATED`. ([#156](https://github.com/ballerina-platform/module-ballerina-workflow/pull/156))
+
 ## [1.0.0] - 2026-09-30
 
 ### Added

@@ -24,6 +24,7 @@ import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.JsonFormat;
 import io.ballerina.lib.workflow.ModuleUtils;
 import io.ballerina.lib.workflow.TaskKeys;
+import io.ballerina.lib.workflow.context.InstanceKind;
 import io.ballerina.lib.workflow.context.TaskRecord;
 import io.ballerina.lib.workflow.context.WorkflowContextNative;
 import io.ballerina.lib.workflow.observability.WorkflowMetrics;
@@ -110,9 +111,6 @@ public final class ManagementNative {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ManagementNative.class);
 
-    private static final String KIND_WORKFLOW = "WORKFLOW";
-    private static final String KIND_AGENT = "AGENT";
-    private static final String KIND_CHILD_WORKFLOW = "CHILD_WORKFLOW";
     // Not in the Base64 alphabet, so a token without it is a plain server token.
     private static final String PAGE_SKIP_SEPARATOR = "~";
     private static final String REVIEW_ACTIVITY_TYPE_CLAUSE = "(WorkflowType STARTS_WITH '"
@@ -292,7 +290,8 @@ public final class ManagementNative {
                 BMap<BString, Object> def = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
                                                                            "WorkflowDefinition");
                 def.put(StringUtils.fromString("workflowType"), StringUtils.fromString(displayType));
-                def.put(StringUtils.fromString("kind"), StringUtils.fromString(agentType ? "AGENT" : "WORKFLOW"));
+                def.put(StringUtils.fromString("kind"),
+                        StringUtils.fromString(agentType ? InstanceKind.AGENT : InstanceKind.WORKFLOW));
                 DisplayNames.Display display = DisplayNames.ofWorkflow(workflowType);
                 def.put(DISPLAY_NAME_FIELD, display.label() != null ? StringUtils.fromString(display.label()) : null);
                 def.put(ICON_FIELD, display.icon() != null ? StringUtils.fromString(display.icon()) : null);
@@ -1047,9 +1046,7 @@ public final class ManagementNative {
     }
 
     private static boolean isReviewActivityType(String workflowType) {
-        return workflowType.startsWith(WorkflowWorkerNative.REVIEW_ACTIVITY_TYPE_PREFIX)
-                || WorkflowWorkerNative.LEGACY_RETRYTASK_WORKFLOW_TYPE.equals(workflowType)
-                || workflowType.startsWith(WorkflowWorkerNative.LEGACY_RETRYTASK_WORKFLOW_TYPE + "-");
+        return InstanceKind.isReviewActivityType(workflowType);
     }
 
     /**
@@ -1057,7 +1054,7 @@ public final class ManagementNative {
      * {@code REVIEW_ACTIVITY} kind or the pre-0.7.0 {@code RETRY_TASK} kind.
      */
     private static boolean isReviewActivityKind(String workflowKind) {
-        return "REVIEW_ACTIVITY".equals(workflowKind) || "RETRY_TASK".equals(workflowKind);
+        return InstanceKind.REVIEW_ACTIVITY.equals(workflowKind) || InstanceKind.LEGACY_RETRY_TASK.equals(workflowKind);
     }
 
     /**
@@ -1855,9 +1852,13 @@ public final class ManagementNative {
             String statusFilter = status instanceof BString bs ? bs.getValue().toUpperCase(Locale.ROOT) : null;
             String kindFilter = kind instanceof BString k && !k.getValue().isBlank()
                     ? k.getValue().toUpperCase(Locale.ROOT) : null;
-            String kindTypeClause = kindFilter == null ? null : typeClauseOfKind(kindFilter);
-            // Only the documented kinds can match; any other value would otherwise scan the whole namespace.
-            boolean unknownKind = kindFilter != null && kindTypeClause == null;
+            // Without a kind, the listing holds the workflow- types: workflows, agents and children, not tasks.
+            String typeKind = kindFilter == null ? InstanceKind.WORKFLOW : kindFilter;
+            String kindTypeClause = typeClauseOfKind(typeKind);
+            if (kindTypeClause == null) {
+                // Only the documented kinds can match; any other value would otherwise scan the whole namespace.
+                return emptyInstancePage();
+            }
             boolean suspendedOnly = "SUSPENDED".equals(statusFilter);
             boolean runningOnly = "RUNNING".equals(statusFilter);
             if (statusFilter != null) {
@@ -1871,12 +1872,14 @@ public final class ManagementNative {
                 String prefixedType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + wt.getValue();
                 String safeWt = prefixedType.replace("\\", "\\\\").replace("\"", "\\\"");
                 clauses.add(String.format("WorkflowType = \"%s\"", safeWt));
-            } else if (kindFilter == null) {
-                // Without a kind, task and review children are left out.
-                clauses.add("WorkflowType STARTS_WITH 'workflow-'");
-            } else if (kindTypeClause != null) {
+            } else {
                 // Built-in WorkflowType narrows the scan on every server; the memo check below makes it exact.
                 clauses.add(kindTypeClause);
+            }
+            if (kindFilter != null && WorkflowWorkerNative.isKindSearchAttributeReady()) {
+                // Tagged runs narrow on the server; untagged ones (started before the attribute) reach the memo check.
+                clauses.add("(" + WorkflowWorkerNative.WORKFLOW_KIND_ATTRIBUTE + " = '" + kindFilter + "' OR "
+                        + WorkflowWorkerNative.WORKFLOW_KIND_ATTRIBUTE + " IS NULL)");
             }
             if (workflowId instanceof BString wi) {
                 String safeId = wi.getValue().replace("\\", "\\\\").replace("'", "\\'");
@@ -1899,10 +1902,8 @@ public final class ManagementNative {
             if (workflowType instanceof BString filterType) {
                 String prefixedType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + filterType.getValue();
                 filter.typeTest(prefixedType::equals);
-            } else if (kindFilter == null) {
-                filter.typeTest(type -> type.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX));
-            } else if (kindTypeClause != null) {
-                filter.typeTest(type -> typeMatchesKind(kindFilter, type));
+            } else {
+                filter.typeTest(type -> typeMatchesKind(typeKind, type));
             }
             if (workflowId instanceof BString filterId) {
                 filter.workflowIdPrefix(filterId.getValue());
@@ -1939,7 +1940,7 @@ public final class ManagementNative {
             int matchedCount = 0;
             String nextTokenStr = null;
 
-            while (!unknownKind && matchedCount < pageSize) {
+            while (matchedCount < pageSize) {
                 VisibilityCompat.Page visPage = VisibilityCompat.fetchPage(client, query, filter, pageSize,
                                                                            fetchToken, GET_INFO_DEADLINE_SECONDS);
                 List<WorkflowExecutionInfo> rows = visPage.executions();
@@ -1948,7 +1949,9 @@ public final class ManagementNative {
                     WorkflowExecutionInfo wfInfo = rows.get(i);
                     consumed = i + 1;
                     String rawType = wfInfo.getType().getName();
-                    String rowKind = rowKindOf(client, wfInfo, rawType);
+                    String rowKind = InstanceKind.of(decodeMemoString(client.getOptions().getDataConverter(),
+                            wfInfo.getMemo().getFieldsMap(), TaskKeys.KIND, null),
+                            wfInfo.getExecution().getWorkflowId(), rawType);
                     if (kindFilter != null && !kindFilter.equals(rowKind)) {
                         continue;
                     }
@@ -2741,12 +2744,12 @@ public final class ManagementNative {
      */
     private static String childNodeType(String workflowType) {
         if (isHumanTaskType(workflowType)) {
-            return "HUMAN_TASK";
+            return InstanceKind.HUMAN_TASK;
         }
         if (isReviewActivityType(workflowType)) {
-            return "REVIEW_ACTIVITY";
+            return InstanceKind.REVIEW_ACTIVITY;
         }
-        return "CHILD_WORKFLOW";
+        return InstanceKind.CHILD_WORKFLOW;
     }
 
     /**
@@ -2916,10 +2919,10 @@ public final class ManagementNative {
     // The WorkflowType clause every instance of a documented kind falls under, or null for any other value.
     private static String typeClauseOfKind(String kind) {
         return switch (kind) {
-            case TaskRecord.HUMAN_TASK ->
+            case InstanceKind.HUMAN_TASK ->
                     "WorkflowType STARTS_WITH '" + WorkflowWorkerNative.HUMANTASK_TYPE_PREFIX + "'";
-            case TaskRecord.REVIEW_ACTIVITY -> REVIEW_ACTIVITY_TYPE_CLAUSE;
-            case KIND_WORKFLOW, KIND_AGENT, KIND_CHILD_WORKFLOW ->
+            case InstanceKind.REVIEW_ACTIVITY -> REVIEW_ACTIVITY_TYPE_CLAUSE;
+            case InstanceKind.WORKFLOW, InstanceKind.AGENT, InstanceKind.CHILD_WORKFLOW ->
                     "WorkflowType STARTS_WITH '" + WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + "'";
             default -> null;
         };
@@ -2928,22 +2931,22 @@ public final class ManagementNative {
     // typeClauseOfKind as a row test, for servers listed without the query API.
     private static boolean typeMatchesKind(String kind, String type) {
         return switch (kind) {
-            case TaskRecord.HUMAN_TASK -> isHumanTaskType(type);
-            case TaskRecord.REVIEW_ACTIVITY -> isReviewActivityType(type);
+            case InstanceKind.HUMAN_TASK -> isHumanTaskType(type);
+            case InstanceKind.REVIEW_ACTIVITY -> isReviewActivityType(type);
             default -> type.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX);
         };
     }
 
-    // The kind every start writes to the memo; rows from before the memo existed fall back to their type prefix.
-    private static String rowKindOf(WorkflowClient client, WorkflowExecutionInfo wfInfo, String rawType) {
-        String memoKind = decodeMemoString(client.getOptions().getDataConverter(),
-                                           wfInfo.getMemo().getFieldsMap(), TaskKeys.KIND, null);
-        if (memoKind != null) {
-            return memoKind;
-        }
-        return isHumanTaskType(rawType) ? TaskRecord.HUMAN_TASK
-                : isReviewActivityType(rawType) ? TaskRecord.REVIEW_ACTIVITY
-                : rawType.startsWith(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX) ? KIND_WORKFLOW : KIND_CHILD_WORKFLOW;
+    private static BMap<BString, Object> emptyInstancePage() {
+        RecordType summaryType = (RecordType) ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
+                                                                             "WorkflowInstanceSummary").getType();
+        BMap<BString, Object> page = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
+                                                                    "WorkflowInstancePage");
+        page.put(StringUtils.fromString("items"),
+                 ValueCreator.createArrayValue(TypeCreator.createArrayType(summaryType)));
+        page.put(StringUtils.fromString("nextPageToken"), null);
+        page.put(StringUtils.fromString("hasMore"), false);
+        return page;
     }
 
     private static void addTimeClause(List<String> clauses, Object param, String field, String op) {

@@ -1035,7 +1035,6 @@ public final class AgentContextNative {
         // environments may not support memo upserts; the in-JVM store remains the fallback.
         try {
             Map<String, Object> memo = new HashMap<>();
-            memo.put(TaskKeys.KIND, "AGENT");
             memo.put("agentResponse", response.getValue());
             Workflow.upsertMemo(memo);
         } catch (Exception e) {

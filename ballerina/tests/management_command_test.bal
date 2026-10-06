@@ -44,6 +44,7 @@
 // registration under any other name is invisible to `run`.
 // ============================================================================
 
+import ballerina/jballerina.java;
 import ballerina/lang.runtime;
 import ballerina/test;
 import ballerina/workflow.management;
@@ -289,7 +290,7 @@ function testCommandStartAndInspectInstance() returns error? {
 
 @test:Config {groups: ["unit"]}
 function testListInstancesFiltersByKindWithoutSearchAttribute() returns error? {
-    // The in-memory server has no custom search attributes, so this runs the memo-based kind filter.
+    // Kind filters match on the instance memo on every server; here through the in-memory fallback listing.
     map<json> startHandle = check commandPayload(management:START_INSTANCE, {
         workflowType: "cmdHumanTaskWorkflow",
         input: {reference: "kind-filter"}
@@ -327,6 +328,22 @@ function assertKindListings(string workflowId) returns error? {
     test:assertEquals(unknown.items.length(), 0, "An undocumented kind must match nothing");
     test:assertFalse(unknown.hasMore, "An undocumented kind must not offer another page");
 }
+
+@test:Config {groups: ["unit"]}
+function testListInstancesKeepsLegacyReviewActivities() returns error? {
+    // Pre-0.7.0 reviews ran as `retrytask` with the memo kind RETRY_TASK; both must read as REVIEW_ACTIVITY.
+    string legacyId = "legacy-retrytask-kind-filter";
+    check startLegacyReviewActivity(legacyId, "legacy-review-queue");
+    management:WorkflowInstancePage reviews = check management:listWorkflowInstances(workflowId = legacyId,
+            kind = "REVIEW_ACTIVITY");
+    cleanupInstance(legacyId);
+    test:assertEquals(reviews.items.length(), 1, "A legacy retrytask run must be listed under REVIEW_ACTIVITY");
+    test:assertEquals(reviews.items[0].kind, "REVIEW_ACTIVITY", "A RETRY_TASK memo must be reported as REVIEW_ACTIVITY");
+}
+
+isolated function startLegacyReviewActivity(string workflowId, string taskQueue) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.test.TestNatives"
+} external;
 
 @test:Config {groups: ["unit"]}
 function testListInstancesPagesFilteredRowsWithoutGapsOrRepeats() returns error? {

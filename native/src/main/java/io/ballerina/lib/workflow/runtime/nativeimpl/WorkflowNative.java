@@ -20,6 +20,7 @@ package io.ballerina.lib.workflow.runtime.nativeimpl;
 
 import io.ballerina.lib.workflow.ModuleUtils;
 import io.ballerina.lib.workflow.TaskKeys;
+import io.ballerina.lib.workflow.context.InstanceKind;
 import io.ballerina.lib.workflow.context.TaskRecord;
 import io.ballerina.lib.workflow.runtime.InstanceAlreadyExistsException;
 import io.ballerina.lib.workflow.runtime.StartOptions;
@@ -873,33 +874,22 @@ public final class WorkflowNative {
     /** As {@link #resolveKind}, from a describe response the caller already holds. */
     private static String resolveKindFromInfo(WorkflowClient client, String workflowId,
                                               WorkflowExecutionInfo describedInfo) {
+        String memoKind = null;
         try {
             io.temporal.api.common.v1.Payload kindPayload =
                     describedInfo.getMemo().getFieldsMap().get(TaskKeys.KIND);
             if (kindPayload != null && !kindPayload.getData().isEmpty()) {
-                String kind = client.getOptions().getDataConverter()
+                memoKind = client.getOptions().getDataConverter()
                         .fromPayload(kindPayload, String.class, String.class);
-                if (kind != null && !kind.isBlank()) {
-                    return kind;
-                }
             }
         } catch (Exception e) {
             // The kind is a routing hint; an info read must not fail over it.
         }
-        return kindFromIdPrefix(workflowId);
+        return InstanceKind.of(memoKind, workflowId, describedInfo.getType().getName());
     }
 
     private static String kindFromIdPrefix(String workflowId) {
-        if (workflowId.startsWith(WorkflowWorkerNative.HUMANTASK_TYPE_PREFIX)) {
-            return "HUMAN_TASK";
-        }
-        if (workflowId.startsWith(WorkflowWorkerNative.REVIEW_ACTIVITY_TYPE_PREFIX)) {
-            return "REVIEW_ACTIVITY";
-        }
-        if (workflowId.startsWith(WorkflowWorkerNative.CHILD_WORKFLOW_ID_PREFIX)) {
-            return "CHILD_WORKFLOW";
-        }
-        return "WORKFLOW";
+        return InstanceKind.of(null, workflowId, null);
     }
 
     /**

@@ -19,6 +19,7 @@
 package io.ballerina.lib.workflow.runtime;
 
 import io.ballerina.lib.workflow.TaskKeys;
+import io.ballerina.lib.workflow.context.InstanceKind;
 import io.ballerina.lib.workflow.observability.TraceContextPropagator;
 import io.ballerina.lib.workflow.observability.WorkerSpans;
 import io.ballerina.lib.workflow.observability.WorkflowMetrics;
@@ -166,7 +167,8 @@ public final class WorkflowRuntime {
         String startRequestId = mayJoin ? java.util.UUID.randomUUID().toString() : null;
         try {
             // The kind memo is how a consumer learns what an instance is without parsing its id.
-            String kind = WorkflowWorkerNative.isAgentWorkflowType(processName) ? "AGENT" : "WORKFLOW";
+            String kind = WorkflowWorkerNative.isAgentWorkflowType(processName)
+                    ? InstanceKind.AGENT : InstanceKind.WORKFLOW;
             java.util.Map<String, Object> memo = new java.util.HashMap<>();
             memo.put(TaskKeys.KIND, kind);
             if (mayJoin) {

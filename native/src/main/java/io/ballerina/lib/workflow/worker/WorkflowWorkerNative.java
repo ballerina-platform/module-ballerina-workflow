@@ -59,6 +59,7 @@ import io.ballerina.runtime.api.values.BString;
 import io.opentelemetry.api.trace.Span;
 import io.temporal.activity.DynamicActivity;
 import io.temporal.api.common.v1.WorkflowExecution;
+import io.temporal.api.workflowservice.v1.CountWorkflowExecutionsRequest;
 import io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionRequest;
 import io.temporal.api.workflowservice.v1.DescribeWorkflowExecutionResponse;
 import io.temporal.client.WorkflowClient;
@@ -647,10 +648,7 @@ public final class WorkflowWorkerNative {
 
             singletonWorker = workerFactory.newWorker(taskQueue, workerOptions);
 
-            // Kind filtering needs the WorkflowKind search attribute on the cluster. Registered
-            // here — never on the in-memory test server, which does not support custom search
-            // attributes — and starts stamp it only when this succeeded, so a server that refuses
-            // the registration degrades to memo-only kinds instead of failing every start.
+            // WorkflowKind only tags instances for Temporal's own UI and CLI; listings match kinds on the memo.
             initWorkflowKindSearchAttribute(ns);
 
             // Parse and store global default activity retry policy
@@ -1196,9 +1194,11 @@ public final class WorkflowWorkerNative {
     /** Set only when the WorkflowKind search attribute is confirmed on the cluster. */
     private static volatile boolean kindSearchAttributeReady = false;
 
+    public static final String WORKFLOW_KIND_ATTRIBUTE = "WorkflowKind";
+
     /** The search-attribute key every start stamps when the cluster is known to accept it. */
     public static final io.temporal.common.SearchAttributeKey<String> WORKFLOW_KIND_KEY =
-            io.temporal.common.SearchAttributeKey.forKeyword("WorkflowKind");
+            io.temporal.common.SearchAttributeKey.forKeyword(WORKFLOW_KIND_ATTRIBUTE);
 
     /**
      * Whether starts may stamp the WorkflowKind search attribute: true only on a real server that
@@ -1209,48 +1209,67 @@ public final class WorkflowWorkerNative {
         return kindSearchAttributeReady;
     }
 
-    /**
-     * Registers the WorkflowKind Keyword search attribute with the cluster, idempotently.
-     * ALREADY_EXISTS counts as success; any other failure only disables stamping — human-task
-     * grade features assume a real, writable server, and a cluster that refuses the attribute
-     * still gets fully working workflows, just without server-side kind filtering.
-     */
+    // Tags are cosmetic, so this runs off the startup path: check first, register only when the attribute is missing.
     private static void initWorkflowKindSearchAttribute(String namespace) {
-        try {
-            io.temporal.serviceclient.OperatorServiceStubsOptions.Builder operatorOptions =
-                    io.temporal.serviceclient.OperatorServiceStubsOptions.newBuilder();
-            operatorOptions.setChannel(serviceStubs.getRawChannel());
-            // newServiceStubs refuses options built with plain build() — the validated variant is
-            // required, and the refusal is an exception this method must not let pass silently.
-            io.temporal.serviceclient.OperatorServiceStubs operator =
-                    io.temporal.serviceclient.OperatorServiceStubs.newServiceStubs(
-                            operatorOptions.validateAndBuildWithDefaults());
-            try {
-                operator.blockingStub()
-                        .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                        .addSearchAttributes(
-                                io.temporal.api.operatorservice.v1.AddSearchAttributesRequest.newBuilder()
-                                        .setNamespace(namespace)
-                                        .putSearchAttributes("WorkflowKind",
-                                                io.temporal.api.enums.v1.IndexedValueType
-                                                        .INDEXED_VALUE_TYPE_KEYWORD)
-                                        .build());
+        kindSearchAttributeReady = false;
+        Thread.ofVirtual().name("workflow-kind-attribute").start(() -> {
+            if (isKindSearchAttributeKeyword(namespace)) {
+                kindSearchAttributeReady = true;
+                LOGGER.debug("Using the existing WorkflowKind search attribute");
+                return;
+            }
+            String failure = registerKindSearchAttribute(namespace);
+            if (failure == null) {
                 kindSearchAttributeReady = true;
                 LOGGER.info("Registered the WorkflowKind search attribute");
-            } catch (io.grpc.StatusRuntimeException e) {
-                if (e.getStatus().getCode() == io.grpc.Status.Code.ALREADY_EXISTS) {
-                    kindSearchAttributeReady = true;
-                    LOGGER.debug("WorkflowKind search attribute already registered");
-                } else {
-                    LOGGER.warn("Could not register the WorkflowKind search attribute; kind "
-                            + "filtering is unavailable on this cluster: {}", e.getMessage());
-                }
-            } finally {
+            } else {
+                LOGGER.info("The WorkflowKind search attribute is not available ({}); instances are not tagged with it",
+                        failure);
+            }
+        });
+    }
+
+    // STARTS_WITH is accepted only on a Keyword attribute, so a WorkflowKind of another type does not count.
+    private static boolean isKindSearchAttributeKeyword(String namespace) {
+        try {
+            serviceStubs.blockingStub()
+                    .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                    .countWorkflowExecutions(CountWorkflowExecutionsRequest.newBuilder()
+                            .setNamespace(namespace)
+                            .setQuery(WORKFLOW_KIND_ATTRIBUTE + " STARTS_WITH 'W'")
+                            .build());
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    // Null when registered; otherwise why not. An admin call, which Temporal Cloud refuses to integration credentials.
+    private static String registerKindSearchAttribute(String namespace) {
+        io.temporal.serviceclient.OperatorServiceStubs operator = null;
+        try {
+            // The worker's own options, so the call carries its API key and TLS; the raw channel carries neither.
+            operator = io.temporal.serviceclient.OperatorServiceStubs.newServiceStubs(
+                    io.temporal.serviceclient.OperatorServiceStubsOptions.newBuilder(serviceStubs.getOptions())
+                            .validateAndBuildWithDefaults());
+            operator.blockingStub()
+                    .withDeadlineAfter(GET_INFO_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                    .addSearchAttributes(io.temporal.api.operatorservice.v1.AddSearchAttributesRequest.newBuilder()
+                            .setNamespace(namespace)
+                            .putSearchAttributes(WORKFLOW_KIND_ATTRIBUTE,
+                                    io.temporal.api.enums.v1.IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD)
+                            .build());
+            return null;
+        } catch (io.grpc.StatusRuntimeException e) {
+            // The check above found no Keyword attribute, so an existing one has another type.
+            return e.getStatus().getCode() == io.grpc.Status.Code.ALREADY_EXISTS
+                    ? "WorkflowKind exists with a type other than Keyword" : e.getStatus().getCode().name();
+        } catch (Exception e) {
+            return e.getMessage();
+        } finally {
+            if (operator != null) {
                 operator.shutdown();
             }
-        } catch (Exception e) {
-            LOGGER.warn("Could not reach the operator service to register WorkflowKind: {}",
-                    e.getMessage());
         }
     }
 

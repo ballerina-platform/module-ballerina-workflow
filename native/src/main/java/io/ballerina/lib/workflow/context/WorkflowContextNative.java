@@ -1381,7 +1381,6 @@ public final class WorkflowContextNative {
     // waitForChildWorkflow / callWorkflow / sendDataToChildWorkflow)
     // -----------------------------------------------------------------------------------------
 
-    private static final String CHILD_WORKFLOW_KIND = "CHILD_WORKFLOW";
 
     /**
      * Child workflow handles started by the current workflow execution, keyed by the child workflow ID returned
@@ -1710,8 +1709,11 @@ public final class WorkflowContextNative {
     private static ChildWorkflowStub newChildStub(String functionName, String childId, String stepId) {
         String childType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + functionName;
 
+        // Fixed at start, so a child agent is listed and tagged as AGENT for its whole run.
+        String childKind = WorkflowWorkerNative.isAgentWorkflowType(childType) ? InstanceKind.AGENT
+                : InstanceKind.CHILD_WORKFLOW;
         Map<String, Object> memo = new HashMap<>();
-        memo.put(TaskKeys.KIND, CHILD_WORKFLOW_KIND);
+        memo.put(TaskKeys.KIND, childKind);
         memo.put(TaskKeys.PARENT_WORKFLOW_ID, Workflow.getInfo().getWorkflowId());
         memo.put(TaskKeys.ROOT_WORKFLOW_ID, rootWorkflowId());
         memo.put(TaskKeys.CREATED_AT, Instant.ofEpochMilli(Workflow.currentTimeMillis()).toString());
@@ -1733,7 +1735,7 @@ public final class WorkflowContextNative {
         }
         if (WorkflowWorkerNative.isKindSearchAttributeReady()) {
             optionsBuilder.setTypedSearchAttributes(io.temporal.common.SearchAttributes.newBuilder()
-                    .set(WorkflowWorkerNative.WORKFLOW_KIND_KEY, CHILD_WORKFLOW_KIND).build());
+                    .set(WorkflowWorkerNative.WORKFLOW_KIND_KEY, childKind).build());
         }
         return Workflow.newUntypedChildWorkflowStub(childType, optionsBuilder.build());
     }

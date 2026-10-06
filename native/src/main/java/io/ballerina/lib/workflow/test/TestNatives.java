@@ -131,6 +131,38 @@ public final class TestNatives {
     }
 
 
+    // A pre-0.7.0 review activity as it was started: a retrytask run stamped RETRY_TASK, on a queue no worker serves.
+    public static Object startLegacyReviewActivity(io.ballerina.runtime.api.values.BString workflowId,
+            io.ballerina.runtime.api.values.BString taskQueue) {
+        try {
+            io.temporal.client.WorkflowClient client =
+                    io.ballerina.lib.workflow.worker.WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return io.ballerina.runtime.api.creators.ErrorCreator.createError(
+                        io.ballerina.runtime.api.utils.StringUtils.fromString("Workflow client not initialized"));
+            }
+            java.util.Map<String, Object> memo = new java.util.HashMap<>();
+            memo.put(TaskKeys.KIND, io.ballerina.lib.workflow.context.InstanceKind.LEGACY_RETRY_TASK);
+            memo.put(TaskKeys.PARENT_WORKFLOW_ID, "test-legacy-parent");
+            io.temporal.client.WorkflowOptions options = io.temporal.client.WorkflowOptions.newBuilder()
+                    .setWorkflowId(workflowId.getValue())
+                    .setTaskQueue(taskQueue.getValue())
+                    .setMemo(memo)
+                    .build();
+            client.newUntypedWorkflowStub(
+                    io.ballerina.lib.workflow.worker.WorkflowWorkerNative.LEGACY_RETRYTASK_WORKFLOW_TYPE, options)
+                    .start(java.util.Map.of());
+            return null;
+        } catch (Exception e) {
+            if (e.getClass().getName().contains("AlreadyStarted")) {
+                return null;
+            }
+            return io.ballerina.runtime.api.creators.ErrorCreator.createError(
+                    io.ballerina.runtime.api.utils.StringUtils.fromString(
+                            "Failed to start legacy review activity: " + e.getMessage()));
+        }
+    }
+
     private TestNatives() {
         // Utility class, prevent instantiation
     }

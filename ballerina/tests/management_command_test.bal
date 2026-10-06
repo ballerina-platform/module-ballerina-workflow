@@ -44,6 +44,7 @@
 // registration under any other name is invisible to `run`.
 // ============================================================================
 
+import ballerina/jballerina.java;
 import ballerina/lang.runtime;
 import ballerina/test;
 import ballerina/workflow.management;
@@ -285,6 +286,99 @@ function testCommandStartAndInspectInstance() returns error? {
     // instances.list — visibility-backed, see assertPageOrUnsupported.
     check assertPageOrUnsupported(management:LIST_INSTANCES,
             {workflowId: workflowId, 'limit: 20}, "items", "hasMore");
+}
+
+@test:Config {groups: ["unit"]}
+function testListInstancesFiltersByKindWithoutSearchAttribute() returns error? {
+    // Kind filters match on the instance memo on every server; here through the in-memory fallback listing.
+    map<json> startHandle = check commandPayload(management:START_INSTANCE, {
+        workflowType: "cmdHumanTaskWorkflow",
+        input: {reference: "kind-filter"}
+    });
+    string workflowId = check startHandle["workflowId"].ensureType();
+    // trap keeps a failed assertion from leaving the parked instance running for later tests.
+    error? outcome = trap assertKindListings(workflowId);
+    cleanupInstance(workflowId);
+    return outcome;
+}
+
+function assertKindListings(string workflowId) returns error? {
+    string taskId = check awaitFirstPendingTaskId(workflowId);
+
+    management:WorkflowInstancePage tasks = check management:listWorkflowInstances(kind = "HUMAN_TASK", 'limit = 100);
+    foreach management:WorkflowInstanceSummary item in tasks.items {
+        test:assertEquals(item.kind, "HUMAN_TASK", "A HUMAN_TASK listing must hold only human tasks");
+    }
+    // Scoped to the task's id, so the check does not depend on which page of a shared server it lands on.
+    management:WorkflowInstancePage ownTask = check management:listWorkflowInstances(workflowId = taskId,
+            kind = "human_task");
+    test:assertEquals(ownTask.items.length(), 1, "The open task must be listed, with the kind matched in any case");
+    test:assertEquals(ownTask.items[0].kind, "HUMAN_TASK");
+
+    management:WorkflowInstancePage workflows = check management:listWorkflowInstances(workflowId = workflowId,
+            kind = "WORKFLOW");
+    test:assertEquals(workflows.items.length(), 1, "The parent must be listed under WORKFLOW");
+    test:assertEquals(workflows.items[0].kind, "WORKFLOW");
+
+    management:WorkflowInstancePage agents = check management:listWorkflowInstances(workflowId = workflowId,
+            kind = "AGENT");
+    test:assertEquals(agents.items.length(), 0, "A workflow must not be listed under AGENT");
+
+    management:WorkflowInstancePage unknown = check management:listWorkflowInstances(kind = "NOT_A_KIND");
+    test:assertEquals(unknown.items.length(), 0, "An undocumented kind must match nothing");
+    test:assertFalse(unknown.hasMore, "An undocumented kind must not offer another page");
+}
+
+@test:Config {groups: ["unit"]}
+function testListInstancesKeepsLegacyReviewActivities() returns error? {
+    // Pre-0.7.0 reviews ran as `retrytask` with the memo kind RETRY_TASK; both must read as REVIEW_ACTIVITY.
+    string legacyId = "legacy-retrytask-kind-filter";
+    check startLegacyReviewActivity(legacyId, "legacy-review-queue");
+    management:WorkflowInstancePage reviews = check management:listWorkflowInstances(workflowId = legacyId,
+            kind = "REVIEW_ACTIVITY");
+    cleanupInstance(legacyId);
+    test:assertEquals(reviews.items.length(), 1, "A legacy retrytask run must be listed under REVIEW_ACTIVITY");
+    test:assertEquals(reviews.items[0].kind, "REVIEW_ACTIVITY", "A RETRY_TASK memo must be reported as REVIEW_ACTIVITY");
+}
+
+isolated function startLegacyReviewActivity(string workflowId, string taskQueue) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.test.TestNatives"
+} external;
+
+@test:Config {groups: ["unit"]}
+function testListInstancesPagesFilteredRowsWithoutGapsOrRepeats() returns error? {
+    // startedBy is matched in the module, so pages are filled from rows the server returned for other instances too.
+    string starter = "pager";
+    management:Identity & readonly identity = {userId: starter, roles: ["OPS"]};
+    string[] started = [];
+    foreach int i in 0 ..< 3 {
+        json startResult = check management:executeCommand({operation: management:START_INSTANCE,
+                params: {workflowType: "cmdSimpleWorkflow", input: {reference: string `page-${i}`}}, identity});
+        map<json> handleMap = check startResult.ensureType();
+        string workflowId = check handleMap["workflowId"].ensureType();
+        started.push(workflowId);
+        _ = check getWorkflowResult(workflowId, 15);
+    }
+    foreach int pageLimit in [1, 2] {
+        string[] seen = [];
+        string? token = ();
+        foreach int guard in 0 ..< 10 {
+            management:WorkflowInstancePage page = check management:listWorkflowInstances(startedBy = starter,
+                    'limit = pageLimit, pageToken = token);
+            foreach management:WorkflowInstanceSummary item in page.items {
+                test:assertTrue(seen.indexOf(item.workflowId) is (), "An instance must not repeat across pages");
+                seen.push(item.workflowId);
+            }
+            token = page.nextPageToken;
+            if !page.hasMore {
+                break;
+            }
+        }
+        test:assertEquals(seen.length(), started.length(), string `Every instance must be listed with limit ${pageLimit}`);
+        foreach string workflowId in started {
+            test:assertTrue(seen.indexOf(workflowId) !is (), "Each started instance must appear");
+        }
+    }
 }
 
 @test:Config {groups: ["unit"]}

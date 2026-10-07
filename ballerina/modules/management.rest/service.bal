@@ -142,12 +142,12 @@ final string jwtHeaderName = jwtAuthHeader.trim();
 final AuthMode & readonly authMode = authModeOf(enableBasicAuth, enableJwtAuth, jwtHeaderName, enableOAuth);
 
 # Expected issuer (`iss`) claim value for JWT validation.
-# Optional: when empty, the `iss` claim is not checked.
-configurable string jwtIssuer = "";
+# Optional: when not set, the `iss` claim is not checked.
+configurable string? jwtIssuer = ();
 
 # Expected audience (`aud`) claim value for JWT validation.
-# Optional: when empty, the `aud` claim is not checked.
-configurable string jwtAudience = "";
+# Optional: when not set, the `aud` claim is not checked.
+configurable string? jwtAudience = ();
 
 # JWKS endpoint URL used to fetch public keys for JWT signature verification.
 # Required when `enableJwtAuth = true`.
@@ -390,11 +390,13 @@ isolated function buildAuthConfigs() returns http:ListenerAuthConfig[]? {
 
 isolated function jwtValidatorConfig() returns http:JwtValidatorConfig {
     http:JwtValidatorConfig config = {signatureConfig: {jwksConfig: {url: jwksUrl}}};
-    if jwtIssuer != "" {
-        config.issuer = jwtIssuer;
+    string? issuer = jwtIssuer;
+    if issuer is string {
+        config.issuer = issuer;
     }
-    if jwtAudience != "" {
-        config.audience = jwtAudience;
+    string? audience = jwtAudience;
+    if audience is string {
+        config.audience = audience;
     }
     return config;
 }

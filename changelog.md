@@ -26,6 +26,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- The management API's `jwtIssuer` and `jwtAudience` are optional with `enableJwtAuth = true`: an
+  empty one skips that claim's check, as in `ballerina/jwt`. `jwksUrl` stays required, since
+  without it no token signature is verified.
+  ([#158](https://github.com/ballerina-platform/module-ballerina-workflow/pull/158))
 - The exported management OpenAPI spec is titled `Workflow Management API` (was
   `Ballerina Workflow Management API`). ([#155](https://github.com/ballerina-platform/module-ballerina-workflow/pull/155))
 

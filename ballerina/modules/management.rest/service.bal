@@ -142,11 +142,11 @@ final string jwtHeaderName = jwtAuthHeader.trim();
 final AuthMode & readonly authMode = authModeOf(enableBasicAuth, enableJwtAuth, jwtHeaderName, enableOAuth);
 
 # Expected issuer (`iss`) claim value for JWT validation.
-# Optional: when not set, the `iss` claim is not checked.
+# Optional: when unset or blank, the `iss` claim is not checked.
 configurable string? jwtIssuer = ();
 
 # Expected audience (`aud`) claim value for JWT validation.
-# Optional: when not set, the `aud` claim is not checked.
+# Optional: when unset or blank, the `aud` claim is not checked.
 configurable string? jwtAudience = ();
 
 # JWKS endpoint URL used to fetch public keys for JWT signature verification.
@@ -404,7 +404,7 @@ isolated function jwtConfigError(string url, string authHeader) returns error? {
 isolated function jwtValidatorConfig() returns http:JwtValidatorConfig =>
     jwtValidatorConfigOf(jwksUrl, jwtIssuer, jwtAudience);
 
-# Builds the JWT validator configuration; an unset claim is left out so it is not checked.
+# Builds the JWT validator configuration; an unset or blank claim is left out so it is not checked.
 #
 # + url - `jwksUrl`
 # + issuer - `jwtIssuer`
@@ -412,10 +412,10 @@ isolated function jwtValidatorConfig() returns http:JwtValidatorConfig =>
 # + return - The validator configuration
 isolated function jwtValidatorConfigOf(string url, string? issuer, string? audience) returns http:JwtValidatorConfig {
     http:JwtValidatorConfig config = {signatureConfig: {jwksConfig: {url}}};
-    if issuer is string {
+    if issuer is string && issuer.trim() != "" {
         config.issuer = issuer;
     }
-    if audience is string {
+    if audience is string && audience.trim() != "" {
         config.audience = audience;
     }
     return config;

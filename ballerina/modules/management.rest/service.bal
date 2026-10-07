@@ -194,14 +194,9 @@ isolated function validateManagementApiConfig() {
     }
 
     if enableJwtAuth {
-        // Without a JWKS URL no signature is verified, so any well-formed token would pass.
-        if jwksUrl == "" {
-            panic error("workflow.management.rest: JWT auth is enabled (enableJwtAuth = true) " +
-                "but 'jwksUrl' is not set.");
-        }
-        if jwtAuthHeader.trim() == "" {
-            panic error("workflow.management.rest: JWT auth is enabled (enableJwtAuth = true) " +
-                "but 'jwtAuthHeader' is blank. Set a header name or leave it at its default.");
+        error? jwtError = jwtConfigError(jwksUrl, jwtAuthHeader);
+        if jwtError is error {
+            panic jwtError;
         }
     }
 
@@ -388,13 +383,38 @@ isolated function buildAuthConfigs() returns http:ListenerAuthConfig[]? {
     return configs.length() > 0 ? configs : ();
 }
 
-isolated function jwtValidatorConfig() returns http:JwtValidatorConfig {
-    http:JwtValidatorConfig config = {signatureConfig: {jwksConfig: {url: jwksUrl}}};
-    string? issuer = jwtIssuer;
+# Checks the JWT configurables that must be set when `enableJwtAuth = true`.
+#
+# + url - `jwksUrl`
+# + authHeader - `jwtAuthHeader`
+# + return - An error naming the missing setting, or `()` when the configuration is usable
+isolated function jwtConfigError(string url, string authHeader) returns error? {
+    // Without a JWKS URL no signature is verified, so any well-formed token would pass.
+    if url == "" {
+        return error("workflow.management.rest: JWT auth is enabled (enableJwtAuth = true) " +
+            "but 'jwksUrl' is not set.");
+    }
+    if authHeader.trim() == "" {
+        return error("workflow.management.rest: JWT auth is enabled (enableJwtAuth = true) " +
+            "but 'jwtAuthHeader' is blank. Set a header name or leave it at its default.");
+    }
+    return;
+}
+
+isolated function jwtValidatorConfig() returns http:JwtValidatorConfig =>
+    jwtValidatorConfigOf(jwksUrl, jwtIssuer, jwtAudience);
+
+# Builds the JWT validator configuration; an unset claim is left out so it is not checked.
+#
+# + url - `jwksUrl`
+# + issuer - `jwtIssuer`
+# + audience - `jwtAudience`
+# + return - The validator configuration
+isolated function jwtValidatorConfigOf(string url, string? issuer, string? audience) returns http:JwtValidatorConfig {
+    http:JwtValidatorConfig config = {signatureConfig: {jwksConfig: {url}}};
     if issuer is string {
         config.issuer = issuer;
     }
-    string? audience = jwtAudience;
     if audience is string {
         config.audience = audience;
     }

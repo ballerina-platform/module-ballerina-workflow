@@ -62,6 +62,11 @@ function testJwtValidatorConfigLeavesUnsetClaimsOut() {
     test:assertFalse(unset.hasKey("audience"));
     test:assertEquals(unset.signatureConfig?.jwksConfig?.url, JWKS_URL);
 
+    // A blank value, e.g. from a template that rendered nothing, counts as unset.
+    http:JwtValidatorConfig blank = jwtValidatorConfigOf(JWKS_URL, "", "  ");
+    test:assertFalse(blank.hasKey("issuer"));
+    test:assertFalse(blank.hasKey("audience"));
+
     http:JwtValidatorConfig set = jwtValidatorConfigOf(JWKS_URL, "test-issuer", "workflow");
     test:assertEquals(set.issuer, "test-issuer");
     test:assertEquals(set.audience, "workflow");
@@ -71,6 +76,8 @@ function testJwtValidatorConfigLeavesUnsetClaimsOut() {
 function testUnsetClaimsAreNotChecked() {
     jwt:Payload|http:Unauthorized result = claimHandler((), ()).authenticate(otherPartyJwt());
     test:assertTrue(result is jwt:Payload, "an unset issuer and audience must accept any iss and aud");
+    test:assertTrue(claimHandler("", "").authenticate(otherPartyJwt()) is jwt:Payload,
+        "a blank issuer and audience must accept any iss and aud");
 }
 
 @test:Config {}

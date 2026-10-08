@@ -54,6 +54,9 @@ dependencies = [
 	{org = "ballerina", name = "lang.string"},
 	{org = "ballerina", name = "log"}
 ]
+modules = [
+	{org = "ballerina", packageName = "auth", moduleName = "auth"}
+]
 
 [[package]]
 org = "ballerina"
@@ -453,6 +456,7 @@ name = "workflow"
 version = "0.10.1"
 dependencies = [
 	{org = "ballerina", name = "ai"},
+	{org = "ballerina", name = "auth"},
 	{org = "ballerina", name = "email"},
 	{org = "ballerina", name = "http"},
 	{org = "ballerina", name = "io"},

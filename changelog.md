@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   without it no token signature is verified.
   ([#158](https://github.com/ballerina-platform/module-ballerina-workflow/pull/158))
 
+### Fixed
+
+- An integration that uses the module no longer prints the JDK 24+ `sun.misc.Unsafe` "terminally deprecated
+  method" warning at startup: gRPC is upgraded to 1.84.1, whose shaded Netty 4.2 avoids `Unsafe`, and protobuf
+  to 4.36.2. ([wso2/product-integrator#2700](https://github.com/wso2/product-integrator/issues/2700))
+
 ## [1.0.0] - 2026-09-30
 
 ### Added

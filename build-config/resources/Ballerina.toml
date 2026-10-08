@@ -178,7 +178,7 @@ version = "@guava.version@"
 [[platform.java25.dependency]]
 groupId = "com.google.guava"
 artifactId = "failureaccess"
-version = "1.0.1"
+version = "1.0.3"
 
 # Other dependencies
 [[platform.java25.dependency]]

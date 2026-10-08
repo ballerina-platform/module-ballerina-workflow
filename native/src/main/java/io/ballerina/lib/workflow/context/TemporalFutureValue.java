@@ -119,8 +119,9 @@ public class TemporalFutureValue extends FutureValue {
         // Default group: just this future (single-event workflows)
         this.siblingGroup = new ArrayList<>(Collections.singletonList(this));
 
-        setupPromiseCallback();
+        // Replace first: an already-completed promise runs the callback inline, into whichever future is installed.
         replaceCompletableFuture();
+        setupPromiseCallback();
     }
 
     private static Strand createStrand(Scheduler scheduler, String signalName) {
@@ -151,13 +152,8 @@ public class TemporalFutureValue extends FutureValue {
             TemporalCompletableFuture temporalCF = new TemporalCompletableFuture(signalName);
             java.lang.reflect.Field cfField = FutureValue.class.getDeclaredField("completableFuture");
             cfField.setAccessible(true);
-
-            // Use sun.misc.Unsafe or VarHandle to write to the final field
-            java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
-            unsafeField.setAccessible(true);
-            sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
-            long offset = unsafe.objectFieldOffset(cfField);
-            unsafe.putObject(this, offset, temporalCF);
+            // Reflection, not sun.misc.Unsafe, which JDK 24+ warns about; FutureValue takes no future of its own.
+            cfField.set(this, temporalCF);
         } catch (Exception e) {
             // If reflection fails, fall back to the default CompletableFuture.
             // Single wait and sequential waits will still work; only alternate wait

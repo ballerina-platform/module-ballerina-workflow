@@ -37,9 +37,11 @@ import ballerina/workflow.management;
 //                           valid token. `trustForwardedIdentity = true` restores
 //                           header precedence for gateway-behind-OAuth topologies.
 //
-// Extraction happens in the request interceptor BEFORE the listener's declarative
-// auth validates the token signature — an invalid token still gets its 401 from
-// the auth layer and never reaches a resource, so nothing is trusted early.
+// A bearer token in `Authorization` is read here BEFORE the listener's declarative
+// auth validates it — an invalid token still gets its 401 from the auth layer and
+// never reaches a resource, so nothing is trusted early. A JWT in a custom
+// `jwtAuthHeader` is outside the declarative layer's reach, so the gateway validates
+// it first and hands the verified payload in; its claims are never read unverified.
 // Scopes stay orthogonal to roles: scopes authorize operation classes (view vs
 // manage, workflow vs human task), while per-task eligibility remains the task's
 // audience — roles or user id, minus exclusions — checked by the management module.
@@ -102,8 +104,10 @@ const string CALLER_IDENTITY_CTX_KEY = "workflowCallerIdentity";
 # trusted-forwarding, scope enforcement) is exercisable in one test run even though
 # the configurables are fixed at module init.
 #
-# + basicAuthEnabled - Whether basic auth is enabled (drives the audit-user default)
-# + tokenAuthEnabled - Whether a token scheme (JWT or OAuth2) is enabled (token mode)
+# + basicAuthEnabled - Whether basic auth is enabled (drives the audit-user default); the
+#                      credentials were validated declaratively or by the gateway before this runs
+# + tokenAuthEnabled - Whether a bearer token in `Authorization` is validated by the
+#                      declarative auth layer (JWT on the standard header, or OAuth2)
 # + trustForwardedIdentity - Whether forwarded x-user-* headers beat token claims
 # + enforceScopes - Whether OAuth scopes gate operation classes
 # + userIdClaim - Claim (dotted path) holding the user ID
@@ -121,7 +125,7 @@ type CallerIdentityConfig record {|
 # + return - The configuration the gateway interceptor resolves identities with
 isolated function defaultIdentityConfig() returns CallerIdentityConfig => {
     basicAuthEnabled: enableBasicAuth,
-    tokenAuthEnabled: enableJwtAuth || enableOAuth,
+    tokenAuthEnabled: authMode.authorizationBearerValidated,
     trustForwardedIdentity,
     enforceScopes,
     userIdClaim,
@@ -136,12 +140,12 @@ isolated function defaultIdentityConfig() returns CallerIdentityConfig => {
 # + firstSegment - The first path segment under the service base path, used to
 #                  classify the operation for scope enforcement
 # + cfg - The identity-resolution configuration
+# + verifiedToken - The payload of a JWT the gateway already validated (custom
+#                   `jwtAuthHeader` mode); when given, `Authorization` is not consulted
 # + return - The resolved identity, or a `403` when scope enforcement is on and
 #            the token lacks the required scope
 isolated function resolveCallerIdentity(http:Request req, string firstSegment,
-        CallerIdentityConfig cfg) returns CallerIdentity|http:Forbidden {
-    boolean hasForwardedUser = req.hasHeader(USER_ID_HEADER);
-    boolean hasForwardedRoles = req.hasHeader(USER_ROLES_HEADER);
+        CallerIdentityConfig cfg, jwt:Payload? verifiedToken = ()) returns CallerIdentity|http:Forbidden {
     CallerIdentity identity = forwardedIdentity(req);
 
     if cfg.basicAuthEnabled && identity.userId is () {
@@ -153,6 +157,9 @@ isolated function resolveCallerIdentity(http:Request req, string firstSegment,
         }
     }
 
+    if verifiedToken is jwt:Payload {
+        return identityFromClaims(req, firstSegment, cfg, identity, claimsOf(verifiedToken));
+    }
     if !cfg.tokenAuthEnabled {
         if cfg.enforceScopes {
             // Scope enforcement is configured but no token-based scheme can carry
@@ -187,8 +194,22 @@ isolated function resolveCallerIdentity(http:Request req, string firstSegment,
         // discarded so a caller cannot pair a valid token with spoofed identity headers.
         return cfg.trustForwardedIdentity ? identity : <CallerIdentity>{};
     }
-    map<json> claims = claimsOf(decoded[1]);
+    return identityFromClaims(req, firstSegment, cfg, identity, claimsOf(decoded[1]));
+}
 
+# Overlays a validated token's claims on the identity resolved so far and enforces
+# scopes. The token was, or will be, validated by the auth layer that owns it.
+#
+# + req - The request
+# + firstSegment - The first path segment, for scope classification
+# + cfg - The identity-resolution configuration
+# + identity - The identity resolved from forwarded headers / basic auth so far
+# + claims - The token's claims
+# + return - The identity, or a `403` under scope enforcement
+isolated function identityFromClaims(http:Request req, string firstSegment, CallerIdentityConfig cfg,
+        CallerIdentity identity, map<json> claims) returns CallerIdentity|http:Forbidden {
+    boolean hasForwardedUser = req.hasHeader(USER_ID_HEADER);
+    boolean hasForwardedRoles = req.hasHeader(USER_ROLES_HEADER);
     if !(cfg.trustForwardedIdentity && hasForwardedUser) {
         json? userId = claimAt(claims, cfg.userIdClaim);
         identity.userId = userId is string && userId.trim().length() > 0 ? userId : ();
@@ -210,6 +231,10 @@ isolated function resolveCallerIdentity(http:Request req, string firstSegment,
 
 const string USER_ID_HEADER = "x-user-id";
 const string USER_ROLES_HEADER = "x-user-roles";
+const string AUTHORIZATION_HEADER = "Authorization";
+const string BEARER_SCHEME = "Bearer";
+const string BEARER_PREFIX = BEARER_SCHEME + " ";
+const string BASIC_PREFIX = "Basic ";
 
 # Reads the identity a trusted gateway forwarded via the x-user-* headers.
 #
@@ -229,11 +254,11 @@ isolated function forwardedIdentity(http:Request req) returns CallerIdentity {
 // validates the credentials; callers gate this on basic auth being enabled and on
 // no identity having been forwarded.
 isolated function basicAuthUsername(http:Request req) returns string? {
-    string|http:HeaderNotFoundError authHeader = req.getHeader("Authorization");
-    if authHeader !is string || !authHeader.startsWith("Basic ") {
+    string|http:HeaderNotFoundError authHeader = req.getHeader(AUTHORIZATION_HEADER);
+    if authHeader !is string || !authHeader.startsWith(BASIC_PREFIX) {
         return ();
     }
-    byte[]|error rawCredentials = array:fromBase64(authHeader.substring(6).trim());
+    byte[]|error rawCredentials = array:fromBase64(authHeader.substring(BASIC_PREFIX.length()).trim());
     if rawCredentials is error {
         return ();
     }
@@ -249,10 +274,25 @@ isolated function basicAuthUsername(http:Request req) returns string? {
 }
 
 isolated function bearerToken(http:Request req) returns string? {
-    string|http:HeaderNotFoundError authHeader = req.getHeader("Authorization");
-    if authHeader is string && authHeader.startsWith("Bearer ") {
-        string token = authHeader.substring(7).trim();
-        return token.length() > 0 ? token : ();
+    string|http:HeaderNotFoundError authHeader = req.getHeader(AUTHORIZATION_HEADER);
+    return authHeader is string ? tokenOfHeaderValue(authHeader, false) : ();
+}
+
+# Extracts the token from a header value of the form `Bearer <token>` (scheme name
+# case-insensitive, as HTTP defines it), or the bare token when `allowBare` is set
+# (gateways forward backend JWTs without a scheme). Anything else is not a token.
+#
+# + value - The header value
+# + allowBare - Whether a value with no scheme prefix is itself the token
+# + return - The token, or `()` when the value carries none
+isolated function tokenOfHeaderValue(string value, boolean allowBare) returns string? {
+    string[] parts = re`\s+`.split(value.trim());
+    boolean bearerScheme = parts[0].toLowerAscii() == BEARER_SCHEME.toLowerAscii();
+    if parts.length() == 2 && bearerScheme {
+        return parts[1];
+    }
+    if allowBare && parts.length() == 1 && parts[0].length() > 0 && !bearerScheme {
+        return parts[0];
     }
     return ();
 }

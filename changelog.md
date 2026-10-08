@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-## [0.10.1]
+## [0.10.1] - 2026-10-08
 
 ### Added
 
@@ -15,6 +15,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   `tasks.extendDeadline` take an optional `kind` (`HUMAN_TASK` or `REVIEW_ACTIVITY`) to require
   the id name that kind of task; it defaults to accepting either, so existing callers are
   unaffected. ([#134](https://github.com/ballerina-platform/module-ballerina-workflow/pull/134))
+- `jwtAuthHeader` in `[ballerina.workflow.management.rest]` names the header that carries the
+  JWT, defaulting to the standard `Authorization` header. Set it (e.g. `X-JWT-Assertion`) when a
+  gateway keeps `Authorization` for its own credential and forwards the caller's JWT in another
+  header, as a bare token or `Bearer <token>`. The gateway interceptor then validates that token
+  with the same issuer, audience and JWKS configuration before the caller identity is read from
+  it, and validates basic auth too when `enableBasicAuth = true`, so either credential admits a
+  request; a request presenting an invalid credential is refused. With `enableOAuth = true`,
+  every request must additionally carry the OAuth2 token in `Authorization`. ([#149](https://github.com/ballerina-platform/module-ballerina-workflow/pull/149))
+
+### Changed
+
+- The management API's `jwtIssuer` and `jwtAudience` are optional (`string?`) with `enableJwtAuth = true`:
+  an unset or blank one skips that claim's check, as in `ballerina/jwt`. `jwksUrl` stays required, since
+  without it no token signature is verified.
+  ([#158](https://github.com/ballerina-platform/module-ballerina-workflow/pull/158))
+- `jackson` moves to 2.18.9 and `grpc` to 1.75.0, which clears the CVEs reported against the
+  versions the 0.10.0 native jar carried. ([#143](https://github.com/ballerina-platform/module-ballerina-workflow/pull/143))
+- The exported management OpenAPI spec is titled `Workflow Management API` (was
+  `Ballerina Workflow Management API`). ([#155](https://github.com/ballerina-platform/module-ballerina-workflow/pull/155))
 
 ### Fixed
 

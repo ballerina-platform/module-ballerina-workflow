@@ -302,6 +302,32 @@ function testMissingOrEmptyBearerTokenUsesForwardedIdentity() {
     test:assertEquals(identity, <CallerIdentity>{userId: "gateway-user", roles: []});
 }
 
+// ── Bearer header parsing ────────────────────────────────────────────────────────
+
+@test:Config {groups: ["unit", "auth"]}
+function testTokenOfHeaderValue() {
+    test:assertEquals(tokenOfHeaderValue("Bearer abc.def.ghi", false), "abc.def.ghi");
+    test:assertEquals(tokenOfHeaderValue("bearer abc.def.ghi", false), "abc.def.ghi");
+    test:assertEquals(tokenOfHeaderValue("  Bearer   abc.def.ghi  ", true), "abc.def.ghi");
+    test:assertEquals(tokenOfHeaderValue("abc.def.ghi", true), "abc.def.ghi");
+    test:assertEquals(tokenOfHeaderValue("abc.def.ghi", false), ());
+    test:assertEquals(tokenOfHeaderValue("Basic dXNlcjpwdw==", true), ());
+    test:assertEquals(tokenOfHeaderValue("Bearer a b", true), ());
+    test:assertEquals(tokenOfHeaderValue("Bearer ", true), ());
+    test:assertEquals(tokenOfHeaderValue("Bearer", true), ());
+    test:assertEquals(tokenOfHeaderValue("abc\tdef", true), ());
+    test:assertEquals(tokenOfHeaderValue("   ", true), ());
+}
+
+@test:Config {groups: ["unit", "auth"]}
+function testUsesAuthorizationHeaderIsCaseInsensitive() {
+    test:assertTrue(usesAuthorizationHeader("Authorization"));
+    test:assertTrue(usesAuthorizationHeader("authorization"));
+    test:assertTrue(usesAuthorizationHeader(" AUTHORIZATION "));
+    test:assertFalse(usesAuthorizationHeader("X-JWT-Assertion"));
+    test:assertFalse(usesAuthorizationHeader(""));
+}
+
 // ── Request-context hand-off ─────────────────────────────────────────────────────
 
 @test:Config {groups: ["unit", "auth"]}

@@ -12,7 +12,7 @@
 # stays describable.
 openapi: 3.0.3
 info:
-  title: Ballerina Workflow Management API
+  title: Workflow Management API
   description: >
     Management surface of a workflow integration: definitions, instances (suspend,
     resume, wake, terminate, cancel, reset), human tasks, and review activities.

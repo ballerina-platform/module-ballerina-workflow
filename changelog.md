@@ -16,6 +16,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   the id name that kind of task; it defaults to accepting either, so existing callers are
   unaffected. ([#134](https://github.com/ballerina-platform/module-ballerina-workflow/pull/134))
 
+### Changed
+
+- The exported management OpenAPI spec is titled `Workflow Management API` (was
+  `Ballerina Workflow Management API`). ([#155](https://github.com/ballerina-platform/module-ballerina-workflow/pull/155))
+
 ### Fixed
 
 - A review activity reported `canComplete` and `canAdminister` as `false` to every caller,

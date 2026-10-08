@@ -72,53 +72,53 @@ version = "0.4.0-alpha"
 [[platform.java21.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-api"
-version = "1.68.2"
+version = "1.75.0"
 
 [[platform.java21.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-context"
-version = "1.68.2"
+version = "1.75.0"
 
 [[platform.java21.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-stub"
-version = "1.68.2"
+version = "1.75.0"
 
 [[platform.java21.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-protobuf"
-version = "1.68.2"
+version = "1.75.0"
 
 [[platform.java21.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-protobuf-lite"
-version = "1.68.2"
+version = "1.75.0"
 
 [[platform.java21.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-core"
-version = "1.68.2"
+version = "1.75.0"
 
 [[platform.java21.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-netty-shaded"
-version = "1.68.2"
+version = "1.75.0"
 
 [[platform.java21.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-services"
-version = "1.68.2"
+version = "1.75.0"
 
 [[platform.java21.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-util"
-version = "1.68.2"
+version = "1.75.0"
 
 # gRPC InProcess (required for embedded test server)
 [[platform.java21.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-inprocess"
-version = "1.68.2"
+version = "1.75.0"
 
 # Protobuf dependencies
 [[platform.java21.dependency]]
@@ -141,27 +141,27 @@ version = "2.22.0"
 [[platform.java21.dependency]]
 groupId = "com.fasterxml.jackson.core"
 artifactId = "jackson-core"
-version = "2.15.4"
+version = "2.18.9"
 
 [[platform.java21.dependency]]
 groupId = "com.fasterxml.jackson.core"
 artifactId = "jackson-annotations"
-version = "2.15.4"
+version = "2.18.9"
 
 [[platform.java21.dependency]]
 groupId = "com.fasterxml.jackson.core"
 artifactId = "jackson-databind"
-version = "2.15.4"
+version = "2.18.9"
 
 [[platform.java21.dependency]]
 groupId = "com.fasterxml.jackson.datatype"
 artifactId = "jackson-datatype-jsr310"
-version = "2.15.4"
+version = "2.18.9"
 
 [[platform.java21.dependency]]
 groupId = "com.fasterxml.jackson.datatype"
 artifactId = "jackson-datatype-jdk8"
-version = "2.15.4"
+version = "2.18.9"
 
 # Metrics
 [[platform.java21.dependency]]

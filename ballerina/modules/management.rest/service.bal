@@ -117,8 +117,8 @@ configurable boolean enableBasicAuth = true;
 
 # Enables JWT Bearer token authentication (`Authorization: Bearer <token>`).
 # Tokens are validated against the JWKS endpoint specified by `jwksUrl`.
-# When `true`, `jwtIssuer`, `jwtAudience`, and `jwksUrl` must all be non-empty
-# or the program panics at startup. The token is read from `jwtAuthHeader`.
+# When `true`, `jwksUrl` must be non-empty or the program panics at startup;
+# `jwtIssuer` and `jwtAudience` are optional. The token is read from `jwtAuthHeader`.
 configurable boolean enableJwtAuth = false;
 
 # Name of the HTTP header that carries the JWT. Defaults to the standard
@@ -142,12 +142,12 @@ final string jwtHeaderName = jwtAuthHeader.trim();
 final AuthMode & readonly authMode = authModeOf(enableBasicAuth, enableJwtAuth, jwtHeaderName, enableOAuth);
 
 # Expected issuer (`iss`) claim value for JWT validation.
-# Required when `enableJwtAuth = true`.
-configurable string jwtIssuer = "";
+# Optional: when unset or blank, the `iss` claim is not checked.
+configurable string? jwtIssuer = ();
 
 # Expected audience (`aud`) claim value for JWT validation.
-# Required when `enableJwtAuth = true`.
-configurable string jwtAudience = "";
+# Optional: when unset or blank, the `aud` claim is not checked.
+configurable string? jwtAudience = ();
 
 # JWKS endpoint URL used to fetch public keys for JWT signature verification.
 # Required when `enableJwtAuth = true`.
@@ -194,13 +194,9 @@ isolated function validateManagementApiConfig() {
     }
 
     if enableJwtAuth {
-        if jwtIssuer == "" || jwtAudience == "" || jwksUrl == "" {
-            panic error("workflow.management.rest: JWT auth is enabled (enableJwtAuth = true) " +
-                "but one or more of 'jwtIssuer', 'jwtAudience', 'jwksUrl' are not set.");
-        }
-        if jwtAuthHeader.trim() == "" {
-            panic error("workflow.management.rest: JWT auth is enabled (enableJwtAuth = true) " +
-                "but 'jwtAuthHeader' is blank. Set a header name or leave it at its default.");
+        error? jwtError = jwtConfigError(jwksUrl, jwtAuthHeader);
+        if jwtError is error {
+            panic jwtError;
         }
     }
 
@@ -387,11 +383,43 @@ isolated function buildAuthConfigs() returns http:ListenerAuthConfig[]? {
     return configs.length() > 0 ? configs : ();
 }
 
-isolated function jwtValidatorConfig() returns http:JwtValidatorConfig => {
-    issuer: jwtIssuer,
-    audience: jwtAudience,
-    signatureConfig: {jwksConfig: {url: jwksUrl}}
-};
+# Checks the JWT configurables that must be set when `enableJwtAuth = true`.
+#
+# + url - `jwksUrl`
+# + authHeader - `jwtAuthHeader`
+# + return - An error naming the missing setting, or `()` when the configuration is usable
+isolated function jwtConfigError(string url, string authHeader) returns error? {
+    // Without a JWKS URL no signature is verified, so any well-formed token would pass.
+    if url == "" {
+        return error("workflow.management.rest: JWT auth is enabled (enableJwtAuth = true) " +
+            "but 'jwksUrl' is not set.");
+    }
+    if authHeader.trim() == "" {
+        return error("workflow.management.rest: JWT auth is enabled (enableJwtAuth = true) " +
+            "but 'jwtAuthHeader' is blank. Set a header name or leave it at its default.");
+    }
+    return;
+}
+
+isolated function jwtValidatorConfig() returns http:JwtValidatorConfig =>
+    jwtValidatorConfigOf(jwksUrl, jwtIssuer, jwtAudience);
+
+# Builds the JWT validator configuration; an unset or blank claim is left out so it is not checked.
+#
+# + url - `jwksUrl`
+# + issuer - `jwtIssuer`
+# + audience - `jwtAudience`
+# + return - The validator configuration
+isolated function jwtValidatorConfigOf(string url, string? issuer, string? audience) returns http:JwtValidatorConfig {
+    http:JwtValidatorConfig config = {signatureConfig: {jwksConfig: {url}}};
+    if issuer is string && issuer.trim() != "" {
+        config.issuer = issuer;
+    }
+    if audience is string && audience.trim() != "" {
+        config.audience = audience;
+    }
+    return config;
+}
 
 # Whether a header name is the standard `Authorization` header (names are case-insensitive).
 #

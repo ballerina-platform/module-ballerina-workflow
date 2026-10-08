@@ -72,70 +72,70 @@ version = "0.4.0-alpha"
 [[platform.java25.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-api"
-version = "1.75.0"
+version = "1.84.1"
 
 [[platform.java25.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-context"
-version = "1.75.0"
+version = "1.84.1"
 
 [[platform.java25.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-stub"
-version = "1.75.0"
+version = "1.84.1"
 
 [[platform.java25.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-protobuf"
-version = "1.75.0"
+version = "1.84.1"
 
 [[platform.java25.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-protobuf-lite"
-version = "1.75.0"
+version = "1.84.1"
 
 [[platform.java25.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-core"
-version = "1.75.0"
+version = "1.84.1"
 
 [[platform.java25.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-netty-shaded"
-version = "1.75.0"
+version = "1.84.1"
 
 [[platform.java25.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-services"
-version = "1.75.0"
+version = "1.84.1"
 
 [[platform.java25.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-util"
-version = "1.75.0"
+version = "1.84.1"
 
 # gRPC InProcess (required for embedded test server)
 [[platform.java25.dependency]]
 groupId = "io.grpc"
 artifactId = "grpc-inprocess"
-version = "1.75.0"
+version = "1.84.1"
 
 # Protobuf dependencies
 [[platform.java25.dependency]]
 groupId = "com.google.protobuf"
 artifactId = "protobuf-java"
-version = "3.25.5"
+version = "4.36.2"
 
 [[platform.java25.dependency]]
 groupId = "com.google.protobuf"
 artifactId = "protobuf-java-util"
-version = "3.25.5"
+version = "4.36.2"
 
 # Google proto status (required by gRPC for StatusProto)
 [[platform.java25.dependency]]
 groupId = "com.google.api.grpc"
 artifactId = "proto-google-common-protos"
-version = "2.22.0"
+version = "2.64.1"
 
 # Jackson JSON dependencies
 [[platform.java25.dependency]]
@@ -173,15 +173,15 @@ version = "0.13.0"
 [[platform.java25.dependency]]
 groupId = "com.google.guava"
 artifactId = "guava"
-version = "33.3.1-jre"
+version = "33.6.0-jre"
 
 [[platform.java25.dependency]]
 groupId = "com.google.guava"
 artifactId = "failureaccess"
-version = "1.0.1"
+version = "1.0.3"
 
 # Other dependencies
 [[platform.java25.dependency]]
 groupId = "io.perfmark"
 artifactId = "perfmark-api"
-version = "0.26.0"
+version = "0.27.0"

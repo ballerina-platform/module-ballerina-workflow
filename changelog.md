@@ -4,16 +4,7 @@ This file contains all the notable changes done to the Ballerina Workflow packag
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Changed
-
-- The management API's `jwtIssuer` and `jwtAudience` are optional (`string?`) with `enableJwtAuth = true`:
-  an unset or blank one skips that claim's check, as in `ballerina/jwt`. `jwksUrl` stays required, since
-  without it no token signature is verified.
-  ([#158](https://github.com/ballerina-platform/module-ballerina-workflow/pull/158))
-
-## [1.0.0] - 2026-09-30
+## [1.0.0] - 2026-10-08
 
 ### Added
 
@@ -128,6 +119,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - The exported management OpenAPI spec is titled `Workflow Management API` (was
   `Ballerina Workflow Management API`). ([#155](https://github.com/ballerina-platform/module-ballerina-workflow/pull/155))
 
+- The management API's `jwtIssuer` and `jwtAudience` are optional (`string?`) with `enableJwtAuth = true`:
+  an unset or blank one skips that claim's check, as in `ballerina/jwt`. `jwksUrl` stays required, since
+  without it no token signature is verified.
+  ([#158](https://github.com/ballerina-platform/module-ballerina-workflow/pull/158))
+
 ### Fixed
 
 - The `kind` filter of `listWorkflowInstances` (and the `instances.list` command) no longer needs the
@@ -167,6 +163,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `tasks.reassign` and `tasks.extendDeadline` passed an unrecognized `kind` through unchecked, so
   a value such as `OTHER` skipped the kind guard entirely instead of constraining the id. An
   unsupported `kind` is now refused. ([#136](https://github.com/ballerina-platform/module-ballerina-workflow/pull/136))
+
+- An integration that uses the module no longer prints the JDK 24+ `sun.misc.Unsafe` "terminally deprecated
+  method" warning at startup: gRPC is upgraded to 1.84.1, whose shaded Netty 4.2 avoids `Unsafe`, and protobuf
+  to 4.36.2. ([wso2/product-integrator#2700](https://github.com/wso2/product-integrator/issues/2700),
+  [#160](https://github.com/ballerina-platform/module-ballerina-workflow/pull/160))
 
 ## [0.10.0] - 2026-09-17
 

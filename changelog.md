@@ -30,6 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   an unset or blank one skips that claim's check, as in `ballerina/jwt`. `jwksUrl` stays required, since
   without it no token signature is verified.
   ([#158](https://github.com/ballerina-platform/module-ballerina-workflow/pull/158))
+- `jackson` moves to 2.18.9 and `grpc` to 1.75.0, which clears the CVEs reported against the
+  versions the 0.10.0 native jar carried. ([#143](https://github.com/ballerina-platform/module-ballerina-workflow/pull/143))
 - The exported management OpenAPI spec is titled `Workflow Management API` (was
   `Ballerina Workflow Management API`). ([#155](https://github.com/ballerina-platform/module-ballerina-workflow/pull/155))
 

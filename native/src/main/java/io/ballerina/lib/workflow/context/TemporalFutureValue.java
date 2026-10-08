@@ -119,8 +119,9 @@ public class TemporalFutureValue extends FutureValue {
         // Default group: just this future (single-event workflows)
         this.siblingGroup = new ArrayList<>(Collections.singletonList(this));
 
-        setupPromiseCallback();
+        // Replace first: an already-completed promise runs the callback inline, into whichever future is installed.
         replaceCompletableFuture();
+        setupPromiseCallback();
     }
 
     private static Strand createStrand(Scheduler scheduler, String signalName) {

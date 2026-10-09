@@ -113,6 +113,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - The module builds on Ballerina Swan Lake Update 14 (`2201.14.0`) and Java 25; the native
   libraries and the compiler plugin are compiled for that platform. ([#137](https://github.com/ballerina-platform/module-ballerina-workflow/pull/137))
 
+- The Ballerina library dependencies move to the versions released on Central for Update 14 in
+  place of the timestamped pre-release builds: `http` 2.18.0, `crypto` 2.13.0, `observe` 1.8.0,
+  `data.xmldata` 1.7.0, `data.yaml` 1.0.0, `file` 1.14.0, `email` 2.14.1, `jwt` 2.15.2, `log` 2.17.1,
+  `io` 1.8.2, `os` 1.10.2, and the latest patches of the rest. ([#163](https://github.com/ballerina-platform/module-ballerina-workflow/pull/163))
+
 - `jackson` moves to 2.18.9 and `grpc` to 1.75.0, which clears the CVEs reported against the
   versions the 0.10.0 native jar carried. ([#143](https://github.com/ballerina-platform/module-ballerina-workflow/pull/143))
 

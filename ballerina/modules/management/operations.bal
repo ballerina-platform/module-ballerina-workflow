@@ -274,30 +274,16 @@ isolated function opListHumanTasks(string? status, string? parentWorkflowId, str
         string? taskName, string? userRole, int 'limit, string? pageToken,
         string? startTimeFrom, string? startTimeTo, string? closeTimeFrom, string? closeTimeTo,
         string? taskQueue, [string, string...]? callerRoles, string? userId) returns json|Error {
-    HumanTaskSummary[]|error all = listAllHumanTasks(status,
-            startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
-    if all is error {
-        return executionFailed("Failed to list human tasks: " + all.message());
+    TaskRowQuery query = {reviews: false, status, startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue};
+    TaskRowFilter filter = {parentWorkflowId, parentWorkflowType, taskName, userRole, callerRoles, userId};
+    [(HumanTaskSummary|ReviewActivitySummary)[], string?]|error read =
+        readTaskRows(query, filter, clampLimit('limit, maxPageSize), pageToken);
+    if read is error {
+        return executionFailed("Failed to list human tasks: " + read.message());
     }
-    // Apply lambda-safe filters first
-    HumanTaskSummary[] preFiltered = all
-        .filter(t => parentWorkflowId is () || t.parentWorkflowId == parentWorkflowId)
-        .filter(t => parentWorkflowType is () || t.parentWorkflowType == parentWorkflowType)
-        .filter(t => taskName is () || t.taskName == taskName)
-        .filter(t => userRole is () || t.userRoles.some(r => r == userRole));
-    // Visibility in a foreach (avoids the lambda isolation constraint on computed local
-    // variables in this Ballerina version). A caller only ever sees tasks they may act on,
-    // so every listed task is one they can complete.
-    HumanTaskSummary[] enriched = [];
-    foreach HumanTaskSummary t in preFiltered {
-        if !visible(t, callerRoles, userId) {
-            continue;
-        }
-        t.canComplete = true;
-        t.canAdminister = administers(t, callerRoles, userId);
-        enriched.push(t);
-    }
-    return paginateHumanTasks(enriched, clampLimit('limit, maxPageSize), pageToken).toJson();
+    HumanTaskSummary[] items = from var row in read[0] where row is HumanTaskSummary select row;
+    HumanTaskPage page = {items, nextPageToken: read[1], hasMore: read[1] is string};
+    return page.toJson();
 }
 
 // ── The unified work queue ──
@@ -314,60 +300,145 @@ isolated function opListWorkItems(string? kinds, string? status, string? parentW
         returns json|Error {
     boolean wantTasks = kinds is () || kinds.includes("HUMAN_TASK");
     boolean wantReviews = kinds is () || kinds.includes("REVIEW_ACTIVITY");
-    WorkItemSummary[] merged = [];
-
-    if wantTasks {
-        HumanTaskSummary[]|error tasks = listAllHumanTasks(status,
-                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
-        if tasks is error {
-            return executionFailed("Failed to list human tasks: " + tasks.message());
-        }
-        foreach HumanTaskSummary t in tasks {
-            if parentWorkflowId is string && t.parentWorkflowId != parentWorkflowId {
-                continue;
-            }
-            if parentWorkflowType is string && t.parentWorkflowType != parentWorkflowType {
-                continue;
-            }
-            boolean mine = visible(t, callerRoles, userId);
-            if !all && !mine {
-                continue;
-            }
-            WorkItemSummary item = workItemOf(t, ());
-            item.canComplete = mine;
-            item.canAdminister = administers(t, callerRoles, userId);
-            merged.push(item);
-        }
+    if !wantTasks && !wantReviews {
+        WorkItemPage empty = {items: [], nextPageToken: (), hasMore: false};
+        return empty.toJson();
     }
-
-    if wantReviews {
-        ReviewActivitySummary[]|error reviews = listAllReviewActivities(status,
-                startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
-        if reviews is error {
-            return executionFailed("Failed to list review activities: " + reviews.message());
-        }
-        foreach ReviewActivitySummary t in reviews {
-            if parentWorkflowId is string && t.parentWorkflowId != parentWorkflowId {
-                continue;
-            }
-            // Older reviews recorded no parent type; their qualified task name carries it.
-            string? reviewParentType = t.parentWorkflowType ?: parentTypeOfQualifiedName(t.taskName);
-            if parentWorkflowType is string && reviewParentType != parentWorkflowType {
-                continue;
-            }
-            boolean mine = canAccessReviewActivity(t, callerRoles, userId);
-            if !all && !mine {
-                continue;
-            }
-            WorkItemSummary item = workItemOf(t, t.trigger);
-            item.parentWorkflowType = reviewParentType;
-            item.canComplete = mine;
-            item.canAdminister = administers(t, callerRoles, userId);
-            merged.push(item);
-        }
+    TaskRowQuery query = {humanTasks: wantTasks, reviews: wantReviews, status, startTimeFrom, startTimeTo,
+        closeTimeFrom, closeTimeTo, taskQueue};
+    TaskRowFilter filter = {parentWorkflowId, parentWorkflowType, callerRoles, userId, all};
+    [(HumanTaskSummary|ReviewActivitySummary)[], string?]|error read =
+        readTaskRows(query, filter, clampLimit('limit, maxPageSize), pageToken);
+    if read is error {
+        return executionFailed("Failed to list work items: " + read.message());
     }
+    WorkItemSummary[] items = [];
+    foreach HumanTaskSummary|ReviewActivitySummary row in read[0] {
+        WorkItemSummary item = workItemOf(row, row is ReviewActivitySummary ? row.trigger : ());
+        item.parentWorkflowType = parentTypeOf(row);
+        item.canComplete = row.canComplete;
+        item.canAdminister = row.canAdminister;
+        items.push(item);
+    }
+    WorkItemPage page = {items, nextPageToken: read[1], hasMore: read[1] is string};
+    return page.toJson();
+}
 
-    return paginateWorkItems(merged, clampLimit('limit, maxPageSize), pageToken).toJson();
+// ── Reading task rows ──
+//
+// Temporal pages the rows; the filters it cannot query (memo fields and the caller's access) run here, row by row,
+// so a page reads only as far as it needs. Rows come in the server's order.
+
+# The most server reads one listing page may spend. A page whose filters keep few rows comes back
+# short, with a token, instead of reading the whole task history to fill it.
+const MAX_TASK_ROW_READS = 5;
+
+// The server-side part of a task listing.
+type TaskRowQuery record {|
+    boolean humanTasks = true;
+    boolean reviews = true;
+    string? status = ();
+    string? startTimeFrom = ();
+    string? startTimeTo = ();
+    string? closeTimeFrom = ();
+    string? closeTimeTo = ();
+    string? taskQueue = ();
+|};
+
+// The part Temporal cannot query. `all` keeps rows the caller may not act on, flagged `canComplete: false`.
+type TaskRowFilter record {|
+    string? parentWorkflowId = ();
+    string? parentWorkflowType = ();
+    string? taskName = ();
+    string? userRole = ();
+    [string, string...]? callerRoles = ();
+    string? userId = ();
+    boolean all = false;
+|};
+
+// Up to `limit` rows that pass the filter, and the token to resume from, or `()` once the listing is exhausted.
+isolated function readTaskRows(TaskRowQuery query, TaskRowFilter filter, int 'limit, string? pageToken)
+        returns [(HumanTaskSummary|ReviewActivitySummary)[], string?]|error {
+    [int, string?] [skip, serverToken] = decodeTaskRowToken(pageToken);
+    (HumanTaskSummary|ReviewActivitySummary)[] kept = [];
+    int reads = 0;
+    while true {
+        TaskRowsPage page = check listTaskRows(query.humanTasks, query.reviews, query.status,
+                query.startTimeFrom, query.startTimeTo, query.closeTimeFrom, query.closeTimeTo, query.taskQueue,
+                'limit, serverToken);
+        reads += 1;
+        int next = skip;
+        while next < page.rows.length() && kept.length() < 'limit {
+            HumanTaskSummary|ReviewActivitySummary row = page.rows[next];
+            next += 1;
+            if acceptTaskRow(row, filter) {
+                kept.push(row);
+            }
+        }
+        if next < page.rows.length() {
+            return [kept, encodeTaskRowToken(next, serverToken)];
+        }
+        string? nextServerToken = page.nextPageToken;
+        if nextServerToken is () {
+            return [kept, ()];
+        }
+        if kept.length() >= 'limit || reads >= MAX_TASK_ROW_READS {
+            return [kept, encodeTaskRowToken(0, nextServerToken)];
+        }
+        skip = 0;
+        serverToken = nextServerToken;
+    }
+}
+
+// Whether a row passes the filter; a kept row gets the caller's `canComplete` and `canAdminister`.
+isolated function acceptTaskRow(HumanTaskSummary|ReviewActivitySummary row, TaskRowFilter filter) returns boolean {
+    if filter.parentWorkflowId is string && row.parentWorkflowId != filter.parentWorkflowId {
+        return false;
+    }
+    if filter.parentWorkflowType is string && parentTypeOf(row) != filter.parentWorkflowType {
+        return false;
+    }
+    if filter.taskName is string && row.taskName != filter.taskName {
+        return false;
+    }
+    string? userRole = filter.userRole;
+    if userRole is string && row.userRoles.indexOf(userRole) is () {
+        return false;
+    }
+    boolean mine = row is HumanTaskSummary ? visible(row, filter.callerRoles, filter.userId)
+        : canAccessReviewActivity(row, filter.callerRoles, filter.userId);
+    if !filter.all && !mine {
+        return false;
+    }
+    row.canComplete = mine;
+    row.canAdminister = administers(row, filter.callerRoles, filter.userId);
+    return true;
+}
+
+// Older reviews recorded no parent type; their qualified task name carries it.
+isolated function parentTypeOf(HumanTaskSummary|ReviewActivitySummary row) returns string? =>
+    row is ReviewActivitySummary ? row.parentWorkflowType ?: parentTypeOfQualifiedName(row.taskName)
+        : row.parentWorkflowType;
+
+// `<rows already taken from the server page>~<server token>`; the server token is empty on the first page.
+isolated function encodeTaskRowToken(int skip, string? serverToken) returns string =>
+    skip.toString() + "~" + (serverToken ?: "");
+
+// An unreadable token, such as one from before 1.0.1, starts the listing over rather than failing it.
+isolated function decodeTaskRowToken(string? token) returns [int, string?] {
+    if token is () {
+        return [0, ()];
+    }
+    int? separator = token.indexOf("~");
+    if separator is () {
+        return [0, ()];
+    }
+    int|error skip = int:fromString(token.substring(0, separator));
+    if skip is error || skip < 0 {
+        return [0, ()];
+    }
+    string serverToken = token.substring(separator + 1);
+    return [skip, serverToken == "" ? () : serverToken];
 }
 
 # The workflow-definition part of a qualified task name (`fulfilOrder.restockApproval` →
@@ -409,35 +480,6 @@ isolated function workItemOf(HumanTaskSummary|ReviewActivitySummary t, string? t
     completedAs: t.completedAs,
     canComplete: true
 };
-
-isolated function paginateWorkItems(WorkItemSummary[] items, int 'limit, string? pageToken)
-        returns WorkItemPage {
-    // The same deterministic (startTime, taskId) cursor the per-kind pages use — one stream
-    // across both kinds, stable across calls.
-    WorkItemSummary[] sorted = from WorkItemSummary t in items
-        order by t.startTime ascending, t.taskId ascending select t;
-    WorkItemSummary[] remaining = sorted;
-    if pageToken is string {
-        [string, string] cursor = decodeCursorToken(pageToken);
-        string cursorTime = cursor[0];
-        string cursorId = cursor[1];
-        if cursorTime != "" {
-            remaining = from WorkItemSummary t in sorted
-                where t.startTime > cursorTime
-                    || (t.startTime == cursorTime && t.taskId > cursorId)
-                select t;
-        }
-    }
-    int count = remaining.length();
-    boolean hasMore = count > 'limit;
-    WorkItemSummary[] pageItems = hasMore ? remaining.slice(0, 'limit) : remaining;
-    string? nextToken = ();
-    if hasMore {
-        WorkItemSummary last = pageItems[pageItems.length() - 1];
-        nextToken = encodeCursorToken(last.startTime, last.taskId);
-    }
-    return {items: pageItems, nextPageToken: nextToken, hasMore: hasMore};
-}
 
 # `all` counts every pending task regardless of the caller — the figure an administrator's
 # dashboard shows; without it only the tasks the caller may complete are counted.
@@ -574,25 +616,16 @@ isolated function opListReviewActivities(string? status, string? parentWorkflowI
         int 'limit, string? pageToken, string? startTimeFrom, string? startTimeTo,
         string? closeTimeFrom, string? closeTimeTo, string? taskQueue, [string, string...]? callerRoles,
         string? userId) returns json|Error {
-    ReviewActivitySummary[]|error all = listAllReviewActivities(status,
-            startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue);
-    if all is error {
-        return executionFailed("Failed to list review activities: " + all.message());
+    TaskRowQuery query = {humanTasks: false, status, startTimeFrom, startTimeTo, closeTimeFrom, closeTimeTo, taskQueue};
+    TaskRowFilter filter = {parentWorkflowId, taskName, callerRoles, userId};
+    [(HumanTaskSummary|ReviewActivitySummary)[], string?]|error read =
+        readTaskRows(query, filter, clampLimit('limit, maxPageSize), pageToken);
+    if read is error {
+        return executionFailed("Failed to list review activities: " + read.message());
     }
-    ReviewActivitySummary[] preFiltered = all
-        .filter(t => parentWorkflowId is () || t.parentWorkflowId == parentWorkflowId)
-        .filter(t => taskName is () || t.taskName == taskName);
-    // Role visibility in a foreach (avoids the lambda isolation constraint on
-    // computed local variables in this Ballerina version — see the human-task op).
-    ReviewActivitySummary[] filtered = [];
-    foreach ReviewActivitySummary t in preFiltered {
-        if canAccessReviewActivity(t, callerRoles, userId) {
-            t.canComplete = true;
-            t.canAdminister = administers(t, callerRoles, userId);
-            filtered.push(t);
-        }
-    }
-    return paginateReviewActivities(filtered, clampLimit('limit, maxPageSize), pageToken).toJson();
+    ReviewActivitySummary[] items = from var row in read[0] where row is ReviewActivitySummary select row;
+    ReviewActivityPage page = {items, nextPageToken: read[1], hasMore: read[1] is string};
+    return page.toJson();
 }
 
 isolated function opGetReviewActivity(string taskId, [string, string...]? callerRoles, string? userId)
@@ -1205,73 +1238,4 @@ isolated function eligible(Assignment task, [string, string...]? callerRoles, st
         }
     }
     return userId is string && task.users.indexOf(userId) != ();
-}
-
-isolated function paginateHumanTasks(HumanTaskSummary[] items, int 'limit, string? pageToken)
-        returns HumanTaskPage {
-    // Sort by (startTime asc, taskId asc) for a deterministic, stable order.
-    HumanTaskSummary[] sorted = from HumanTaskSummary t in items
-        order by t.startTime ascending, t.taskId ascending select t;
-    // Seek past the cursor item so page N+1 starts after the last item on page N.
-    HumanTaskSummary[] remaining = sorted;
-    if pageToken is string {
-        [string, string] cursor = decodeCursorToken(pageToken);
-        string cursorTime = cursor[0];
-        string cursorId = cursor[1];
-        if cursorTime != "" {
-            remaining = from HumanTaskSummary t in sorted
-                where t.startTime > cursorTime
-                    || (t.startTime == cursorTime && t.taskId > cursorId)
-                select t;
-        }
-    }
-    int count = remaining.length();
-    boolean hasMore = count > 'limit;
-    HumanTaskSummary[] pageItems = hasMore ? remaining.slice(0, 'limit) : remaining;
-    string? nextToken = ();
-    if hasMore {
-        HumanTaskSummary last = pageItems[pageItems.length() - 1];
-        nextToken = encodeCursorToken(last.startTime, last.taskId);
-    }
-    return {items: pageItems, nextPageToken: nextToken, hasMore: hasMore};
-}
-
-isolated function paginateReviewActivities(ReviewActivitySummary[] items, int 'limit, string? pageToken)
-        returns ReviewActivityPage {
-    ReviewActivitySummary[] sorted = from ReviewActivitySummary t in items
-        order by t.startTime ascending, t.taskId ascending select t;
-    ReviewActivitySummary[] remaining = sorted;
-    if pageToken is string {
-        [string, string] cursor = decodeCursorToken(pageToken);
-        string cursorTime = cursor[0];
-        string cursorId = cursor[1];
-        if cursorTime != "" {
-            remaining = from ReviewActivitySummary t in sorted
-                where t.startTime > cursorTime
-                    || (t.startTime == cursorTime && t.taskId > cursorId)
-                select t;
-        }
-    }
-    int count = remaining.length();
-    boolean hasMore = count > 'limit;
-    ReviewActivitySummary[] pageItems = hasMore ? remaining.slice(0, 'limit) : remaining;
-    string? nextToken = ();
-    if hasMore {
-        ReviewActivitySummary last = pageItems[pageItems.length() - 1];
-        nextToken = encodeCursorToken(last.startTime, last.taskId);
-    }
-    return {items: pageItems, nextPageToken: nextToken, hasMore: hasMore};
-}
-
-// Cursor format: "<ISO-8601 startTime>~<taskId>" — split on the FIRST "~" so a taskId
-// that contains "~" (e.g., when a parent workflow ID has one) is still decoded correctly.
-isolated function encodeCursorToken(string startTime, string taskId) returns string =>
-    startTime + "~" + taskId;
-
-isolated function decodeCursorToken(string token) returns [string, string] {
-    int? sep = token.indexOf("~");
-    if sep is int {
-        return [token.substring(0, sep), token.substring(sep + 1)];
-    }
-    return ["", ""];
 }

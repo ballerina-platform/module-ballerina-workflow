@@ -41,6 +41,7 @@ import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
 import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.creators.TypeCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
+import io.ballerina.runtime.api.types.ArrayType;
 import io.ballerina.runtime.api.types.FunctionType;
 import io.ballerina.runtime.api.types.IntersectionType;
 import io.ballerina.runtime.api.types.Parameter;
@@ -93,6 +94,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 
 /**
  * Native implementations for the {@code workflow.management} submodule.
@@ -1408,7 +1410,72 @@ public final class ManagementNative {
             return result;
 
         } catch (Exception e) {
-            return ErrorCreator.createError(StringUtils.fromString("Failed to list retry tasks: " + e.getMessage()));
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "Failed to list review activities: " + e.getMessage()));
+        }
+    }
+
+    // One server page of human tasks and/or review activities, in the server's order, for the listings to filter.
+    // The token is the server's own (Base64); the caller tracks how far into a page it has read.
+    public static Object listTaskRows(boolean humanTasks, boolean reviews, Object status, Object startTimeFrom,
+                                      Object startTimeTo, Object closeTimeFrom, Object closeTimeTo,
+                                      Object taskQueue, long pageSize, Object pageToken) {
+        try {
+            WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
+            if (client == null) {
+                return ErrorCreator.createError(StringUtils.fromString(ERR_CLIENT_NOT_INIT));
+            }
+
+            String statusFilter = status instanceof BString bs ? bs.getValue() : null;
+            List<String> clauses = new ArrayList<>();
+            addTaskStatusClause(clauses, statusFilter);
+            addTimeClause(clauses, startTimeFrom, "StartTime", ">=");
+            addTimeClause(clauses, startTimeTo, "StartTime", "<=");
+            addTimeClause(clauses, closeTimeFrom, "CloseTime", ">=");
+            addTimeClause(clauses, closeTimeTo, "CloseTime", "<=");
+            addTaskQueueClause(clauses, taskQueue);
+            String humanTaskClause = "WorkflowType STARTS_WITH '" + WorkflowWorkerNative.HUMANTASK_TYPE_PREFIX + "'";
+            if (humanTasks && reviews) {
+                clauses.add("(" + humanTaskClause + " OR " + REVIEW_ACTIVITY_TYPE_CLAUSE + ")");
+            } else {
+                clauses.add(humanTasks ? humanTaskClause : REVIEW_ACTIVITY_TYPE_CLAUSE);
+            }
+            String query = String.join(" AND ", clauses);
+            Predicate<String> wanted = type -> (humanTasks && isHumanTaskType(type))
+                    || (reviews && isReviewActivityType(type));
+            VisibilityCompat.Filter filter = new VisibilityCompat.Filter()
+                    .statuses(taskStatusesOf(statusFilter))
+                    .typeTest(wanted)
+                    .taskQueue(taskQueue)
+                    .startTime(startTimeFrom, startTimeTo)
+                    .closeTime(closeTimeFrom, closeTimeTo);
+
+            ByteString fetchToken = ByteString.EMPTY;
+            if (pageToken instanceof BString pt && !pt.getValue().isEmpty()) {
+                fetchToken = ByteString.copyFrom(Base64.getDecoder().decode(pt.getValue()));
+            }
+            VisibilityCompat.Page page = VisibilityCompat.fetchPage(client, query, filter,
+                    (int) Math.max(1, Math.min(pageSize, 100)), fetchToken, GET_INFO_DEADLINE_SECONDS);
+
+            BMap<BString, Object> result = ValueCreator.createRecordValue(ModuleUtils.getManagementModule(),
+                                                                          "TaskRowsPage");
+            ArrayType rowsType = (ArrayType) ((RecordType) result.getType()).getFields().get("rows").getFieldType();
+            BArray rows = ValueCreator.createArrayValue(rowsType);
+            for (WorkflowExecutionInfo wfInfo : page.executions()) {
+                String type = wfInfo.getType().getName();
+                if (humanTasks && isHumanTaskType(type)) {
+                    rows.append(toHumanTaskSummaryRecord(client, wfInfo));
+                } else if (reviews && isReviewActivityType(type)) {
+                    rows.append(toReviewActivitySummaryRecord(client, wfInfo));
+                }
+            }
+            result.put(StringUtils.fromString("rows"), rows);
+            ByteString next = page.nextPageToken();
+            result.put(StringUtils.fromString("nextPageToken"), next.isEmpty() ? null
+                    : StringUtils.fromString(Base64.getEncoder().encodeToString(next.toByteArray())));
+            return result;
+        } catch (Exception e) {
+            return ErrorCreator.createError(StringUtils.fromString(String.valueOf(e.getMessage())));
         }
     }
 

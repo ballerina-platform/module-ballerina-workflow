@@ -16,45 +16,21 @@
 
 import ballerina/test;
 
-// ── Cursor token encode / decode ──────────────────────────────────────────────
+// ── Task row token ────────────────────────────────────────────────────────────
 
 @test:Config {groups: ["unit"]}
-function testEncodeCursorToken() {
-    string token = encodeCursorToken("2026-06-01T10:00:00Z", "humantask-wf-task-abc");
-    test:assertEquals(token, "2026-06-01T10:00:00Z~humantask-wf-task-abc");
+function testTaskRowTokenRoundTrips() {
+    test:assertEquals(decodeTaskRowToken(encodeTaskRowToken(3, "c2VydmVyLXRva2Vu")), [3, "c2VydmVyLXRva2Vu"]);
+    test:assertEquals(decodeTaskRowToken(encodeTaskRowToken(2, ())), [2, ()], "a part-read first page has no server token");
+    test:assertEquals(decodeTaskRowToken(()), [0, ()]);
 }
 
 @test:Config {groups: ["unit"]}
-function testDecodeCursorToken() {
-    [string, string] cursor = decodeCursorToken("2026-06-01T10:00:00Z~humantask-wf-task-abc");
-    test:assertEquals(cursor[0], "2026-06-01T10:00:00Z");
-    test:assertEquals(cursor[1], "humantask-wf-task-abc");
-}
-
-@test:Config {groups: ["unit"]}
-function testDecodeCursorTokenNoTilde() {
-    // Old numeric offset tokens (before cursor-based pagination) → treat as no cursor
-    [string, string] cursor = decodeCursorToken("42");
-    test:assertEquals(cursor[0], "", "No tilde should yield empty cursorTime");
-    test:assertEquals(cursor[1], "", "No tilde should yield empty cursorId");
-}
-
-@test:Config {groups: ["unit"]}
-function testDecodeCursorTokenEmptyString() {
-    [string, string] cursor = decodeCursorToken("");
-    test:assertEquals(cursor[0], "");
-    test:assertEquals(cursor[1], "");
-}
-
-@test:Config {groups: ["unit"]}
-function testDecodeCursorTokenTaskIdWithTilde() {
-    // taskId itself contains a tilde (e.g. parent workflow ID has ~).
-    // encode/decode must round-trip correctly by splitting on the FIRST tilde.
-    string taskId = "humantask-my~workflow-taskname-uuid";
-    string token = encodeCursorToken("2026-06-01T10:00:00Z", taskId);
-    [string, string] cursor = decodeCursorToken(token);
-    test:assertEquals(cursor[0], "2026-06-01T10:00:00Z");
-    test:assertEquals(cursor[1], taskId, "Full taskId including embedded tilde should round-trip");
+function testUnreadableTaskRowTokenStartsOver() {
+    test:assertEquals(decodeTaskRowToken("2026-06-01T10:00:00Z~humantask-wf-task-abc"), [0, ()],
+        "a cursor from before 1.0.1 starts the listing over");
+    test:assertEquals(decodeTaskRowToken("42"), [0, ()]);
+    test:assertEquals(decodeTaskRowToken("-1~abc"), [0, ()]);
 }
 
 // ── eligible ──────────────────────────────────────────────────────────────────
@@ -107,162 +83,47 @@ function testEligibleOpenAudience() {
     test:assertFalse(eligible(open, ["auditor"], "bob"));
 }
 
-// ── paginateHumanTasks ────────────────────────────────────────────────────────
+// ── acceptTaskRow ─────────────────────────────────────────────────────────────
 
-// Helper creates a minimal HumanTaskSummary for test data.
 function mkHumanTask(string taskId, string startTime) returns HumanTaskSummary =>
     {kind: "HUMAN_TASK", taskId, taskName: "review", parentWorkflowId: "parent", parentWorkflowType: (),
      status: "PENDING", startTime, closeTime: (), userRoles: ["admin"]};
 
-@test:Config {groups: ["unit"]}
-function testPaginateHumanTasksEmpty() {
-    HumanTaskPage page = paginateHumanTasks([], 10, ());
-    test:assertEquals(page.items.length(), 0);
-    test:assertTrue(page.nextPageToken is ());
-    test:assertFalse(page.hasMore);
-}
-
-@test:Config {groups: ["unit"]}
-function testPaginateHumanTasksAllOnOnePage() {
-    HumanTaskSummary[] items = [
-        mkHumanTask("task-b", "2026-06-01T11:00:00Z"),
-        mkHumanTask("task-a", "2026-06-01T10:00:00Z")
-    ];
-    HumanTaskPage page = paginateHumanTasks(items, 10, ());
-    test:assertEquals(page.items.length(), 2, "Both items should be on one page");
-    test:assertFalse(page.hasMore);
-    test:assertTrue(page.nextPageToken is ());
-    // Sorted ascending by startTime
-    test:assertEquals(page.items[0].taskId, "task-a");
-    test:assertEquals(page.items[1].taskId, "task-b");
-}
-
-@test:Config {groups: ["unit"]}
-function testPaginateHumanTasksFirstPageHasMore() {
-    HumanTaskSummary[] items = [
-        mkHumanTask("task-a", "2026-06-01T10:00:00Z"),
-        mkHumanTask("task-b", "2026-06-01T11:00:00Z"),
-        mkHumanTask("task-c", "2026-06-01T12:00:00Z")
-    ];
-    HumanTaskPage page = paginateHumanTasks(items, 2, ());
-    test:assertEquals(page.items.length(), 2);
-    test:assertTrue(page.hasMore);
-    test:assertFalse(page.nextPageToken is ());
-    test:assertEquals(page.items[0].taskId, "task-a");
-    test:assertEquals(page.items[1].taskId, "task-b");
-}
-
-@test:Config {groups: ["unit"]}
-function testPaginateHumanTasksSecondPageViaToken() {
-    HumanTaskSummary[] items = [
-        mkHumanTask("task-a", "2026-06-01T10:00:00Z"),
-        mkHumanTask("task-b", "2026-06-01T11:00:00Z"),
-        mkHumanTask("task-c", "2026-06-01T12:00:00Z")
-    ];
-    HumanTaskPage page1 = paginateHumanTasks(items, 2, ());
-    HumanTaskPage page2 = paginateHumanTasks(items, 2, page1.nextPageToken);
-    test:assertEquals(page2.items.length(), 1, "Second page should have the remaining item");
-    test:assertFalse(page2.hasMore);
-    test:assertEquals(page2.items[0].taskId, "task-c");
-}
-
-@test:Config {groups: ["unit"]}
-function testPaginateHumanTasksTiebreakByTaskId() {
-    // Items with identical startTime are ordered lexicographically by taskId
-    HumanTaskSummary[] items = [
-        mkHumanTask("task-z", "2026-06-01T10:00:00Z"),
-        mkHumanTask("task-a", "2026-06-01T10:00:00Z"),
-        mkHumanTask("task-m", "2026-06-01T10:00:00Z")
-    ];
-    HumanTaskPage page = paginateHumanTasks(items, 10, ());
-    test:assertEquals(page.items[0].taskId, "task-a");
-    test:assertEquals(page.items[1].taskId, "task-m");
-    test:assertEquals(page.items[2].taskId, "task-z");
-}
-
-@test:Config {groups: ["unit"]}
-function testPaginateHumanTasksCursorStabilityOnNewItem() {
-    // A new (later) task inserted between page 1 and page 2 requests must NOT
-    // cause page-1 items to re-appear on page 2.
-    HumanTaskSummary[] originalItems = [
-        mkHumanTask("task-a", "2026-06-01T10:00:00Z"),
-        mkHumanTask("task-b", "2026-06-01T11:00:00Z"),
-        mkHumanTask("task-c", "2026-06-01T12:00:00Z")
-    ];
-    HumanTaskPage page1 = paginateHumanTasks(originalItems, 2, ());
-    string? cursor = page1.nextPageToken;
-
-    // Simulate a later task arriving before the next request
-    HumanTaskSummary[] updatedItems = [
-        mkHumanTask("task-a", "2026-06-01T10:00:00Z"),
-        mkHumanTask("task-b", "2026-06-01T11:00:00Z"),
-        mkHumanTask("task-c", "2026-06-01T12:00:00Z"),
-        mkHumanTask("task-d", "2026-06-01T13:00:00Z")
-    ];
-    HumanTaskPage page2 = paginateHumanTasks(updatedItems, 2, cursor);
-    // Page 2 must start after task-b (the last item on page 1)
-    HumanTaskSummary[] page1Dupes = page2.items.filter(t => t.taskId == "task-a" || t.taskId == "task-b");
-    test:assertEquals(page1Dupes.length(), 0, "Page-1 items must not re-appear on page 2");
-    test:assertEquals(page2.items[0].taskId, "task-c");
-}
-
-@test:Config {groups: ["unit"]}
-function testPaginateHumanTasksOldOffsetTokenRestartsFromBeginning() {
-    // An old numeric offset token (e.g. "20") cannot be decoded as a cursor.
-    // Pagination must restart from the beginning rather than crashing.
-    HumanTaskSummary[] items = [
-        mkHumanTask("task-a", "2026-06-01T10:00:00Z"),
-        mkHumanTask("task-b", "2026-06-01T11:00:00Z")
-    ];
-    HumanTaskPage page = paginateHumanTasks(items, 10, "20");
-    test:assertEquals(page.items.length(), 2, "Unrecognised token should restart from beginning");
-    test:assertEquals(page.items[0].taskId, "task-a");
-}
-
-// ── paginateReviewActivities ────────────────────────────────────────────────────────
-
 function mkReviewActivity(string taskId, string startTime) returns ReviewActivitySummary =>
-    {kind: "REVIEW_ACTIVITY", taskId, taskName: "retryOrder", activityName: "processOrder",
+    {kind: "REVIEW_ACTIVITY", taskId, taskName: "orders.retryOrder", activityName: "processOrder",
      parentWorkflowId: "parent", trigger: "ON_FAILURE",
      title: "Review failed activity: processOrder", status: "PENDING", startTime, closeTime: (),
      userRoles: []};
 
 @test:Config {groups: ["unit"]}
-function testPaginateReviewActivitiesEmpty() {
-    ReviewActivityPage page = paginateReviewActivities([], 10, ());
-    test:assertEquals(page.items.length(), 0);
-    test:assertTrue(page.nextPageToken is ());
-    test:assertFalse(page.hasMore);
+function testAcceptTaskRowKeepsOnlyWhatTheCallerMayAct() {
+    HumanTaskSummary task = mkHumanTask("t1", "2026-06-01T10:00:00Z");
+    test:assertTrue(acceptTaskRow(task, {callerRoles: ["admin"]}));
+    test:assertTrue(task.canComplete);
+    test:assertFalse(acceptTaskRow(mkHumanTask("t2", "2026-06-01T10:00:00Z"), {callerRoles: ["viewer"]}));
+
+    HumanTaskSummary seenByAll = mkHumanTask("t3", "2026-06-01T10:00:00Z");
+    test:assertTrue(acceptTaskRow(seenByAll, {callerRoles: ["viewer"], all: true}),
+        "`all` keeps a row the caller may not act on");
+    test:assertFalse(seenByAll.canComplete);
 }
 
 @test:Config {groups: ["unit"]}
-function testPaginateReviewActivitiesFirstAndSecondPage() {
-    ReviewActivitySummary[] items = [
-        mkReviewActivity("retry-b", "2026-06-01T11:00:00Z"),
-        mkReviewActivity("retry-c", "2026-06-01T12:00:00Z"),
-        mkReviewActivity("retry-a", "2026-06-01T10:00:00Z")
-    ];
-    ReviewActivityPage page1 = paginateReviewActivities(items, 2, ());
-    test:assertEquals(page1.items.length(), 2);
-    test:assertTrue(page1.hasMore);
-    test:assertEquals(page1.items[0].taskId, "retry-a");
-    test:assertEquals(page1.items[1].taskId, "retry-b");
-
-    ReviewActivityPage page2 = paginateReviewActivities(items, 2, page1.nextPageToken);
-    test:assertEquals(page2.items.length(), 1);
-    test:assertFalse(page2.hasMore);
-    test:assertEquals(page2.items[0].taskId, "retry-c");
+function testAcceptTaskRowAppliesTheMemoFilters() {
+    string at = "2026-06-01T10:00:00Z";
+    test:assertFalse(acceptTaskRow(mkHumanTask("t1", at), {callerRoles: ["admin"], parentWorkflowId: "other"}));
+    test:assertFalse(acceptTaskRow(mkHumanTask("t2", at), {callerRoles: ["admin"], taskName: "approve"}));
+    test:assertFalse(acceptTaskRow(mkHumanTask("t3", at), {callerRoles: ["admin"], userRole: "approver"}));
+    test:assertTrue(acceptTaskRow(mkHumanTask("t4", at), {callerRoles: ["admin"], userRole: "admin"}));
 }
 
 @test:Config {groups: ["unit"]}
-function testPaginateReviewActivitiesTiebreakByTaskId() {
-    ReviewActivitySummary[] items = [
-        mkReviewActivity("retry-z", "2026-06-02T10:00:00Z"),
-        mkReviewActivity("retry-a", "2026-06-02T10:00:00Z")
-    ];
-    ReviewActivityPage page = paginateReviewActivities(items, 10, ());
-    test:assertEquals(page.items[0].taskId, "retry-a");
-    test:assertEquals(page.items[1].taskId, "retry-z");
+function testAcceptTaskRowReadsAReviewParentTypeFromItsTaskName() {
+    ReviewActivitySummary review = mkReviewActivity("r1", "2026-06-01T10:00:00Z");
+    test:assertTrue(acceptTaskRow(review, {parentWorkflowType: "orders"}),
+        "a review that recorded no parent type is matched on its qualified task name");
+    test:assertTrue(review.canComplete, "a review that declares no roles is open by default");
+    test:assertFalse(acceptTaskRow(mkReviewActivity("r2", "2026-06-01T10:00:00Z"), {parentWorkflowType: "billing"}));
 }
 
 // ── clampLimit ────────────────────────────────────────────────────────────────

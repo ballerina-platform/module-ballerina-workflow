@@ -196,6 +196,13 @@ public isolated function listAllHumanTasks(string? status = (),
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
 } external;
 
+// One server page of human tasks and/or review activities, in the server's order; the token is the server's own.
+isolated function listTaskRows(boolean humanTasks, boolean reviews, string? status,
+        string? startTimeFrom, string? startTimeTo, string? closeTimeFrom, string? closeTimeTo,
+        string? taskQueue, int pageSize, string? pageToken) returns TaskRowsPage|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.ManagementNative"
+} external;
+
 # Returns detailed info for a single human task, including memo fields.
 # Calls Temporal DescribeWorkflowExecution to read the memo set at task creation.
 #

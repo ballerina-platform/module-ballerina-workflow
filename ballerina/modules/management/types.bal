@@ -676,6 +676,12 @@ public type HumanTaskPage record {|
     boolean hasMore;
 |};
 
+// One server page of task rows, either kind, before the listing's own filters.
+type TaskRowsPage record {|
+    (HumanTaskSummary|ReviewActivitySummary)[] rows;
+    string? nextPageToken;
+|};
+
 # Paginated list of review activity summaries.
 #
 # + items - Review activity summaries for this page

@@ -410,7 +410,7 @@ final http:ListenerJwtAuthHandler? jwtAuthHandler =
 final http:ListenerFileUserStoreBasicAuthHandler? basicAuthHandler = enableBasicAuth ? new ({}) : ();
 
 final http:ListenerOAuth2Handler? oauth2AuthHandler = enableOAuth && oauth2IntrospectionUrl != ""
-    ? new ({url: oauth2IntrospectionUrl, tokenTypeHint: "access_token"}) : ();
+    ? new ({url: oauth2IntrospectionUrl}) : ();
 
 # What the gateway interceptor admits a request with. Built from the module's
 # configurables by `defaultGatewayConfig`; tests construct it directly.

@@ -14,6 +14,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   overrides it. A program without observability no longer writes these records to its log.
   ([#9305](https://github.com/ballerina-platform/ballerina-library/issues/9305))
 
+- Importing `ballerina/workflow.management.rest` now serves the management REST API: `enableManagementApi`
+  defaults to `true`. Set `enableManagementApi = false` to keep the import without opening the port (`8234` by
+  default). Basic auth stays on by default; when no `[[ballerina.auth.users]]` are configured, the startup log
+  and the `401` response say how to add users or turn basic auth off.
+  ([#9306](https://github.com/ballerina-platform/ballerina-library/issues/9306))
+
 ### Fixed
 
 - `workItems.list`, `humanTasks.list` and `reviewActivities.list` page through Temporal visibility

@@ -331,3 +331,29 @@ function testUnvalidatedAuthorizationBearerIsNotReadForIdentity() {
     test:assertEquals(gateRequest(keyed, "workflows", gatewayConfig([WITH_JWT, WITH_API_KEY])),
             <CallerIdentity>{userId: (), roles: []});
 }
+
+// ── Basic auth with no users configured ──────────────────────────────────────────
+
+@test:Config {groups: ["unit", "auth"]}
+function testRefusalExplainsAnEmptyBasicAuthUserStore() {
+    // tests/Config.toml configures a user, so the probe sees a populated store.
+    test:assertFalse(isFileUserStoreEmpty());
+
+    GatewayConfig empty = gatewayConfig([WITH_BASIC]);
+    empty.basicAuthUsersMissing = true;
+    CallerIdentity|http:Unauthorized|http:Forbidden refused = gateRequest(requestWith({}), "workflows", empty);
+    if refused !is http:Unauthorized {
+        test:assertFail("a request without credentials must be refused");
+    }
+    string message = (refused?.body).toString();
+    test:assertTrue(message.includes("[[ballerina.auth.users]]") && message.includes("enableBasicAuth = false"),
+            "the refusal must say how to configure users or turn basic auth off: " + message);
+
+    CallerIdentity|http:Unauthorized|http:Forbidden configured = gateRequest(requestWith({}), "workflows",
+            gatewayConfig([WITH_BASIC]));
+    if configured !is http:Unauthorized {
+        test:assertFail("a request without credentials must be refused");
+    }
+    test:assertFalse((configured?.body).toString().includes("[[ballerina.auth.users]]"),
+            "with users configured, the refusal does not describe the server's configuration");
+}

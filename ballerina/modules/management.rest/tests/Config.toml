@@ -7,6 +7,8 @@ scopes = ["ops"]
 
 # Test credentials and invalid credential values (see test_credentials.bal).
 [ballerina.workflow.management.rest]
+# The API is served on import by default; these tests start and stop the listener themselves.
+enableManagementApi = false
 testJwtSecret = "gateway-test-secret-0123456789"
 forgedJwtSecret = "somebody-elses-secret-0123456789"
 testApiKey = "test-api-key"

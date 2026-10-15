@@ -14,6 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import ballerina/auth;
 import ballerina/http;
 import ballerina/jwt;
 import ballerina/lang.runtime;
@@ -22,19 +23,21 @@ import ballerina/workflow.management;
 
 // All configurable variables are scoped to [ballerina.workflow.management.rest] in Config.toml.
 //
+// Importing this module serves the API; `enableManagementApi = false` turns it off.
+//
 // K8s-internal (no auth, no TLS):
 //   [ballerina.workflow.management.rest]
-//   enableManagementApi = true
-//   enableBasicAuth     = false
+//   enableBasicAuth = false
 //
 // Externally-exposed (Basic Auth + TLS):
 //   [ballerina.workflow.management.rest]
-//   enableManagementApi  = true
-//   enableTls            = true
-//   certFile             = "/etc/certs/tls.crt"
-//   keyFile              = "/etc/certs/tls.key"
-//   basicAuthUsername    = "ops"
-//   basicAuthPassword    = "s3cret!"
+//   enableTls = true
+//   certFile  = "/etc/certs/tls.crt"
+//   keyFile   = "/etc/certs/tls.key"
+//
+//   [[ballerina.auth.users]]
+//   username = "ops"
+//   password = "s3cret!"
 //
 // Every resource below is a thin HTTP adapter over `management:executeCommand`:
 // it maps the route to the operation name, packs the query/path/body parameters, carries
@@ -43,7 +46,7 @@ import ballerina/workflow.management;
 
 // Validates the management API configuration so any misconfiguration causes a
 // descriptive error at startup rather than a silent runtime failure, and then starts
-// the management HTTP service programmatically when enableManagementApi = true.
+// the management HTTP service programmatically unless enableManagementApi = false.
 // When the API is disabled, no listener is created and no port is reserved —
 // importing `ballerina/workflow.management` alone never opens a port, and importing
 // this module with the API disabled doesn't either.
@@ -57,12 +60,11 @@ function init() returns error? {
     check startManagementService();
 }
 
-# Master switch for the management HTTP API.
-# When `false` (the default), no listener is created and the port is not
-# reserved — importing this module purely for its programmatic helpers opens
-# no port. Workflow execution runs independently of this flag.
-# Set to `true` in Config.toml to activate the API.
-public configurable boolean enableManagementApi = false;
+# Master switch for the management HTTP API. Importing this module serves the API
+# (the default, `true`); set `false` to keep the import without opening the port.
+# `ballerina/workflow.management` alone never opens a port. Workflow execution runs
+# independently of this flag.
+public configurable boolean enableManagementApi = true;
 
 # TCP port the management service listens on.
 # Default is 8234.
@@ -293,6 +295,10 @@ function startManagementListener() returns error? {
     log:printInfo(string `Workflow management REST API enabled on ` +
             string `${enableTls ? "https" : "http"}://localhost:${port}/workflow` +
             string ` (auth: ${describeManagementAuth()})`);
+    if basicAuthUsersMissing {
+        log:printWarn("Workflow management REST API: basic auth is enabled but no users are configured, " +
+                "so every request is refused with 401. " + BASIC_AUTH_USERS_HINT);
+    }
     // Always stop the listener on shutdown. With a programmatically started listener the
     // runtime no longer does this automatically (it only manages `listener` declarations);
     // an un-stopped listener would hold the port past program end (e.g. across `bal test`
@@ -409,6 +415,25 @@ final http:ListenerJwtAuthHandler? jwtAuthHandler =
 
 final http:ListenerFileUserStoreBasicAuthHandler? basicAuthHandler = enableBasicAuth ? new ({}) : ();
 
+// Whether basic auth is on with an empty user store, so no request can be admitted by it.
+final boolean basicAuthUsersMissing = enableBasicAuth && isFileUserStoreEmpty();
+
+const string BASIC_AUTH_USERS_HINT = "Add users under [[ballerina.auth.users]] in Config.toml, or set " +
+    "enableBasicAuth = false under [ballerina.workflow.management.rest] for local development.";
+
+// A credential no real user holds, used only to ask the file user store whether it has users.
+const string USER_STORE_PROBE = "d29ya2Zsb3ctdXNlci1zdG9yZS1wcm9iZTo="; // workflow-user-store-probe:
+
+# Whether `[[ballerina.auth.users]]` holds no users. The store has no listing API, so this reads
+# the error it answers a probe credential with when it is empty.
+#
+# + return - `true` when the file user store is not configured
+isolated function isFileUserStoreEmpty() returns boolean {
+    auth:ListenerFileUserStoreBasicAuthProvider provider = new ({});
+    auth:UserDetails|auth:Error result = provider.authenticate(USER_STORE_PROBE);
+    return result is auth:Error && result.message().includes("not provided");
+}
+
 final http:ListenerOAuth2Handler? oauth2AuthHandler = enableOAuth && oauth2IntrospectionUrl != ""
     ? new ({url: oauth2IntrospectionUrl}) : ();
 
@@ -419,6 +444,7 @@ final http:ListenerOAuth2Handler? oauth2AuthHandler = enableOAuth && oauth2Intro
 # + jwtHeader - The header carrying the JWT; only read when `jwtHandler` is set
 # + jwtHandler - Validates the JWT; `()` when JWT auth is off
 # + basicAuthHandler - Validates basic auth; `()` when basic auth is off
+# + basicAuthUsersMissing - Basic auth is on but no users are configured; the refusal says how to fix it
 # + oauth2Handler - Introspects an OAuth2 bearer token in `Authorization`; `()` when OAuth2 is off
 # + apiKeyEnabled - Whether API key auth is enabled
 # + apiKeyHeader - The header carrying the API key
@@ -428,6 +454,7 @@ type GatewayConfig record {|
     string jwtHeader;
     http:ListenerJwtAuthHandler? jwtHandler;
     http:ListenerFileUserStoreBasicAuthHandler? basicAuthHandler;
+    boolean basicAuthUsersMissing = false;
     http:ListenerOAuth2Handler? oauth2Handler;
     boolean apiKeyEnabled;
     string apiKeyHeader;
@@ -439,6 +466,7 @@ isolated function defaultGatewayConfig() returns GatewayConfig => {
     jwtHeader: jwtHeaderName,
     jwtHandler: jwtAuthHandler,
     basicAuthHandler,
+    basicAuthUsersMissing,
     oauth2Handler: oauth2AuthHandler,
     apiKeyEnabled: enableApiKey,
     apiKeyHeader,
@@ -533,6 +561,7 @@ isolated function gateRequest(http:Request req, string firstSegment, GatewayConf
 isolated function missingCredential(GatewayConfig cfg) returns http:Unauthorized? {
     string[] accepted = [];
     string[] challenges = [];
+    string hint = "";
     if cfg.jwtHandler is http:ListenerJwtAuthHandler {
         accepted.push(string `a JWT in the '${cfg.jwtHeader}' header`);
         challenges.push(string `Bearer realm="workflow"`);
@@ -543,6 +572,9 @@ isolated function missingCredential(GatewayConfig cfg) returns http:Unauthorized
     }
     if cfg.basicAuthHandler is http:ListenerFileUserStoreBasicAuthHandler {
         accepted.push("basic auth credentials");
+        if cfg.basicAuthUsersMissing {
+            hint = " No basic auth users are configured. " + BASIC_AUTH_USERS_HINT;
+        }
         challenges.push(string `Basic realm="workflow"`);
     }
     if cfg.apiKeyEnabled {
@@ -554,7 +586,7 @@ isolated function missingCredential(GatewayConfig cfg) returns http:Unauthorized
     }
     return {
         headers: {"WWW-Authenticate": challenges[0]},
-        body: errorBody(string `Unauthorized: credentials required (${string:'join(", or ", ...accepted)})`)
+        body: errorBody(string `Unauthorized: credentials required (${string:'join(", or ", ...accepted)}).${hint}`)
     };
 }
 

@@ -1,6 +1,6 @@
 
 # The OpenAPI description of the workflow Management REST API — the surface
-# `workflow.management.rest` attaches at `/workflow` when `enableManagementApi = true`.
+# `workflow.management.rest` attaches at `/workflow` unless `enableManagementApi = false`.
 #
 # This file is the single source of truth for that surface. It is embedded in the
 # compiler plugin and exported into a consuming package's `target/openapi/` when
@@ -17,7 +17,7 @@ info:
     Management surface of a workflow integration: definitions, instances (suspend,
     resume, wake, terminate, cancel, reset), human tasks, and review activities.
     Served at basePath /workflow on the configured management port (default 8234),
-    only when `enableManagementApi = true`. Authentication is configuration-driven:
+    unless `enableManagementApi = false`. Authentication is configuration-driven:
     file-based Basic auth, JWT Bearer, or OAuth2 introspection — combined with
     optional gateway-forwarded identity headers (x-user-id / x-user-roles).
   version: 0.9.0

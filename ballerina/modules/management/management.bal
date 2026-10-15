@@ -681,10 +681,9 @@ public isolated function getExecutionGraph(string workflowId, string runId)
 // HTTP SERVICE
 // ================================================================================
 // The management HTTP API lives in `ballerina/workflow.management.rest`. Import
-// that module and enable it in Config.toml to expose these operations over REST:
+// that module to expose these operations over REST (`enableManagementApi = false` turns it off):
 //
 //   import ballerina/workflow.management.rest as _;
 //
 //   [ballerina.workflow.management.rest]
-//   enableManagementApi = true
 //   port = 8234

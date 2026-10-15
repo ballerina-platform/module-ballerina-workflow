@@ -29,7 +29,7 @@ import ballerina/test;
 @test:Config {}
 function testManagementListenerLifecycle() returns error? {
     check startManagementListener();
-    http:Client mgmtClient = check new (string `http://localhost:${port}`, timeout = 5);
+    http:Client mgmtClient = check new (string `http://localhost:${port}`, timeout = 5, auth = opsCredentials);
     http:Response response = check mgmtClient->get("/workflow/definitions");
     test:assertEquals(response.statusCode, 200,
         "The started management listener should serve management API requests");
@@ -49,7 +49,7 @@ function testManagementListenerLifecycle() returns error? {
 @test:Config {}
 function testRuntimeRouteReportsTheTaskQueue() returns error? {
     check startManagementListener();
-    http:Client mgmtClient = check new (string `http://localhost:${port}`, timeout = 5);
+    http:Client mgmtClient = check new (string `http://localhost:${port}`, timeout = 5, auth = opsCredentials);
     http:Response response = check mgmtClient->get("/workflow/runtime");
     test:assertEquals(response.statusCode, 200);
 
@@ -57,6 +57,28 @@ function testRuntimeRouteReportsTheTaskQueue() returns error? {
     map<json> info = check body.ensureType();
     test:assertEquals(info["taskQueue"], management:getWorkflowTaskQueue(),
         "GET /workflow/runtime must report the queue this worker polls");
+
+    check stopManagementService();
+    langRuntime:sleep(0.1);
+}
+
+// The service is a value attached at runtime, so `@http:ServiceConfig { auth }` would be ignored;
+// the listener must still refuse a request without credentials (basic auth is on by default).
+@test:Config {}
+function testListenerRefusesRequestsWithoutCredentials() returns error? {
+    check startManagementListener();
+    http:Client anonymous = check new (string `http://localhost:${port}`, timeout = 5);
+    http:Response refused = check anonymous->get("/workflow/runtime");
+    test:assertEquals(refused.statusCode, 401, "A request without credentials must be refused");
+
+    http:Client wrongPassword = check new (string `http://localhost:${port}`, timeout = 5,
+        auth = {username: "ops", password: "wrong"});
+    http:Response rejected = check wrongPassword->get("/workflow/runtime");
+    test:assertEquals(rejected.statusCode, 401, "Wrong basic credentials must be refused");
+
+    http:Client ops = check new (string `http://localhost:${port}`, timeout = 5, auth = opsCredentials);
+    http:Response admitted = check ops->get("/workflow/runtime");
+    test:assertEquals(admitted.statusCode, 200, "Valid basic credentials must be admitted");
 
     check stopManagementService();
     langRuntime:sleep(0.1);

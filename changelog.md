@@ -20,6 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - A failed `listAllReviewActivities` reported `Failed to list retry tasks`, and the task listings
   repeated their `Failed to list human tasks:` prefix.
 
+- The management API applies the configured authentication schemes (basic auth, JWT and OAuth2)
+  to every request in the gateway interceptor. A request without a valid credential for an enabled
+  scheme receives `401 Unauthorized`, as does a request that presents an invalid credential.
+
 ## [1.0.0] - 2026-10-08
 
 ### Added

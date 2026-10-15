@@ -37,11 +37,8 @@ import ballerina/workflow.management;
 //                           valid token. `trustForwardedIdentity = true` restores
 //                           header precedence for gateway-behind-OAuth topologies.
 //
-// A bearer token in `Authorization` is read here BEFORE the listener's declarative
-// auth validates it — an invalid token still gets its 401 from the auth layer and
-// never reaches a resource, so nothing is trusted early. A JWT in a custom
-// `jwtAuthHeader` is outside the declarative layer's reach, so the gateway validates
-// it first and hands the verified payload in; its claims are never read unverified.
+// The gateway validates every credential before the identity is resolved, so a token's
+// claims are only ever read from a token that was verified.
 // Scopes stay orthogonal to roles: scopes authorize operation classes (view vs
 // manage, workflow vs human task), while per-task eligibility remains the task's
 // audience — roles or user id, minus exclusions — checked by the management module.
@@ -105,9 +102,9 @@ const string CALLER_IDENTITY_CTX_KEY = "workflowCallerIdentity";
 # the configurables are fixed at module init.
 #
 # + basicAuthEnabled - Whether basic auth is enabled (drives the audit-user default); the
-#                      credentials were validated declaratively or by the gateway before this runs
+#                      credentials were validated by the gateway before this runs
 # + tokenAuthEnabled - Whether a bearer token in `Authorization` is validated by the
-#                      declarative auth layer (JWT on the standard header, or OAuth2)
+#                      gateway (JWT on the standard header, or OAuth2)
 # + trustForwardedIdentity - Whether forwarded x-user-* headers beat token claims
 # + enforceScopes - Whether OAuth scopes gate operation classes
 # + userIdClaim - Claim (dotted path) holding the user ID
@@ -125,7 +122,7 @@ type CallerIdentityConfig record {|
 # + return - The configuration the gateway interceptor resolves identities with
 isolated function defaultIdentityConfig() returns CallerIdentityConfig => {
     basicAuthEnabled: enableBasicAuth,
-    tokenAuthEnabled: authMode.authorizationBearerValidated,
+    tokenAuthEnabled: authorizationBearerValidated(enableJwtAuth, jwtHeaderName, enableOAuth),
     trustForwardedIdentity,
     enforceScopes,
     userIdClaim,
@@ -151,7 +148,7 @@ isolated function resolveCallerIdentity(http:Request req, string firstSegment,
     if cfg.basicAuthEnabled && identity.userId is () {
         string? basicUser = basicAuthUsername(req);
         if basicUser is string {
-            // The declarative auth layer validated these credentials before this ran.
+            // The gateway validated these credentials before this ran.
             identity.userId = basicUser;
             identity.identitySource = "verified";
         }
@@ -198,7 +195,7 @@ isolated function resolveCallerIdentity(http:Request req, string firstSegment,
 }
 
 # Overlays a validated token's claims on the identity resolved so far and enforces
-# scopes. The token was, or will be, validated by the auth layer that owns it.
+# scopes. The gateway validated the token before this runs.
 #
 # + req - The request
 # + firstSegment - The first path segment, for scope classification
@@ -213,7 +210,7 @@ isolated function identityFromClaims(http:Request req, string firstSegment, Call
     if !(cfg.trustForwardedIdentity && hasForwardedUser) {
         json? userId = claimAt(claims, cfg.userIdClaim);
         identity.userId = userId is string && userId.trim().length() > 0 ? userId : ();
-        // The auth layer admitted the token; a user ID read from its claims is verified.
+        // The gateway admitted the token; a user ID read from its claims is verified.
         identity.identitySource = identity.userId is string ? "verified" : "asserted";
     }
     if !(cfg.trustForwardedIdentity && hasForwardedRoles) {
@@ -250,8 +247,8 @@ isolated function forwardedIdentity(http:Request req) returns CallerIdentity {
 }
 
 // Extracts the basic-auth username for the audit identity (completedBy/
-// startedBy that would otherwise read "unknown"). The declarative auth layer still
-// validates the credentials; callers gate this on basic auth being enabled and on
+// startedBy that would otherwise read "unknown"). The gateway has already
+// validated the credentials; callers gate this on basic auth being enabled and on
 // no identity having been forwarded.
 isolated function basicAuthUsername(http:Request req) returns string? {
     string|http:HeaderNotFoundError authHeader = req.getHeader(AUTHORIZATION_HEADER);

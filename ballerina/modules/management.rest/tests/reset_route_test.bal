@@ -43,7 +43,7 @@ function releaseManagementListener() {
 @test:Config {}
 function testResetRoutesMapBodyAndErrors() returns error? {
     check startManagementListener();
-    http:Client mgmtClient = check new (string `http://localhost:${port}`, timeout = 5);
+    http:Client mgmtClient = check new (string `http://localhost:${port}`, timeout = 5, auth = opsCredentials);
     map<string> asOperator = {"x-user-roles": "OPS"};
 
     // ── The role gate, before anything reads the run ──────────────────────────

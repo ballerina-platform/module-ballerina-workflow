@@ -29,7 +29,7 @@ import ballerina/test;
 @test:Config {}
 function testBulkRetryRouteMapsErrorsToStatusCodes() returns error? {
     check startManagementListener();
-    http:Client mgmtClient = check new (string `http://localhost:${port}`, timeout = 5);
+    http:Client mgmtClient = check new (string `http://localhost:${port}`, timeout = 5, auth = opsCredentials);
 
     // A selector naming nothing: the operation's InvalidRequestError becomes 400, and
     // the body is this module's canonical error shape.

@@ -23,21 +23,27 @@ import ballerina/time;
 configurable boolean captureHumanTaskContent = true;
 
 # Whether every activity attempt logs its arguments and result (or error) to the worker's module log.
-# Long values are truncated.
-configurable boolean captureActivityContent = true;
+# Long values are truncated. Unset, it follows whether Ballerina observability is enabled.
+configurable boolean? captureActivityContent = ();
 
 # Whether the runtime publishes one structured log record per workflow event under `logger = "workflow-metrics"`,
 # the workflow counterpart of `ballerinax/metrics.logs`. Structural fields only, never content.
-configurable boolean publishMetricSamples = true;
+# Unset, it follows whether metrics or metrics logs are enabled.
+configurable boolean? publishMetricSamples = ();
+
+final boolean activityContentCaptured = captureActivityContent ?: observe:isObservabilityEnabled();
+
+final boolean metricSamplesPublished = publishMetricSamples
+    ?: (observe:isMetricsEnabled() || observe:isMetricsLogsEnabled());
 
 function init() {
-    configure(captureActivityContent, publishMetricSamples);
+    configure(activityContentCaptured, metricSamplesPublished);
 }
 
 # Reports whether the runtime publishes one structured log record per workflow event.
 #
-# + return - The value of `publishMetricSamples`
-public isolated function isMetricSamplesPublished() returns boolean => publishMetricSamples;
+# + return - `publishMetricSamples` when set, else whether metrics or metrics logs are enabled
+public isolated function isMetricSamplesPublished() returns boolean => metricSamplesPublished;
 
 # Reports whether decision content is recorded on task-decision spans and audit entries.
 #
@@ -46,8 +52,8 @@ public isolated function isHumanTaskContentCaptured() returns boolean => capture
 
 # Reports whether activity executions log their arguments and results.
 #
-# + return - The value of `captureActivityContent`
-public isolated function isActivityContentCaptured() returns boolean => captureActivityContent;
+# + return - `captureActivityContent` when set, else whether observability is enabled
+public isolated function isActivityContentCaptured() returns boolean => activityContentCaptured;
 
 // Span tag names: identifiers, declared names and, for a task decision, who made it.
 enum WorkflowTagNames {

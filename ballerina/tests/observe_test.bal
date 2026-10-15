@@ -117,10 +117,19 @@ function testOversizedDecisionContentIsCut() {
 function testContentCaptureDefaults() {
     test:assertTrue(observe:isHumanTaskContentCaptured(),
             "a decision's content is recorded unless the deployment switches it off, as ai.observe does");
+}
+
+// tests/Config.toml enables tracing but not metrics and sets neither switch, so each follows its signal.
+@test:Config {
+    groups: ["observe"]
+}
+function testUnsetLogSwitchesFollowObservability() {
+    test:assertTrue(observability:isObservabilityEnabled() && !observability:isMetricsEnabled()
+            && !observability:isMetricsLogsEnabled(), "the test configuration enables tracing only");
     test:assertTrue(observe:isActivityContentCaptured(),
-            "activity arguments and results are logged unless the deployment switches it off");
-    test:assertTrue(observe:isMetricSamplesPublished(),
-            "one sample per workflow event is published unless the deployment switches it off");
+            "activity arguments and results are logged when observability is enabled");
+    test:assertFalse(observe:isMetricSamplesPublished(),
+            "metric samples are not published while metrics and metrics logs are off");
 }
 
 @test:Config {

@@ -33,8 +33,8 @@ import java.util.Map;
 public final class ObservabilityNative {
 
     // Set once at module init from the workflow.observe configurables; volatile because activity threads read them.
-    private static volatile boolean activityContentCaptured = true;
-    private static volatile boolean metricSamplesPublished = true;
+    private static volatile boolean activityContentCaptured = false;
+    private static volatile boolean metricSamplesPublished = false;
 
     private ObservabilityNative() {
     }

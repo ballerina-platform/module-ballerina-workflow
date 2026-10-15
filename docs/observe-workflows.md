@@ -167,7 +167,8 @@ registry tags) — and the human-decision **audit entries**, which are ordinary
 The samples carry `icp.runtimeId` only when the integration is built with observability
 enabled (`--observability-included`, and metrics, tracing or metrics-logs on): the tag
 lives in the observability layer, and `observe:addTag` stores nothing when that layer is
-off. The samples themselves are published either way, under `publishMetricSamples`.
+off. The samples are published when metrics or metrics logs are enabled, or when
+`publishMetricSamples = true` is set explicitly.
 
 See the proposal in
 [`proposals/observability-integration.md`](proposals/observability-integration.md) for the

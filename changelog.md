@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- `publishMetricSamples` and `captureActivityContent` under `[ballerina.workflow.observe]` follow Ballerina
+  observability when they are not set. Metric samples are published when metrics or metrics logs are enabled,
+  and activity content is logged when observability is enabled. Setting either to `true` or `false` still
+  overrides it. A program without observability no longer writes these records to its log.
+  ([#9305](https://github.com/ballerina-platform/ballerina-library/issues/9305))
+
 ### Fixed
 
 - `workItems.list`, `humanTasks.list` and `reviewActivities.list` page through Temporal visibility

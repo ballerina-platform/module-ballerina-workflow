@@ -592,6 +592,16 @@ isolated function headerOf(http:Request req, string name) returns string? {
     return value is string ? value : ();
 }
 
+const string CORS_REQUEST_METHOD_HEADER = "Access-Control-Request-Method";
+
+# Whether a request is a CORS preflight. No management resource handles `OPTIONS`, so passing
+# one through runs no resource: the listener answers it from the CORS configuration.
+#
+# + req - The request
+# + return - `true` for an `OPTIONS` request carrying `Access-Control-Request-Method`
+isolated function isCorsPreflight(http:Request req) returns boolean =>
+    req.method == http:OPTIONS && req.hasHeader(CORS_REQUEST_METHOD_HEADER);
+
 # Request interceptor that authenticates every request and resolves the caller's
 # identity. Registered via createInterceptors on the `http:InterceptableService`.
 # The management API master switch needs no gate here: when
@@ -613,6 +623,10 @@ service class ManagementGatewayInterceptor {
             http:RequestContext ctx,
             http:Request req)
             returns http:Unauthorized|http:Forbidden|http:NextService|error? {
+        // A CORS preflight never carries credentials; the listener answers it from the CORS config.
+        if isCorsPreflight(req) {
+            return ctx.next();
+        }
         CallerIdentity|http:Unauthorized|http:Forbidden gate = gateRequest(req,
                 path.length() > 0 ? path[0] : "", defaultGatewayConfig());
         if gate is CallerIdentity {

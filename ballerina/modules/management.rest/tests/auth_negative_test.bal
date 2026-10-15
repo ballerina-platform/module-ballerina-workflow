@@ -263,3 +263,29 @@ function testEveryRouteRefusesUnauthenticatedCallers() returns error? {
     check stopManagementService();
     langRuntime:sleep(0.1);
 }
+
+// A browser sends a CORS preflight without credentials, so it is answered from the CORS configuration,
+// while any other OPTIONS request still needs a credential.
+@test:Config {}
+function testCorsPreflightIsAnsweredWithoutCredentials() returns error? {
+    check startManagementListener();
+    http:Client anonymous = check new (string `http://localhost:${port}`, timeout = 5);
+    http:Response preflight = check anonymous->options("/workflow/definitions", {
+        "Origin": "https://portal.example.com",
+        [CORS_REQUEST_METHOD_HEADER]: "GET",
+        "Access-Control-Request-Headers": "authorization"
+    });
+    test:assertEquals(preflight.statusCode, 204, "a CORS preflight must not need credentials");
+    test:assertTrue(preflight.hasHeader("Access-Control-Allow-Origin"),
+        "the preflight must carry the CORS headers");
+
+    http:Response plainOptions = check anonymous->options("/workflow/definitions");
+    test:assertEquals(plainOptions.statusCode, 401, "an OPTIONS request that is not a preflight needs credentials");
+
+    http:Response getWithPreflightHeader = check anonymous->get("/workflow/definitions",
+        {[CORS_REQUEST_METHOD_HEADER]: "GET"});
+    test:assertEquals(getWithPreflightHeader.statusCode, 401, "the preflight header does not exempt other methods");
+
+    check stopManagementService();
+    langRuntime:sleep(0.1);
+}

@@ -27,7 +27,7 @@ const string JWKS_URL = "https://idp.example.com/jwks";
 // secret, so a real handler can check the claims of an HS256 test token.
 isolated function claimHandler(string? issuer, string? audience) returns http:ListenerJwtAuthHandler {
     http:JwtValidatorConfig config = jwtValidatorConfigOf(JWKS_URL, issuer, audience);
-    config.signatureConfig = {secret: TEST_SECRET};
+    config.signatureConfig = {secret: testJwtSecret};
     return new (config);
 }
 
@@ -35,7 +35,7 @@ isolated function otherPartyJwt() returns string => BEARER_PREFIX + checkpanic j
     issuer: "other-issuer",
     audience: "other-audience",
     username: "alice",
-    signatureConfig: {algorithm: jwt:HS256, config: TEST_SECRET}
+    signatureConfig: {algorithm: jwt:HS256, config: testJwtSecret}
 });
 
 @test:Config {}

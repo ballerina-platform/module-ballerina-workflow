@@ -71,9 +71,9 @@ function testListenerRefusesRequestsWithoutCredentials() returns error? {
     http:Response refused = check anonymous->get("/workflow/runtime");
     test:assertEquals(refused.statusCode, 401, "A request without credentials must be refused");
 
-    http:Client wrongPassword = check new (string `http://localhost:${port}`, timeout = 5,
-        auth = {username: "ops", password: "wrong"});
-    http:Response rejected = check wrongPassword->get("/workflow/runtime");
+    http:Client wrongPasswordCaller = check new (string `http://localhost:${port}`, timeout = 5,
+        auth = {username: opsUsername, password: wrongPassword});
+    http:Response rejected = check wrongPasswordCaller->get("/workflow/runtime");
     test:assertEquals(rejected.statusCode, 401, "Wrong basic credentials must be refused");
 
     http:Client ops = check new (string `http://localhost:${port}`, timeout = 5, auth = opsCredentials);

@@ -46,26 +46,18 @@ isolated function unsignedJwt() returns string {
 
 // Tokens the JWT handler must refuse, as the raw token (the scheme prefix is added per header).
 isolated function invalidJwts() returns map<string> => {
-    "signed with another key": signedJwt("admin", ["admin"], FORGED_SECRET),
+    "signed with another key": signedJwt("admin", ["admin"], forgedJwtSecret),
     "tampered payload": tamperedJwt(),
     "unsigned (alg none)": unsignedJwt(),
     "bogus signature": jwtOf(adminClaims),
     "expired": jwtWith(issuer = "test-issuer", audience = "workflow", username = "alice", expTime = -60,
-            signatureConfig = {algorithm: jwt:HS256, config: TEST_SECRET}),
+            signatureConfig = {algorithm: jwt:HS256, config: testJwtSecret}),
     "wrong issuer": jwtWith(issuer = "other-issuer", audience = "workflow", username = "alice",
-            signatureConfig = {algorithm: jwt:HS256, config: TEST_SECRET}),
+            signatureConfig = {algorithm: jwt:HS256, config: testJwtSecret}),
     "wrong audience": jwtWith(issuer = "test-issuer", audience = "other-audience", username = "alice",
-            signatureConfig = {algorithm: jwt:HS256, config: TEST_SECRET}),
+            signatureConfig = {algorithm: jwt:HS256, config: testJwtSecret}),
     "not a JWT": "not.a.jwt",
     "random text": "garbage"
-};
-
-// Header values that carry no usable token at all.
-final readonly & map<string> malformedBearerValues = {
-    "empty bearer": "Bearer ",
-    "bare scheme": "Bearer",
-    "two tokens": "Bearer one two",
-    "unknown scheme": "Token abc"
 };
 
 // ── JWT ──────────────────────────────────────────────────────────────────────────
@@ -89,9 +81,9 @@ function testInvalidJwtIsRefusedOnEveryHeader() {
 
 @test:Config {groups: ["unit", "auth"]}
 function testInvalidJwtIsRefusedEvenWhenAnotherSchemeAdmits() {
-    GatewayConfig cfg = gatewayConfig(basicAuthEnabled = true, apiKeyEnabled = true);
+    GatewayConfig cfg = gatewayConfig([WITH_JWT, WITH_BASIC, WITH_API_KEY]);
     foreach [string, string] [name, token] in invalidJwts().entries() {
-        http:Request req = requestWith({[JWT_HEADER]: token, "Authorization": OPS_BASIC, "x-api-key": API_KEY});
+        http:Request req = requestWith({[JWT_HEADER]: token, "Authorization": opsBasic, "x-api-key": testApiKey});
         test:assertTrue(gateRequest(req, "workflows", cfg) is http:Unauthorized,
                 name + ": an invalid JWT must be refused beside valid basic and API key credentials");
     }
@@ -101,8 +93,8 @@ function testInvalidJwtIsRefusedEvenWhenAnotherSchemeAdmits() {
 
 @test:Config {groups: ["unit", "auth"]}
 function testOAuth2RefusesInactiveMalformedAndUnverifiableTokens() {
-    GatewayConfig cfg = gatewayConfig(jwtEnabled = false, oauthEnabled = true);
-    http:Request inactive = requestWith({"Authorization": BEARER_PREFIX + REVOKED + "-token"});
+    GatewayConfig cfg = gatewayConfig([WITH_OAUTH2]);
+    http:Request inactive = requestWith({"Authorization": BEARER_PREFIX + revokedAccessToken});
     test:assertTrue(gateRequest(inactive, "workflows", cfg) is http:Unauthorized, "an inactive token must be refused");
     foreach [string, string] [name, value] in malformedBearerValues.entries() {
         http:Request req = requestWith({"Authorization": value});
@@ -112,9 +104,9 @@ function testOAuth2RefusesInactiveMalformedAndUnverifiableTokens() {
     // An introspection endpoint that fails or cannot be reached never admits a request.
     map<int> endpoints = {"failing endpoint": BROKEN_INTROSPECTION_PORT, "unreachable endpoint": UNREACHABLE_INTROSPECTION_PORT};
     foreach [string, int] [name, endpointPort] in endpoints.entries() {
-        GatewayConfig unverifiable = gatewayConfig(jwtEnabled = false, oauthEnabled = true);
+        GatewayConfig unverifiable = gatewayConfig([WITH_OAUTH2]);
         unverifiable.oauth2Handler = new ({url: string `http://localhost:${endpointPort}/oauth2/introspect`});
-        http:Request req = requestWith({"Authorization": BEARER_PREFIX + OPAQUE_TOKEN});
+        http:Request req = requestWith({"Authorization": BEARER_PREFIX + opaqueAccessToken});
         test:assertTrue(gateRequest(req, "workflows", unverifiable) is http:Unauthorized,
                 name + ": a token that cannot be introspected must be refused");
     }
@@ -122,11 +114,11 @@ function testOAuth2RefusesInactiveMalformedAndUnverifiableTokens() {
 
 @test:Config {groups: ["unit", "auth"]}
 function testRevokedOAuth2TokenIsRefusedEvenWhenAnotherSchemeAdmits() {
-    GatewayConfig cfg = gatewayConfig(jwtHeader = JWT_HEADER, oauthEnabled = true, apiKeyEnabled = true);
+    GatewayConfig cfg = gatewayConfig([WITH_JWT, WITH_OAUTH2, WITH_API_KEY], jwtHeader = JWT_HEADER);
     http:Request req = requestWith({
-        "Authorization": BEARER_PREFIX + REVOKED + "-token",
+        "Authorization": BEARER_PREFIX + revokedAccessToken,
         [JWT_HEADER]: signedJwt("alice", ["approver"]),
-        "x-api-key": API_KEY
+        "x-api-key": testApiKey
     });
     // The JWT travels in its own header, so the token in Authorization is still introspected.
     test:assertTrue(gateRequest(req, "workflows", cfg) is http:Unauthorized,
@@ -137,16 +129,16 @@ function testRevokedOAuth2TokenIsRefusedEvenWhenAnotherSchemeAdmits() {
 
 @test:Config {groups: ["unit", "auth"]}
 function testBasicAuthRefusesBadCredentials() {
-    GatewayConfig cfg = gatewayConfig(jwtEnabled = false, basicAuthEnabled = true);
+    GatewayConfig cfg = gatewayConfig([WITH_BASIC]);
     map<string> invalid = {
-        "wrong password": OPS_BAD_BASIC,
-        "unknown user": "Basic " + "nobody:s3cret!".toBytes().toBase64(),
-        "no separator": "Basic " + "ops".toBytes().toBase64(),
-        "empty password": "Basic " + "ops:".toBytes().toBase64(),
-        "not base64": "Basic !!!",
-        "empty": "Basic ",
-        "lower-case scheme": "basic " + "ops:s3cret!".toBytes().toBase64()
+        "wrong password": opsBadBasic,
+        "unknown user": basicCredential(unknownUsername, opsPassword),
+        "no separator": "Basic " + opsUsername.toBytes().toBase64(),
+        "empty password": basicCredential(opsUsername, "")
     };
+    foreach [string, string] [name, value] in malformedBasicValues.entries() {
+        invalid[name] = value;
+    }
     foreach [string, string] [name, value] in invalid.entries() {
         http:Request req = requestWith({"Authorization": value, "x-user-id": "admin"});
         test:assertTrue(gateRequest(req, "workflows", cfg) is http:Unauthorized, name + ": must be refused");
@@ -157,15 +149,14 @@ function testBasicAuthRefusesBadCredentials() {
 
 @test:Config {groups: ["unit", "auth"]}
 function testApiKeyRefusesAnythingButTheExactKey() {
-    GatewayConfig cfg = gatewayConfig(jwtEnabled = false, apiKeyEnabled = true);
+    GatewayConfig cfg = gatewayConfig([WITH_API_KEY]);
     map<map<string>> invalid = {
-        "wrong key": {"x-api-key": "nope"},
-        "empty key": {"x-api-key": ""},
-        "different case": {"x-api-key": API_KEY.toUpperAscii()},
-        "key with a suffix": {"x-api-key": API_KEY + "x"},
-        "key in another header": {"x-api-token": API_KEY},
-        "key as a bearer token": {"Authorization": BEARER_PREFIX + API_KEY}
+        "key in another header": {"x-api-token": testApiKey},
+        "key as a bearer token": {"Authorization": BEARER_PREFIX + testApiKey}
     };
+    foreach [string, string] [name, value] in invalidApiKeyValues.entries() {
+        invalid[name] = {"x-api-key": value};
+    }
     foreach [string, map<string>] [name, headers] in invalid.entries() {
         test:assertTrue(gateRequest(requestWith(headers), "workflows", cfg) is http:Unauthorized,
                 name + ": must be refused");
@@ -178,17 +169,17 @@ function testApiKeyRefusesAnythingButTheExactKey() {
 function testCredentialForADisabledSchemeIsNotAccepted() {
     string validJwt = signedJwt("alice", ["approver"]);
     map<[GatewayConfig, map<string>]> cases = {
-        "basic credentials, JWT only": [gatewayConfig(jwtHeader = AUTHORIZATION_HEADER), {"Authorization": OPS_BASIC}],
-        "API key, JWT only": [gatewayConfig(), {"x-api-key": API_KEY}],
-        "JWT, basic only": [gatewayConfig(jwtEnabled = false, basicAuthEnabled = true),
+        "basic credentials, JWT only": [gatewayConfig(jwtHeader = AUTHORIZATION_HEADER), {"Authorization": opsBasic}],
+        "API key, JWT only": [gatewayConfig(), {"x-api-key": testApiKey}],
+        "JWT, basic only": [gatewayConfig([WITH_BASIC]),
             {"Authorization": BEARER_PREFIX + validJwt, [JWT_HEADER]: validJwt}],
-        "API key, basic only": [gatewayConfig(jwtEnabled = false, basicAuthEnabled = true), {"x-api-key": API_KEY}],
-        "basic credentials, OAuth2 only": [gatewayConfig(jwtEnabled = false, oauthEnabled = true),
-            {"Authorization": OPS_BASIC}],
-        "JWT in the custom header, OAuth2 only": [gatewayConfig(jwtEnabled = false, oauthEnabled = true),
+        "API key, basic only": [gatewayConfig([WITH_BASIC]), {"x-api-key": testApiKey}],
+        "basic credentials, OAuth2 only": [gatewayConfig([WITH_OAUTH2]),
+            {"Authorization": opsBasic}],
+        "JWT in the custom header, OAuth2 only": [gatewayConfig([WITH_OAUTH2]),
             {[JWT_HEADER]: validJwt}],
         "Authorization bearer, JWT on a custom header": [gatewayConfig(), {"Authorization": BEARER_PREFIX + validJwt}],
-        "forwarded identity only": [gatewayConfig(jwtEnabled = false, apiKeyEnabled = true),
+        "forwarded identity only": [gatewayConfig([WITH_API_KEY]),
             {"x-user-id": "admin", "x-user-roles": "admin"}]
     };
     foreach [string, [GatewayConfig, map<string>]] [name, [cfg, headers]] in cases.entries() {
@@ -253,9 +244,9 @@ function testEveryRouteRefusesUnauthenticatedCallers() returns error? {
     string url = string `http://localhost:${port}`;
     map<http:Client> callers = {
         "no credentials": check new (url, timeout = 5),
-        "wrong password": check new (url, timeout = 5, auth = {username: "ops", password: "wrong"}),
-        "unknown user": check new (url, timeout = 5, auth = {username: "nobody", password: "s3cret!"}),
-        "forged bearer token": check new (url, timeout = 5, auth = {token: signedJwt("admin", ["admin"], FORGED_SECRET)})
+        "wrong password": check new (url, timeout = 5, auth = {username: opsUsername, password: wrongPassword}),
+        "unknown user": check new (url, timeout = 5, auth = {username: unknownUsername, password: opsPassword}),
+        "forged bearer token": check new (url, timeout = 5, auth = {token: signedJwt("admin", ["admin"], forgedJwtSecret)})
     };
     foreach [string, http:Client] [name, caller] in callers.entries() {
         foreach [string, string] [method, path] in managementRoutes {

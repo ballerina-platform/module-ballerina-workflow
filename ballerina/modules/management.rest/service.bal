@@ -415,8 +415,19 @@ final http:ListenerJwtAuthHandler? jwtAuthHandler =
 
 final http:ListenerFileUserStoreBasicAuthHandler? basicAuthHandler = enableBasicAuth ? new ({}) : ();
 
-// Whether basic auth is on with an empty user store, so no request can be admitted by it.
-final boolean basicAuthUsersMissing = enableBasicAuth && isFileUserStoreEmpty();
+// Basic auth is the only scheme on and its user store is empty, so no request can be admitted.
+final boolean basicAuthUsersMissing =
+    isBasicAuthTheOnlyScheme(enableBasicAuth, enableJwtAuth, enableOAuth, enableApiKey) && isFileUserStoreEmpty();
+
+# Whether basic auth is enabled and no other scheme is, so an empty user store refuses every request.
+#
+# + basicAuth - `enableBasicAuth`
+# + jwtAuth - `enableJwtAuth`
+# + oauth - `enableOAuth`
+# + apiKey - `enableApiKey`
+# + return - `true` when basic auth is the only enabled scheme
+isolated function isBasicAuthTheOnlyScheme(boolean basicAuth, boolean jwtAuth, boolean oauth, boolean apiKey)
+        returns boolean => basicAuth && !jwtAuth && !oauth && !apiKey;
 
 const string BASIC_AUTH_USERS_HINT = "Add users under [[ballerina.auth.users]] in Config.toml, or set " +
     "enableBasicAuth = false under [ballerina.workflow.management.rest] for local development.";
@@ -444,7 +455,8 @@ final http:ListenerOAuth2Handler? oauth2AuthHandler = enableOAuth && oauth2Intro
 # + jwtHeader - The header carrying the JWT; only read when `jwtHandler` is set
 # + jwtHandler - Validates the JWT; `()` when JWT auth is off
 # + basicAuthHandler - Validates basic auth; `()` when basic auth is off
-# + basicAuthUsersMissing - Basic auth is on but no users are configured; the refusal says how to fix it
+# + basicAuthUsersMissing - Basic auth is the only scheme on and no users are configured; the refusal says
+#                           how to fix it
 # + oauth2Handler - Introspects an OAuth2 bearer token in `Authorization`; `()` when OAuth2 is off
 # + apiKeyEnabled - Whether API key auth is enabled
 # + apiKeyHeader - The header carrying the API key

@@ -162,7 +162,7 @@ captureActivityContent = true
 
 `captureHumanTaskContent` is on by default, and the other two are on whenever the matching
 observability is enabled, so a program that does not enable observability logs neither. Set
-either explicitly to override that. Content is captured by default, as `ballerina/ai`'s
+either explicitly to override that. Human-task content is captured by default, as `ballerina/ai`'s
 `ai.observe` records prompt and completion content: the engine already persists everything a workflow handles — inputs, activity
 arguments and results, task submissions — in the run's history for the life of the run, so
 the log carries nothing the workflow store does not, and telemetry retention retires its

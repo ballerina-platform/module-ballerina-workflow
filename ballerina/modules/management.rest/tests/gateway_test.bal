@@ -357,3 +357,13 @@ function testRefusalExplainsAnEmptyBasicAuthUserStore() {
     test:assertFalse((configured?.body).toString().includes("[[ballerina.auth.users]]"),
             "with users configured, the refusal does not describe the server's configuration");
 }
+
+@test:Config {groups: ["unit", "auth"]}
+function testEmptyUserStoreIsReportedOnlyWhenBasicAuthIsTheOnlyScheme() {
+    test:assertTrue(isBasicAuthTheOnlyScheme(true, false, false, false));
+    // Another scheme can still admit requests, so the empty store is not a misconfiguration.
+    test:assertFalse(isBasicAuthTheOnlyScheme(true, true, false, false));
+    test:assertFalse(isBasicAuthTheOnlyScheme(true, false, true, false));
+    test:assertFalse(isBasicAuthTheOnlyScheme(true, false, false, true));
+    test:assertFalse(isBasicAuthTheOnlyScheme(false, false, false, false));
+}

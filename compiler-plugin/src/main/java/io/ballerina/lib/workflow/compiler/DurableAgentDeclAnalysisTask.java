@@ -26,6 +26,7 @@ import io.ballerina.compiler.api.symbols.ModuleSymbol;
 import io.ballerina.compiler.api.symbols.ParameterSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
+import io.ballerina.compiler.api.symbols.TypeDescKind;
 import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.api.symbols.VariableSymbol;
@@ -85,6 +86,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
 
     private static final String DURABLE_AGENT_CLASS = "DurableAgent";
     private static final String NAME_FIELD = "name";
+    private static final String ALLOWED_EVENTS_FIELD = "allowedEvents";
     private static final String APPROVAL_POLICY_FIELD = "approvalPolicy";
     private static final String RETRY_POLICY_FIELD = "retryPolicy";
     private static final String REQUIRES_APPROVAL_FIELD = "requiresApproval";
@@ -680,6 +682,8 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 continue;
             }
             String targetAgent = null;
+            boolean workflowPeer = false;
+            SpecificFieldNode allowedEventsField = null;
             StringBuilder meta = new StringBuilder();
             Location nameLocation = peerMapping.location();
             for (MappingFieldNode peerField : peerMapping.fields()) {
@@ -694,9 +698,14 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 switch (key) {
                     // The peer's identity — and its tool-name prefix — is its module-level variable
                     // name, the same name its own declaration registers under.
-                    case "agent" -> {
+                    case WorkflowConstants.DECL_AGENT -> {
                         targetAgent = simpleName(fieldValue.toSourceCode().strip());
                         nameLocation = fieldValue.location();
+                        workflowPeer = isWorkflowFunctionPeer(fieldValue, targetAgent, context);
+                    }
+                    case ALLOWED_EVENTS_FIELD -> {
+                        allowedEventsField = sf;
+                        appendMetaField(meta, sf, fieldValue.toSourceCode().strip());
                     }
                     case NAME_FIELD -> reportRemovedField(context, sf, key, "PeerDecl",
                             "the peer is named by its 'agent' variable");
@@ -711,10 +720,32 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             if (targetAgent == null) {
                 continue;
             }
+            if (workflowPeer && allowedEventsField != null) {
+                reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_172, allowedEventsField.location(),
+                        targetAgent);
+            }
             checkUnique(targetAgent, seenNames, agentName, nameLocation, context);
             peers.add(new DurableAgentDeclInfo.PeerDecl(targetAgent, targetAgent,
-                    meta.isEmpty() ? null : "{" + meta + "}"));
+                    meta.isEmpty() ? null : "{" + meta + "}", workflowPeer));
         }
+    }
+
+    // A function peer is advertised as a tool that starts a workflow, so it must be a @workflow:Workflow
+    // function; the `DurableAgent|function` type alone admits any function.
+    private boolean isWorkflowFunctionPeer(ExpressionNode agentRef, String name, SyntaxNodeAnalysisContext context) {
+        SemanticModel semanticModel = context.semanticModel();
+        Optional<Symbol> symbol = semanticModel.symbol(agentRef);
+        boolean function = symbol.map(sym -> sym.kind() == SymbolKind.FUNCTION
+                || (sym instanceof VariableSymbol variable
+                        && WorkflowPluginUtils.resolveTypeReference(variable.typeDescriptor()).typeKind()
+                                == TypeDescKind.FUNCTION)).orElse(false);
+        if (!function) {
+            return false;
+        }
+        if (!WorkflowPluginUtils.hasWorkflowAnnotation(agentRef, semanticModel, WorkflowConstants.PROCESS_ANNOTATION)) {
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_171, agentRef.location(), name);
+        }
+        return true;
     }
 
     // Fields removed in 0.10 fail the build: ignoring `requiresApproval: true` would drop a gate.

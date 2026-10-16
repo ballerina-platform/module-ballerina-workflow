@@ -96,7 +96,7 @@ public final class DescriptorFields {
     public static final String RESPONSE = "response";
     /** Capabilities advertised to an agent's model. */
     public static final String TOOLS = "tools";
-    /** Where a tool comes from: ACTIVITY, AI_TOOL, or PEER. */
+    /** Where a tool comes from: ACTIVITY, AI_TOOL, PEER, or PEER_WORKFLOW. */
     public static final String SOURCE = "source";
 
     // ── Execution graph ───────────────────────────────────────────────────────
@@ -251,6 +251,8 @@ public final class DescriptorFields {
     public static final String SOURCE_AI_TOOL = "AI_TOOL";
     /** A tool backed by a peer agent. */
     public static final String SOURCE_PEER = "PEER";
+    /** A tool that starts a peer workflow function detached from the agent. */
+    public static final String SOURCE_PEER_WORKFLOW = "PEER_WORKFLOW";
     /** A review that runs before the activity. */
     public static final String TRIGGER_PRE_RUN = "PRE_RUN";
     /** A review that runs when the activity fails. */

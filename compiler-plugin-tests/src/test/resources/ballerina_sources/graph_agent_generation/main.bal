@@ -42,5 +42,17 @@ final workflow:DurableAgent expenseAgent = check new ({
     // The mapping form on purpose: the descriptor must read the primary declaration
     // style, or the agent map loses its whole inbound column.
     events: {billSubmitted: {request: string}},
-    humanTasks: {approveExpense: {userRoles: "MANAGER", resultType: ApprovalDecision, title: "Approve expense"}}
+    humanTasks: {approveExpense: {userRoles: "MANAGER", resultType: ApprovalDecision, title: "Approve expense"}},
+    // Both peer kinds: an agent is delegated to, a workflow function is started and left to run.
+    peers: [{agent: auditAgent, description: "Audits a claim."}, {agent: archiveExpense}]
 });
+
+final workflow:DurableAgent auditAgent = check new ({
+    systemPrompt: {role: "Auditor", instructions: "Audit expense claims."},
+    model: expenseModel
+});
+
+@workflow:Workflow
+function archiveExpense(workflow:Context ctx, ExpenseClaim claim) returns error? {
+    return;
+}

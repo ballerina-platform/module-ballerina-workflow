@@ -422,6 +422,16 @@ public class WorkflowGraphTest {
                 "An activity-backed tool is drawn differently from an AI tool");
         Assert.assertEquals(nodeAt(graph, "tool:validateClaim").get("source"), "AI_TOOL");
 
+        // Peers are tools too, named by their `agent` reference. A workflow function peer carries the
+        // workflow's input as the tool's input; a peer agent takes a free-text query.
+        Assert.assertTrue(hasEdge(graph, "agent", "tool:auditAgent", "out"));
+        Assert.assertEquals(nodeAt(graph, "tool:auditAgent").get("source"), "PEER");
+        Assert.assertTrue(hasEdge(graph, "agent", "tool:archiveExpense", "out"));
+        Assert.assertEquals(nodeAt(graph, "tool:archiveExpense").get("source"), "PEER_WORKFLOW");
+        Map<String, Object> archiveTool = toolOf(descriptorOf(AGENT_PACKAGE), "expenseAgent", "archiveExpense");
+        Assert.assertEquals(asObject(archiveTool.get("input")).get("type"), "(ExpenseClaim claim)",
+                "The workflow peer's tool input is the workflow's data parameter, without the context");
+
         // @display labels ride on the display-only `label` slot; `target` stays the identity.
         Assert.assertEquals(nodeAt(graph, "agent").get("label"), "Expense agent",
                 "The agent variable's @display label names the agent node");
@@ -628,6 +638,20 @@ public class WorkflowGraphTest {
             }
         }
         throw new AssertionError("No workflow '" + workflowName + "' in the descriptor");
+    }
+
+    private static Map<String, Object> toolOf(Map<String, Object> document, String agentName, String toolName) {
+        for (Object agent : (List<?>) document.get("agents")) {
+            Map<?, ?> entry = (Map<?, ?>) agent;
+            if (agentName.equals(entry.get("name"))) {
+                for (Object tool : (List<?>) entry.get("tools")) {
+                    if (toolName.equals(((Map<?, ?>) tool).get("name"))) {
+                        return asObject(tool);
+                    }
+                }
+            }
+        }
+        throw new AssertionError("No tool '" + toolName + "' on agent '" + agentName + "'");
     }
 
     private static Map<String, Object> agentGraphOf(Map<String, Object> document, String agentName) {

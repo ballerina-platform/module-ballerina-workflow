@@ -138,7 +138,7 @@ public final class AgentGraphBuilder {
             node.put(LABEL, label);
         }
         if (source != null) {
-            // A tool's backing kind (ACTIVITY, AI_TOOL, PEER) changes how it is drawn.
+            // A tool's backing kind (ACTIVITY, AI_TOOL, PEER, PEER_WORKFLOW) changes how it is drawn.
             node.put(SOURCE, source);
         }
         return node;

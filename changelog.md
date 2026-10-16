@@ -22,7 +22,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
-- `workItems.list`, `humanTasks.list` and `reviewActivities.list` page through Temporal visibility
+- A `@workflow:Workflow` function in a durable agent's `peers` no longer fails the run with
+  `Unknown durable agent`. The model gets a tool named after the function whose arguments are
+  the workflow's input; it starts the workflow and returns its instance id at once. The workflow
+  runs on its own and outlives the agent. The compiler now rejects a peer function without
+  `@workflow:Workflow` (`WORKFLOW_171`) and `allowedEvents` on a workflow peer (`WORKFLOW_172`).
+  The descriptor lists peers again (`source: PEER` for an agent, `PEER_WORKFLOW` for a workflow
+  function, with its input); they had been missing since the `name` field was removed in 0.10.
+  ([#9319](https://github.com/ballerina-platform/ballerina-library/issues/9319))
+
+- `workItems.list", `humanTasks.list` and `reviewActivities.list` page through Temporal visibility
   instead of reading every matching task on each request. An integration with a few thousand task
   executions exhausted the namespace's visibility rate limit (`RESOURCE_EXHAUSTED`) and its task
   inbox never loaded. A page now reads at most five server pages and may come back short, with a

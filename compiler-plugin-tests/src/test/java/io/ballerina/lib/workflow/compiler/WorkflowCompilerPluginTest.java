@@ -19,6 +19,9 @@
 package io.ballerina.lib.workflow.compiler;
 
 import io.ballerina.projects.DiagnosticResult;
+import io.ballerina.projects.DocumentId;
+import io.ballerina.projects.Module;
+import io.ballerina.projects.ModuleId;
 import io.ballerina.projects.ProjectEnvironmentBuilder;
 import io.ballerina.projects.directory.BuildProject;
 import io.ballerina.projects.environment.Environment;
@@ -264,6 +267,44 @@ public class WorkflowCompilerPluginTest {
                 "Expected no errors for events record with anydata future<T> fields "
                         + "(boolean, int, string, json, xml, table). Errors: "
                         + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "valid")
+    public void testWorkflowFunctionPeerRegistersAsAWorkflowPeer() {
+        // ballerina-library#9319: a @workflow:Workflow function in `peers` is a tool that starts the
+        // workflow, so its registration carries the kind; a peer agent's registration is unchanged.
+        String packagePath = "valid_durable_agent_workflow_peer";
+        DiagnosticResult validationResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertEquals(validationResult.errorCount(), 0,
+                "Expected no errors for workflow function peers. Errors: " + getDiagnosticMessages(validationResult));
+        BuildProject project = BuildProject.load(getEnvironmentBuilder(), RESOURCE_DIRECTORY.resolve(packagePath));
+        DiagnosticResult declResult = project.currentPackage().runCodeGenAndModifyPlugins();
+        Assert.assertEquals(declResult.errorCount(), 0,
+                "Expected no declaration errors for workflow function peers. Errors: "
+                        + getDiagnosticMessages(declResult));
+        String generated = allSourcesOf(project);
+        Assert.assertTrue(generated.contains("registerDurableAgentPeer(\"claimAgent\", \"departmentApproval\", "
+                + "\"departmentApproval\", {\"description\": \"Asks one department to approve the claim.\"}, "
+                + "kind = \"WORKFLOW\");"), "The workflow peer registers with its kind:\n" + generated);
+        Assert.assertTrue(generated.contains("registerDurableAgentPeer(\"claimAgent\", \"archiveCase\", "
+                + "\"archiveCase\", (), kind = \"WORKFLOW\");"),
+                "A workflow peer without metadata still registers with its kind:\n" + generated);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidWorkflowFunctionPeer() {
+        String packagePath = "invalid_durable_agent_workflow_peer";
+        DiagnosticResult diagnosticResult = getDiagnosticResult(packagePath);
+        List<Diagnostic> plainFunction = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_171");
+        Assert.assertEquals(plainFunction.size(), 1, "A plain function peer is rejected once. Got: "
+                + getDiagnosticMessages(diagnosticResult));
+        assertDiagnosticLine(plainFunction.get(0), 40);
+        assertMessageContains(plainFunction.get(0), "notifyDepartment");
+        List<Diagnostic> allowedEvents = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_172");
+        Assert.assertEquals(allowedEvents.size(), 1, "allowedEvents on a workflow peer is rejected once. Got: "
+                + getDiagnosticMessages(diagnosticResult));
+        assertDiagnosticLine(allowedEvents.get(0), 41);
+        assertMessageContains(allowedEvents.get(0), "departmentApproval");
     }
 
     @Test(groups = "valid")
@@ -950,6 +991,17 @@ public class WorkflowCompilerPluginTest {
             }
         }
         return matching;
+    }
+
+    private static String allSourcesOf(BuildProject project) {
+        StringBuilder sources = new StringBuilder();
+        for (ModuleId moduleId : project.currentPackage().moduleIds()) {
+            Module module = project.currentPackage().module(moduleId);
+            for (DocumentId documentId : module.documentIds()) {
+                sources.append(module.document(documentId).syntaxTree().toSourceCode());
+            }
+        }
+        return sources.toString();
     }
 
     // Signature diagnostics sit on the offending parameter or return type, not on the function name.

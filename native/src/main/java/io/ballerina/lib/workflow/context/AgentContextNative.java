@@ -612,6 +612,27 @@ public final class AgentContextNative {
      */
     public static Object recordPeerEventTool(BHandle handle, BString name, BString description, BString kindSpec,
                                              BString schemaJson) {
+        return recordSchemaTool(handle, name, description, kindSpec, schemaJson, "peer event");
+    }
+
+    /**
+     * Records a workflow peer as a tool: its schema is the workflow's input, and the kind spec
+     * ({@code peerworkflow:<function>}) tells the loop which workflow to start.
+     *
+     * @param handle      the AgentContextInfo handle
+     * @param name        the tool name advertised to the model
+     * @param description the tool description advertised to the model
+     * @param kindSpec    the encoded peerworkflow kind
+     * @param schemaJson  the input JSON schema
+     * @return null on success, or a BError
+     */
+    public static Object recordWorkflowPeerTool(BHandle handle, BString name, BString description,
+                                                BString kindSpec, BString schemaJson) {
+        return recordSchemaTool(handle, name, description, kindSpec, schemaJson, "workflow peer");
+    }
+
+    private static Object recordSchemaTool(BHandle handle, BString name, BString description, BString kindSpec,
+                                           BString schemaJson, String what) {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             if (RESERVED_TOOL_NAMES.contains(name.getValue())) {
@@ -626,7 +647,7 @@ public final class AgentContextNative {
             return null;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
-                    "Failed to register peer event tool: " + e.getMessage()));
+                    "Failed to register " + what + " tool: " + e.getMessage()));
         }
     }
 

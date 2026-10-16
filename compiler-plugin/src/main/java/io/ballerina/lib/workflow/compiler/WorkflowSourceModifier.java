@@ -373,8 +373,12 @@ public class WorkflowSourceModifier implements ModifierTask<SourceModifierContex
                     .append(":" + WorkflowConstants.REGISTER_AGENT_PEER_FUNCTION + "(").append(agentNameLiteral)
                     .append(", \"").append(escapeBallerinaStringLiteral(peer.name()))
                     .append("\", \"").append(escapeBallerinaStringLiteral(peer.targetAgent()))
-                    .append("\", ").append(peer.metaSource() != null ? peer.metaSource() : "()")
-                    .append(");").append(System.lineSeparator());
+                    .append("\", ").append(peer.metaSource() != null ? peer.metaSource() : "()");
+            if (peer.workflow()) {
+                body.append(", ").append(WorkflowConstants.REGISTER_AGENT_PEER_KIND_PARAM)
+                        .append(" = \"").append(WorkflowConstants.PEER_KIND_WORKFLOW).append("\"");
+            }
+            body.append(");").append(System.lineSeparator());
         }
         // Register the shared object-model runner as this agent's workflow (the agent's own
         // workflow type + its activity map incl. the built-in agent activities), and bind the

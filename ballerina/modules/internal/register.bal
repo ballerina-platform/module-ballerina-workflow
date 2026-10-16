@@ -215,17 +215,19 @@ public isolated function registerDurableAgentRunner(string agentName)
     name: "registerDurableAgentRunner"
 } external;
 
-# Registers a peer-agent declaration of an object-model durable agent: the peer is
-# advertised to the agent's model as a delegable tool and runs as a true Temporal
-# child workflow of the agent.
+# Registers a peer declaration of an object-model durable agent: the peer is advertised to
+# the agent's model as a delegable tool. A peer agent runs as a true Temporal child workflow
+# of the agent; a peer workflow function is started detached and runs on its own.
 #
 # + agentName - The declaring agent's name
 # + peerName - The tool name advertised to the model
-# + targetAgent - The peer agent's name (its module-level variable name)
-# + meta - Declaration metadata (description, wait, callbackChannel, gating)
+# + targetAgent - The peer agent's name (its module-level variable name), or the workflow
+#                 function's name
+# + meta - Declaration metadata (description, allowedEvents)
+# + kind - `"AGENT"` for a durable agent, `"WORKFLOW"` for a workflow function
 # + return - `true` on success, or an error
 public isolated function registerDurableAgentPeer(string agentName, string peerName,
-        string targetAgent, json meta = ()) returns boolean|error = @java:Method {
+        string targetAgent, json meta = (), string kind = "AGENT") returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
     name: "registerDurableAgentPeer"
 } external;

@@ -157,11 +157,13 @@ captureActivityContent = true
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `captureHumanTaskContent` | `true` | Record a decision's content on its span and audit entry: what the person was shown (the human task's input, or the arguments of the activity under review) and what they submitted (the completion result, the rejection reason and details, or the review decision's input and feedback). Who decided, what and when are recorded regardless |
-| `captureActivityContent` | `true` | Log every activity execution attempt's arguments and result (or error) to the worker's log, beside its outcome and duration. Long values are truncated |
-| `publishMetricSamples` | `true` | Publish one structured log record per workflow event — run started/closed with duration, activity attempt with outcome and duration, data event delivered, task decided — tagged `logger = "workflow-metrics"`, so a log pipeline can build a workflow metrics index the way `ballerinax/metrics.logs` feeds HTTP metrics. Structural fields only |
+| `captureActivityContent` | follows observability | Log every activity execution attempt's arguments and result (or error) to the worker's log, beside its outcome and duration. Long values are truncated. Unset, it is on when observability is enabled (metrics, tracing or metrics logs) |
+| `publishMetricSamples` | follows metrics | Publish one structured log record per workflow event — run started/closed with duration, activity attempt with outcome and duration, data event delivered, task decided — tagged `logger = "workflow-metrics"`, so a log pipeline can build a workflow metrics index the way `ballerinax/metrics.logs` feeds HTTP metrics. Structural fields only. Unset, it is on when metrics or metrics logs are enabled |
 
-Both are on by default, as `ballerina/ai`'s `ai.observe` records prompt and completion
-content: the engine already persists everything a workflow handles — inputs, activity
+`captureHumanTaskContent` is on by default, and the other two are on whenever the matching
+observability is enabled, so a program that does not enable observability logs neither. Set
+either explicitly to override that. Human-task content is captured by default, as `ballerina/ai`'s
+`ai.observe` records prompt and completion content: the engine already persists everything a workflow handles — inputs, activity
 arguments and results, task submissions — in the run's history for the life of the run, so
 the log carries nothing the workflow store does not, and telemetry retention retires its
 copy on its own schedule. The module's standing advice still applies — keep sensitive data

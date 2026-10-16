@@ -18,13 +18,13 @@ import ballerina/http;
 import ballerina/test;
 
 // Regression test for https://github.com/ballerina-platform/ballerina-library/issues/8942:
-// these tests import `workflow.management` (for its programmatic helpers) but leave
-// `enableManagementApi` unset (disabled). The management listener must therefore never
-// be created — the management port stays free and any request to it fails to connect.
+// these tests import `workflow.management` (for its programmatic helpers) but not
+// `workflow.management.rest`, which owns the listener. The management port must therefore
+// stay free and any request to it fails to connect.
 @test:Config {groups: ["unit"]}
 function testManagementPortNotReservedWhenApiDisabled() returns error? {
     http:Client mgmtClient = check new ("http://localhost:8234", timeout = 2);
     http:Response|error response = mgmtClient->get("/workflow/definitions");
     test:assertTrue(response is error,
-        "The management port must not be open when enableManagementApi = false");
+        "The management port must not be open without workflow.management.rest");
 }

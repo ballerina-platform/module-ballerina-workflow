@@ -252,7 +252,7 @@ public isolated distinct class TaskDecisionSpan {
         string outcome = (err is ()) ? DECISION_ACCEPTED : DECISION_DENIED;
         recordTaskDecisionMetric(self.kind, taskName ?: UNKNOWN_TASK_NAME, self.action, err is (),
                 (err is ()) ? "" : errorTypeName(err));
-        if publishMetricSamples {
+        if metricSamplesPublished {
             // The decision's sample for log-based metrics: what was decided and on which task —
             // never who, and never the content. Those stay on the audit entry below.
             log:printInfo("", logger = "workflow-metrics", sample = "task.decided", task_kind = self.kind,

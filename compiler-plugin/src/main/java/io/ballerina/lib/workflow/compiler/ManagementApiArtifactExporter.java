@@ -71,10 +71,10 @@ import java.nio.file.StandardCopyOption;
  * import cannot serve {@code /workflow} under any configuration, and describing an endpoint it
  * cannot answer would mislead every consumer of the export — a gateway would provision a dead
  * route. Within an importing package, whether the port actually opens is a runtime
- * configurable ({@code enableManagementApi}, default {@code false}) that a build cannot see —
+ * configurable ({@code enableManagementApi}, default {@code true}) that a build cannot see —
  * and so is the port number itself, so the exported port is the {@code port} configurable's
  * default, not a fact about any deployment. The artifacts describe the surface the package CAN
- * serve, and the flags are an explicit opt-in.
+ * serve.
  *
  * @since 1.0.0
  */

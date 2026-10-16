@@ -443,6 +443,42 @@ public class WorkflowGraphTest {
                 "A tool without a label has none — the console falls back to the target");
     }
 
+    // ── Literal unions are enums ──────────────────────────────────────────────
+
+    @Test
+    public void testLiteralUnionsAreEnumsNotAnyOfObjects() {
+        // ballerina-library#9232: `"OPS"|"SALES"|"R&D"` is a value set. It used to render as three
+        // `{"type":"object"}` members under anyOf and mark the slot lossy, while the runtime form
+        // schema for the same task already said `enum`.
+        Map<String, Object> document = descriptorOf("descriptor_generation");
+        Map<String, Object> result = null;
+        for (Object workflow : (List<?>) document.get("workflows")) {
+            Map<?, ?> entry = (Map<?, ?>) workflow;
+            if ("expenseApproval".equals(entry.get("name"))) {
+                Map<?, ?> task = (Map<?, ?>) ((List<?>) entry.get("humanTasks")).get(0);
+                result = asObject(task.get("result"));
+            }
+        }
+        Assert.assertNotNull(result, "expenseApproval has a human task");
+        Assert.assertNull(result.get("lossy"), "A record of literal unions is exact: " + result);
+        Map<String, Object> properties = asObject(asObject(result.get("schema")).get("properties"));
+
+        Assert.assertEquals(String.valueOf(properties.get("costCentre")), "{enum=[OPS, SALES, R&D], type=string}");
+        // An enum declaration is the union of its members' values, in the order the compiler keeps
+        // that union (not the declaration's); the runtime reads the same union, so the two agree.
+        Assert.assertEquals(String.valueOf(properties.get("department")), "{enum=[SALES, OPS], type=string}");
+        Assert.assertEquals(String.valueOf(properties.get("altDepartment")),
+                "{enum=[SALES, OPS, null], type=[string, null]}", "Nil joins the enum and widens the type");
+        Assert.assertEquals(String.valueOf(properties.get("viaConst")), "{enum=[OPS, R&D], type=string}",
+                "A const reference contributes its value, not its name");
+        // MiniJson reads every number as a double; the golden document pins the integer spelling.
+        Assert.assertEquals(String.valueOf(properties.get("level")), "{enum=[1.0, 2.0, 3.0], type=integer}");
+        Assert.assertEquals(String.valueOf(properties.get("mixed")), "{enum=[1.0, a]}",
+                "Values of different types keep the enum and drop the type");
+        Assert.assertEquals(String.valueOf(properties.get("option")), "{enum=[x, y, null], type=[string, null]}");
+        Assert.assertEquals(String.valueOf(properties.get("single")), "{enum=[only], type=string}");
+    }
+
     // ── The runtime gets the same ids ─────────────────────────────────────────
 
     @Test

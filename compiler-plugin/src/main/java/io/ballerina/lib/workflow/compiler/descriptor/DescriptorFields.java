@@ -217,6 +217,8 @@ public final class DescriptorFields {
     public static final String SCHEMA_ADDITIONAL_PROPERTIES = "additionalProperties";
     /** Alternatives of a union. */
     public static final String SCHEMA_ANY_OF = "anyOf";
+    /** The value set of a literal union or enum. */
+    public static final String SCHEMA_ENUM = "enum";
 
     // ── JSON Schema type names ────────────────────────────────────────────────
     /** JSON object. */

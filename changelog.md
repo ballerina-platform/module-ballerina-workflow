@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- The workflow descriptor (`workflow.def.json`) describes a string-literal union field such as
+  `"OPS"|"SALES"|"R&D"`, an `enum`, or a union of `const` references as `{"type": "string", "enum":
+  [...]}`, as the management API's human task form schema already did, and no longer marks the
+  slot `lossy`. Integer, float and boolean literals, mixed literal unions and nil members follow the
+  runtime's rules, so the two schemas agree.
+  ([#9232](https://github.com/ballerina-platform/ballerina-library/issues/9232))
+
 - A `@workflow:Workflow` function in a durable agent's `peers` no longer fails the run with
   `Unknown durable agent`. The model gets a tool named after the function whose arguments are
   the workflow's input; it starts the workflow and returns its instance id at once. The workflow

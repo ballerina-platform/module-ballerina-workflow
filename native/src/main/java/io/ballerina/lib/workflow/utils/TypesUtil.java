@@ -553,19 +553,10 @@ public final class TypesUtil {
             }
 
             // An enum is a union whose members are all finite: one value set, one schema —
-            // never an anyOf of per-member schemas.
-            boolean allFinite = true;
-            for (Type member : nonNullMembers) {
-                if (!(member.getTag() == TypeTags.FINITE_TYPE_TAG && member instanceof FiniteType)) {
-                    allFinite = false;
-                    break;
-                }
-            }
-            if (allFinite) {
-                Set<Object> valueSpace = new LinkedHashSet<>();
-                for (Type member : nonNullMembers) {
-                    valueSpace.addAll(((FiniteType) member).getValueSpace());
-                }
+            // never an anyOf of per-member schemas. A nested one (`Department?`, where the enum is
+            // itself a union) is the same value set (ballerina-library#9232).
+            Set<Object> valueSpace = new LinkedHashSet<>();
+            if (collectFiniteValues(nonNullMembers, valueSpace, depth)) {
                 Map<String, Object> merged = finiteSchema(valueSpace);
                 if (hasNull) {
                     // The enum is what a validator checks against, so null has to be IN it —
@@ -628,6 +619,25 @@ public final class TypesUtil {
 
         // For all other unsupported tags, return a generic object schema.
         return mapOf("type", "object");
+    }
+
+    private static boolean collectFiniteValues(List<Type> members, Set<Object> valueSpace, int depth) {
+        if (depth > 12) {
+            return false;
+        }
+        for (Type member : members) {
+            Type m = dereferenceType(member, depth + 1);
+            if (m.getTag() == TypeTags.FINITE_TYPE_TAG && m instanceof FiniteType finite) {
+                valueSpace.addAll(finite.getValueSpace());
+            } else if (m.getTag() == TypeTags.UNION_TAG && m instanceof UnionType union) {
+                if (!collectFiniteValues(union.getMemberTypes(), valueSpace, depth + 1)) {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

@@ -151,7 +151,8 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
         public void visit(RemoteMethodCallActionNode remoteCallNode) {
             String methodName = remoteCallNode.methodName().name().text();
 
-            if (WorkflowConstants.CALL_ACTIVITY_FUNCTION.equals(methodName)) {
+            if (WorkflowConstants.CALL_ACTIVITY_FUNCTION.equals(methodName)
+                    && WorkflowPluginUtils.isContextCall(remoteCallNode, semanticModel)) {
                 SeparatedNodeList<FunctionArgumentNode> arguments = remoteCallNode.arguments();
                 if (!arguments.isEmpty()) {
                     FunctionArgumentNode firstArg = arguments.get(0);

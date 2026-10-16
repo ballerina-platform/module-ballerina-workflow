@@ -27,6 +27,8 @@ import io.ballerina.tools.diagnostics.Diagnostic;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -191,48 +193,58 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "invalid")
-    public void testInvalidActivityParam() {
+    public void testInvalidActivityParam() throws IOException {
         String packagePath = "invalid_activity_param";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertTrue(diagnosticResult.errorCount() > 0,
                 "Expected validation error for activity with non-anydata parameter");
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_103);
+        assertDiagnosticStartsAt(diagnosticResult, packagePath, WorkflowDiagnostic.WORKFLOW_103,
+                30, "MyClass obj");
     }
 
     @Test(groups = "invalid")
-    public void testInvalidActivityReturn() {
+    public void testInvalidActivityReturn() throws IOException {
         String packagePath = "invalid_activity_return";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertTrue(diagnosticResult.errorCount() > 0,
                 "Expected validation error for activity with non-anydata return type");
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_104);
+        assertDiagnosticStartsAt(diagnosticResult, packagePath, WorkflowDiagnostic.WORKFLOW_104,
+                30, "MyClass|error");
     }
 
     @Test(groups = "invalid")
-    public void testInvalidWorkflowParam() {
+    public void testInvalidWorkflowParam() throws IOException {
         String packagePath = "invalid_process_param";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertTrue(diagnosticResult.errorCount() > 0,
                 "Expected validation error for workflow with non-anydata input parameter");
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_101);
+        assertDiagnosticStartsAt(diagnosticResult, packagePath, WorkflowDiagnostic.WORKFLOW_101,
+                39, "InvalidInput input");
     }
 
     @Test(groups = "invalid")
-    public void testInvalidWorkflowReturn() {
+    public void testInvalidWorkflowReturn() throws IOException {
         String packagePath = "invalid_process_return";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertTrue(diagnosticResult.errorCount() > 0,
                 "Expected validation error for workflow with non-anydata return type");
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_105);
+        assertDiagnosticStartsAt(diagnosticResult, packagePath, WorkflowDiagnostic.WORKFLOW_105,
+                39, "InvalidResult|error");
     }
 
     @Test(groups = "invalid")
-    public void testInvalidWorkflowEvents() {
+    public void testInvalidWorkflowEvents() throws IOException {
         String packagePath = "invalid_process_events";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertTrue(diagnosticResult.errorCount() > 0,
                 "Expected validation error for workflow with invalid events parameter type");
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_102);
+        assertDiagnosticStartsAt(diagnosticResult, packagePath, WorkflowDiagnostic.WORKFLOW_102,
+                31, "string events");
     }
 
     @Test(groups = "invalid")
@@ -251,6 +263,15 @@ public class WorkflowCompilerPluginTest {
         Assert.assertEquals(diagnosticResult.errorCount(), 0,
                 "Expected no errors for events record with anydata future<T> fields "
                         + "(boolean, int, string, json, xml, table). Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "valid")
+    public void testCallActivityOnUnrelatedClient() {
+        String packagePath = "valid_call_activity_unrelated_client";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for a callActivity remote method on a non-workflow client. Errors: "
                         + getDiagnosticMessages(diagnosticResult));
     }
 
@@ -929,6 +950,19 @@ public class WorkflowCompilerPluginTest {
             }
         }
         return matching;
+    }
+
+    // Signature diagnostics sit on the offending parameter or return type, not on the function name.
+    private void assertDiagnosticStartsAt(DiagnosticResult diagnosticResult, String packagePath,
+                                          WorkflowDiagnostic expected, int line, String text) throws IOException {
+        List<Diagnostic> diagnostics = getDiagnosticsWithCode(diagnosticResult, expected.getCode());
+        Assert.assertEquals(diagnostics.size(), 1, getDiagnosticMessages(diagnosticResult));
+        Diagnostic diagnostic = diagnostics.get(0);
+        String sourceLine = Files.readAllLines(RESOURCE_DIRECTORY.resolve(packagePath).resolve("main.bal"))
+                .get(line - 1);
+        assertDiagnosticLine(diagnostic, line);
+        Assert.assertEquals(diagnostic.location().lineRange().startLine().offset(), sourceLine.indexOf(text),
+                expected.getCode() + " should start at '" + text + "' in: " + sourceLine);
     }
 
     /**

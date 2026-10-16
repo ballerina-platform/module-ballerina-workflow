@@ -25,7 +25,7 @@ import ballerina/test;
 @test:Config {}
 function testSendDataRouteRefusesReservedNames() returns error? {
     check startManagementListener();
-    http:Client mgmtClient = check new (string `http://localhost:${port}`, timeout = 5);
+    http:Client mgmtClient = check new (string `http://localhost:${port}`, timeout = 5, auth = opsCredentials);
 
     // A framework control signal carries the checks of the operation that sends it — completing a
     // task, resuming a run — so forging one through the data-event route is a denial, not a

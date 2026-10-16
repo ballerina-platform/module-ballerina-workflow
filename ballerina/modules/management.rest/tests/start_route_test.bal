@@ -23,7 +23,7 @@ import ballerina/test;
 @test:Config {}
 function testStartRouteRefusesBadIdsAndPolicies() returns error? {
     check startManagementListener();
-    http:Client mgmtClient = check new (string `http://localhost:${port}`, timeout = 5);
+    http:Client mgmtClient = check new (string `http://localhost:${port}`, timeout = 5, auth = opsCredentials);
 
     json[] bad = [
         {workflowType: "anything", workflowId: 42},

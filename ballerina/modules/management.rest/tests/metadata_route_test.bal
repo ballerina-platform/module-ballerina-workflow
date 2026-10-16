@@ -25,7 +25,7 @@ import ballerina/workflow.management;
 @test:Config {}
 function testMetadataRouteServesTheMetadataDocument() returns error? {
     check startManagementListener();
-    http:Client mgmtClient = check new (string `http://localhost:${port}`, timeout = 5);
+    http:Client mgmtClient = check new (string `http://localhost:${port}`, timeout = 5, auth = opsCredentials);
 
     // No identity headers: the document describes the program, not a run, so no roles are needed.
     http:Response response = check mgmtClient->get("/workflow/metadata");

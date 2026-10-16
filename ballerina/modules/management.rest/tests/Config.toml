@@ -4,3 +4,33 @@
 username = "ops"
 password = "s3cret!"
 scopes = ["ops"]
+
+# Test credentials and invalid credential values (see test_credentials.bal).
+[ballerina.workflow.management.rest]
+testJwtSecret = "gateway-test-secret-0123456789"
+forgedJwtSecret = "somebody-elses-secret-0123456789"
+testApiKey = "test-api-key"
+wrongApiKey = "nope"
+opaqueAccessToken = "opaque-access-token"
+revokedAccessToken = "revoked-access-token"
+opsUsername = "ops"
+opsPassword = "s3cret!"
+wrongPassword = "wrong"
+unknownUsername = "nobody"
+
+[ballerina.workflow.management.rest.malformedBearerValues]
+"empty bearer" = "Bearer "
+"bare scheme" = "Bearer"
+"two values" = "Bearer one two"
+"unknown scheme" = "Token abc"
+
+[ballerina.workflow.management.rest.malformedBasicValues]
+"not base64" = "Basic !!!"
+"empty" = "Basic "
+"lower-case scheme" = "basic b3BzOnMzY3JldCE="
+
+[ballerina.workflow.management.rest.invalidApiKeyValues]
+"wrong key" = "nope"
+"empty key" = ""
+"different case" = "TEST-API-KEY"
+"key with a suffix" = "test-api-keyx"

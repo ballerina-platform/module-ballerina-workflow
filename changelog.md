@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- `workItems.list`, `humanTasks.list` and `reviewActivities.list` page through Temporal visibility
+  instead of reading every matching task on each request. An integration with a few thousand task
+  executions exhausted the namespace's visibility rate limit (`RESOURCE_EXHAUSTED`) and its task
+  inbox never loaded. A page now reads at most five server pages and may come back short, with a
+  token, when the filters Temporal cannot apply (caller access, parent workflow, task name) keep
+  few rows. Items come in Temporal's order rather than oldest first, and a page token from an
+  earlier version starts the listing over.
+  ([wso2/product-integrator#2510](https://github.com/wso2/product-integrator/issues/2510))
+
+- A failed `listAllReviewActivities` reported `Failed to list retry tasks`, and the task listings
+  repeated their `Failed to list human tasks:` prefix.
+
 ## [1.0.0] - 2026-10-08
 
 ### Added

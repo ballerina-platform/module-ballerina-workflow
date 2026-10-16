@@ -22,6 +22,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- Activity arguments are converted to the activity's declared parameter types before the call. A
+  `string[]` parameter used to receive a value whose inherent type was `anydata[]`, so the first
+  operation that checked the type inside the activity panicked with `InherentTypeViolation`. This
+  applies to every path into an activity: a workflow's `callActivity`, a durable agent's tool call,
+  and a reviewer's `proceed` / `proceed-with-input`. An argument that does not fit now fails the
+  call with the parameter and its type named.
+  ([#9320](https://github.com/ballerina-platform/ballerina-library/issues/9320))
+
 - The workflow descriptor (`workflow.def.json`) describes a string-literal union field such as
   `"OPS"|"SALES"|"R&D"`, an `enum`, or a union of `const` references as `{"type": "string", "enum":
   [...]}`, as the management API's human task form schema already did, and no longer marks the

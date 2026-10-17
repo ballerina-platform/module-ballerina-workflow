@@ -301,6 +301,24 @@ public final class TypesUtil {
     }
 
     /**
+     * An error's message with its detail message, when it has one: a conversion error's message is only
+     * {@code {ballerina}ConversionError}; which field failed, and why, is in the detail.
+     *
+     * @param error the error
+     * @return the message, followed by the detail message when present
+     */
+    public static String errorDetail(BError error) {
+        String message = error.getMessage();
+        if (error.getDetails() instanceof BMap<?, ?> details) {
+            Object detail = details.get(StringUtils.fromString(ERROR_MESSAGE));
+            if (detail != null && !detail.toString().isBlank() && !detail.toString().equals(message)) {
+                return message + ": " + detail;
+            }
+        }
+        return message;
+    }
+
+    /**
      * Validates and converts a completion/signal payload against the expected {@code targetType}.
      * <p>
      * Unlike {@link #cloneWithType(Object, Type)}, a {@code null} (Ballerina nil) value is rejected when the target

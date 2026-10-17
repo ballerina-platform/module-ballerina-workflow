@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- A durable agent's human task with a `taskInputType` now advertises that type's JSON schema to the
+  model as the tool's parameters (plus the reserved `excludedUsers`), and an input that does not
+  match it is reported with the conversion detail (which field, expected and found) rather than a
+  bare `ConversionError`. Before, the model was shown a generic object schema and repeated the same
+  mismatched call until the agent hit its iteration limit.
+  ([#9323](https://github.com/ballerina-platform/ballerina-library/issues/9323))
+
 - Activity arguments are converted to the activity's declared parameter types before the call. A
   `string[]` parameter used to receive a value whose inherent type was `anydata[]`, so the first
   operation that checked the type inside the activity panicked with `InherentTypeViolation`. This

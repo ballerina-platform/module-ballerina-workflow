@@ -807,16 +807,16 @@ public final class AgentContextNative {
             String descriptionStr = description instanceof BString d ? d.getValue()
                     : "Creates the human task '" + name + "' and waits for a person to complete it. "
                             + "Pass any details relevant for the person as fields.";
-            // The model may pass arbitrary payload fields shown to the person, plus one reserved
-            // field that narrows who may act on this creation — a ladder excludes whoever already
-            // decided. It can never widen the declared audience.
-            Map<String, Object> schema = new LinkedHashMap<>();
-            schema.put(SCHEMA_TYPE, TYPE_OBJECT);
-            schema.put("additionalProperties", Boolean.TRUE);
-            Map<String, Object> properties = new LinkedHashMap<>();
+            // The model's input is the declared taskInputType when there is one — advertised so the
+            // model can fill it, as an activity's parameters are — or any payload fields shown to the
+            // person. Either way one reserved field narrows who may act on this creation — a ladder
+            // excludes whoever already decided. It can never widen the declared audience.
+            Map<String, Object> schema = humanTaskInputSchema(taskInputType);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> properties = (Map<String, Object>) schema.computeIfAbsent(SCHEMA_PROPERTIES,
+                    key -> new LinkedHashMap<String, Object>());
             properties.put(TaskKeys.EXCLUDED_USERS, namesProperty(
                     "User ids that may not complete this task, such as someone who already decided"));
-            schema.put(SCHEMA_PROPERTIES, properties);
             if (RESERVED_TOOL_NAMES.contains(name)) {
                 return reservedToolNameError(name);
             }
@@ -1534,6 +1534,20 @@ public final class AgentContextNative {
             envelope.put(StringUtils.fromString(TaskKeys.COMPLETED_AT), asText(completion.get(TaskKeys.COMPLETED_AT)));
         }
         return envelope;
+    }
+
+    // The declared input type's schema (ballerina-library#9323), or the open object when none is declared.
+    private static Map<String, Object> humanTaskInputSchema(Object taskInputType) {
+        if (taskInputType instanceof BTypedesc declared) {
+            Map<String, Object> schema = parseSchema(TypesUtil.toJsonSchema(declared.getDescribingType()));
+            if (TYPE_OBJECT.equals(schema.get(SCHEMA_TYPE))) {
+                return schema;
+            }
+        }
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put(SCHEMA_TYPE, TYPE_OBJECT);
+        schema.put("additionalProperties", Boolean.TRUE);
+        return schema;
     }
 
     private static Map<String, Object> namesProperty(String description) {

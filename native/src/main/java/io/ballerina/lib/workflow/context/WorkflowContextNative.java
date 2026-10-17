@@ -957,7 +957,7 @@ public final class WorkflowContextNative {
         if (converted instanceof BError mismatch) {
             return ErrorCreator.createError(StringUtils.fromString(
                     "The input for human task '" + taskName + "' does not match its declared taskInputType ("
-                            + inputType.getDescribingType() + "): " + mismatch.getMessage()));
+                            + inputType.getDescribingType() + "): " + TypesUtil.errorDetail(mismatch)));
         }
         return null;
     }

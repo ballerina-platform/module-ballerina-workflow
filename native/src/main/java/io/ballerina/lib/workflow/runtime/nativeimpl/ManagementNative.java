@@ -319,37 +319,42 @@ public final class ManagementNative {
      * {@link WorkflowMetadataNative} can reuse the derivation for metadata publishing.
      */
     static String deriveWorkflowInputSchema(io.ballerina.lib.workflow.worker.WorkflowFunctionRef processFunction) {
-        if (processFunction == null) {
-            return TypesUtil.toJsonSchemaForParameters(new Parameter[0], 0, 0);
+        Parameter[] parameters = workflowDataParameters(processFunction);
+        if (parameters.length == 0) {
+            return TypesUtil.toJsonSchemaForParameters(parameters, 0, 0);
         }
 
+        // Common path: one data parameter (typically a record input).
+        if (parameters.length == 1) {
+            return TypesUtil.toJsonSchema(parameters[0].type);
+        }
+
+        // Multi-parameter workflows are represented as an object keyed by parameter names.
+        return TypesUtil.toJsonSchemaForParameters(parameters, 0, parameters.length);
+    }
+
+    // The data parameters of a workflow function: everything between the Context and the events record.
+    static Parameter[] workflowDataParameters(io.ballerina.lib.workflow.worker.WorkflowFunctionRef processFunction) {
+        if (processFunction == null) {
+            return new Parameter[0];
+        }
         FunctionType functionType = resolveFunctionType(processFunction.getType(), 0);
         if (functionType == null) {
-            return TypesUtil.toJsonSchemaForParameters(new Parameter[0], 0, 0);
+            return new Parameter[0];
         }
-
         Parameter[] parameters = functionType.getParameters();
         if (parameters == null || parameters.length == 0) {
-            return TypesUtil.toJsonSchemaForParameters(new Parameter[0], 0, 0);
+            return new Parameter[0];
         }
-
         int startIndex = EventExtractor.hasContextParameter(processFunction.getType()) ? 1 : 0;
         int endExclusive = parameters.length;
         if (EventExtractor.getEventsRecordType(processFunction.getType()) != null && endExclusive > startIndex) {
             endExclusive--;
         }
-
         if (endExclusive <= startIndex) {
-            return TypesUtil.toJsonSchemaForParameters(new Parameter[0], 0, 0);
+            return new Parameter[0];
         }
-
-        // Common path: one data parameter (typically a record input).
-        if (endExclusive - startIndex == 1) {
-            return TypesUtil.toJsonSchema(parameters[startIndex].type);
-        }
-
-        // Multi-parameter workflows are represented as an object keyed by parameter names.
-        return TypesUtil.toJsonSchemaForParameters(parameters, startIndex, endExclusive);
+        return java.util.Arrays.copyOfRange(parameters, startIndex, endExclusive);
     }
 
     private static FunctionType resolveFunctionType(Type type, int depth) {

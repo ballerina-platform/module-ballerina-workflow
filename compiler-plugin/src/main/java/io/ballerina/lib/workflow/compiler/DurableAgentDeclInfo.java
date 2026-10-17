@@ -117,10 +117,12 @@ public record DurableAgentDeclInfo(String agentName,
     /**
      * A declared peer, advertised to the model as delegable tools.
      *
-     * @param name        the tool-name prefix: the peer's module-level variable name
-     * @param targetAgent the peer's agent name (the same variable name)
+     * @param name        the tool-name prefix: the peer's module-level variable name, or the
+     *                    workflow function's name
+     * @param targetAgent the peer's agent name (the same variable name), or the workflow function's name
      * @param metaSource  source text of a json metadata mapping (description, allowedEvents), or
      *                    null when there is none
+     * @param workflow    whether the peer is a {@code @workflow:Workflow} function rather than an agent
      */
-    public record PeerDecl(String name, String targetAgent, String metaSource) { }
+    public record PeerDecl(String name, String targetAgent, String metaSource, boolean workflow) { }
 }

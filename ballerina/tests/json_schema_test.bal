@@ -211,3 +211,41 @@ function testSchemaRequiredMatchesBallerinasOwnRule() returns error? {
     test:assertTrue(required.indexOf("optional") is (),
             "an optional field must not be required: " + required.toString());
 }
+
+// ── Literal unions (ballerina-library#9232) ──────────────────────────────────
+// The descriptor the compiler plugin writes must say the same as this runtime schema, so
+// WorkflowGraphTest.testLiteralUnionsAreEnumsNotAnyOfObjects pins the same shapes.
+
+enum SchemaDepartment {
+    OPS,
+    SALES
+}
+
+const string SCHEMA_RND = "R&D";
+
+type CostCentre "OPS"|"SALES"|"R&D";
+type OptDepartment SchemaDepartment?;
+type ViaConst OPS|SCHEMA_RND;
+type Level 1|2|3;
+type Mixed 1|"a";
+type OptXY ("x"|"y")?;
+type Only "only";
+type OptX "x"|();
+type NestedNil OptX|"z";
+
+@test:Config {groups: ["unit"]}
+function testSchemaLiteralUnionsAreEnums() returns error? {
+    test:assertEquals(check schemaOf(CostCentre), {"type": "string", "enum": ["OPS", "SALES", "R&D"]});
+    // The compiler keeps an enum's union in its own order, not the declaration's; the descriptor
+    // reads the same union, so both sides list SALES before OPS.
+    test:assertEquals(check schemaOf(SchemaDepartment), {"type": "string", "enum": ["SALES", "OPS"]});
+    test:assertEquals(check schemaOf(OptDepartment),
+        {"type": ["string", "null"], "enum": ["SALES", "OPS", ()]}, "A nested enum with nil is one value set");
+    test:assertEquals(check schemaOf(ViaConst), {"type": "string", "enum": ["OPS", "R&D"]});
+    test:assertEquals(check schemaOf(Level), {"type": "integer", "enum": [1, 2, 3]});
+    test:assertEquals(check schemaOf(Mixed), {"enum": [1, "a"]});
+    test:assertEquals(check schemaOf(OptXY), {"type": ["string", "null"], "enum": ["x", "y", ()]});
+    test:assertEquals(check schemaOf(Only), {"type": "string", "enum": ["only"]});
+    test:assertEquals(check schemaOf(NestedNil), {"type": ["string", "null"], "enum": ["x", "z", ()]},
+        "A nil inside a nested literal union is the union's nil");
+}

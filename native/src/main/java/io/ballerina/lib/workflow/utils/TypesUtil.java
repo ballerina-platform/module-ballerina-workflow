@@ -301,6 +301,24 @@ public final class TypesUtil {
     }
 
     /**
+     * An error's message with its detail message, when it has one: a conversion error's message is only
+     * {@code {ballerina}ConversionError}; which field failed, and why, is in the detail.
+     *
+     * @param error the error
+     * @return the message, followed by the detail message when present
+     */
+    public static String errorDetail(BError error) {
+        String message = error.getMessage();
+        if (error.getDetails() instanceof BMap<?, ?> details) {
+            Object detail = details.get(StringUtils.fromString(ERROR_MESSAGE));
+            if (detail != null && !detail.toString().isBlank() && !detail.toString().equals(message)) {
+                return message + ": " + detail;
+            }
+        }
+        return message;
+    }
+
+    /**
      * Validates and converts a completion/signal payload against the expected {@code targetType}.
      * <p>
      * Unlike {@link #cloneWithType(Object, Type)}, a {@code null} (Ballerina nil) value is rejected when the target
@@ -553,21 +571,13 @@ public final class TypesUtil {
             }
 
             // An enum is a union whose members are all finite: one value set, one schema —
-            // never an anyOf of per-member schemas.
-            boolean allFinite = true;
-            for (Type member : nonNullMembers) {
-                if (!(member.getTag() == TypeTags.FINITE_TYPE_TAG && member instanceof FiniteType)) {
-                    allFinite = false;
-                    break;
-                }
-            }
-            if (allFinite) {
-                Set<Object> valueSpace = new LinkedHashSet<>();
-                for (Type member : nonNullMembers) {
-                    valueSpace.addAll(((FiniteType) member).getValueSpace());
-                }
+            // never an anyOf of per-member schemas. A nested one (`Department?`, where the enum is
+            // itself a union) is the same value set (ballerina-library#9232).
+            Set<Object> valueSpace = new LinkedHashSet<>();
+            boolean[] nestedNull = {hasNull};
+            if (collectFiniteValues(nonNullMembers, valueSpace, depth, nestedNull)) {
                 Map<String, Object> merged = finiteSchema(valueSpace);
-                if (hasNull) {
+                if (nestedNull[0]) {
                     // The enum is what a validator checks against, so null has to be IN it —
                     // widening `type` alone still rejects the null that `"a"|"b"|()` permits.
                     Object enumValues = merged.get("enum");
@@ -628,6 +638,30 @@ public final class TypesUtil {
 
         // For all other unsupported tags, return a generic object schema.
         return mapOf("type", "object");
+    }
+
+    // A nil inside a nested union (`type A "x"|(); A|"y"`) is the enclosing union's nil: it is reported
+    // through hasNull rather than folded into the value space, so null is added to the enum once.
+    private static boolean collectFiniteValues(List<Type> members, Set<Object> valueSpace, int depth,
+                                               boolean[] hasNull) {
+        if (depth > 12) {
+            return false;
+        }
+        for (Type member : members) {
+            Type m = dereferenceType(member, depth + 1);
+            if (m.getTag() == TypeTags.FINITE_TYPE_TAG && m instanceof FiniteType finite) {
+                valueSpace.addAll(finite.getValueSpace());
+            } else if (m.getTag() == TypeTags.NULL_TAG) {
+                hasNull[0] = true;
+            } else if (m.getTag() == TypeTags.UNION_TAG && m instanceof UnionType union) {
+                if (!collectFiniteValues(union.getMemberTypes(), valueSpace, depth + 1, hasNull)) {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

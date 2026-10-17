@@ -397,6 +397,9 @@ isolated function dispatchAgentTool(handle ctxHandle, string agentName, AgentFun
     } else if kind.startsWith("peeragent:") {
         // Delegates to a peer durable agent running as a true Temporal child workflow.
         result = dispatchPeerAgent(ctxHandle, kind.substring(10), args);
+    } else if kind.startsWith("peerworkflow:") {
+        // Starts a peer workflow detached from this agent and returns its id at once.
+        result = startPeerWorkflow(kind.substring(13), args);
     } else if kind.startsWith("peerevent:") {
         // Sends one of the peer's events to its companion instance; a duplex event returns the answer.
         int split = <int>kind.lastIndexOf(":");
@@ -659,6 +662,10 @@ isolated function getAgentModel(string agentName) returns ai:ModelProvider|error
 
 // Hard cap on event waits per run: the backstop for a conversation that never ends.
 const int MAX_EVENT_WAITS = 50;
+
+// Peer kinds, as the declaration registers them.
+const string PEER_KIND_AGENT = "AGENT";
+const string PEER_KIND_WORKFLOW = "WORKFLOW";
 
 // Internal shape of a registered tool: the LLM-facing definition plus the
 // dispatch kind ("activity", "aitool", "humantask", or "event:<name>") and
@@ -982,8 +989,8 @@ isolated function retryPolicyOf(map<json> retryJson) returns RetryPolicy|error {
 }
 
 
-# Registers one declared peer agent on the runner's context, converting the
-# declaration metadata (description, wait, callbackChannel, gating).
+# Registers one declared peer on the runner's context: a peer agent as its run tool plus one
+# tool per exposed event, a peer workflow function as one tool that starts it.
 #
 # + agentCtx - The native agent context handle
 # + peerSpec - The declared peer
@@ -997,6 +1004,14 @@ isolated function registerDeclaredPeer(handle agentCtx, DurableAgentPeerSpec pee
         if descriptionJson is string {
             description = descriptionJson;
         }
+    }
+    if peerSpec.kind == PEER_KIND_WORKFLOW {
+        string workflowName = peerSpec.targetAgent;
+        string schema = check peerWorkflowToolSchema(workflowName);
+        string workflowDesc = description ?: ("Starts the workflow '" + workflowName
+            + "' and returns its instance id at once; it runs on its own and its result is not returned.");
+        return recordWorkflowPeerTool(agentCtx, peerSpec.name, workflowDesc, "peerworkflow:" + workflowName,
+            schema);
     }
     string[]? allowedEvents = ();
     if meta is map<json> {
@@ -1121,6 +1136,16 @@ isolated function peerEventTools(string targetAgent, string[]? allowedEvents) re
     name: "peerEventTools"
 } external;
 
+isolated function peerWorkflowToolSchema(string workflowName) returns string|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "peerWorkflowToolSchema"
+} external;
+
+isolated function startPeerWorkflow(string workflowName, map<anydata> args) returns string|error = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
+    name: "startPeerWorkflow"
+} external;
+
 isolated function sendPeerEvent(string targetAgent, string eventName, map<anydata> payload)
         returns anydata|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
@@ -1136,6 +1161,12 @@ isolated function recordPeerEventTool(handle nativeContext, string name, string 
         string schemaJson) returns error? = @java:Method {
     'class: "io.ballerina.lib.workflow.context.AgentContextNative",
     name: "recordPeerEventTool"
+} external;
+
+isolated function recordWorkflowPeerTool(handle nativeContext, string name, string description, string kindSpec,
+        string schemaJson) returns error? = @java:Method {
+    'class: "io.ballerina.lib.workflow.context.AgentContextNative",
+    name: "recordWorkflowPeerTool"
 } external;
 
 isolated function recordReplyToCallerTool(handle nativeContext, map<anydata> replyTo) returns error? = @java:Method {

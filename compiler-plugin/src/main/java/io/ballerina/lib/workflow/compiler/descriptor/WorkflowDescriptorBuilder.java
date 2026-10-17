@@ -109,6 +109,7 @@ import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SOU
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SOURCE_ACTIVITY;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SOURCE_AI_TOOL;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SOURCE_PEER;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SOURCE_PEER_WORKFLOW;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.TOOLS;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.TRIGGERS;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.TRIGGER_ON_FAILURE;
@@ -686,7 +687,7 @@ public final class WorkflowDescriptorBuilder {
                     case WorkflowConstants.AGENT_CONFIG_ACTIVITIES ->
                             collectAgentActivities(semanticModel, value, tools);
                     case WorkflowConstants.AGENT_CONFIG_TOOLS -> collectAgentTools(semanticModel, value, tools);
-                    case WorkflowConstants.AGENT_CONFIG_PEERS -> collectAgentPeers(value, tools);
+                    case WorkflowConstants.AGENT_CONFIG_PEERS -> collectAgentPeers(semanticModel, value, tools);
                     case WorkflowConstants.AGENT_CONFIG_MODEL -> modelLabel = sourceLabel(value);
                     default -> {
                         // systemPrompt, maxIter: runtime values — not structure.
@@ -950,21 +951,40 @@ public final class WorkflowDescriptorBuilder {
         }
     }
 
-    private static void collectAgentPeers(ExpressionNode value, Map<String, Map<String, Object>> tools) {
+    // A peer is named by its `agent` reference: the peer agent's variable, or a workflow function. The
+    // workflow peer's tool takes the workflow's input, so it carries an input slot like an activity.
+    private static void collectAgentPeers(SemanticModel semanticModel, ExpressionNode value,
+                                          Map<String, Map<String, Object>> tools) {
         for (MappingConstructorExpressionNode mapping : mappingsOf(value)) {
-            String name = null;
+            ExpressionNode ref = null;
             for (MappingFieldNode field : mapping.fields()) {
                 if (field instanceof SpecificFieldNode specific && specific.valueExpr().isPresent()
-                        && WorkflowConstants.DECL_NAME.equals(fieldKeyName(specific))) {
-                    name = constantStringValue(specific.valueExpr().get());
+                        && WorkflowConstants.DECL_AGENT.equals(fieldKeyName(specific))) {
+                    ref = specific.valueExpr().get();
                 }
             }
-            if (name == null) {
+            if (ref == null) {
+                continue;
+            }
+            Optional<Symbol> symbol = semanticModel.symbol(ref);
+            String name = symbol.flatMap(Symbol::getName).orElse(simpleNameOf(ref.toSourceCode().trim()));
+            if (name.isEmpty()) {
                 continue;
             }
             Map<String, Object> tool = new LinkedHashMap<>();
             tool.put(NAME, name);
-            tool.put(SOURCE, SOURCE_PEER);
+            if (symbol.isPresent() && symbol.get() instanceof FunctionSymbol fnSymbol) {
+                tool.put(SOURCE, SOURCE_PEER_WORKFLOW);
+                List<ParameterSymbol> inputParams = new ArrayList<>();
+                for (ParameterSymbol p : dataParameters(fnSymbol.typeDescriptor().params().orElse(List.of()))) {
+                    if (!WorkflowPluginUtils.isEventsRecordType(p.typeDescriptor())) {
+                        inputParams.add(p);
+                    }
+                }
+                tool.put(INPUT, DescriptorSchemaGen.parameterSlot(inputParams));
+            } else {
+                tool.put(SOURCE, SOURCE_PEER);
+            }
             tools.put(name, tool);
         }
     }

@@ -27,8 +27,11 @@ import io.ballerina.runtime.api.Environment;
 import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.creators.TypeCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
+import io.ballerina.runtime.api.types.Parameter;
 import io.ballerina.runtime.api.types.Type;
+import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.utils.StringUtils;
+import io.ballerina.runtime.api.utils.TypeUtils;
 import io.ballerina.runtime.api.values.BArray;
 import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BFunctionPointer;
@@ -194,13 +197,18 @@ public final class DurableAgentNative {
     }
 
     /**
-     * A declared peer agent.
+     * A declared peer.
      *
      * @param name        the tool name advertised to the model
-     * @param targetAgent the peer agent's name
-     * @param meta        declaration metadata (description, wait, callbackChannel, gating)
+     * @param targetAgent the peer's name: a durable agent, or a workflow function
+     * @param meta        declaration metadata (description, allowedEvents)
+     * @param kind        {@link #PEER_KIND_AGENT} or {@link #PEER_KIND_WORKFLOW}
      */
-    public record PeerDecl(String name, String targetAgent, Object meta) { }
+    public record PeerDecl(String name, String targetAgent, Object meta, String kind) { }
+
+    public static final String PEER_KIND_AGENT = "AGENT";
+    public static final String PEER_KIND_WORKFLOW = "WORKFLOW";
+    private static final String PEER_SPEC_KIND_FIELD = "kind";
 
     /**
      * A declared activity capability.
@@ -558,6 +566,7 @@ public final class DurableAgentNative {
                 fields.put(SPEC_NAME_FIELD, StringUtils.fromString(peer.name()));
                 fields.put("targetAgent", StringUtils.fromString(peer.targetAgent()));
                 fields.put("meta", peer.meta());
+                fields.put(PEER_SPEC_KIND_FIELD, StringUtils.fromString(peer.kind()));
                 peers.append(ValueCreator.createRecordValue(
                         ModuleUtils.getModule(), PEER_SPEC_RECORD, fields));
             }
@@ -1000,27 +1009,95 @@ public final class DurableAgentNative {
     }
 
     /**
-     * Registers a peer-agent declaration of a durable agent.
+     * Registers a peer declaration of a durable agent.
      *
      * @param agentName   the declaring agent's name
      * @param peerName    the tool name advertised to the model
-     * @param targetAgent the peer agent's name (its module-level variable name)
-     * @param meta        declaration metadata (description, wait, callbackChannel, gating)
+     * @param targetAgent the peer's name: an agent's module-level variable name, or a workflow function name
+     * @param meta        declaration metadata (description, allowedEvents)
+     * @param kind        {@link #PEER_KIND_AGENT} or {@link #PEER_KIND_WORKFLOW}
      * @return true on success, or a BError when the agent is unknown
      */
     public static Object registerDurableAgentPeer(BString agentName, BString peerName, BString targetAgent,
-                                                  Object meta) {
+                                                  Object meta, BString kind) {
         AgentDecl decl = AGENT_DECL_REGISTRY.get(agentName.getValue());
         if (decl == null) {
             return unknownAgentError(agentName.getValue());
         }
-        Object duplicate = duplicateCapabilityError(decl, peerName.getValue(), "a peer agent");
+        Object duplicate = duplicateCapabilityError(decl, peerName.getValue(), "a peer");
         if (duplicate != null) {
             return duplicate;
         }
         decl.peers().put(peerName.getValue(),
-                new PeerDecl(peerName.getValue(), targetAgent.getValue(), meta));
+                new PeerDecl(peerName.getValue(), targetAgent.getValue(), meta, kind.getValue()));
         return true;
+    }
+
+    /**
+     * The tool schema of a workflow peer: the workflow's input type. A record input is the schema itself;
+     * any other input is wrapped as an object keyed by the parameter name, so the model always sends an object.
+     *
+     * @param target the workflow function name
+     * @return the JSON schema string, or a BError when no such workflow is registered
+     */
+    public static Object peerWorkflowToolSchema(BString target) {
+        io.ballerina.lib.workflow.worker.WorkflowFunctionRef workflow = registeredWorkflow(target.getValue());
+        if (workflow == null) {
+            return unknownWorkflowPeerError(target.getValue());
+        }
+        Parameter[] parameters = ManagementNative.workflowDataParameters(workflow);
+        if (parameters.length == 1 && isMappingParameter(parameters[0])) {
+            return StringUtils.fromString(TypesUtil.toJsonSchema(parameters[0].type));
+        }
+        return StringUtils.fromString(TypesUtil.toJsonSchemaForParameters(parameters, 0, parameters.length));
+    }
+
+    /**
+     * Starts a workflow peer with the model's arguments and returns at once: the workflow runs detached from
+     * the agent, which never reads its result.
+     *
+     * @param target the workflow function name
+     * @param args   the model's tool-call arguments, shaped by {@link #peerWorkflowToolSchema}
+     * @return the tool result the model sees, or a BError
+     */
+    public static Object startPeerWorkflow(BString target, BMap<BString, Object> args) {
+        String functionName = target.getValue();
+        io.ballerina.lib.workflow.worker.WorkflowFunctionRef workflow = registeredWorkflow(functionName);
+        if (workflow == null) {
+            return unknownWorkflowPeerError(functionName);
+        }
+        Parameter[] parameters = ManagementNative.workflowDataParameters(workflow);
+        Object input;
+        if (parameters.length == 0) {
+            input = null;
+        } else if (parameters.length == 1 && !isMappingParameter(parameters[0])) {
+            input = args.get(StringUtils.fromString(parameters[0].name));
+        } else {
+            input = args;
+        }
+        Object started = WorkflowContextNative.startDetachedChildWorkflow(functionName,
+                input == null ? null : TypesUtil.convertBallerinaToJavaType(input));
+        if (started instanceof BError) {
+            return started;
+        }
+        return StringUtils.fromString("Started workflow '" + functionName + "' (instance id " + started
+                + "). It runs on its own and this agent does not wait for its result; do not start it again "
+                + "for the same request.");
+    }
+
+    private static io.ballerina.lib.workflow.worker.WorkflowFunctionRef registeredWorkflow(String functionName) {
+        return WorkflowWorkerNative.getProcessRegistry()
+                .get(WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + functionName);
+    }
+
+    private static boolean isMappingParameter(Parameter parameter) {
+        int tag = TypeUtils.getImpliedType(parameter.type).getTag();
+        return tag == TypeTags.RECORD_TYPE_TAG || tag == TypeTags.MAP_TAG;
+    }
+
+    private static Object unknownWorkflowPeerError(String functionName) {
+        return ErrorCreator.createError(StringUtils.fromString(
+                "Peer '" + functionName + "' is not a registered workflow function"));
     }
 
     /**

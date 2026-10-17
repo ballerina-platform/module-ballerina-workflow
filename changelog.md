@@ -22,6 +22,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- A durable agent's human task with a `taskInputType` now advertises that type's JSON schema to the
+  model as the tool's parameters (plus the reserved `excludedUsers`), and an input that does not
+  match it is reported with the conversion detail (which field, expected and found) rather than a
+  bare `ConversionError`. Before, the model was shown a generic object schema and repeated the same
+  mismatched call until the agent hit its iteration limit.
+  ([#9323](https://github.com/ballerina-platform/ballerina-library/issues/9323))
+
+- Activity arguments are converted to the activity's declared parameter types before the call. A
+  `string[]` parameter used to receive a value whose inherent type was `anydata[]`, so the first
+  operation that checked the type inside the activity panicked with `InherentTypeViolation`. This
+  applies to every path into an activity: a workflow's `callActivity`, a durable agent's tool call,
+  and a reviewer's `proceed` / `proceed-with-input`. An argument that does not fit now fails the
+  call with the parameter and its type named.
+  ([#9320](https://github.com/ballerina-platform/ballerina-library/issues/9320))
+
+- The workflow descriptor (`workflow.def.json`) describes a string-literal union field such as
+  `"OPS"|"SALES"|"R&D"`, an `enum`, or a union of `const` references as `{"type": "string", "enum":
+  [...]}`, as the management API's human task form schema already did, and no longer marks the
+  slot `lossy`. Integer, float and boolean literals, mixed literal unions and nil members follow the
+  runtime's rules, so the two schemas agree.
+  ([#9232](https://github.com/ballerina-platform/ballerina-library/issues/9232))
+
+- A `@workflow:Workflow` function in a durable agent's `peers` no longer fails the run with
+  `Unknown durable agent`. The model gets a tool named after the function whose arguments are
+  the workflow's input; it starts the workflow and returns its instance id at once. The workflow
+  runs on its own and outlives the agent. The compiler now rejects a peer function without
+  `@workflow:Workflow` (`WORKFLOW_171`) and `allowedEvents` on a workflow peer (`WORKFLOW_172`).
+  The descriptor lists peers again (`source: PEER` for an agent, `PEER_WORKFLOW` for a workflow
+  function, with its input); they had been missing since the `name` field was removed in 0.10.
+  ([#9319](https://github.com/ballerina-platform/ballerina-library/issues/9319))
+
 - `workItems.list`, `humanTasks.list` and `reviewActivities.list` page through Temporal visibility
   instead of reading every matching task on each request. An integration with a few thousand task
   executions exhausted the namespace's visibility rate limit (`RESOURCE_EXHAUSTED`) and its task

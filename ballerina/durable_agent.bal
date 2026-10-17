@@ -94,16 +94,18 @@ public type ToolDecl record {
     ApprovalPolicy approvalPolicy = NoApproval;
 };
 
-# A peer advertised to this agent's model as delegable tools: one to start the peer, and
-# one per event the peer declares. The peer runs as a Temporal child workflow; its
-# tool names take the peer's module-level variable name as prefix. A one-way event returns
-# an acknowledgement, a duplex event or the run entry waits durably for the answer.
+# A peer advertised to this agent's model as delegable tools. A peer durable agent gives one
+# tool to start it and one per event it declares; the peer runs as a Temporal child workflow,
+# and its tool names take the peer's module-level variable name as prefix. A one-way event
+# returns an acknowledgement, a duplex event or the run entry waits durably for the answer.
+# A peer `@workflow:Workflow` function gives one tool, named after the function, whose
+# arguments are the workflow's input: it starts the workflow and returns its instance id at
+# once. The workflow runs on its own, outlives the agent, and its result is not read back.
 #
 # + agent - The peer `workflow:DurableAgent`, or a `@workflow:Workflow` function
-#           (started fire-and-forget: a workflow has no events to answer on)
 # + description - What the peer does, for the model
-# + allowedEvents - The peer events to expose; omit for every declared event, `[]` for
-#                   the run entry only
+# + allowedEvents - The peer agent's events to expose; omit for every declared event, `[]`
+#                   for the run entry only. Not allowed on a workflow function peer
 public type PeerDecl record {
     DurableAgent|function agent;
     string description?;
@@ -127,7 +129,7 @@ public type PeerDecl record {
 #                Capability names share one namespace across activities, tools,
 #                events, human tasks, and peers: a name claimed twice is rejected
 #                when the agent registers, so the program fails at startup
-# + peers - Peer durable agents advertised as delegable tools
+# + peers - Peer durable agents and workflow functions advertised as delegable tools
 # + maxIter - Hard cap on reasoning iterations per turn. An agent that overruns it fails, except a
 #             `MULTI_EVENT` agent with a `chat` event: it ends that turn with a failure for its waiter
 #             and goes on to the next chat message, so one bad turn does not end the conversation
@@ -394,6 +396,7 @@ type DurableAgentPeerSpec record {|
     string name;
     string targetAgent;
     json meta = ();
+    string kind = PEER_KIND_AGENT;
 |};
 
 type DurableAgentRunSpec record {|

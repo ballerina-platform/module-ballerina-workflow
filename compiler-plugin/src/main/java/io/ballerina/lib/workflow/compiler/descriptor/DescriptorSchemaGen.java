@@ -19,21 +19,26 @@
 package io.ballerina.lib.workflow.compiler.descriptor;
 
 import io.ballerina.compiler.api.symbols.ArrayTypeSymbol;
+import io.ballerina.compiler.api.symbols.ConstantSymbol;
 import io.ballerina.compiler.api.symbols.IntersectionTypeSymbol;
 import io.ballerina.compiler.api.symbols.MapTypeSymbol;
 import io.ballerina.compiler.api.symbols.ParameterKind;
 import io.ballerina.compiler.api.symbols.ParameterSymbol;
 import io.ballerina.compiler.api.symbols.RecordFieldSymbol;
 import io.ballerina.compiler.api.symbols.RecordTypeSymbol;
+import io.ballerina.compiler.api.symbols.SingletonTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeDescKind;
 import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.api.symbols.UnionTypeSymbol;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.BAL_ANYDATA;
@@ -49,6 +54,7 @@ import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.LOS
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SCHEMA;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SCHEMA_ADDITIONAL_PROPERTIES;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SCHEMA_ANY_OF;
+import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SCHEMA_ENUM;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SCHEMA_ITEMS;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SCHEMA_PROPERTIES;
 import static io.ballerina.lib.workflow.compiler.descriptor.DescriptorFields.SCHEMA_REQUIRED;
@@ -246,12 +252,123 @@ public final class DescriptorSchemaGen {
             case UNION -> {
                 return unionSchema((UnionTypeSymbol) type, depth);
             }
+            case SINGLETON -> {
+                List<Object> values = new ArrayList<>();
+                return collectLiterals(type, values, depth, new boolean[1])
+                        ? finiteSchema(values) : mapOf(TYPE, JSON_OBJECT);
+            }
             default -> {
                 // json/anydata and every unsupported kind: the permissive object schema
                 // (mirrors the runtime fallback).
                 return mapOf(TYPE, JSON_OBJECT);
             }
         }
+    }
+
+    // A literal value: the `"OPS"` in `"OPS"|"SALES"`, an enum member, or a const reference. A
+    // ConstantSymbol is also a singleton, but its signature is the constant's NAME, so it is
+    // read through its value first. Returns null when the singleton is not a plain literal.
+    private static Optional<Object> literalValue(TypeSymbol type, int depth) {
+        if (type instanceof ConstantSymbol constant) {
+            Object value = constant.constValue();
+            if (value instanceof String || value instanceof Long || value instanceof Double
+                    || value instanceof Boolean || value instanceof BigDecimal) {
+                return Optional.of(value);
+            }
+            return literalValue(constant.typeDescriptor(), depth + 1);
+        }
+        if (!(type instanceof SingletonTypeSymbol singleton)) {
+            return Optional.empty();
+        }
+        TypeSymbol original = dereference(singleton.originalType(), depth + 1);
+        if (original == null) {
+            return Optional.empty();
+        }
+        String signature = singleton.signature();
+        try {
+            return switch (original.typeKind()) {
+                case STRING, STRING_CHAR -> Optional.of(signature.length() >= 2 && signature.startsWith("\"")
+                        && signature.endsWith("\"") ? signature.substring(1, signature.length() - 1) : signature);
+                case INT, BYTE, INT_SIGNED8, INT_SIGNED16, INT_SIGNED32, INT_UNSIGNED8, INT_UNSIGNED16,
+                     INT_UNSIGNED32 -> Optional.of(Long.parseLong(signature));
+                case FLOAT -> Optional.of(Double.parseDouble(signature));
+                case DECIMAL -> Optional.of(new BigDecimal(signature.endsWith("d")
+                        ? signature.substring(0, signature.length() - 1) : signature));
+                case BOOLEAN -> Optional.of(Boolean.parseBoolean(signature));
+                default -> Optional.empty();
+            };
+        } catch (NumberFormatException e) {
+            return Optional.empty();
+        }
+    }
+
+    // Whether a type is a nil literal: `()` inside a literal union surfaces as a singleton, not NIL.
+    private static boolean isNilLiteral(TypeSymbol type, int depth) {
+        if (type instanceof SingletonTypeSymbol singleton && !(type instanceof ConstantSymbol)) {
+            TypeSymbol original = dereference(singleton.originalType(), depth + 1);
+            return original != null && original.typeKind() == TypeDescKind.NIL;
+        }
+        return false;
+    }
+
+    // Collects the literal values of a singleton or a union of singletons (an enum, nested or not),
+    // in the union's order. A nil inside a nested union is reported through hasNull, as the runtime
+    // does, so null is added to the enum once. False when any member is not a literal.
+    private static boolean collectLiterals(TypeSymbol rawType, List<Object> values, int depth, boolean[] hasNull) {
+        if (rawType == null || depth > MAX_DEPTH) {
+            return false;
+        }
+        TypeSymbol type = dereference(rawType, depth);
+        if (type == null) {
+            return false;
+        }
+        if (type.typeKind() == TypeDescKind.UNION) {
+            for (TypeSymbol member : ((UnionTypeSymbol) type).memberTypeDescriptors()) {
+                if (!collectLiterals(member, values, depth + 1, hasNull)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (type.typeKind() == TypeDescKind.NIL || isNilLiteral(type, depth)) {
+            hasNull[0] = true;
+            return true;
+        }
+        if (type.typeKind() != TypeDescKind.SINGLETON) {
+            return false;
+        }
+        Optional<Object> value = literalValue(type, depth);
+        if (value.isEmpty()) {
+            return false;
+        }
+        values.add(value.get());
+        return true;
+    }
+
+    // The runtime's finiteSchema: `enum` in declaration order, plus `type` when the values agree on one.
+    private static Map<String, Object> finiteSchema(List<Object> valueSpace) {
+        Map<String, Object> schema = new LinkedHashMap<>();
+        List<Object> values = new ArrayList<>(new LinkedHashSet<>(valueSpace));
+        String uniformType = null;
+        boolean uniform = true;
+        boolean firstValue = true;
+        for (Object value : values) {
+            String t = value instanceof String ? JSON_STRING
+                    : value instanceof Long ? JSON_INTEGER
+                    : value instanceof Boolean ? JSON_BOOLEAN
+                    : value instanceof Number ? JSON_NUMBER : null;
+            if (firstValue) {
+                uniformType = t;
+                firstValue = false;
+            } else if (!Objects.equals(uniformType, t)) {
+                uniform = false;
+            }
+        }
+        if (uniform && uniformType != null) {
+            schema.put(TYPE, uniformType);
+        }
+        schema.put(SCHEMA_ENUM, values);
+        return schema;
     }
 
     private static Map<String, Object> recordSchema(RecordTypeSymbol recordType, int depth) {
@@ -286,7 +403,7 @@ public final class DescriptorSchemaGen {
         boolean hasNull = false;
         for (TypeSymbol member : unionType.memberTypeDescriptors()) {
             TypeSymbol m = dereference(member, depth + 1);
-            if (m != null && m.typeKind() == TypeDescKind.NIL) {
+            if (m != null && (m.typeKind() == TypeDescKind.NIL || isNilLiteral(m, depth + 1))) {
                 hasNull = true;
             } else {
                 nonNullMembers.add(m);
@@ -294,6 +411,30 @@ public final class DescriptorSchemaGen {
         }
         if (nonNullMembers.isEmpty()) {
             return mapOf(TYPE, JSON_NULL);
+        }
+        // A literal union (an enum, a `"a"|"b"` field) is one value set, never an anyOf of its members;
+        // with nil, null joins the enum and widens the type, as the runtime does.
+        List<Object> literals = new ArrayList<>();
+        boolean[] nestedNull = {hasNull};
+        boolean allLiterals = true;
+        for (TypeSymbol member : nonNullMembers) {
+            if (!collectLiterals(member, literals, depth + 1, nestedNull)) {
+                allLiterals = false;
+                break;
+            }
+        }
+        if (allLiterals) {
+            Map<String, Object> merged = finiteSchema(literals);
+            if (nestedNull[0]) {
+                List<Object> withNull = new ArrayList<>((List<?>) merged.get(SCHEMA_ENUM));
+                withNull.add(null);
+                merged.put(SCHEMA_ENUM, withNull);
+                Object declared = merged.get(TYPE);
+                if (declared != null) {
+                    merged.put(TYPE, new ArrayList<>(List.of(declared, JSON_NULL)));
+                }
+            }
+            return merged;
         }
         if (nonNullMembers.size() == 1) {
             Object base = schemaObject(nonNullMembers.get(0), depth + 1);
@@ -346,11 +487,9 @@ public final class DescriptorSchemaGen {
                 return Tier.EXACT;
             }
             case SINGLETON -> {
-                // The pinned dialect renders a singleton as the permissive object schema
-                // (matching TypesUtil), which does not capture the value the type admits.
-                // That is an approximation, so the slot must say so rather than claim to be
-                // exact — a form generator would otherwise trust it for validation.
-                return Tier.APPROXIMATE;
+                // A literal value renders as an enum; a singleton of anything else stays the permissive object.
+                return literalValue(type, depth).isPresent() || isNilLiteral(type, depth)
+                        ? Tier.EXACT : Tier.APPROXIMATE;
             }
             case ARRAY -> {
                 return tierOf(((ArrayTypeSymbol) type).memberTypeDescriptor(), depth + 1);

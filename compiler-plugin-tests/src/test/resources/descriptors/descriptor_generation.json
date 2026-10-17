@@ -1,1 +1,744 @@
-{"agents":[],"checksum":"sha256:f8bdf9656e5da75d8df2998a38dc5addb8ef4dc704212e9c24139b40710baba2","descriptorVersion":"1.0","package":{"name":"descriptor_generation","org":"test","version":"1.2.0"},"workflows":[{"activities":[{"function":{"module":"test/descriptor_generation","name":"fetchAudit","version":"1"},"input":{"schema":{"properties":{},"type":"object"},"type":"()"},"name":"fetchAudit","output":{"type":"xml|error"}},{"function":{"module":"test/descriptor_generation","name":"freeform","version":"1"},"input":{"schema":{"properties":{},"type":"object"},"type":"()"},"name":"freeform","output":{"lossy":true,"schema":{"type":"object"},"type":"json|error"}},{"displayName":"Post to ledger","function":{"module":"test/descriptor_generation","name":"postToLedger","version":"1"},"input":{"schema":{"properties":{"expense":{"properties":{"amount":{"type":"number"},"id":{"type":"string"},"note":{"type":["string","null"]}},"required":["id","amount"],"type":"object"},"retries":{"type":"integer"}},"required":["expense"],"type":"object"},"type":"(ExpenseRequest expense, int retries)"},"name":"postToLedger","output":{"schema":{"properties":{"ref":{"type":"string"},"sequence":{"type":"integer"}},"required":["ref","sequence"],"type":"object"},"type":"PostingResult|error"}}],"displayName":"Expense approval","events":[],"function":{"module":"test/descriptor_generation","name":"expenseApproval","version":"1"},"graph":{"edges":[{"from":"managerApproval#1","to":"if#1"},{"from":"if#1","to":"postToLedger#1","when":"then"},{"from":"postToLedger#1","to":"code#1"},{"from":"code#1","to":"fetchAudit#1"},{"from":"fetchAudit#1","to":"code#2"},{"from":"code#2","to":"freeform#1"},{"from":"freeform#1","to":"code#3"},{"from":"postToLedger#1","to":"postToLedger#1#review","when":"on failure"}],"file":"main.bal","nodes":[{"column":39,"kind":"HUMAN_TASK","label":"Manager approval","line":44,"stepId":"managerApproval#1","target":"managerApproval"},{"column":5,"kind":"BRANCH","label":"decision.approved","line":46,"stepId":"if#1"},{"branch":"then","column":39,"kind":"ACTIVITY","label":"Post to ledger","line":47,"parent":"if#1","stepId":"postToLedger#1","target":"postToLedger"},{"branch":"then","column":39,"kind":"REVIEW","label":"Post to ledger","line":47,"metadata":{"reviewedStepId":"postToLedger#1","trigger":"ON_FAILURE","userRoles":["FINANCE"]},"parent":"if#1","stepId":"postToLedger#1#review","target":"postToLedger"},{"branch":"then","column":9,"kind":"CODE","label":"1 statement","line":49,"parent":"if#1","stepId":"code#1"},{"branch":"then","column":28,"kind":"ACTIVITY","line":50,"parent":"if#1","stepId":"fetchAudit#1","target":"fetchAudit"},{"branch":"then","column":9,"kind":"CODE","label":"1 statement","line":51,"parent":"if#1","stepId":"code#2"},{"branch":"then","column":28,"kind":"ACTIVITY","line":52,"parent":"if#1","stepId":"freeform#1","target":"freeform"},{"branch":"then","column":9,"kind":"CODE","label":"1 statement","line":53,"parent":"if#1","stepId":"code#3"}]},"humanTasks":[{"name":"managerApproval","result":{"schema":{"properties":{"altDepartment":{"enum":["SALES","OPS",null],"type":["string","null"]},"approved":{"type":"boolean"},"comment":{"type":"string"},"costCentre":{"enum":["OPS","SALES","R&D"],"type":"string"},"department":{"enum":["SALES","OPS"],"type":"string"},"level":{"enum":[1,2,3],"type":"integer"},"mixed":{"enum":[1,"a"]},"option":{"enum":["x","y",null],"type":["string","null"]},"single":{"enum":["only"],"type":"string"},"viaConst":{"enum":["OPS","R&D"],"type":"string"}},"required":["approved","costCentre","department","viaConst","level","mixed","single"],"type":"object"},"type":"ApprovalDecision"},"title":"Manager approval"}],"icon":"icons/expense.svg","input":{"schema":{"properties":{"expense":{"properties":{"amount":{"type":"number"},"id":{"type":"string"},"note":{"type":["string","null"]}},"required":["id","amount"],"type":"object"}},"required":["expense"],"type":"object"},"type":"(ExpenseRequest expense)"},"kind":"WORKFLOW","name":"expenseApproval","reviewActivities":[{"activity":"postToLedger","triggers":["ON_FAILURE"]}]},{"activities":[{"displayName":"Post to ledger","function":{"module":"test/descriptor_generation","name":"postToLedger","version":"1"},"input":{"schema":{"properties":{"expense":{"properties":{"amount":{"type":"number"},"id":{"type":"string"},"note":{"type":["string","null"]}},"required":["id","amount"],"type":"object"},"retries":{"type":"integer"}},"required":["expense"],"type":"object"},"type":"(ExpenseRequest expense, int retries)"},"name":"postToLedger","output":{"schema":{"properties":{"ref":{"type":"string"},"sequence":{"type":"integer"}},"required":["ref","sequence"],"type":"object"},"type":"PostingResult|error"}}],"events":[{"cardinality":"SINGLE","direction":"IN","name":"approval","payload":{"schema":{"properties":{"altDepartment":{"enum":["SALES","OPS",null],"type":["string","null"]},"approved":{"type":"boolean"},"comment":{"type":"string"},"costCentre":{"enum":["OPS","SALES","R&D"],"type":"string"},"department":{"enum":["SALES","OPS"],"type":"string"},"level":{"enum":[1,2,3],"type":"integer"},"mixed":{"enum":[1,"a"]},"option":{"enum":["x","y",null],"type":["string","null"]},"single":{"enum":["only"],"type":"string"},"viaConst":{"enum":["OPS","R&D"],"type":"string"}},"required":["approved","costCentre","department","viaConst","level","mixed","single"],"type":"object"},"type":"ApprovalDecision"}}],"function":{"module":"test/descriptor_generation","name":"orderFlow","version":"1"},"graph":{"edges":[{"from":"postToLedger#1","to":"opsSignoff#1"},{"from":"postToLedger#1","to":"postToLedger#1#review","when":"on failure"}],"file":"main.bal","nodes":[{"column":29,"kind":"ACTIVITY","label":"Post to ledger","line":62,"stepId":"postToLedger#1","target":"postToLedger"},{"column":29,"kind":"REVIEW","label":"Post to ledger","line":62,"metadata":{"reviewedStepId":"postToLedger#1","trigger":"ON_FAILURE","userRoles":["OPS"]},"stepId":"postToLedger#1#review","target":"postToLedger"},{"column":32,"kind":"HUMAN_TASK","label":"Ops sign-off","line":66,"stepId":"opsSignoff#1","target":"opsSignoff"}]},"humanTasks":[{"name":"opsSignoff","result":{"schema":{"properties":{"altDepartment":{"enum":["SALES","OPS",null],"type":["string","null"]},"approved":{"type":"boolean"},"comment":{"type":"string"},"costCentre":{"enum":["OPS","SALES","R&D"],"type":"string"},"department":{"enum":["SALES","OPS"],"type":"string"},"level":{"enum":[1,2,3],"type":"integer"},"mixed":{"enum":[1,"a"]},"option":{"enum":["x","y",null],"type":["string","null"]},"single":{"enum":["only"],"type":"string"},"viaConst":{"enum":["OPS","R&D"],"type":"string"}},"required":["approved","costCentre","department","viaConst","level","mixed","single"],"type":"object"},"type":"ApprovalDecision"},"title":"Ops sign-off"}],"input":{"schema":{"properties":{},"type":"object"},"type":"()"},"kind":"WORKFLOW","name":"orderFlow","reviewActivities":[{"activity":"postToLedger","triggers":["ON_FAILURE"]}]}]}
+{
+  "agents": [],
+  "checksum": "sha256:b9ddbb2d8efce2269f16079226c693f66f9b864df037d41f224586e7c42a832a",
+  "descriptorVersion": "1.0",
+  "package": {
+    "name": "descriptor_generation",
+    "org": "test",
+    "version": "1.2.0"
+  },
+  "workflows": [
+    {
+      "activities": [
+        {
+          "function": {
+            "module": "test/descriptor_generation",
+            "name": "fetchAudit",
+            "version": "1"
+          },
+          "input": {
+            "schema": {
+              "properties": {},
+              "type": "object"
+            },
+            "type": "()"
+          },
+          "name": "fetchAudit",
+          "output": {
+            "type": "xml|error"
+          }
+        },
+        {
+          "function": {
+            "module": "test/descriptor_generation",
+            "name": "freeform",
+            "version": "1"
+          },
+          "input": {
+            "schema": {
+              "properties": {},
+              "type": "object"
+            },
+            "type": "()"
+          },
+          "name": "freeform",
+          "output": {
+            "lossy": true,
+            "schema": {
+              "type": "object"
+            },
+            "type": "json|error"
+          }
+        },
+        {
+          "displayName": "Post to ledger",
+          "function": {
+            "module": "test/descriptor_generation",
+            "name": "postToLedger",
+            "version": "1"
+          },
+          "input": {
+            "schema": {
+              "properties": {
+                "expense": {
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "amount"
+                  ],
+                  "type": "object"
+                },
+                "retries": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "expense"
+              ],
+              "type": "object"
+            },
+            "type": "(ExpenseRequest expense, int retries)"
+          },
+          "name": "postToLedger",
+          "output": {
+            "schema": {
+              "properties": {
+                "ref": {
+                  "type": "string"
+                },
+                "sequence": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "ref",
+                "sequence"
+              ],
+              "type": "object"
+            },
+            "type": "PostingResult|error"
+          }
+        }
+      ],
+      "displayName": "Expense approval",
+      "events": [],
+      "function": {
+        "module": "test/descriptor_generation",
+        "name": "expenseApproval",
+        "version": "1"
+      },
+      "graph": {
+        "edges": [
+          {
+            "from": "managerApproval#1",
+            "to": "if#1"
+          },
+          {
+            "from": "if#1",
+            "to": "postToLedger#1",
+            "when": "then"
+          },
+          {
+            "from": "postToLedger#1",
+            "to": "code#1"
+          },
+          {
+            "from": "code#1",
+            "to": "fetchAudit#1"
+          },
+          {
+            "from": "fetchAudit#1",
+            "to": "code#2"
+          },
+          {
+            "from": "code#2",
+            "to": "freeform#1"
+          },
+          {
+            "from": "freeform#1",
+            "to": "code#3"
+          },
+          {
+            "from": "postToLedger#1",
+            "to": "postToLedger#1#review",
+            "when": "on failure"
+          }
+        ],
+        "file": "main.bal",
+        "nodes": [
+          {
+            "column": 39,
+            "kind": "HUMAN_TASK",
+            "label": "Manager approval",
+            "line": 47,
+            "stepId": "managerApproval#1",
+            "target": "managerApproval"
+          },
+          {
+            "column": 5,
+            "kind": "BRANCH",
+            "label": "decision.approved",
+            "line": 49,
+            "stepId": "if#1"
+          },
+          {
+            "branch": "then",
+            "column": 39,
+            "kind": "ACTIVITY",
+            "label": "Post to ledger",
+            "line": 50,
+            "parent": "if#1",
+            "stepId": "postToLedger#1",
+            "target": "postToLedger"
+          },
+          {
+            "branch": "then",
+            "column": 39,
+            "kind": "REVIEW",
+            "label": "Post to ledger",
+            "line": 50,
+            "metadata": {
+              "reviewedStepId": "postToLedger#1",
+              "trigger": "ON_FAILURE",
+              "userRoles": [
+                "FINANCE"
+              ]
+            },
+            "parent": "if#1",
+            "stepId": "postToLedger#1#review",
+            "target": "postToLedger"
+          },
+          {
+            "branch": "then",
+            "column": 9,
+            "kind": "CODE",
+            "label": "1 statement",
+            "line": 52,
+            "parent": "if#1",
+            "stepId": "code#1"
+          },
+          {
+            "branch": "then",
+            "column": 28,
+            "kind": "ACTIVITY",
+            "line": 53,
+            "parent": "if#1",
+            "stepId": "fetchAudit#1",
+            "target": "fetchAudit"
+          },
+          {
+            "branch": "then",
+            "column": 9,
+            "kind": "CODE",
+            "label": "1 statement",
+            "line": 54,
+            "parent": "if#1",
+            "stepId": "code#2"
+          },
+          {
+            "branch": "then",
+            "column": 28,
+            "kind": "ACTIVITY",
+            "line": 55,
+            "parent": "if#1",
+            "stepId": "freeform#1",
+            "target": "freeform"
+          },
+          {
+            "branch": "then",
+            "column": 9,
+            "kind": "CODE",
+            "label": "1 statement",
+            "line": 56,
+            "parent": "if#1",
+            "stepId": "code#3"
+          }
+        ]
+      },
+      "humanTasks": [
+        {
+          "name": "managerApproval",
+          "result": {
+            "schema": {
+              "properties": {
+                "altDepartment": {
+                  "enum": [
+                    "SALES",
+                    "OPS",
+                    null
+                  ],
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "approved": {
+                  "type": "boolean"
+                },
+                "comment": {
+                  "type": "string"
+                },
+                "costCentre": {
+                  "enum": [
+                    "OPS",
+                    "SALES",
+                    "R&D"
+                  ],
+                  "type": "string"
+                },
+                "department": {
+                  "enum": [
+                    "SALES",
+                    "OPS"
+                  ],
+                  "type": "string"
+                },
+                "level": {
+                  "enum": [
+                    1,
+                    2,
+                    3
+                  ],
+                  "type": "integer"
+                },
+                "mixed": {
+                  "enum": [
+                    1,
+                    "a"
+                  ]
+                },
+                "nestedNil": {
+                  "enum": [
+                    "x",
+                    "z",
+                    null
+                  ],
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "option": {
+                  "enum": [
+                    "x",
+                    "y",
+                    null
+                  ],
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "single": {
+                  "enum": [
+                    "only"
+                  ],
+                  "type": "string"
+                },
+                "viaConst": {
+                  "enum": [
+                    "OPS",
+                    "R&D"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "approved",
+                "costCentre",
+                "department",
+                "viaConst",
+                "level",
+                "mixed",
+                "single"
+              ],
+              "type": "object"
+            },
+            "type": "ApprovalDecision"
+          },
+          "title": "Manager approval"
+        }
+      ],
+      "icon": "icons/expense.svg",
+      "input": {
+        "schema": {
+          "properties": {
+            "expense": {
+              "properties": {
+                "amount": {
+                  "type": "number"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "note": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "amount"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "expense"
+          ],
+          "type": "object"
+        },
+        "type": "(ExpenseRequest expense)"
+      },
+      "kind": "WORKFLOW",
+      "name": "expenseApproval",
+      "reviewActivities": [
+        {
+          "activity": "postToLedger",
+          "triggers": [
+            "ON_FAILURE"
+          ]
+        }
+      ]
+    },
+    {
+      "activities": [
+        {
+          "displayName": "Post to ledger",
+          "function": {
+            "module": "test/descriptor_generation",
+            "name": "postToLedger",
+            "version": "1"
+          },
+          "input": {
+            "schema": {
+              "properties": {
+                "expense": {
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "amount"
+                  ],
+                  "type": "object"
+                },
+                "retries": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "expense"
+              ],
+              "type": "object"
+            },
+            "type": "(ExpenseRequest expense, int retries)"
+          },
+          "name": "postToLedger",
+          "output": {
+            "schema": {
+              "properties": {
+                "ref": {
+                  "type": "string"
+                },
+                "sequence": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "ref",
+                "sequence"
+              ],
+              "type": "object"
+            },
+            "type": "PostingResult|error"
+          }
+        }
+      ],
+      "events": [
+        {
+          "cardinality": "SINGLE",
+          "direction": "IN",
+          "name": "approval",
+          "payload": {
+            "schema": {
+              "properties": {
+                "altDepartment": {
+                  "enum": [
+                    "SALES",
+                    "OPS",
+                    null
+                  ],
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "approved": {
+                  "type": "boolean"
+                },
+                "comment": {
+                  "type": "string"
+                },
+                "costCentre": {
+                  "enum": [
+                    "OPS",
+                    "SALES",
+                    "R&D"
+                  ],
+                  "type": "string"
+                },
+                "department": {
+                  "enum": [
+                    "SALES",
+                    "OPS"
+                  ],
+                  "type": "string"
+                },
+                "level": {
+                  "enum": [
+                    1,
+                    2,
+                    3
+                  ],
+                  "type": "integer"
+                },
+                "mixed": {
+                  "enum": [
+                    1,
+                    "a"
+                  ]
+                },
+                "nestedNil": {
+                  "enum": [
+                    "x",
+                    "z",
+                    null
+                  ],
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "option": {
+                  "enum": [
+                    "x",
+                    "y",
+                    null
+                  ],
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "single": {
+                  "enum": [
+                    "only"
+                  ],
+                  "type": "string"
+                },
+                "viaConst": {
+                  "enum": [
+                    "OPS",
+                    "R&D"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "approved",
+                "costCentre",
+                "department",
+                "viaConst",
+                "level",
+                "mixed",
+                "single"
+              ],
+              "type": "object"
+            },
+            "type": "ApprovalDecision"
+          }
+        }
+      ],
+      "function": {
+        "module": "test/descriptor_generation",
+        "name": "orderFlow",
+        "version": "1"
+      },
+      "graph": {
+        "edges": [
+          {
+            "from": "postToLedger#1",
+            "to": "opsSignoff#1"
+          },
+          {
+            "from": "postToLedger#1",
+            "to": "postToLedger#1#review",
+            "when": "on failure"
+          }
+        ],
+        "file": "main.bal",
+        "nodes": [
+          {
+            "column": 29,
+            "kind": "ACTIVITY",
+            "label": "Post to ledger",
+            "line": 65,
+            "stepId": "postToLedger#1",
+            "target": "postToLedger"
+          },
+          {
+            "column": 29,
+            "kind": "REVIEW",
+            "label": "Post to ledger",
+            "line": 65,
+            "metadata": {
+              "reviewedStepId": "postToLedger#1",
+              "trigger": "ON_FAILURE",
+              "userRoles": [
+                "OPS"
+              ]
+            },
+            "stepId": "postToLedger#1#review",
+            "target": "postToLedger"
+          },
+          {
+            "column": 32,
+            "kind": "HUMAN_TASK",
+            "label": "Ops sign-off",
+            "line": 69,
+            "stepId": "opsSignoff#1",
+            "target": "opsSignoff"
+          }
+        ]
+      },
+      "humanTasks": [
+        {
+          "name": "opsSignoff",
+          "result": {
+            "schema": {
+              "properties": {
+                "altDepartment": {
+                  "enum": [
+                    "SALES",
+                    "OPS",
+                    null
+                  ],
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "approved": {
+                  "type": "boolean"
+                },
+                "comment": {
+                  "type": "string"
+                },
+                "costCentre": {
+                  "enum": [
+                    "OPS",
+                    "SALES",
+                    "R&D"
+                  ],
+                  "type": "string"
+                },
+                "department": {
+                  "enum": [
+                    "SALES",
+                    "OPS"
+                  ],
+                  "type": "string"
+                },
+                "level": {
+                  "enum": [
+                    1,
+                    2,
+                    3
+                  ],
+                  "type": "integer"
+                },
+                "mixed": {
+                  "enum": [
+                    1,
+                    "a"
+                  ]
+                },
+                "nestedNil": {
+                  "enum": [
+                    "x",
+                    "z",
+                    null
+                  ],
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "option": {
+                  "enum": [
+                    "x",
+                    "y",
+                    null
+                  ],
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "single": {
+                  "enum": [
+                    "only"
+                  ],
+                  "type": "string"
+                },
+                "viaConst": {
+                  "enum": [
+                    "OPS",
+                    "R&D"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "approved",
+                "costCentre",
+                "department",
+                "viaConst",
+                "level",
+                "mixed",
+                "single"
+              ],
+              "type": "object"
+            },
+            "type": "ApprovalDecision"
+          },
+          "title": "Ops sign-off"
+        }
+      ],
+      "input": {
+        "schema": {
+          "properties": {},
+          "type": "object"
+        },
+        "type": "()"
+      },
+      "kind": "WORKFLOW",
+      "name": "orderFlow",
+      "reviewActivities": [
+        {
+          "activity": "postToLedger",
+          "triggers": [
+            "ON_FAILURE"
+          ]
+        }
+      ]
+    }
+  ]
+}

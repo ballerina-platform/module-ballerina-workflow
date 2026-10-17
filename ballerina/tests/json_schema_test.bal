@@ -230,6 +230,8 @@ type Level 1|2|3;
 type Mixed 1|"a";
 type OptXY ("x"|"y")?;
 type Only "only";
+type OptX "x"|();
+type NestedNil OptX|"z";
 
 @test:Config {groups: ["unit"]}
 function testSchemaLiteralUnionsAreEnums() returns error? {
@@ -244,4 +246,6 @@ function testSchemaLiteralUnionsAreEnums() returns error? {
     test:assertEquals(check schemaOf(Mixed), {"enum": [1, "a"]});
     test:assertEquals(check schemaOf(OptXY), {"type": ["string", "null"], "enum": ["x", "y", ()]});
     test:assertEquals(check schemaOf(Only), {"type": "string", "enum": ["only"]});
+    test:assertEquals(check schemaOf(NestedNil), {"type": ["string", "null"], "enum": ["x", "z", ()]},
+        "A nil inside a nested literal union is the union's nil");
 }

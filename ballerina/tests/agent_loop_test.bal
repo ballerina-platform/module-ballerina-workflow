@@ -1446,7 +1446,7 @@ function testAgentHumanTaskInputTypeIsAdvertisedAndMismatchNamesTheField() retur
     test:assertEquals(check properties["amount"].ensureType(), {"type": "integer"});
     test:assertTrue(properties.hasKey("excludedUsers"), "The reserved exclusion field stays advertised");
     test:assertEquals(schema["required"], ["orderId", "amount"], "Required fields are required");
-    test:assertFalse(schema.hasKey("additionalProperties"), "A closed record admits no other fields");
+    test:assertEquals(schema["additionalProperties"], false, "A closed record admits no other fields");
 
     string failure = parts[1];
     test:assertTrue(failure.includes("does not match its declared taskInputType"), failure);

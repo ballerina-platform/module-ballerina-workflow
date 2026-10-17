@@ -254,7 +254,8 @@ public final class DescriptorSchemaGen {
             }
             case SINGLETON -> {
                 List<Object> values = new ArrayList<>();
-                return collectLiterals(type, values, depth) ? finiteSchema(values) : mapOf(TYPE, JSON_OBJECT);
+                return collectLiterals(type, values, depth, new boolean[1])
+                        ? finiteSchema(values) : mapOf(TYPE, JSON_OBJECT);
             }
             default -> {
                 // json/anydata and every unsupported kind: the permissive object schema
@@ -311,8 +312,9 @@ public final class DescriptorSchemaGen {
     }
 
     // Collects the literal values of a singleton or a union of singletons (an enum, nested or not),
-    // in declaration order. False when any member is not a literal.
-    private static boolean collectLiterals(TypeSymbol rawType, List<Object> values, int depth) {
+    // in the union's order. A nil inside a nested union is reported through hasNull, as the runtime
+    // does, so null is added to the enum once. False when any member is not a literal.
+    private static boolean collectLiterals(TypeSymbol rawType, List<Object> values, int depth, boolean[] hasNull) {
         if (rawType == null || depth > MAX_DEPTH) {
             return false;
         }
@@ -322,10 +324,14 @@ public final class DescriptorSchemaGen {
         }
         if (type.typeKind() == TypeDescKind.UNION) {
             for (TypeSymbol member : ((UnionTypeSymbol) type).memberTypeDescriptors()) {
-                if (!collectLiterals(member, values, depth + 1)) {
+                if (!collectLiterals(member, values, depth + 1, hasNull)) {
                     return false;
                 }
             }
+            return true;
+        }
+        if (type.typeKind() == TypeDescKind.NIL || isNilLiteral(type, depth)) {
+            hasNull[0] = true;
             return true;
         }
         if (type.typeKind() != TypeDescKind.SINGLETON) {
@@ -409,16 +415,17 @@ public final class DescriptorSchemaGen {
         // A literal union (an enum, a `"a"|"b"` field) is one value set, never an anyOf of its members;
         // with nil, null joins the enum and widens the type, as the runtime does.
         List<Object> literals = new ArrayList<>();
+        boolean[] nestedNull = {hasNull};
         boolean allLiterals = true;
         for (TypeSymbol member : nonNullMembers) {
-            if (!collectLiterals(member, literals, depth + 1)) {
+            if (!collectLiterals(member, literals, depth + 1, nestedNull)) {
                 allLiterals = false;
                 break;
             }
         }
         if (allLiterals) {
             Map<String, Object> merged = finiteSchema(literals);
-            if (hasNull) {
+            if (nestedNull[0]) {
                 List<Object> withNull = new ArrayList<>((List<?>) merged.get(SCHEMA_ENUM));
                 withNull.add(null);
                 merged.put(SCHEMA_ENUM, withNull);

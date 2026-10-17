@@ -13,6 +13,8 @@ enum Department {
 
 const string RND = "R&D";
 
+type OptX "x"|();
+
 // Literal unions in every spelling: a human task form renders each as a choice, so the descriptor
 // must say `enum`, as the runtime's form schema does (ballerina-library#9232).
 type ApprovalDecision record {|
@@ -26,6 +28,7 @@ type ApprovalDecision record {|
     1|"a" mixed;
     ("x"|"y")? option;
     "only" single;
+    OptX|"z" nestedNil;
 |};
 
 type PostingResult record {|

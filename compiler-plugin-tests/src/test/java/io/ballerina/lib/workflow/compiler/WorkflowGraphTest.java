@@ -477,6 +477,8 @@ public class WorkflowGraphTest {
                 "Values of different types keep the enum and drop the type");
         Assert.assertEquals(String.valueOf(properties.get("option")), "{enum=[x, y, null], type=[string, null]}");
         Assert.assertEquals(String.valueOf(properties.get("single")), "{enum=[only], type=string}");
+        Assert.assertEquals(String.valueOf(properties.get("nestedNil")), "{enum=[x, z, null], type=[string, null]}",
+                "A nil inside a nested literal union is the union's nil");
     }
 
     // ── The runtime gets the same ids ─────────────────────────────────────────

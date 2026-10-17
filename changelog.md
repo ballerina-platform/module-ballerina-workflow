@@ -53,7 +53,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   function, with its input); they had been missing since the `name` field was removed in 0.10.
   ([#9319](https://github.com/ballerina-platform/ballerina-library/issues/9319))
 
-- `workItems.list", `humanTasks.list` and `reviewActivities.list` page through Temporal visibility
+- `workItems.list`, `humanTasks.list` and `reviewActivities.list` page through Temporal visibility
   instead of reading every matching task on each request. An integration with a few thousand task
   executions exhausted the namespace's visibility rate limit (`RESOURCE_EXHAUSTED`) and its task
   inbox never loaded. A page now reads at most five server pages and may come back short, with a

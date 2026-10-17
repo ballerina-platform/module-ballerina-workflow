@@ -1541,6 +1541,11 @@ public final class AgentContextNative {
         if (taskInputType instanceof BTypedesc declared) {
             Map<String, Object> schema = parseSchema(TypesUtil.toJsonSchema(declared.getDescribingType()));
             if (TYPE_OBJECT.equals(schema.get(SCHEMA_TYPE))) {
+                // A closed record admits no other field; the runtime schema leaves that implicit.
+                if (io.ballerina.runtime.api.utils.TypeUtils.getImpliedType(declared.getDescribingType())
+                        instanceof io.ballerina.runtime.api.types.RecordType record && record.isSealed()) {
+                    schema.put("additionalProperties", Boolean.FALSE);
+                }
                 return schema;
             }
         }

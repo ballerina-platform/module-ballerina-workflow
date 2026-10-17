@@ -75,16 +75,73 @@ public class WorkflowDescriptorTest {
         Assert.assertTrue(CHECKSUM_PATTERN.matcher(descriptor).find(),
                 "Descriptor has no sha256 checksum: " + descriptor);
 
+        // The golden is kept pretty-printed so a review diff shows the field that changed, not one
+        // 8 KB line; the builder's own output stays canonical (one line, sorted keys).
+        String pretty = prettyPrint(descriptor);
         Path goldenPath = GOLDEN_DIRECTORY.resolve("descriptor_generation.json");
         if (!Files.exists(goldenPath)) {
             // Bootstrap aid: write the actual output next to the expected location and fail.
             Files.createDirectories(goldenPath.getParent());
-            Files.writeString(goldenPath.resolveSibling("descriptor_generation.actual.json"), descriptor);
+            Files.writeString(goldenPath.resolveSibling("descriptor_generation.actual.json"), pretty);
             Assert.fail("Golden file missing: " + goldenPath + " — actual output written alongside");
         }
         String golden = Files.readString(goldenPath, StandardCharsets.UTF_8).strip();
-        Assert.assertEquals(descriptor, golden,
+        Assert.assertEquals(pretty, golden,
                 "Descriptor does not match the golden document");
+    }
+
+    // Lossless re-indentation of canonical JSON: strings are copied verbatim, so numbers and key
+    // order survive, and the minified form is recovered by dropping the whitespace added here.
+    static String prettyPrint(String json) {
+        StringBuilder out = new StringBuilder();
+        int depth = 0;
+        boolean inString = false;
+        for (int i = 0; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (inString) {
+                out.append(c);
+                if (c == '\\') {
+                    out.append(json.charAt(++i));
+                } else if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            switch (c) {
+                case '"' -> {
+                    inString = true;
+                    out.append(c);
+                }
+                case '{', '[' -> {
+                    out.append(c);
+                    char next = json.charAt(i + 1);
+                    if (next == '}' || next == ']') {
+                        out.append(next);
+                        i++;
+                    } else {
+                        depth++;
+                        newline(out, depth);
+                    }
+                }
+                case '}', ']' -> {
+                    depth--;
+                    newline(out, depth);
+                    out.append(c);
+                }
+                case ',' -> {
+                    out.append(c);
+                    newline(out, depth);
+                }
+                case ':' -> out.append(": ");
+                default -> out.append(c);
+            }
+        }
+        return out.toString();
+    }
+
+    private static void newline(StringBuilder out, int depth) {
+        out.append('\n');
+        out.append("  ".repeat(depth));
     }
 
     // The artifact external tooling reads. Emitting an executable from this harness cannot

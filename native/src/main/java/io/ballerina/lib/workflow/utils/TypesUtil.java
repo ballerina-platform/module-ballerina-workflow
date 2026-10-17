@@ -574,9 +574,10 @@ public final class TypesUtil {
             // never an anyOf of per-member schemas. A nested one (`Department?`, where the enum is
             // itself a union) is the same value set (ballerina-library#9232).
             Set<Object> valueSpace = new LinkedHashSet<>();
-            if (collectFiniteValues(nonNullMembers, valueSpace, depth)) {
+            boolean[] nestedNull = {hasNull};
+            if (collectFiniteValues(nonNullMembers, valueSpace, depth, nestedNull)) {
                 Map<String, Object> merged = finiteSchema(valueSpace);
-                if (hasNull) {
+                if (nestedNull[0]) {
                     // The enum is what a validator checks against, so null has to be IN it —
                     // widening `type` alone still rejects the null that `"a"|"b"|()` permits.
                     Object enumValues = merged.get("enum");
@@ -639,7 +640,10 @@ public final class TypesUtil {
         return mapOf("type", "object");
     }
 
-    private static boolean collectFiniteValues(List<Type> members, Set<Object> valueSpace, int depth) {
+    // A nil inside a nested union (`type A "x"|(); A|"y"`) is the enclosing union's nil: it is reported
+    // through hasNull rather than folded into the value space, so null is added to the enum once.
+    private static boolean collectFiniteValues(List<Type> members, Set<Object> valueSpace, int depth,
+                                               boolean[] hasNull) {
         if (depth > 12) {
             return false;
         }
@@ -647,8 +651,10 @@ public final class TypesUtil {
             Type m = dereferenceType(member, depth + 1);
             if (m.getTag() == TypeTags.FINITE_TYPE_TAG && m instanceof FiniteType finite) {
                 valueSpace.addAll(finite.getValueSpace());
+            } else if (m.getTag() == TypeTags.NULL_TAG) {
+                hasNull[0] = true;
             } else if (m.getTag() == TypeTags.UNION_TAG && m instanceof UnionType union) {
-                if (!collectFiniteValues(union.getMemberTypes(), valueSpace, depth + 1)) {
+                if (!collectFiniteValues(union.getMemberTypes(), valueSpace, depth + 1, hasNull)) {
                     return false;
                 }
             } else {

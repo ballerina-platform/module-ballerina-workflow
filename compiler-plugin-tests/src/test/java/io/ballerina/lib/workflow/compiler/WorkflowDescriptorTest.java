@@ -85,7 +85,8 @@ public class WorkflowDescriptorTest {
             Files.writeString(goldenPath.resolveSibling("descriptor_generation.actual.json"), pretty);
             Assert.fail("Golden file missing: " + goldenPath + " — actual output written alongside");
         }
-        String golden = Files.readString(goldenPath, StandardCharsets.UTF_8).strip();
+        // A Windows checkout may carry CRLF; the comparison is on content.
+        String golden = Files.readString(goldenPath, StandardCharsets.UTF_8).replace("\r\n", "\n").strip();
         Assert.assertEquals(pretty, golden,
                 "Descriptor does not match the golden document");
     }

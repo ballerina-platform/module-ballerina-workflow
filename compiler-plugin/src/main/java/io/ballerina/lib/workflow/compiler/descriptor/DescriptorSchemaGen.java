@@ -31,6 +31,7 @@ import io.ballerina.compiler.api.symbols.TypeDescKind;
 import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.api.symbols.UnionTypeSymbol;
+import io.ballerina.compiler.api.values.ConstantValue;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -254,8 +255,15 @@ public final class DescriptorSchemaGen {
             }
             case SINGLETON -> {
                 List<Object> values = new ArrayList<>();
-                return collectLiterals(type, values, depth, new boolean[1])
-                        ? finiteSchema(values) : mapOf(TYPE, JSON_OBJECT);
+                boolean[] hasNull = new boolean[1];
+                if (!collectLiterals(type, values, depth, hasNull)) {
+                    return mapOf(TYPE, JSON_OBJECT);
+                }
+                // A nil-only finite type is a singleton too; its one value is null.
+                if (hasNull[0]) {
+                    values.add(null);
+                }
+                return finiteSchema(values);
             }
             default -> {
                 // json/anydata and every unsupported kind: the permissive object schema
@@ -270,7 +278,7 @@ public final class DescriptorSchemaGen {
     // read through its value first. Returns null when the singleton is not a plain literal.
     private static Optional<Object> literalValue(TypeSymbol type, int depth) {
         if (type instanceof ConstantSymbol constant) {
-            Object value = constant.constValue();
+            Object value = constant.constValue() instanceof ConstantValue wrapped ? wrapped.value() : null;
             if (value instanceof String || value instanceof Long || value instanceof Double
                     || value instanceof Boolean || value instanceof BigDecimal) {
                 return Optional.of(value);

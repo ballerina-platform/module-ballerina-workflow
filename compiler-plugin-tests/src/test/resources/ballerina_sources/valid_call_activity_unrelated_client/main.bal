@@ -29,3 +29,22 @@ final Recorder recorder = new;
 function recordingWorkflow(workflow:Context ctx, int count) returns int|error {
     return recorder->callActivity(count);
 }
+
+// A client whose remote methods share the names of every context step; none of them takes a stepId
+client class Inbox {
+    remote function awaitHumanTask(string name) returns string {
+        return name;
+    }
+
+    remote function runChildWorkflow(string name) returns string {
+        return name;
+    }
+}
+
+final Inbox inbox = new;
+
+@workflow:Workflow
+function reviewWorkflow(workflow:Context ctx, string input) returns string|error {
+    string review = inbox->awaitHumanTask("review");
+    return inbox->runChildWorkflow(review);
+}

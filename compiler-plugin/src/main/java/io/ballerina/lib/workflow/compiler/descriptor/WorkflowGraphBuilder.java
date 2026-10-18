@@ -833,7 +833,10 @@ public final class WorkflowGraphBuilder {
 
         @Override
         public void visit(RemoteMethodCallActionNode remoteCall) {
-            String methodName = remoteCall.methodName().name().text();
+            // Only the workflow context's methods are steps; an unrelated client's remote method that
+            // shares a name would otherwise be stamped with a stepId argument it does not take.
+            String methodName = WorkflowPluginUtils.isContextCall(remoteCall, semanticModel)
+                    ? remoteCall.methodName().name().text() : "";
             switch (methodName) {
                 case WorkflowConstants.CALL_ACTIVITY_FUNCTION -> {
                     Symbol target = activityTargetOf(remoteCall.arguments());

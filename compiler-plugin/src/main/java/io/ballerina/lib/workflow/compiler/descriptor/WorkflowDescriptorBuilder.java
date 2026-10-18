@@ -427,10 +427,12 @@ public final class WorkflowDescriptorBuilder {
         @Override
         public void visit(RemoteMethodCallActionNode remoteCall) {
             String methodName = remoteCall.methodName().name().text();
-            if (WorkflowConstants.CALL_ACTIVITY_FUNCTION.equals(methodName)) {
-                collectCallActivity(remoteCall);
-            } else if (WorkflowConstants.CALL_HUMAN_TASK_METHOD.equals(methodName)) {
-                collectAwaitHumanTask(remoteCall);
+            if (WorkflowPluginUtils.isContextCall(remoteCall, semanticModel)) {
+                if (WorkflowConstants.CALL_ACTIVITY_FUNCTION.equals(methodName)) {
+                    collectCallActivity(remoteCall);
+                } else if (WorkflowConstants.CALL_HUMAN_TASK_METHOD.equals(methodName)) {
+                    collectAwaitHumanTask(remoteCall);
+                }
             }
             remoteCall.arguments().forEach(arg -> arg.accept(this));
         }
@@ -981,7 +983,14 @@ public final class WorkflowDescriptorBuilder {
                         inputParams.add(p);
                     }
                 }
-                tool.put(INPUT, DescriptorSchemaGen.parameterSlot(inputParams));
+                // The shape the runtime advertises to the model: one record or map input is the
+                // schema itself; anything else is an object keyed by parameter name.
+                TypeSymbol only = inputParams.size() == 1
+                        ? DescriptorSchemaGen.dereference(inputParams.get(0).typeDescriptor(), 0) : null;
+                boolean recordInput = only != null
+                        && (only.typeKind() == TypeDescKind.RECORD || only.typeKind() == TypeDescKind.MAP);
+                tool.put(INPUT, recordInput ? DescriptorSchemaGen.slot(inputParams.get(0).typeDescriptor())
+                        : DescriptorSchemaGen.parameterSlot(inputParams));
             } else {
                 tool.put(SOURCE, SOURCE_PEER);
             }

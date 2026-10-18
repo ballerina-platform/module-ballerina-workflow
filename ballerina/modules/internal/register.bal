@@ -227,7 +227,7 @@ public isolated function registerDurableAgentRunner(string agentName)
 # + kind - `"AGENT"` for a durable agent, `"WORKFLOW"` for a workflow function
 # + return - `true` on success, or an error
 public isolated function registerDurableAgentPeer(string agentName, string peerName,
-        string targetAgent, json meta = (), string kind = "AGENT") returns boolean|error = @java:Method {
+        string targetAgent, json meta = (), "AGENT"|"WORKFLOW" kind = "AGENT") returns boolean|error = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative",
     name: "registerDurableAgentPeer"
 } external;

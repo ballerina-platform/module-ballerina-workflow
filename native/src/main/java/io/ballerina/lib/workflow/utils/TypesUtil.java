@@ -35,6 +35,7 @@ import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.types.UnionType;
 import io.ballerina.runtime.api.utils.StringUtils;
+import io.ballerina.runtime.api.utils.TypeUtils;
 import io.ballerina.runtime.api.utils.ValueUtils;
 import io.ballerina.runtime.api.utils.XmlUtils;
 import io.ballerina.runtime.api.values.BArray;
@@ -339,6 +340,89 @@ public final class TypesUtil {
                     "expected a non-nil value of type '" + targetType + "', but found ()"));
         }
         return cloneWithType(value, targetType);
+    }
+
+    /**
+     * {@link #validateAndConvert} for a value a model or a person supplied: a fractional number is
+     * refused where an integer is declared instead of being rounded into it, so a quantity or an
+     * amount never changes without notice.
+     *
+     * @param value      the value to validate (may be {@code null})
+     * @param targetType the expected type
+     * @return the coerced value, or a {@link BError} naming what did not fit
+     */
+    public static Object validateAndConvertStrict(Object value, Type targetType) {
+        String fractional = fractionalIntegerError(value, targetType, "", 0);
+        if (fractional != null) {
+            return ErrorCreator.createError(StringUtils.fromString(fractional));
+        }
+        return validateAndConvert(value, targetType);
+    }
+
+    // The first fractional number that sits where an integer is declared, walked by the declared
+    // shape; null when there is none. A union with a non-integer numeric member takes the value.
+    private static String fractionalIntegerError(Object value, Type rawType, String path, int depth) {
+        if (value == null || rawType == null || depth > 12) {
+            return null;
+        }
+        Type type = TypeUtils.getImpliedType(rawType);
+        int tag = type.getTag();
+        if (value instanceof Double || value instanceof BDecimal) {
+            java.math.BigDecimal exact = value instanceof BDecimal decimal ? decimal.decimalValue()
+                    : java.math.BigDecimal.valueOf((Double) value);
+            boolean fraction = exact.stripTrailingZeros().scale() > 0;
+            if (isIntegerTag(tag) && fraction) {
+                return "'" + value + "' is not an integer" + (path.isEmpty() ? "" : " at " + path);
+            }
+            if (tag == TypeTags.UNION_TAG && type instanceof UnionType union && fraction) {
+                boolean takesFraction = union.getMemberTypes().stream().map(TypeUtils::getImpliedType)
+                        .anyMatch(member -> !isIntegerTag(member.getTag()) && member.getTag() != TypeTags.NULL_TAG);
+                if (!takesFraction) {
+                    return "'" + value + "' is not an integer" + (path.isEmpty() ? "" : " at " + path);
+                }
+            }
+            return null;
+        }
+        if (value instanceof BMap<?, ?> map && tag == TypeTags.RECORD_TYPE_TAG && type instanceof RecordType record) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                String field = entry.getKey().toString();
+                Field declared = record.getFields().get(field);
+                Type fieldType = declared != null ? declared.getFieldType() : record.getRestFieldType();
+                String error = fractionalIntegerError(entry.getValue(), fieldType,
+                        path.isEmpty() ? field : path + "." + field, depth + 1);
+                if (error != null) {
+                    return error;
+                }
+            }
+            return null;
+        }
+        if (value instanceof BMap<?, ?> map && tag == TypeTags.MAP_TAG && type instanceof MapType mapType) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                String error = fractionalIntegerError(entry.getValue(), mapType.getConstrainedType(),
+                        path.isEmpty() ? entry.getKey().toString() : path + "." + entry.getKey(), depth + 1);
+                if (error != null) {
+                    return error;
+                }
+            }
+            return null;
+        }
+        if (value instanceof BArray array && tag == TypeTags.ARRAY_TAG && type instanceof ArrayType arrayType) {
+            for (int i = 0; i < array.size(); i++) {
+                String error = fractionalIntegerError(array.get(i), arrayType.getElementType(),
+                        path + "[" + i + "]", depth + 1);
+                if (error != null) {
+                    return error;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static boolean isIntegerTag(int tag) {
+        return tag == TypeTags.INT_TAG || tag == TypeTags.BYTE_TAG || tag == TypeTags.SIGNED8_INT_TAG
+                || tag == TypeTags.SIGNED16_INT_TAG || tag == TypeTags.SIGNED32_INT_TAG
+                || tag == TypeTags.UNSIGNED8_INT_TAG || tag == TypeTags.UNSIGNED16_INT_TAG
+                || tag == TypeTags.UNSIGNED32_INT_TAG;
     }
 
     /**

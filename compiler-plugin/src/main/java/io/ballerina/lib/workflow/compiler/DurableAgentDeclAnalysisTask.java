@@ -48,6 +48,7 @@ import io.ballerina.compiler.syntax.tree.Node;
 import io.ballerina.compiler.syntax.tree.PositionalArgumentNode;
 import io.ballerina.compiler.syntax.tree.QualifiedNameReferenceNode;
 import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
+import io.ballerina.compiler.syntax.tree.SimpleNameReferenceNode;
 import io.ballerina.compiler.syntax.tree.SpecificFieldNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.compiler.syntax.tree.Token;
@@ -733,6 +734,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
     // A function peer is advertised as a tool that starts a workflow, so it must be a @workflow:Workflow
     // function; the `DurableAgent|function` type alone admits any function.
     private boolean isWorkflowFunctionPeer(ExpressionNode agentRef, String name, SyntaxNodeAnalysisContext context) {
+        // A peer is named by a reference: a call's symbol is the called function, not a peer.
+        if (!(agentRef instanceof SimpleNameReferenceNode || agentRef instanceof QualifiedNameReferenceNode)) {
+            return false;
+        }
         SemanticModel semanticModel = context.semanticModel();
         Optional<Symbol> symbol = semanticModel.symbol(agentRef);
         boolean function = symbol.map(sym -> sym.kind() == SymbolKind.FUNCTION

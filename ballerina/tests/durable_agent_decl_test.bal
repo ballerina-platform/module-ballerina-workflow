@@ -771,6 +771,16 @@ isolated client class WorkflowPeerMockModelProvider {
                     results.push(message.name + " => " + (message.content ?: ""));
                 }
             }
+            // The first call left departmentId out: the tool error says so, and the retry fills it in.
+            if results.length() == 1 && results[0].includes("does not fit its parameter") {
+                return {
+                    role: ai:ASSISTANT,
+                    toolCalls: [
+                        {name: "peerApprovalWorkflow", arguments: {"claimId": "C-1", "departmentId": "MOTOR"}, id: "c3"},
+                        {name: "peerArchiveWorkflow", arguments: {"caseId": "CASE-7"}, id: "c4"}
+                    ]
+                };
+            }
             if results.length() > 0 {
                 return {role: ai:ASSISTANT, content: string:'join("\n", ...results)
                     + "\ncollectPeerResult: " + (toolNames.indexOf("collectPeerResult") is int).toString()};
@@ -778,10 +788,7 @@ isolated client class WorkflowPeerMockModelProvider {
         }
         return {
             role: ai:ASSISTANT,
-            toolCalls: [
-                {name: "peerApprovalWorkflow", arguments: {"claimId": "C-1", "departmentId": "MOTOR"}, id: "c1"},
-                {name: "peerArchiveWorkflow", arguments: {"caseId": "CASE-7"}, id: "c2"}
-            ]
+            toolCalls: [{name: "peerApprovalWorkflow", arguments: {"claimId": "C-1"}, id: "c1"}]
         };
     }
 
@@ -822,24 +829,29 @@ function testWorkflowFunctionPeerStartsADetachedWorkflow() returns error? {
 
     string agentId = check workflowPeerAgent.run("Route claim C-1.");
     string answer = check workflowPeerAgent.waitForResult(agentId, timeout = {seconds: 30});
-    string[] lines = re `\n`.split(answer);
-    test:assertEquals(lines.length(), 3, "One line per tool result, then the tool check: " + answer);
-    test:assertTrue(lines[0].startsWith("peerApprovalWorkflow => Started workflow 'peerApprovalWorkflow' (instance id peerApprovalWorkflow-"),
+    // A conversion detail spans lines; only the lines that open a tool result count.
+    string[] lines = re `\n`.split(answer).filter(line => line.startsWith("peer") || line.startsWith("collect"));
+    test:assertEquals(lines.length(), 4, "The refused call, the two starts, then the tool check: " + answer);
+    // An input that does not fit the declared type is refused before anything starts, naming the field.
+    test:assertTrue(lines[0].startsWith("peerApprovalWorkflow => Error: The input for workflow 'peerApprovalWorkflow' "
+        + "does not fit its parameter 'claim'") && answer.includes("missing required field 'departmentId'"),
+        "A missing required field is reported to the model: " + answer);
+    test:assertTrue(lines[1].startsWith("peerApprovalWorkflow => Started workflow 'peerApprovalWorkflow' (instance id peerApprovalWorkflow-"),
         "The record-input peer tool starts the workflow and returns its id: " + answer);
-    test:assertTrue(lines[1].startsWith("peerArchiveWorkflow => Started workflow 'peerArchiveWorkflow' (instance id peerArchiveWorkflow-"),
+    test:assertTrue(lines[2].startsWith("peerArchiveWorkflow => Started workflow 'peerArchiveWorkflow' (instance id peerArchiveWorkflow-"),
         "The scalar-input peer tool unwraps the argument and starts the workflow: " + answer);
-    test:assertEquals(lines[2], "collectPeerResult: false",
+    test:assertEquals(lines[3], "collectPeerResult: false",
         "collectPeerResult only serves peer agents; a workflow-only peer set does not advertise it");
 
     // The agent is done, but the approval it started is still running (ABANDON, not REQUEST_CANCEL),
     // holds the converted input, and completes on its own event.
-    string approvalId = instanceIdIn(lines[0]);
+    string approvalId = instanceIdIn(lines[1]);
     test:assertEquals(check getStatus(approvalId), RUNNING, "A workflow peer outlives the agent that started it");
     check sendData(peerApprovalWorkflow, approvalId, "decision", "approved");
     string approval = check waitForResult(approvalId, timeout = {seconds: 30});
     test:assertEquals(approval, "C-1/MOTOR/approved", "The peer received the converted record input");
 
-    string archived = check waitForResult(instanceIdIn(lines[1]), timeout = {seconds: 30});
+    string archived = check waitForResult(instanceIdIn(lines[2]), timeout = {seconds: 30});
     test:assertEquals(archived, "archived CASE-7", "The peer received the unwrapped scalar input");
 }
 

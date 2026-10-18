@@ -53,11 +53,29 @@ function mismatchedArgumentsWorkflow(Context ctx, string input) returns string|e
     return ctx->callActivity(storeTypedItems, {items: input, counts: {}, 'order: {id: "x", qty: 1}});
 }
 
+@Workflow
+function fractionalQuantityWorkflow(Context ctx, string input) returns string|error {
+    return ctx->callActivity(storeTypedItems, {items: [input], counts: {}, 'order: {id: "x", qty: 2.7}});
+}
+
 @test:BeforeSuite
 function setupActivityArgumentTypeTests() returns error? {
     map<function> activities = {"storeTypedItems": storeTypedItems};
     _ = check registerWorkflowForTest(typedArgumentsWorkflow, "typedArgumentsWorkflow", activities);
     _ = check registerWorkflowForTest(mismatchedArgumentsWorkflow, "mismatchedArgumentsWorkflow", activities);
+    _ = check registerWorkflowForTest(fractionalQuantityWorkflow, "fractionalQuantityWorkflow", activities);
+}
+
+@test:Config {groups: ["unit"]}
+function testCallActivityFractionalNumberIsNotRoundedIntoAnInt() returns error? {
+    // cloneWithType would round 2.7 into 3; a quantity must not change without notice.
+    string id = check run(fractionalQuantityWorkflow, "a");
+    string|error result = waitForResult(id, timeout = {seconds: 30});
+    test:assertTrue(result is error, "A fractional number where an int is declared fails the call");
+    if result is error {
+        test:assertTrue(result.message().includes("parameter 'order'") && result.message().includes("2.7")
+            && result.message().includes("qty"), "The failure names the field and the value: " + result.message());
+    }
 }
 
 @test:Config {groups: ["unit"]}

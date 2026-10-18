@@ -429,8 +429,8 @@ public class WorkflowGraphTest {
         Assert.assertTrue(hasEdge(graph, "agent", "tool:archiveExpense", "out"));
         Assert.assertEquals(nodeAt(graph, "tool:archiveExpense").get("source"), "PEER_WORKFLOW");
         Map<String, Object> archiveTool = toolOf(descriptorOf(AGENT_PACKAGE), "expenseAgent", "archiveExpense");
-        Assert.assertEquals(asObject(archiveTool.get("input")).get("type"), "(ExpenseClaim claim)",
-                "The workflow peer's tool input is the workflow's data parameter, without the context");
+        Assert.assertEquals(asObject(archiveTool.get("input")).get("type"), "ExpenseClaim",
+                "A record input is the tool's schema itself, the shape the runtime advertises to the model");
 
         // @display labels ride on the display-only `label` slot; `target` stays the identity.
         Assert.assertEquals(nodeAt(graph, "agent").get("label"), "Expense agent",

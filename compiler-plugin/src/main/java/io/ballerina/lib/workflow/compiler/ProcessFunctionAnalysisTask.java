@@ -176,7 +176,8 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
                         }
                     }
                 }
-            } else if (WorkflowConstants.CALL_HUMAN_TASK_METHOD.equals(methodName)) {
+            } else if (WorkflowConstants.CALL_HUMAN_TASK_METHOD.equals(methodName)
+                    && WorkflowPluginUtils.isContextCall(remoteCallNode, semanticModel)) {
                 String taskName = extractHumanTaskName(remoteCallNode.arguments());
                 if (taskName == null && hasTaskNameArgument(remoteCallNode.arguments())) {
                     DiagnosticInfo nameInfo = new DiagnosticInfo(

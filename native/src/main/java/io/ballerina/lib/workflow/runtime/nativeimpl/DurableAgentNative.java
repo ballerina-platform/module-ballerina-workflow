@@ -1049,7 +1049,8 @@ public final class DurableAgentNative {
         if (parameters.length == 1 && isMappingParameter(parameters[0])) {
             return StringUtils.fromString(TypesUtil.toJsonSchema(parameters[0].type));
         }
-        return StringUtils.fromString(TypesUtil.toJsonSchemaForParameters(parameters, 0, parameters.length));
+        // A parameter with a default may be left out, as the descriptor says.
+        return StringUtils.fromString(TypesUtil.toJsonSchemaForParameters(parameters, 0, parameters.length, true));
     }
 
     /**
@@ -1067,13 +1068,36 @@ public final class DurableAgentNative {
             return unknownWorkflowPeerError(functionName);
         }
         Parameter[] parameters = ManagementNative.workflowDataParameters(workflow);
+        // The input is checked against the workflow's declared type before anything starts: a detached
+        // workflow has no reader for a conversion failure, and the model needs to hear what to fix.
         Object input;
         if (parameters.length == 0) {
             input = null;
         } else if (parameters.length == 1 && !isMappingParameter(parameters[0])) {
-            input = args.get(StringUtils.fromString(parameters[0].name));
+            Object raw = args.get(StringUtils.fromString(parameters[0].name));
+            if (raw == null && !parameters[0].isDefault) {
+                return peerInputError(functionName, parameters[0].name, "it is required");
+            }
+            input = raw == null ? null : converted(functionName, parameters[0], raw);
+        } else if (parameters.length == 1) {
+            input = converted(functionName, parameters[0], args);
         } else {
+            for (Parameter parameter : parameters) {
+                Object raw = args.get(StringUtils.fromString(parameter.name));
+                if (raw == null && !parameter.isDefault) {
+                    return peerInputError(functionName, parameter.name, "it is required");
+                }
+                if (raw != null) {
+                    Object checked = converted(functionName, parameter, raw);
+                    if (checked instanceof BError) {
+                        return checked;
+                    }
+                }
+            }
             input = args;
+        }
+        if (input instanceof BError) {
+            return input;
         }
         Object started = WorkflowContextNative.startDetachedChildWorkflow(functionName,
                 input == null ? null : TypesUtil.convertBallerinaToJavaType(input));
@@ -1083,6 +1107,17 @@ public final class DurableAgentNative {
         return StringUtils.fromString("Started workflow '" + functionName + "' (instance id " + started
                 + "). It runs on its own and this agent does not wait for its result; do not start it again "
                 + "for the same request.");
+    }
+
+    private static Object converted(String functionName, Parameter parameter, Object value) {
+        Object converted = TypesUtil.validateAndConvertStrict(value, parameter.type);
+        return converted instanceof BError error
+                ? peerInputError(functionName, parameter.name, TypesUtil.errorDetail(error)) : converted;
+    }
+
+    private static Object peerInputError(String functionName, String parameter, String why) {
+        return ErrorCreator.createError(StringUtils.fromString("The input for workflow '" + functionName
+                + "' does not fit its parameter '" + parameter + "': " + why));
     }
 
     private static io.ballerina.lib.workflow.worker.WorkflowFunctionRef registeredWorkflow(String functionName) {

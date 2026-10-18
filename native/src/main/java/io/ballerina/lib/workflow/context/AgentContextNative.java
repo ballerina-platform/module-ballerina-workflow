@@ -806,7 +806,8 @@ public final class AgentContextNative {
             String titleStr = title instanceof BString t ? t.getValue() : name;
             String descriptionStr = description instanceof BString d ? d.getValue()
                     : "Creates the human task '" + name + "' and waits for a person to complete it. "
-                            + "Pass any details relevant for the person as fields.";
+                            + (taskInputType instanceof BTypedesc ? "Pass the task input the schema describes."
+                                    : "Pass any details relevant for the person as fields.");
             // The model's input is the declared taskInputType when there is one — advertised so the
             // model can fill it, as an activity's parameters are — or any payload fields shown to the
             // person. Either way one reserved field narrows who may act on this creation — a ladder
@@ -815,6 +816,12 @@ public final class AgentContextNative {
             @SuppressWarnings("unchecked")
             Map<String, Object> properties = (Map<String, Object>) schema.computeIfAbsent(SCHEMA_PROPERTIES,
                     key -> new LinkedHashMap<String, Object>());
+            // The reserved field is stripped before the input is checked, so a declared field of that
+            // name could never be supplied: refuse it here rather than ship a tool that always fails.
+            if (properties.containsKey(TaskKeys.EXCLUDED_USERS)) {
+                return ErrorCreator.createError(StringUtils.fromString("HumanTask '" + name
+                        + "' taskInputType must not declare the reserved field '" + TaskKeys.EXCLUDED_USERS + "'"));
+            }
             properties.put(TaskKeys.EXCLUDED_USERS, namesProperty(
                     "User ids that may not complete this task, such as someone who already decided"));
             if (RESERVED_TOOL_NAMES.contains(name)) {
@@ -1539,7 +1546,11 @@ public final class AgentContextNative {
     // The declared input type's schema (ballerina-library#9323), or the open object when none is declared.
     private static Map<String, Object> humanTaskInputSchema(Object taskInputType) {
         if (taskInputType instanceof BTypedesc declared) {
-            Map<String, Object> schema = parseSchema(TypesUtil.toJsonSchema(declared.getDescribingType()));
+            // The schema map itself, not a string round trip: that would hash the property order.
+            Object value = TypesUtil.toJsonSchemaValue(declared.getDescribingType());
+            @SuppressWarnings("unchecked")
+            Map<String, Object> schema = value instanceof Map<?, ?> map
+                    ? (Map<String, Object>) map : new LinkedHashMap<>();
             if (TYPE_OBJECT.equals(schema.get(SCHEMA_TYPE))) {
                 // A closed record admits no other field; the runtime schema leaves that implicit.
                 if (io.ballerina.runtime.api.utils.TypeUtils.getImpliedType(declared.getDescribingType())

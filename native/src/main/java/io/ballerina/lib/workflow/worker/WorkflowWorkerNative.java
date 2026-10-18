@@ -3400,16 +3400,11 @@ public final class WorkflowWorkerNative {
         // declares the narrow one; without this the first inherent-type check inside the activity panics
         // (ballerina-library#9320). A value that does not fit fails the call with the parameter named.
         private static Object toDeclaredType(String activityName, Parameter param, Object value) {
-            // A client passed through the connection registry is already the declared object; a data
-            // value is converted even when the declared type is an object-or-data union.
-            if (value instanceof BObject) {
-                return value;
-            }
-            Object converted = TypesUtil.validateAndConvert(value, param.type);
+            Object converted = TypesUtil.validateAndConvertStrict(value, param.type);
             if (converted instanceof BError error) {
                 throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
                         "Activity '" + activityName + "' parameter '" + param.name + "' expects a value of type '"
-                                + param.type + "': " + error.getMessage(), "ActivityArgumentMismatch");
+                                + param.type + "': " + TypesUtil.errorDetail(error), "ActivityArgumentMismatch");
             }
             return converted;
         }

@@ -314,6 +314,16 @@ public class WorkflowCompilerPluginTest {
         Assert.assertEquals(diagnosticResult.errorCount(), 0,
                 "Expected no errors for a callActivity remote method on a non-workflow client. Errors: "
                         + getDiagnosticMessages(diagnosticResult));
+        // The modifier stamps the context's steps with a stepId; a client's same-named method takes none.
+        BuildProject project = BuildProject.load(getEnvironmentBuilder(), RESOURCE_DIRECTORY.resolve(packagePath));
+        DiagnosticResult modified = project.currentPackage().runCodeGenAndModifyPlugins();
+        Assert.assertEquals(modified.errorCount(), 0,
+                "Expected the rewritten sources to compile. Errors: " + getDiagnosticMessages(modified));
+        String rewritten = allSourcesOf(project);
+        Assert.assertTrue(rewritten.contains("inbox->awaitHumanTask(\"review\")")
+                && rewritten.contains("inbox->runChildWorkflow(review)")
+                && rewritten.contains("recorder->callActivity(count)"),
+                "A client's same-named remote methods must not be stamped with a stepId:\n" + rewritten);
     }
 
     @Test(groups = "invalid")

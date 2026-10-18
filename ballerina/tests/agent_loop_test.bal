@@ -662,6 +662,21 @@ isolated client class TypedInputMockModelProvider {
 
 final TypedInputMockModelProvider typedInputAgentModel = new;
 
+// A taskInputType that declares the reserved exclusion field can never be supplied, since that field
+// is stripped before the input is checked: the registration refuses it (rdulmina, module PR #171).
+type ClashingInput record {|
+    string orderId;
+    string excludedUsers;
+|};
+
+function clashingTaskAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerHumanTask(ctx, "escalate", "APPROVER", ApprovalResult,
+            title = "Escalate order", taskInputType = ClashingInput);
+    check buildAndRun(ctx, input.request,
+            systemPrompt = {role: "", instructions: "You escalate orders to a person."},
+            model = typedInputAgentModel);
+}
+
 function typedTaskAgent(handle ctx, AgentOrderInput input) returns error? {
     check registerHumanTask(ctx, "escalate", "APPROVER", ApprovalResult,
             title = "Escalate order", taskInputType = EscalationInput);
@@ -1087,6 +1102,7 @@ function setupAgentTests() returns error? {
     _ = check registerAgentWorkflowForTest(approvalAgent, "approvalAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(ladderAgent, "ladderAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(typedTaskAgent, "typedTaskAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(clashingTaskAgent, "clashingTaskAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(schemaTaskAgent, "schemaTaskAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(eventWaitingAgent, "eventWaitingAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(conversationAgent, "conversationAgent", agentActivities);
@@ -1425,6 +1441,18 @@ function testAgentHumanTaskInputTypeChecked() returns error? {
     test:assertTrue(response is string && response.includes("\"approved\":true"),
             "The corrected task's completion should flow back to the agent, got: "
                     + (response ?: "()"));
+}
+
+@test:Config {groups: ["unit"]}
+function testAgentHumanTaskInputTypeMustNotDeclareExcludedUsers() returns error? {
+    map<anydata> input = {id: "agent-clashtask-001", request: "Escalate order ORD-10"};
+    string workflowId = check run(clashingTaskAgent, input);
+    anydata|error result = getWorkflowResult(workflowId, 30);
+    test:assertTrue(result is error, "Registering a task whose input type declares excludedUsers fails the run");
+    if result is error {
+        test:assertTrue(result.message().includes("must not declare the reserved field 'excludedUsers'"),
+            "The failure names the reserved field: " + result.message());
+    }
 }
 
 @test:Config {groups: ["unit"]}

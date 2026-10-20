@@ -3,9 +3,10 @@ org = "ballerina"
 name = "workflow"
 version = "@toml.version@"
 authors = ["Ballerina"]
-keywords = ["workflow", "Type/Library"]
+keywords = ["workflow", "Type/Library", "Area/Durable Workflows", "Name/Workflow"]
 repository = "https://github.com/ballerina-platform/module-ballerina-workflow"
 license = ["Apache-2.0"]
+icon = "icon.png"
 distribution = "@ballerina.lang.version@"
 
 [[package.modules]]

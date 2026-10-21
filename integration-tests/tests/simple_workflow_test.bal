@@ -35,3 +35,13 @@ function testSimpleWorkflowExecution() returns error? {
     anydata result = check workflow:getWorkflowResult(workflowId, 30);
     test:assertEquals(result, "Hello from workflow: TestUser", "Result should match");
 }
+
+@test:Config {
+    groups: ["integration"]
+}
+function testLeftOutInputTakesItsDefault() returns error? {
+    // A start without input passes none, so the declared default applies; an agent's workflow peer starts the same way.
+    string workflowId = check workflow:run(defaultedInputWorkflow);
+    anydata result = check workflow:getWorkflowResult(workflowId, 30);
+    test:assertEquals(result, "priority normal", "A left-out input should take the declared default");
+}

@@ -289,6 +289,12 @@ public class WorkflowCompilerPluginTest {
         Assert.assertTrue(generated.contains("registerDurableAgentPeer(\"claimAgent\", \"archiveCase\", "
                 + "\"archiveCase\", (), kind = \"WORKFLOW\");"),
                 "A workflow peer without metadata still registers with its kind:\n" + generated);
+        // A workflow from another module registers under its plain name, the name the peer is started by.
+        Assert.assertTrue(generated.contains("registerDurableAgentPeer(\"claimAgent\", \"closeCase\", "
+                + "\"closeCase\", (), kind = \"WORKFLOW\");"),
+                "A qualified workflow reference registers as a workflow peer:\n" + generated);
+        Assert.assertTrue(generated.contains("\\\"name\\\":\\\"closeCase\\\""),
+                "The submodule's descriptor registers the workflow under its plain name:\n" + generated);
     }
 
     @Test(groups = "invalid")
@@ -305,6 +311,17 @@ public class WorkflowCompilerPluginTest {
                 + getDiagnosticMessages(diagnosticResult));
         assertDiagnosticLine(allowedEvents.get(0), 41);
         assertMessageContains(allowedEvents.get(0), "departmentApproval");
+    }
+
+    @Test(groups = "invalid")
+    public void testTaskInputTypeMustNotDeclareExcludedUsers() {
+        String packagePath = "invalid_durable_agent_task_input_reserved";
+        DiagnosticResult diagnosticResult = getDiagnosticResult(packagePath);
+        List<Diagnostic> reserved = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_173");
+        Assert.assertEquals(reserved.size(), 1, "Only the input type that declares excludedUsers is rejected. Got: "
+                + getDiagnosticMessages(diagnosticResult));
+        assertDiagnosticLine(reserved.get(0), 35);
+        assertMessageContains(reserved.get(0), "signoff");
     }
 
     @Test(groups = "valid")

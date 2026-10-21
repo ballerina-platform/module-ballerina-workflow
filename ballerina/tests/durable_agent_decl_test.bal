@@ -755,6 +755,11 @@ function peerArchiveWorkflow(Context ctx, string caseId) returns string|error {
     return "archived " + caseId;
 }
 
+@Workflow
+function peerNoteWorkflow(Context ctx, string? note) returns string|error {
+    return "note " + (note ?: "none");
+}
+
 // Turn 1 starts both workflow peers; turn 2 answers with what the tools returned, plus whether
 // the agent-peer-only collectPeerResult tool was advertised.
 isolated client class WorkflowPeerMockModelProvider {
@@ -777,7 +782,8 @@ isolated client class WorkflowPeerMockModelProvider {
                     role: ai:ASSISTANT,
                     toolCalls: [
                         {name: "peerApprovalWorkflow", arguments: {"claimId": "C-1", "departmentId": "MOTOR"}, id: "c3"},
-                        {name: "peerArchiveWorkflow", arguments: {"caseId": "CASE-7"}, id: "c4"}
+                        {name: "peerArchiveWorkflow", arguments: {"caseId": "CASE-7"}, id: "c4"},
+                        {name: "peerNoteWorkflow", arguments: {"note": ()}, id: "c6"}
                     ]
                 };
             }
@@ -805,7 +811,7 @@ final DurableAgent workflowPeerAgent = check new ({
     systemPrompt: {role: "Claim router", instructions: "Start an approval per department."},
     model: workflowPeerModel,
     peers: [{agent: peerApprovalWorkflow, description: "Asks one department to approve the claim."},
-        {agent: peerArchiveWorkflow}]
+        {agent: peerArchiveWorkflow}, {agent: peerNoteWorkflow}]
 });
 
 isolated function instanceIdIn(string toolResult) returns string {
@@ -824,6 +830,9 @@ function testWorkflowFunctionPeerStartsADetachedWorkflow() returns error? {
         "peerApprovalWorkflow", {description: "Asks one department to approve the claim."}, kind = "WORKFLOW");
     _ = check wfInternal:registerDurableAgentPeer("workflowPeerAgent", "peerArchiveWorkflow",
         "peerArchiveWorkflow", (), kind = "WORKFLOW");
+    _ = check registerWorkflowForTest(peerNoteWorkflow, "peerNoteWorkflow");
+    _ = check wfInternal:registerDurableAgentPeer("workflowPeerAgent", "peerNoteWorkflow",
+        "peerNoteWorkflow", (), kind = "WORKFLOW");
     _ = check wfInternal:registerDurableAgentRunner("workflowPeerAgent");
     workflowPeerAgent.bindAgentName("workflowPeerAgent");
 
@@ -831,7 +840,7 @@ function testWorkflowFunctionPeerStartsADetachedWorkflow() returns error? {
     string answer = check workflowPeerAgent.waitForResult(agentId, timeout = {seconds: 30});
     // A conversion detail spans lines; only the lines that open a tool result count.
     string[] lines = re `\n`.split(answer).filter(line => line.startsWith("peer") || line.startsWith("collect"));
-    test:assertEquals(lines.length(), 4, "The refused call, the two starts, then the tool check: " + answer);
+    test:assertEquals(lines.length(), 5, "The refused call, the three starts, then the tool check: " + answer);
     // An input that does not fit the declared type is refused before anything starts, naming the field.
     test:assertTrue(lines[0].startsWith("peerApprovalWorkflow => Error: The input for workflow 'peerApprovalWorkflow' "
         + "does not fit its parameter 'claim'") && answer.includes("missing required field 'departmentId'"),
@@ -840,7 +849,9 @@ function testWorkflowFunctionPeerStartsADetachedWorkflow() returns error? {
         "The record-input peer tool starts the workflow and returns its id: " + answer);
     test:assertTrue(lines[2].startsWith("peerArchiveWorkflow => Started workflow 'peerArchiveWorkflow' (instance id peerArchiveWorkflow-"),
         "The scalar-input peer tool unwraps the argument and starts the workflow: " + answer);
-    test:assertEquals(lines[3], "collectPeerResult: false",
+    test:assertTrue(lines[3].startsWith("peerNoteWorkflow => Started workflow 'peerNoteWorkflow'"),
+        "A nilable input may be null, as its schema says: " + answer);
+    test:assertEquals(lines[4], "collectPeerResult: false",
         "collectPeerResult only serves peer agents; a workflow-only peer set does not advertise it");
 
     // The agent is done, but the approval it started is still running (ABANDON, not REQUEST_CANCEL),
@@ -853,6 +864,8 @@ function testWorkflowFunctionPeerStartsADetachedWorkflow() returns error? {
 
     string archived = check waitForResult(instanceIdIn(lines[2]), timeout = {seconds: 30});
     test:assertEquals(archived, "archived CASE-7", "The peer received the unwrapped scalar input");
+    string note = check waitForResult(instanceIdIn(lines[3]), timeout = {seconds: 30});
+    test:assertEquals(note, "note none", "A null input reaches the child as nil");
 }
 
 final DurableAgent unregisteredPeerAgent = check new ({

@@ -367,6 +367,9 @@ public final class TypesUtil {
         }
         Type type = TypeUtils.getImpliedType(rawType);
         int tag = type.getTag();
+        if (value instanceof Double d && !Double.isFinite(d)) {
+            return null;
+        }
         if (value instanceof Double || value instanceof BDecimal) {
             java.math.BigDecimal exact = value instanceof BDecimal decimal ? decimal.decimalValue()
                     : java.math.BigDecimal.valueOf((Double) value);
@@ -804,6 +807,11 @@ public final class TypesUtil {
         }
 
         return type;
+    }
+
+    // A nilable union: the parameter schemas leave such a parameter out of `required`.
+    public static boolean isNilable(Type type) {
+        return isNilableType(type, 0);
     }
 
     private static boolean isNilableType(Type rawType, int depth) {

@@ -1070,31 +1070,20 @@ public final class DurableAgentNative {
         Parameter[] parameters = ManagementNative.workflowDataParameters(workflow);
         // The input is checked against the workflow's declared type before anything starts: a detached
         // workflow has no reader for a conversion failure, and the model needs to hear what to fix.
+        // A workflow takes at most one input (the plugin enforces it): a record or map is the arguments
+        // object itself, anything else is the argument named after the parameter.
         Object input;
         if (parameters.length == 0) {
             input = null;
-        } else if (parameters.length == 1 && !isMappingParameter(parameters[0])) {
+        } else if (isMappingParameter(parameters[0])) {
+            input = converted(functionName, parameters[0], args);
+        } else {
             Object raw = args.get(StringUtils.fromString(parameters[0].name));
-            if (raw == null && !parameters[0].isDefault) {
+            // Left out or null: the start passes no input, so the declared default or nil applies.
+            if (raw == null && !parameters[0].isDefault && !TypesUtil.isNilable(parameters[0].type)) {
                 return peerInputError(functionName, parameters[0].name, "it is required");
             }
             input = raw == null ? null : converted(functionName, parameters[0], raw);
-        } else if (parameters.length == 1) {
-            input = converted(functionName, parameters[0], args);
-        } else {
-            for (Parameter parameter : parameters) {
-                Object raw = args.get(StringUtils.fromString(parameter.name));
-                if (raw == null && !parameter.isDefault) {
-                    return peerInputError(functionName, parameter.name, "it is required");
-                }
-                if (raw != null) {
-                    Object checked = converted(functionName, parameter, raw);
-                    if (checked instanceof BError) {
-                        return checked;
-                    }
-                }
-            }
-            input = args;
         }
         if (input instanceof BError) {
             return input;

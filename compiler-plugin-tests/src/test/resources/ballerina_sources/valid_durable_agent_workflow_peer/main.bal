@@ -16,6 +16,7 @@
 
 import ballerina/ai;
 import ballerina/workflow;
+import valid_durable_agent_workflow_peer.archive;
 
 final ai:Wso2ModelProvider routerModel = check new ("http://localhost:9099", "test-token");
 
@@ -46,7 +47,8 @@ final workflow:DurableAgent claimAgent = check new ({
     model: routerModel,
     peers: [
         {agent: departmentApproval, description: "Asks one department to approve the claim."},
-        {agent: archiveCase}
+        {agent: archiveCase},
+        {agent: archive:closeCase}
     ]
 });
 

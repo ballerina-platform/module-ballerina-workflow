@@ -24,9 +24,11 @@ import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.FunctionTypeSymbol;
 import io.ballerina.compiler.api.symbols.ModuleSymbol;
 import io.ballerina.compiler.api.symbols.ParameterSymbol;
+import io.ballerina.compiler.api.symbols.RecordTypeSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
 import io.ballerina.compiler.api.symbols.TypeDescKind;
+import io.ballerina.compiler.api.symbols.TypeDescTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.api.symbols.VariableSymbol;
@@ -93,6 +95,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
     private static final String REQUIRES_APPROVAL_FIELD = "requiresApproval";
     private static final String USER_ROLES_FIELD = "userRoles";
     private static final String USERS_FIELD = "users";
+    private static final String EXCLUDED_USERS_FIELD = "excludedUsers";
     private static final String LEGACY_ROLES_FIELD = "roles";
     private static final String MAX_RETRIES_FIELD = "maxRetries";
     private static final String WAIT_FIELD = "wait";
@@ -662,7 +665,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 // The typedescs travel separately (they are not json): folded into the meta
                 // mapping they would make the injected registration ill-typed.
                 case "resultType" -> resultTypeSource = fieldValue.toSourceCode().strip();
-                case "taskInputType" -> taskInputTypeSource = fieldValue.toSourceCode().strip();
+                case "taskInputType" -> {
+                    taskInputTypeSource = fieldValue.toSourceCode().strip();
+                    checkReservedTaskInputField(name, fieldValue, context);
+                }
                 default -> appendMetaField(meta, sf, fieldValue.toSourceCode().strip());
             }
         }
@@ -670,6 +676,21 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         checkReviewDefinition(config, context);
         humanTasks.add(new DurableAgentDeclInfo.HumanTaskDecl(name,
                 meta.isEmpty() ? null : "{" + meta + "}", resultTypeSource, taskInputTypeSource));
+    }
+
+    // The model's `excludedUsers` narrows who may act and is stripped before the input is checked,
+    // so a declared field of that name could never be filled.
+    private void checkReservedTaskInputField(String taskName, ExpressionNode typeRef,
+                                             SyntaxNodeAnalysisContext context) {
+        Optional<TypeSymbol> type = context.semanticModel().typeOf(typeRef);
+        if (type.isEmpty() || !(type.get() instanceof TypeDescTypeSymbol typedesc)
+                || typedesc.typeParameter().isEmpty()) {
+            return;
+        }
+        if (WorkflowPluginUtils.resolveTypeReference(typedesc.typeParameter().get()) instanceof RecordTypeSymbol record
+                && record.fieldDescriptors().containsKey(EXCLUDED_USERS_FIELD)) {
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_173, typeRef.location(), taskName);
+        }
     }
 
     private void extractPeers(ExpressionNode value, List<DurableAgentDeclInfo.PeerDecl> peers,

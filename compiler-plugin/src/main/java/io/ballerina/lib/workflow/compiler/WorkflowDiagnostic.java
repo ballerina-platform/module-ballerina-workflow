@@ -301,10 +301,15 @@ public enum WorkflowDiagnostic {
                     + "parent's to issue. Use 'run', which starts the agent as a child of this workflow",
             DiagnosticSeverity.ERROR),
     WORKFLOW_171("WORKFLOW_171",
-            "a peer function must be a '@workflow:Workflow' function: '%s' is not one",
+            "a peer function must be a '@workflow:Workflow' function referenced by its name: '%s' is not one",
             DiagnosticSeverity.ERROR),
     WORKFLOW_172("WORKFLOW_172",
             "'allowedEvents' does not apply to the workflow function peer '%s': only a peer agent has events",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_173("WORKFLOW_173",
+            "the 'taskInputType' of human task '%s' declares 'excludedUsers', which is reserved: the model's "
+                    + "'excludedUsers' narrows who may act on the task and is never part of the input. "
+                    + "Rename the field",
             DiagnosticSeverity.ERROR);
 
     private final String code;

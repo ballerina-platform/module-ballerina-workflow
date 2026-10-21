@@ -29,6 +29,7 @@ import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
 import io.ballerina.runtime.api.types.FunctionType;
 import io.ballerina.runtime.api.types.Parameter;
+import io.ballerina.runtime.api.types.RecordType;
 import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.utils.JsonUtils;
 import io.ballerina.runtime.api.utils.StringUtils;
@@ -1554,7 +1555,7 @@ public final class AgentContextNative {
             if (TYPE_OBJECT.equals(schema.get(SCHEMA_TYPE))) {
                 // A closed record admits no other field; the runtime schema leaves that implicit.
                 if (io.ballerina.runtime.api.utils.TypeUtils.getImpliedType(declared.getDescribingType())
-                        instanceof io.ballerina.runtime.api.types.RecordType record && record.isSealed()) {
+                        instanceof RecordType record && record.isSealed()) {
                     schema.put("additionalProperties", Boolean.FALSE);
                 }
                 return schema;

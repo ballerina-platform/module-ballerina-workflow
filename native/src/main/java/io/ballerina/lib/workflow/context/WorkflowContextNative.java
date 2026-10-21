@@ -37,6 +37,7 @@ import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BObject;
 import io.ballerina.runtime.api.values.BString;
 import io.ballerina.runtime.api.values.BTypedesc;
+import io.temporal.api.enums.v1.ParentClosePolicy;
 import io.temporal.failure.ApplicationFailure;
 import io.temporal.failure.CanceledFailure;
 import io.temporal.failure.ChildWorkflowFailure;
@@ -552,7 +553,7 @@ public final class WorkflowContextNative {
         // CANCELED — distinguishable from an admin terminating the task (ballerina-library#8892).
         io.temporal.workflow.ChildWorkflowOptions.Builder optsBuilder =
                 io.temporal.workflow.ChildWorkflowOptions.newBuilder().setWorkflowId(reviewId).setParentClosePolicy(
-                        io.temporal.api.enums.v1.ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL)
+                        ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL)
                         .setMemo(task.toMemo());
         if (WorkflowWorkerNative.isKindSearchAttributeReady()) {
             // The indexed kind, so lists can include or exclude reviews server-side. Not part of
@@ -1062,7 +1063,7 @@ public final class WorkflowContextNative {
                     .newBuilder()
                     .setWorkflowId(taskWorkflowId)
                     .setParentClosePolicy(
-                            io.temporal.api.enums.v1.ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL)
+                            ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL)
                     .setMemo(task.toMemo());
             if (WorkflowWorkerNative.isKindSearchAttributeReady()) {
                 childOptionsBuilder.setTypedSearchAttributes(io.temporal.common.SearchAttributes.newBuilder()
@@ -1598,7 +1599,7 @@ public final class WorkflowContextNative {
             WorkflowWorkerNative.awaitWhileSuspended();
             String childId = InstanceIdNaming.childInstanceId("childwf-", functionName + "-" + Workflow.randomUUID());
             ChildWorkflowStub stub = newChildStub(functionName, childId, null,
-                    io.temporal.api.enums.v1.ParentClosePolicy.PARENT_CLOSE_POLICY_ABANDON);
+                    ParentClosePolicy.PARENT_CLOSE_POLICY_ABANDON);
             stub.executeAsync(Object.class, input);
             stub.getExecution().get();
             return StringUtils.fromString(childId);
@@ -1727,6 +1728,12 @@ public final class WorkflowContextNative {
         }
     }
 
+    // The top of the run's tree: the trace a task or child belongs to, even when created under a child workflow.
+    static String rootWorkflowId() {
+        io.temporal.workflow.WorkflowInfo info = Workflow.getInfo();
+        return info.getRootWorkflowId().orElse(info.getWorkflowId());
+    }
+
     /**
      * Builds an untyped child workflow stub for the given @Workflow function name. The child workflow type uses
      * the same user-workflow prefix as {@code workflow:run}, so it resolves against the worker's process
@@ -1734,19 +1741,13 @@ public final class WorkflowContextNative {
      * CANCELED; ABANDON leaves a detached child running. The memo carries the parent linkage for the
      * management/tree views.
      */
-    // The top of the run's tree: the trace a task or child belongs to, even when created under a child workflow.
-    static String rootWorkflowId() {
-        io.temporal.workflow.WorkflowInfo info = Workflow.getInfo();
-        return info.getRootWorkflowId().orElse(info.getWorkflowId());
-    }
-
     private static ChildWorkflowStub newChildStub(String functionName, String childId, String stepId) {
         return newChildStub(functionName, childId, stepId,
-                io.temporal.api.enums.v1.ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL);
+                ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL);
     }
 
     private static ChildWorkflowStub newChildStub(String functionName, String childId, String stepId,
-                                                  io.temporal.api.enums.v1.ParentClosePolicy parentClosePolicy) {
+                                                  ParentClosePolicy parentClosePolicy) {
         String childType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + functionName;
 
         // Fixed at start, so a child agent is listed and tagged as AGENT for its whole run.

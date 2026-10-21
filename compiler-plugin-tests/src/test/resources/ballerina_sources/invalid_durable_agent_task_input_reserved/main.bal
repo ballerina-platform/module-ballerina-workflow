@@ -19,20 +19,51 @@ import ballerina/workflow;
 
 final ai:Wso2ModelProvider routerModel = check new ("http://localhost:9099", "test-token");
 
-type SignoffInput record {|
+type OptionalField record {|
     string claimId;
     string[] excludedUsers?;
 |};
 
-type ReviewInput record {|
+type RequiredField record {|
     string claimId;
+    string excludedUsers;
+|};
+
+type Base record {|
+    string[] excludedUsers?;
+|};
+
+type IncludedField record {|
+    *Base;
+    string claimId;
+|};
+
+type AliasOfOptional OptionalField;
+
+type ReadonlyOptional readonly & OptionalField;
+
+type AudienceLookalikes record {|
+    string claimId;
+    string[] users;
+    string[] userRoles;
+    string[] excludedRoles;
+|};
+
+type OpenRecord record {|
+    string claimId;
+    json...;
 |};
 
 final workflow:DurableAgent claimAgent = check new ({
     systemPrompt: {role: "Claim router", instructions: "Route claims."},
     model: routerModel,
     humanTasks: {
-        signoff: {userRoles: "manager", taskInputType: SignoffInput},
-        review: {userRoles: "manager", taskInputType: ReviewInput}
+        optionalField: {userRoles: "manager", taskInputType: OptionalField},
+        requiredField: {userRoles: "manager", taskInputType: RequiredField},
+        includedField: {userRoles: "manager", taskInputType: IncludedField},
+        aliasField: {userRoles: "manager", taskInputType: AliasOfOptional},
+        readonlyField: {userRoles: "manager", taskInputType: ReadonlyOptional},
+        audienceLookalikes: {userRoles: "manager", taskInputType: AudienceLookalikes},
+        openRecord: {userRoles: "manager", taskInputType: OpenRecord}
     }
 });

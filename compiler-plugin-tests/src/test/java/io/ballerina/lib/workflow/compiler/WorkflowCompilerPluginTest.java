@@ -36,6 +36,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Tests for workflow compiler plugin.
@@ -315,13 +317,23 @@ public class WorkflowCompilerPluginTest {
 
     @Test(groups = "invalid")
     public void testTaskInputTypeMustNotDeclareExcludedUsers() {
+        // However the reserved field gets into the record it is rejected; look-alike audience names are not reserved.
         String packagePath = "invalid_durable_agent_task_input_reserved";
         DiagnosticResult diagnosticResult = getDiagnosticResult(packagePath);
         List<Diagnostic> reserved = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_173");
-        Assert.assertEquals(reserved.size(), 1, "Only the input type that declares excludedUsers is rejected. Got: "
+        Map<Integer, String> expected = new TreeMap<>(Map.of(
+                61, "optionalField", 62, "requiredField", 63, "includedField", 64, "aliasField",
+                65, "readonlyField"));
+        Map<Integer, String> actual = new TreeMap<>();
+        for (Diagnostic diagnostic : reserved) {
+            assertMessageContains(diagnostic, "'excludedUsers'");
+            int line = diagnostic.location().lineRange().startLine().line() + 1;
+            actual.put(line, diagnostic.message().replaceAll(".*human task '([^']+)'.*", "$1"));
+        }
+        Assert.assertEquals(actual, expected, "Each reserved-field shape is rejected once, and only those. Got: "
                 + getDiagnosticMessages(diagnosticResult));
-        assertDiagnosticLine(reserved.get(0), 35);
-        assertMessageContains(reserved.get(0), "signoff");
+        Assert.assertEquals(diagnosticResult.errorCount(), reserved.size(),
+                "The fixture has no other errors. Got: " + getDiagnosticMessages(diagnosticResult));
     }
 
     @Test(groups = "valid")

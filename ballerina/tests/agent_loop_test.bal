@@ -579,6 +579,10 @@ function testAgentLadderExcludesTheFirstCompleter() returns error? {
 
     string second = check awaitPendingTask(workflowId, first);
     test:assertNotEquals(second, first, "a second task is created after the first completes");
+    // The model's excludedUsers steers the audience only: the person sees the order, not the exclusion.
+    management:HumanTaskInfo secondInfo = check management:getHumanTaskInfo(second);
+    map<json> secondInput = check secondInfo.taskInput.ensureType();
+    test:assertEquals(secondInput, {"orderId": "ORD-L1"}, "the reserved key never reaches the task's input");
     error? sameApprover = management:completeHumanTask(second, <ApprovalResult>{approved: true, comment: "again"},
             ["APPROVER"], userId = "alice");
     test:assertTrue(sameApprover is error, "the first completer is excluded from the second task");

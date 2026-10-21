@@ -307,8 +307,8 @@ public enum WorkflowDiagnostic {
             "'allowedEvents' does not apply to the workflow function peer '%s': only a peer agent has events",
             DiagnosticSeverity.ERROR),
     WORKFLOW_173("WORKFLOW_173",
-            "the 'taskInputType' of human task '%s' declares 'excludedUsers', which is reserved: the model's "
-                    + "'excludedUsers' narrows who may act on the task and is never part of the input. "
+            "the 'taskInputType' of human task '%s' declares the reserved field '%s': the runtime reads it from "
+                    + "the model's input to decide who may act on the task, so it never reaches the person. "
                     + "Rename the field",
             DiagnosticSeverity.ERROR);
 

@@ -817,11 +817,13 @@ public final class AgentContextNative {
             @SuppressWarnings("unchecked")
             Map<String, Object> properties = (Map<String, Object>) schema.computeIfAbsent(SCHEMA_PROPERTIES,
                     key -> new LinkedHashMap<String, Object>());
-            // The reserved field is stripped before the input is checked, so a declared field of that
-            // name could never be supplied: refuse it here rather than ship a tool that always fails.
-            if (properties.containsKey(TaskKeys.EXCLUDED_USERS)) {
-                return ErrorCreator.createError(StringUtils.fromString("HumanTask '" + name
-                        + "' taskInputType must not declare the reserved field '" + TaskKeys.EXCLUDED_USERS + "'"));
+            // A reserved field is stripped before the input is checked, so a declared field of that name
+            // would never reach the person: refuse it here rather than ship a tool that misreads it.
+            for (String reserved : TaskKeys.RESERVED_TASK_INPUT_FIELDS) {
+                if (properties.containsKey(reserved)) {
+                    return ErrorCreator.createError(StringUtils.fromString("HumanTask '" + name
+                            + "' taskInputType must not declare the reserved field '" + reserved + "'"));
+                }
             }
             properties.put(TaskKeys.EXCLUDED_USERS, namesProperty(
                     "User ids that may not complete this task, such as someone who already decided"));
@@ -1482,10 +1484,10 @@ public final class AgentContextNative {
         BMap<BString, Object> supplied = payload instanceof BMap
                 ? (BMap<BString, Object>) payload
                 : ValueCreator.createMapValue();
-        // The reserved exclusion key narrows this creation and never reaches the person.
+        // The reserved keys steer this creation and never reach the person.
         BMap<BString, Object> payloadMap = ValueCreator.createMapValue();
         for (Map.Entry<BString, Object> entry : supplied.entrySet()) {
-            if (!TaskKeys.EXCLUDED_USERS.equals(entry.getKey().getValue())) {
+            if (!TaskKeys.RESERVED_TASK_INPUT_FIELDS.contains(entry.getKey().getValue())) {
                 payloadMap.put(entry.getKey(), entry.getValue());
             }
         }

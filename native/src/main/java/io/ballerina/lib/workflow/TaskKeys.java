@@ -18,6 +18,8 @@
 
 package io.ballerina.lib.workflow;
 
+import java.util.Set;
+
 /**
  * The wire vocabulary of a task: memo and input keys, decision and completion envelope fields. Writers and
  * readers share these so the two sides cannot drift.
@@ -37,6 +39,8 @@ public final class TaskKeys {
     public static final String USERS = "users";
     public static final String EXCLUDED_USERS = "excludedUsers";
     public static final String EXCLUDED_ROLES = "excludedRoles";
+    // Fields the runtime reads from an agent's human task input; mirrored by the compiler plugin's WORKFLOW_173.
+    public static final Set<String> RESERVED_TASK_INPUT_FIELDS = Set.of(EXCLUDED_USERS);
     public static final String ADMINISTRATOR_ROLES = "administratorRoles";
     public static final String ADMINISTRATOR_USERS = "administratorUsers";
     public static final String TASK_INPUT = "taskInput";

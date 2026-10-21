@@ -18,6 +18,8 @@
 
 package io.ballerina.lib.workflow.compiler;
 
+import java.util.Set;
+
 /**
  * Constants used by the workflow compiler plugin.
  *
@@ -67,6 +69,8 @@ public final class WorkflowConstants {
     public static final String REGISTER_AGENT_PEER_FUNCTION = "registerDurableAgentPeer";
     public static final String REGISTER_AGENT_PEER_KIND_PARAM = "kind";
     public static final String PEER_KIND_WORKFLOW = "WORKFLOW";
+    // Fields the runtime reads from an agent's human task input; mirrors TaskKeys.RESERVED_TASK_INPUT_FIELDS.
+    public static final Set<String> RESERVED_TASK_INPUT_FIELDS = Set.of("excludedUsers");
     /** Registers the shared runner as an agent's workflow. */
     public static final String REGISTER_AGENT_RUNNER_FUNCTION = "registerDurableAgentRunner";
 

@@ -22,6 +22,7 @@ import io.ballerina.compiler.api.SemanticModel;
 import io.ballerina.compiler.api.symbols.ClassSymbol;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.FunctionTypeSymbol;
+import io.ballerina.compiler.api.symbols.IntersectionTypeSymbol;
 import io.ballerina.compiler.api.symbols.ModuleSymbol;
 import io.ballerina.compiler.api.symbols.ParameterSymbol;
 import io.ballerina.compiler.api.symbols.RecordTypeSymbol;
@@ -95,7 +96,6 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
     private static final String REQUIRES_APPROVAL_FIELD = "requiresApproval";
     private static final String USER_ROLES_FIELD = "userRoles";
     private static final String USERS_FIELD = "users";
-    private static final String EXCLUDED_USERS_FIELD = "excludedUsers";
     private static final String LEGACY_ROLES_FIELD = "roles";
     private static final String MAX_RETRIES_FIELD = "maxRetries";
     private static final String WAIT_FIELD = "wait";
@@ -678,18 +678,30 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 meta.isEmpty() ? null : "{" + meta + "}", resultTypeSource, taskInputTypeSource));
     }
 
-    // The model's `excludedUsers` narrows who may act and is stripped before the input is checked,
-    // so a declared field of that name could never be filled.
+    // The runtime strips its reserved fields from the model's input before the check, so a declared field
+    // of that name never reaches the person and its value is read as something else.
     private void checkReservedTaskInputField(String taskName, ExpressionNode typeRef,
                                              SyntaxNodeAnalysisContext context) {
-        Optional<TypeSymbol> type = context.semanticModel().typeOf(typeRef);
-        if (type.isEmpty() || !(type.get() instanceof TypeDescTypeSymbol typedesc)
-                || typedesc.typeParameter().isEmpty()) {
+        // Through the typedesc, aliases and `readonly &` to the record that declares the fields.
+        TypeSymbol type = context.semanticModel().typeOf(typeRef).orElse(null);
+        for (int depth = 0; type != null && depth < 8; depth++) {
+            if (type instanceof TypeDescTypeSymbol typedesc) {
+                type = typedesc.typeParameter().orElse(null);
+            } else if (type instanceof TypeReferenceTypeSymbol reference) {
+                type = reference.typeDescriptor();
+            } else if (type instanceof IntersectionTypeSymbol intersection) {
+                type = intersection.effectiveTypeDescriptor();
+            } else {
+                break;
+            }
+        }
+        if (!(type instanceof RecordTypeSymbol record)) {
             return;
         }
-        if (WorkflowPluginUtils.resolveTypeReference(typedesc.typeParameter().get()) instanceof RecordTypeSymbol record
-                && record.fieldDescriptors().containsKey(EXCLUDED_USERS_FIELD)) {
-            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_173, typeRef.location(), taskName);
+        for (String reserved : WorkflowConstants.RESERVED_TASK_INPUT_FIELDS) {
+            if (record.fieldDescriptors().containsKey(reserved)) {
+                reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_173, typeRef.location(), taskName, reserved);
+            }
         }
     }
 

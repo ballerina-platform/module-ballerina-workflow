@@ -6,9 +6,29 @@ type ExpenseRequest record {|
     string? note;
 |};
 
+enum Department {
+    OPS,
+    SALES
+}
+
+const string RND = "R&D";
+
+type OptX "x"|();
+
+// Literal unions in every spelling: a human task form renders each as a choice, so the descriptor
+// must say `enum`, as the runtime's form schema does (ballerina-library#9232).
 type ApprovalDecision record {|
     boolean approved;
     string comment?;
+    "OPS"|"SALES"|"R&D" costCentre;
+    Department department;
+    Department? altDepartment;
+    OPS|RND viaConst;
+    1|2|3 level;
+    1|"a" mixed;
+    ("x"|"y")? option;
+    "only" single;
+    OptX|"z" nestedNil;
 |};
 
 type PostingResult record {|

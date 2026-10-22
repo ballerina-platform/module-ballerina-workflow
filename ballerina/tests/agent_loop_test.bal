@@ -579,6 +579,10 @@ function testAgentLadderExcludesTheFirstCompleter() returns error? {
 
     string second = check awaitPendingTask(workflowId, first);
     test:assertNotEquals(second, first, "a second task is created after the first completes");
+    // The model's excludedUsers steers the audience only: the person sees the order, not the exclusion.
+    management:HumanTaskInfo secondInfo = check management:getHumanTaskInfo(second);
+    map<json> secondInput = check secondInfo.taskInput.ensureType();
+    test:assertEquals(secondInput, {"orderId": "ORD-L1"}, "the reserved key never reaches the task's input");
     error? sameApprover = management:completeHumanTask(second, <ApprovalResult>{approved: true, comment: "again"},
             ["APPROVER"], userId = "alice");
     test:assertTrue(sameApprover is error, "the first completer is excluded from the second task");
@@ -662,12 +666,72 @@ isolated client class TypedInputMockModelProvider {
 
 final TypedInputMockModelProvider typedInputAgentModel = new;
 
+// A taskInputType that declares the reserved exclusion field can never be supplied, since that field
+// is stripped before the input is checked: the registration refuses it (rdulmina, module PR #171).
+type ClashingInput record {|
+    string orderId;
+    string excludedUsers;
+|};
+
+function clashingTaskAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerHumanTask(ctx, "escalate", "APPROVER", ApprovalResult,
+            title = "Escalate order", taskInputType = ClashingInput);
+    check buildAndRun(ctx, input.request,
+            systemPrompt = {role: "", instructions: "You escalate orders to a person."},
+            model = typedInputAgentModel);
+}
+
 function typedTaskAgent(handle ctx, AgentOrderInput input) returns error? {
     check registerHumanTask(ctx, "escalate", "APPROVER", ApprovalResult,
             title = "Escalate order", taskInputType = EscalationInput);
     check buildAndRun(ctx, input.request,
             systemPrompt = {role: "", instructions: "You escalate orders to a person."},
             model = typedInputAgentModel);
+}
+
+// The declared taskInputType must reach the model (ballerina-library#9323): this model answers
+// with the schema it was shown for the task and the error it got for a mistyped call, so the
+// test can read both from the agent's final response. No task is ever created.
+isolated client class SchemaAwareTypedInputMockModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        string schema = "";
+        foreach ai:ChatCompletionFunctions tool in tools {
+            if tool.name == "escalate" {
+                schema = tool.parameters.toJsonString();
+            }
+        }
+        if messages is ai:ChatMessage[] {
+            foreach ai:ChatMessage message in messages {
+                if message is ai:ChatFunctionMessage && message.name == "escalate" {
+                    return {role: ai:ASSISTANT, content: "schema=" + schema + "\nerror=" + (message.content ?: "")};
+                }
+            }
+        }
+        return {
+            role: ai:ASSISTANT,
+            toolCalls: [{name: "escalate", arguments: {"orderId": "ORD-9", "amount": "a lot"}}]
+        };
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final SchemaAwareTypedInputMockModelProvider schemaAwareTypedInputModel = new;
+
+function schemaTaskAgent(handle ctx, AgentOrderInput input) returns error? {
+    check registerHumanTask(ctx, "escalate", "APPROVER", ApprovalResult,
+            title = "Escalate order", taskInputType = EscalationInput);
+    check buildAndRun(ctx, input.request,
+            systemPrompt = {role: "", instructions: "You escalate orders to a person."},
+            model = schemaAwareTypedInputModel);
 }
 
 function approvalAgent(handle ctx, AgentOrderInput input) returns error? {
@@ -1042,6 +1106,8 @@ function setupAgentTests() returns error? {
     _ = check registerAgentWorkflowForTest(approvalAgent, "approvalAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(ladderAgent, "ladderAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(typedTaskAgent, "typedTaskAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(clashingTaskAgent, "clashingTaskAgent", agentActivities);
+    _ = check registerAgentWorkflowForTest(schemaTaskAgent, "schemaTaskAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(eventWaitingAgent, "eventWaitingAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(conversationAgent, "conversationAgent", agentActivities);
     _ = check registerAgentWorkflowForTest(unboundedConversationAgent, "unboundedConversationAgent",
@@ -1379,6 +1445,45 @@ function testAgentHumanTaskInputTypeChecked() returns error? {
     test:assertTrue(response is string && response.includes("\"approved\":true"),
             "The corrected task's completion should flow back to the agent, got: "
                     + (response ?: "()"));
+}
+
+@test:Config {groups: ["unit"]}
+function testAgentHumanTaskInputTypeMustNotDeclareExcludedUsers() returns error? {
+    map<anydata> input = {id: "agent-clashtask-001", request: "Escalate order ORD-10"};
+    string workflowId = check run(clashingTaskAgent, input);
+    anydata|error result = getWorkflowResult(workflowId, 30);
+    test:assertTrue(result is error, "Registering a task whose input type declares excludedUsers fails the run");
+    if result is error {
+        test:assertTrue(result.message().includes("must not declare the reserved field 'excludedUsers'"),
+            "The failure names the reserved field: " + result.message());
+    }
+}
+
+@test:Config {groups: ["unit"]}
+function testAgentHumanTaskInputTypeIsAdvertisedAndMismatchNamesTheField() returns error? {
+    // ballerina-library#9323: the tool the model sees for a task with a taskInputType carries that
+    // type's schema (plus the reserved excludedUsers), and a mismatch names the field and the
+    // expected type, so the model can correct the next call instead of repeating it.
+    map<anydata> input = {id: "agent-schematask-001", request: "Escalate order ORD-9"};
+    string workflowId = check run(schemaTaskAgent, input);
+    _ = check getWorkflowResult(workflowId, 30);
+    string response = getAgentFinalResponse(workflowId) ?: "";
+    string[] parts = re `\nerror=`.split(response);
+    test:assertEquals(parts.length(), 2, "The model answers with the schema and the error: " + response);
+
+    map<json> schema = check parts[0].substring(7).fromJsonString().ensureType();
+    map<json> properties = check schema["properties"].ensureType();
+    test:assertEquals(check properties["orderId"].ensureType(), {"type": "string"},
+            "The declared record's fields are the tool's parameters");
+    test:assertEquals(check properties["amount"].ensureType(), {"type": "integer"});
+    test:assertTrue(properties.hasKey("excludedUsers"), "The reserved exclusion field stays advertised");
+    test:assertEquals(schema["required"], ["orderId", "amount"], "Required fields are required");
+    test:assertEquals(schema["additionalProperties"], false, "A closed record admits no other fields");
+
+    string failure = parts[1];
+    test:assertTrue(failure.includes("does not match its declared taskInputType"), failure);
+    test:assertTrue(failure.includes("amount") && failure.includes("int"),
+            "The mismatch names the field and the expected type: " + failure);
 }
 
 @test:Config {groups: ["unit"]}

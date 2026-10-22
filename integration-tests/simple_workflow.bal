@@ -52,3 +52,13 @@ type SimpleInput record {|
 function simpleWorkflow(workflow:Context ctx, SimpleInput input) returns string|error {
     return "Hello from workflow: " + input.name;
 }
+
+# A workflow whose only input has a default, so a start may leave it out.
+#
+# + ctx - The workflow context
+# + priority - The priority, `normal` when left out
+# + return - The priority it ran with
+@workflow:Workflow
+function defaultedInputWorkflow(workflow:Context ctx, string priority = "normal") returns string|error {
+    return "priority " + priority;
+}

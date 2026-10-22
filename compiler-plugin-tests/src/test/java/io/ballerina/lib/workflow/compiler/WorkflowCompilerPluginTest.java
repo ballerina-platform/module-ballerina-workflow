@@ -19,6 +19,9 @@
 package io.ballerina.lib.workflow.compiler;
 
 import io.ballerina.projects.DiagnosticResult;
+import io.ballerina.projects.DocumentId;
+import io.ballerina.projects.Module;
+import io.ballerina.projects.ModuleId;
 import io.ballerina.projects.ProjectEnvironmentBuilder;
 import io.ballerina.projects.directory.BuildProject;
 import io.ballerina.projects.environment.Environment;
@@ -27,10 +30,14 @@ import io.ballerina.tools.diagnostics.Diagnostic;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Tests for workflow compiler plugin.
@@ -191,48 +198,58 @@ public class WorkflowCompilerPluginTest {
     }
 
     @Test(groups = "invalid")
-    public void testInvalidActivityParam() {
+    public void testInvalidActivityParam() throws IOException {
         String packagePath = "invalid_activity_param";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertTrue(diagnosticResult.errorCount() > 0,
                 "Expected validation error for activity with non-anydata parameter");
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_103);
+        assertDiagnosticStartsAt(diagnosticResult, packagePath, WorkflowDiagnostic.WORKFLOW_103,
+                30, "MyClass obj");
     }
 
     @Test(groups = "invalid")
-    public void testInvalidActivityReturn() {
+    public void testInvalidActivityReturn() throws IOException {
         String packagePath = "invalid_activity_return";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertTrue(diagnosticResult.errorCount() > 0,
                 "Expected validation error for activity with non-anydata return type");
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_104);
+        assertDiagnosticStartsAt(diagnosticResult, packagePath, WorkflowDiagnostic.WORKFLOW_104,
+                30, "MyClass|error");
     }
 
     @Test(groups = "invalid")
-    public void testInvalidWorkflowParam() {
+    public void testInvalidWorkflowParam() throws IOException {
         String packagePath = "invalid_process_param";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertTrue(diagnosticResult.errorCount() > 0,
                 "Expected validation error for workflow with non-anydata input parameter");
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_101);
+        assertDiagnosticStartsAt(diagnosticResult, packagePath, WorkflowDiagnostic.WORKFLOW_101,
+                39, "InvalidInput input");
     }
 
     @Test(groups = "invalid")
-    public void testInvalidWorkflowReturn() {
+    public void testInvalidWorkflowReturn() throws IOException {
         String packagePath = "invalid_process_return";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertTrue(diagnosticResult.errorCount() > 0,
                 "Expected validation error for workflow with non-anydata return type");
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_105);
+        assertDiagnosticStartsAt(diagnosticResult, packagePath, WorkflowDiagnostic.WORKFLOW_105,
+                39, "InvalidResult|error");
     }
 
     @Test(groups = "invalid")
-    public void testInvalidWorkflowEvents() {
+    public void testInvalidWorkflowEvents() throws IOException {
         String packagePath = "invalid_process_events";
         DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
         Assert.assertTrue(diagnosticResult.errorCount() > 0,
                 "Expected validation error for workflow with invalid events parameter type");
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_102);
+        assertDiagnosticStartsAt(diagnosticResult, packagePath, WorkflowDiagnostic.WORKFLOW_102,
+                31, "string events");
     }
 
     @Test(groups = "invalid")
@@ -252,6 +269,90 @@ public class WorkflowCompilerPluginTest {
                 "Expected no errors for events record with anydata future<T> fields "
                         + "(boolean, int, string, json, xml, table). Errors: "
                         + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "valid")
+    public void testWorkflowFunctionPeerRegistersAsAWorkflowPeer() {
+        // ballerina-library#9319: a @workflow:Workflow function in `peers` is a tool that starts the
+        // workflow, so its registration carries the kind; a peer agent's registration is unchanged.
+        String packagePath = "valid_durable_agent_workflow_peer";
+        DiagnosticResult validationResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertEquals(validationResult.errorCount(), 0,
+                "Expected no errors for workflow function peers. Errors: " + getDiagnosticMessages(validationResult));
+        BuildProject project = BuildProject.load(getEnvironmentBuilder(), RESOURCE_DIRECTORY.resolve(packagePath));
+        DiagnosticResult declResult = project.currentPackage().runCodeGenAndModifyPlugins();
+        Assert.assertEquals(declResult.errorCount(), 0,
+                "Expected no declaration errors for workflow function peers. Errors: "
+                        + getDiagnosticMessages(declResult));
+        String generated = allSourcesOf(project);
+        Assert.assertTrue(generated.contains("registerDurableAgentPeer(\"claimAgent\", \"departmentApproval\", "
+                + "\"departmentApproval\", {\"description\": \"Asks one department to approve the claim.\"}, "
+                + "kind = \"WORKFLOW\");"), "The workflow peer registers with its kind:\n" + generated);
+        Assert.assertTrue(generated.contains("registerDurableAgentPeer(\"claimAgent\", \"archiveCase\", "
+                + "\"archiveCase\", (), kind = \"WORKFLOW\");"),
+                "A workflow peer without metadata still registers with its kind:\n" + generated);
+        // A workflow from another module registers under its plain name, the name the peer is started by.
+        Assert.assertTrue(generated.contains("registerDurableAgentPeer(\"claimAgent\", \"closeCase\", "
+                + "\"closeCase\", (), kind = \"WORKFLOW\");"),
+                "A qualified workflow reference registers as a workflow peer:\n" + generated);
+        Assert.assertTrue(generated.contains("\\\"name\\\":\\\"closeCase\\\""),
+                "The submodule's descriptor registers the workflow under its plain name:\n" + generated);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidWorkflowFunctionPeer() {
+        String packagePath = "invalid_durable_agent_workflow_peer";
+        DiagnosticResult diagnosticResult = getDiagnosticResult(packagePath);
+        List<Diagnostic> plainFunction = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_171");
+        Assert.assertEquals(plainFunction.size(), 1, "A plain function peer is rejected once. Got: "
+                + getDiagnosticMessages(diagnosticResult));
+        assertDiagnosticLine(plainFunction.get(0), 40);
+        assertMessageContains(plainFunction.get(0), "notifyDepartment");
+        List<Diagnostic> allowedEvents = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_172");
+        Assert.assertEquals(allowedEvents.size(), 1, "allowedEvents on a workflow peer is rejected once. Got: "
+                + getDiagnosticMessages(diagnosticResult));
+        assertDiagnosticLine(allowedEvents.get(0), 41);
+        assertMessageContains(allowedEvents.get(0), "departmentApproval");
+    }
+
+    @Test(groups = "invalid")
+    public void testTaskInputTypeMustNotDeclareExcludedUsers() {
+        // However the reserved field gets into the record it is rejected; look-alike audience names are not reserved.
+        String packagePath = "invalid_durable_agent_task_input_reserved";
+        DiagnosticResult diagnosticResult = getDiagnosticResult(packagePath);
+        List<Diagnostic> reserved = getDiagnosticsWithCode(diagnosticResult, "WORKFLOW_173");
+        Map<Integer, String> expected = new TreeMap<>(Map.of(
+                61, "optionalField", 62, "requiredField", 63, "includedField", 64, "aliasField",
+                65, "readonlyField"));
+        Map<Integer, String> actual = new TreeMap<>();
+        for (Diagnostic diagnostic : reserved) {
+            assertMessageContains(diagnostic, "'excludedUsers'");
+            int line = diagnostic.location().lineRange().startLine().line() + 1;
+            actual.put(line, diagnostic.message().replaceAll(".*human task '([^']+)'.*", "$1"));
+        }
+        Assert.assertEquals(actual, expected, "Each reserved-field shape is rejected once, and only those. Got: "
+                + getDiagnosticMessages(diagnosticResult));
+        Assert.assertEquals(diagnosticResult.errorCount(), reserved.size(),
+                "The fixture has no other errors. Got: " + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "valid")
+    public void testCallActivityOnUnrelatedClient() {
+        String packagePath = "valid_call_activity_unrelated_client";
+        DiagnosticResult diagnosticResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertEquals(diagnosticResult.errorCount(), 0,
+                "Expected no errors for a callActivity remote method on a non-workflow client. Errors: "
+                        + getDiagnosticMessages(diagnosticResult));
+        // The modifier stamps the context's steps with a stepId; a client's same-named method takes none.
+        BuildProject project = BuildProject.load(getEnvironmentBuilder(), RESOURCE_DIRECTORY.resolve(packagePath));
+        DiagnosticResult modified = project.currentPackage().runCodeGenAndModifyPlugins();
+        Assert.assertEquals(modified.errorCount(), 0,
+                "Expected the rewritten sources to compile. Errors: " + getDiagnosticMessages(modified));
+        String rewritten = allSourcesOf(project);
+        Assert.assertTrue(rewritten.contains("inbox->awaitHumanTask(\"review\")")
+                && rewritten.contains("inbox->runChildWorkflow(review)")
+                && rewritten.contains("recorder->callActivity(count)"),
+                "A client's same-named remote methods must not be stamped with a stepId:\n" + rewritten);
     }
 
     @Test(groups = "invalid")
@@ -929,6 +1030,30 @@ public class WorkflowCompilerPluginTest {
             }
         }
         return matching;
+    }
+
+    private static String allSourcesOf(BuildProject project) {
+        StringBuilder sources = new StringBuilder();
+        for (ModuleId moduleId : project.currentPackage().moduleIds()) {
+            Module module = project.currentPackage().module(moduleId);
+            for (DocumentId documentId : module.documentIds()) {
+                sources.append(module.document(documentId).syntaxTree().toSourceCode());
+            }
+        }
+        return sources.toString();
+    }
+
+    // Signature diagnostics sit on the offending parameter or return type, not on the function name.
+    private void assertDiagnosticStartsAt(DiagnosticResult diagnosticResult, String packagePath,
+                                          WorkflowDiagnostic expected, int line, String text) throws IOException {
+        List<Diagnostic> diagnostics = getDiagnosticsWithCode(diagnosticResult, expected.getCode());
+        Assert.assertEquals(diagnostics.size(), 1, getDiagnosticMessages(diagnosticResult));
+        Diagnostic diagnostic = diagnostics.get(0);
+        String sourceLine = Files.readAllLines(RESOURCE_DIRECTORY.resolve(packagePath).resolve("main.bal"))
+                .get(line - 1);
+        assertDiagnosticLine(diagnostic, line);
+        Assert.assertEquals(diagnostic.location().lineRange().startLine().offset(), sourceLine.indexOf(text),
+                expected.getCode() + " should start at '" + text + "' in: " + sourceLine);
     }
 
     /**

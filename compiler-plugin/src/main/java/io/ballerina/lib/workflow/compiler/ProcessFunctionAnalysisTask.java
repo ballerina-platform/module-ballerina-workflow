@@ -151,7 +151,8 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
         public void visit(RemoteMethodCallActionNode remoteCallNode) {
             String methodName = remoteCallNode.methodName().name().text();
 
-            if (WorkflowConstants.CALL_ACTIVITY_FUNCTION.equals(methodName)) {
+            if (WorkflowConstants.CALL_ACTIVITY_FUNCTION.equals(methodName)
+                    && WorkflowPluginUtils.isContextCall(remoteCallNode, semanticModel)) {
                 SeparatedNodeList<FunctionArgumentNode> arguments = remoteCallNode.arguments();
                 if (!arguments.isEmpty()) {
                     FunctionArgumentNode firstArg = arguments.get(0);
@@ -175,7 +176,8 @@ public class ProcessFunctionAnalysisTask implements AnalysisTask<SyntaxNodeAnaly
                         }
                     }
                 }
-            } else if (WorkflowConstants.CALL_HUMAN_TASK_METHOD.equals(methodName)) {
+            } else if (WorkflowConstants.CALL_HUMAN_TASK_METHOD.equals(methodName)
+                    && WorkflowPluginUtils.isContextCall(remoteCallNode, semanticModel)) {
                 String taskName = extractHumanTaskName(remoteCallNode.arguments());
                 if (taskName == null && hasTaskNameArgument(remoteCallNode.arguments())) {
                     DiagnosticInfo nameInfo = new DiagnosticInfo(

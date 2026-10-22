@@ -43,6 +43,7 @@ import io.ballerina.compiler.syntax.tree.FunctionDefinitionNode;
 import io.ballerina.compiler.syntax.tree.MetadataNode;
 import io.ballerina.compiler.syntax.tree.Node;
 import io.ballerina.compiler.syntax.tree.NodeList;
+import io.ballerina.compiler.syntax.tree.RemoteMethodCallActionNode;
 import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.tools.diagnostics.Location;
@@ -289,6 +290,11 @@ public final class WorkflowPluginUtils {
         
         Optional<ModuleSymbol> moduleOpt = typeRef.getModule();
         return moduleOpt.isPresent() && isWorkflowModule(moduleOpt.get());
+    }
+
+    // A user client whose remote method only shares a workflow:Context method's name is not a workflow call.
+    public static boolean isContextCall(RemoteMethodCallActionNode remoteCall, SemanticModel semanticModel) {
+        return semanticModel.typeOf(remoteCall.expression()).map(WorkflowPluginUtils::isContextType).orElse(false);
     }
 
     /**

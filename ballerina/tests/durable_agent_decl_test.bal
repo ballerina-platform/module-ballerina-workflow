@@ -734,3 +734,160 @@ function testSideTurnAnswersWhileParked() returns error? {
     string result = check sideTurnAgent.waitForResult(runResult);
     test:assertEquals(result, "Done SAW_ASIDE");
 }
+
+// ── Workflow function peers (ballerina-library#9319) ─────────────────────────
+
+type PeerClaim record {|
+    string claimId;
+    string departmentId;
+|};
+
+// Waits on a data event so it is still running once the agent that started it has finished.
+@Workflow
+function peerApprovalWorkflow(Context ctx, PeerClaim claim, record {|future<string> decision;|} events)
+        returns string|error {
+    string decision = check wait events.decision;
+    return claim.claimId + "/" + claim.departmentId + "/" + decision;
+}
+
+@Workflow
+function peerArchiveWorkflow(Context ctx, string caseId) returns string|error {
+    return "archived " + caseId;
+}
+
+@Workflow
+function peerNoteWorkflow(Context ctx, string? note) returns string|error {
+    return "note " + (note ?: "none");
+}
+
+// Turn 1 starts both workflow peers; turn 2 answers with what the tools returned, plus whether
+// the agent-peer-only collectPeerResult tool was advertised.
+isolated client class WorkflowPeerMockModelProvider {
+    *ai:ModelProvider;
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        string[] toolNames = tools.map(tool => tool.name);
+        if messages is ai:ChatMessage[] {
+            string[] results = [];
+            foreach ai:ChatMessage message in messages {
+                if message is ai:ChatFunctionMessage {
+                    results.push(message.name + " => " + (message.content ?: ""));
+                }
+            }
+            // The first call left departmentId out: the tool error says so, and the retry fills it in.
+            if results.length() == 1 && results[0].includes("does not fit its parameter") {
+                return {
+                    role: ai:ASSISTANT,
+                    toolCalls: [
+                        {name: "peerApprovalWorkflow", arguments: {"claimId": "C-1", "departmentId": "MOTOR"}, id: "c3"},
+                        {name: "peerArchiveWorkflow", arguments: {"caseId": "CASE-7"}, id: "c4"},
+                        {name: "peerNoteWorkflow", arguments: {"note": ()}, id: "c6"}
+                    ]
+                };
+            }
+            if results.length() > 0 {
+                return {role: ai:ASSISTANT, content: string:'join("\n", ...results)
+                    + "\ncollectPeerResult: " + (toolNames.indexOf("collectPeerResult") is int).toString()};
+            }
+        }
+        return {
+            role: ai:ASSISTANT,
+            toolCalls: [{name: "peerApprovalWorkflow", arguments: {"claimId": "C-1"}, id: "c1"}]
+        };
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerate"
+    } external;
+}
+
+final WorkflowPeerMockModelProvider workflowPeerModel = new;
+
+final DurableAgent workflowPeerAgent = check new ({
+    systemPrompt: {role: "Claim router", instructions: "Start an approval per department."},
+    model: workflowPeerModel,
+    peers: [{agent: peerApprovalWorkflow, description: "Asks one department to approve the claim."},
+        {agent: peerArchiveWorkflow}, {agent: peerNoteWorkflow}]
+});
+
+isolated function instanceIdIn(string toolResult) returns string {
+    int? idAt = toolResult.indexOf("instance id ");
+    int? closeAt = toolResult.indexOf(")");
+    return idAt is int && closeAt is int ? toolResult.substring(idAt + 12, closeAt) : "";
+}
+
+@test:Config {groups: ["unit"], dependsOn: [testObjectModelRunnerEndToEnd]}
+function testWorkflowFunctionPeerStartsADetachedWorkflow() returns error? {
+    _ = check registerWorkflowForTest(peerApprovalWorkflow, "peerApprovalWorkflow");
+    _ = check registerWorkflowForTest(peerArchiveWorkflow, "peerArchiveWorkflow");
+    _ = check wfInternal:registerDurableAgentDecl("workflowPeerAgent", workflowPeerModel,
+        {role: "Claim router", instructions: "Start an approval per department."}, 8);
+    _ = check wfInternal:registerDurableAgentPeer("workflowPeerAgent", "peerApprovalWorkflow",
+        "peerApprovalWorkflow", {description: "Asks one department to approve the claim."}, kind = "WORKFLOW");
+    _ = check wfInternal:registerDurableAgentPeer("workflowPeerAgent", "peerArchiveWorkflow",
+        "peerArchiveWorkflow", (), kind = "WORKFLOW");
+    _ = check registerWorkflowForTest(peerNoteWorkflow, "peerNoteWorkflow");
+    _ = check wfInternal:registerDurableAgentPeer("workflowPeerAgent", "peerNoteWorkflow",
+        "peerNoteWorkflow", (), kind = "WORKFLOW");
+    _ = check wfInternal:registerDurableAgentRunner("workflowPeerAgent");
+    workflowPeerAgent.bindAgentName("workflowPeerAgent");
+
+    string agentId = check workflowPeerAgent.run("Route claim C-1.");
+    string answer = check workflowPeerAgent.waitForResult(agentId, timeout = {seconds: 30});
+    // A conversion detail spans lines; only the lines that open a tool result count.
+    string[] lines = re `\n`.split(answer).filter(line => line.startsWith("peer") || line.startsWith("collect"));
+    test:assertEquals(lines.length(), 5, "The refused call, the three starts, then the tool check: " + answer);
+    // An input that does not fit the declared type is refused before anything starts, naming the field.
+    test:assertTrue(lines[0].startsWith("peerApprovalWorkflow => Error: The input for workflow 'peerApprovalWorkflow' "
+        + "does not fit its parameter 'claim'") && answer.includes("missing required field 'departmentId'"),
+        "A missing required field is reported to the model: " + answer);
+    test:assertTrue(lines[1].startsWith("peerApprovalWorkflow => Started workflow 'peerApprovalWorkflow' (instance id peerApprovalWorkflow-"),
+        "The record-input peer tool starts the workflow and returns its id: " + answer);
+    test:assertTrue(lines[2].startsWith("peerArchiveWorkflow => Started workflow 'peerArchiveWorkflow' (instance id peerArchiveWorkflow-"),
+        "The scalar-input peer tool unwraps the argument and starts the workflow: " + answer);
+    test:assertTrue(lines[3].startsWith("peerNoteWorkflow => Started workflow 'peerNoteWorkflow'"),
+        "A nilable input may be null, as its schema says: " + answer);
+    test:assertEquals(lines[4], "collectPeerResult: false",
+        "collectPeerResult only serves peer agents; a workflow-only peer set does not advertise it");
+
+    // The agent is done, but the approval it started is still running (ABANDON, not REQUEST_CANCEL),
+    // holds the converted input, and completes on its own event.
+    string approvalId = instanceIdIn(lines[1]);
+    test:assertEquals(check getStatus(approvalId), RUNNING, "A workflow peer outlives the agent that started it");
+    check sendData(peerApprovalWorkflow, approvalId, "decision", "approved");
+    string approval = check waitForResult(approvalId, timeout = {seconds: 30});
+    test:assertEquals(approval, "C-1/MOTOR/approved", "The peer received the converted record input");
+
+    string archived = check waitForResult(instanceIdIn(lines[2]), timeout = {seconds: 30});
+    test:assertEquals(archived, "archived CASE-7", "The peer received the unwrapped scalar input");
+    string note = check waitForResult(instanceIdIn(lines[3]), timeout = {seconds: 30});
+    test:assertEquals(note, "note none", "A null input reaches the child as nil");
+}
+
+final DurableAgent unregisteredPeerAgent = check new ({
+    systemPrompt: {role: "", instructions: "Unused."},
+    model: workflowPeerModel
+});
+
+@test:Config {groups: ["unit"], dependsOn: [testWorkflowFunctionPeerStartsADetachedWorkflow]}
+function testWorkflowFunctionPeerMustBeRegistered() returns error? {
+    // A workflow peer the worker does not know fails the run with its name, before any model call.
+    _ = check wfInternal:registerDurableAgentDecl("unregisteredPeerAgent", workflowPeerModel,
+        {role: "", instructions: "Unused."}, 8);
+    _ = check wfInternal:registerDurableAgentPeer("unregisteredPeerAgent", "noSuchWorkflow",
+        "noSuchWorkflow", (), kind = "WORKFLOW");
+    _ = check wfInternal:registerDurableAgentRunner("unregisteredPeerAgent");
+    unregisteredPeerAgent.bindAgentName("unregisteredPeerAgent");
+
+    string agentId = check unregisteredPeerAgent.run("Anything.");
+    string|error answer = unregisteredPeerAgent.waitForResult(agentId, timeout = {seconds: 30});
+    test:assertTrue(answer is error, "An unregistered workflow peer fails the run");
+    if answer is error {
+        test:assertTrue(answer.message().includes("'noSuchWorkflow' is not a registered workflow function"),
+            "The failure names the peer: " + answer.message());
+    }
+}

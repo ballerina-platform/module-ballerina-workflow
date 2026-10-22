@@ -249,7 +249,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         // Get parameters — workflow:Context is mandatory as the first parameter
         Optional<List<ParameterSymbol>> paramsOpt = typeSymbol.params();
         if (paramsOpt.isEmpty() || paramsOpt.get().isEmpty()) {
-            reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_100);
+            reportDiagnostic(context, functionNode.functionName().location(), WorkflowDiagnostic.WORKFLOW_100);
             return;
         }
 
@@ -257,70 +257,35 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
 
         // Check for excess parameters (max 3: Context, input, events)
         if (params.size() > 3) {
-            reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_106);
+            reportDiagnostic(context, paramLocation(functionNode, 3), WorkflowDiagnostic.WORKFLOW_106);
             return;
         }
 
-        int paramIndex = 0;
-        boolean hasInput = false;
-        boolean hasEvents = false;
-
-        // First parameter must be workflow:Context
-        ParameterSymbol firstParam = params.get(paramIndex);
-        TypeSymbol firstParamType = firstParam.typeDescriptor();
-
-        if (!WorkflowPluginUtils.isContextType(firstParamType)) {
-            reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_100);
+        if (!WorkflowPluginUtils.isContextType(params.get(0).typeDescriptor())) {
+            reportDiagnostic(context, paramLocation(functionNode, 0), WorkflowDiagnostic.WORKFLOW_100);
             return;
         }
-        paramIndex++;
 
-        // Check remaining parameters - they can be input and/or events
-        // The order should be: [Context], [input], [events]
-        while (paramIndex < params.size()) {
-            ParameterSymbol param = params.get(paramIndex);
-            TypeSymbol paramType = param.typeDescriptor();
-
-            // Determine expected parameter type based on position
-            // After context (or at start), next should be input or events
-            // After input, next should be events
-
-            if (hasInput) {
-                // Already have input, so this parameter MUST be events
-                if (!isValidEventsType(paramType)) {
-                    reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_102);
-                    return;
-                }
-                if (hasEvents) {
-                    // Already have events parameter, this is an error
-                    reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_106);
-                    return;
-                }
-                validateEventFutureTypes(paramType, functionNode, context, semanticModel);
-                hasEvents = true;
-                paramIndex++;
-            } else {
-                // No input yet - this could be input or events
-                if (isValidEventsType(paramType)) {
-                    // This is an events parameter (can come without input)
-                    validateEventFutureTypes(paramType, functionNode, context, semanticModel);
-                    hasEvents = true;
-                    paramIndex++;
-                } else if (WorkflowPluginUtils.isSubtypeOfAnydata(paramType, semanticModel)) {
-                    // This is an input parameter
-                    if (hasEvents) {
-                        // Input must come before events
-                        reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_101);
-                        return;
-                    }
-                    hasInput = true;
-                    paramIndex++;
-                } else {
-                    // Parameter is neither anydata nor events record - error
-                    reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_101);
-                    return;
-                }
+        // After the Context: one parameter is the input or the events, two are the input then the events
+        if (params.size() == 2) {
+            TypeSymbol paramType = params.get(1).typeDescriptor();
+            if (isValidEventsType(paramType)) {
+                validateEventFutureTypes(paramType, paramLocation(functionNode, 1), context, semanticModel);
+            } else if (!WorkflowPluginUtils.isSubtypeOfAnydata(paramType, semanticModel)) {
+                reportDiagnostic(context, paramLocation(functionNode, 1), WorkflowDiagnostic.WORKFLOW_101);
+                return;
             }
+        } else if (params.size() == 3) {
+            if (!WorkflowPluginUtils.isSubtypeOfAnydata(params.get(1).typeDescriptor(), semanticModel)) {
+                reportDiagnostic(context, paramLocation(functionNode, 1), WorkflowDiagnostic.WORKFLOW_101);
+                return;
+            }
+            TypeSymbol eventsType = params.get(2).typeDescriptor();
+            if (!isValidEventsType(eventsType)) {
+                reportDiagnostic(context, paramLocation(functionNode, 2), WorkflowDiagnostic.WORKFLOW_102);
+                return;
+            }
+            validateEventFutureTypes(eventsType, paramLocation(functionNode, 2), context, semanticModel);
         }
 
         // Validate return type
@@ -328,7 +293,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
     }
 
     /**
-     * Validates the return type of a process or activity function.
+     * Validates the return type of a process function.
      */
     private void validateReturnType(FunctionDefinitionNode functionNode, SyntaxNodeAnalysisContext context,
                                      FunctionTypeSymbol typeSymbol) {
@@ -336,7 +301,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         if (returnTypeOpt.isPresent()) {
             TypeSymbol returnType = returnTypeOpt.get();
             if (!WorkflowPluginUtils.isSubtypeOfAnydataOrError(returnType, context.semanticModel())) {
-                reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_105);
+                reportDiagnostic(context, returnTypeLocation(functionNode), WorkflowDiagnostic.WORKFLOW_105);
             }
         }
     }
@@ -378,7 +343,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                     // (dependently-typed function). Reject required or
                     // explicitly defaultable typedesc params.
                     if (!isInferredTypedescDefault(syntaxParams, i)) {
-                        reportDiagnostic(context, functionNode,
+                        reportDiagnostic(context, paramLocation(functionNode, i),
                                 WorkflowDiagnostic.WORKFLOW_114);
                         return;
                     }
@@ -386,7 +351,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                 }
                 if (!WorkflowPluginUtils.isSubtypeOfAnydata(paramType, semanticModel)
                         && !WorkflowPluginUtils.isClientObjectType(paramType)) {
-                    reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_103);
+                    reportDiagnostic(context, paramLocation(functionNode, i), WorkflowDiagnostic.WORKFLOW_103);
                     return;
                 }
             }
@@ -397,7 +362,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         if (returnTypeOpt.isPresent()) {
             TypeSymbol returnType = returnTypeOpt.get();
             if (!WorkflowPluginUtils.isSubtypeOfAnydataOrError(returnType, semanticModel)) {
-                reportDiagnostic(context, functionNode, WorkflowDiagnostic.WORKFLOW_104);
+                reportDiagnostic(context, returnTypeLocation(functionNode), WorkflowDiagnostic.WORKFLOW_104);
             }
         }
     }
@@ -464,12 +429,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                     || WorkflowConstants.CALL_HUMAN_TASK_METHOD.equals(methodName)
                     || WorkflowConstants.RUN_CHILD_WORKFLOW_METHOD.equals(methodName)
                     || WorkflowConstants.CALL_WORKFLOW_METHOD.equals(methodName)) {
-                // Only the workflow context's own operations carry step ids: an unrelated
-                // client whose remote method merely shares a name must not draw
-                // WORKFLOW_160/161 for its ordinary string arguments.
-                Optional<TypeSymbol> receiverType = context.semanticModel()
-                        .typeOf(remoteCall.expression());
-                if (receiverType.isPresent() && WorkflowPluginUtils.isContextType(receiverType.get())) {
+                if (WorkflowPluginUtils.isContextCall(remoteCall, context.semanticModel())) {
                     checkStepId(WorkflowGraphBuilder.stepIdArgument(remoteCall));
                     // Only the human task declares these types, and only by name — see below.
                     if (WorkflowConstants.CALL_HUMAN_TASK_METHOD.equals(methodName)) {
@@ -581,9 +541,8 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
         public void visit(RemoteMethodCallActionNode remoteCallNode) {
             String methodName = remoteCallNode.methodName().name().text();
             
-            // Check if this is a callActivity call
-            if (WorkflowConstants.CALL_ACTIVITY_FUNCTION.equals(methodName)) {
-                // Verify the expression is a Context type (optional, for better error messages)
+            if (WorkflowConstants.CALL_ACTIVITY_FUNCTION.equals(methodName)
+                    && WorkflowPluginUtils.isContextCall(remoteCallNode, semanticModel)) {
                 // Validate the first argument has @Activity annotation
                 SeparatedNodeList<FunctionArgumentNode> arguments = remoteCallNode.arguments();
                 if (!arguments.isEmpty()) {
@@ -1156,7 +1115,7 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
      * Assumes {@code typeSymbol} has already passed {@link #isValidEventsType(TypeSymbol)} (a record whose fields are
      * all futures); each non-anydata constraint is reported as {@code WORKFLOW_129}.
      */
-    private void validateEventFutureTypes(TypeSymbol typeSymbol, FunctionDefinitionNode functionNode,
+    private void validateEventFutureTypes(TypeSymbol typeSymbol, Location location,
                                           SyntaxNodeAnalysisContext context, SemanticModel semanticModel) {
         TypeSymbol resolved = WorkflowPluginUtils.resolveTypeReference(typeSymbol);
         if (!(resolved instanceof RecordTypeSymbol recordType)) {
@@ -1179,18 +1138,28 @@ public class WorkflowValidatorTask implements AnalysisTask<SyntaxNodeAnalysisCon
                         WorkflowDiagnostic.WORKFLOW_129.getCode(),
                         WorkflowDiagnostic.WORKFLOW_129.getMessage(entry.getKey(), innerName, innerName),
                         WorkflowDiagnostic.WORKFLOW_129.getSeverity());
-                context.reportDiagnostic(DiagnosticFactory.createDiagnostic(
-                        info, functionNode.functionName().location()));
+                context.reportDiagnostic(DiagnosticFactory.createDiagnostic(info, location));
             }
         }
     }
 
-    private void reportDiagnostic(SyntaxNodeAnalysisContext context, FunctionDefinitionNode functionNode,
+    private void reportDiagnostic(SyntaxNodeAnalysisContext context, Location location,
                                    WorkflowDiagnostic diagnostic) {
         DiagnosticInfo diagnosticInfo = new DiagnosticInfo(
                 diagnostic.getCode(), diagnostic.getMessage(), diagnostic.getSeverity());
-        context.reportDiagnostic(DiagnosticFactory.createDiagnostic(diagnosticInfo,
-                functionNode.functionName().location()));
+        context.reportDiagnostic(DiagnosticFactory.createDiagnostic(diagnosticInfo, location));
+    }
+
+    // Symbol params exclude a rest parameter, which can only come last, so the indices match the syntax ones.
+    private static Location paramLocation(FunctionDefinitionNode functionNode, int index) {
+        SeparatedNodeList<ParameterNode> params = functionNode.functionSignature().parameters();
+        return index < params.size() ? params.get(index).location() : functionNode.functionName().location();
+    }
+
+    private static Location returnTypeLocation(FunctionDefinitionNode functionNode) {
+        return functionNode.functionSignature().returnTypeDesc()
+                .map(returnType -> returnType.type().location())
+                .orElse(functionNode.functionName().location());
     }
 
             // =========================================================================

@@ -22,10 +22,14 @@ import io.ballerina.compiler.api.SemanticModel;
 import io.ballerina.compiler.api.symbols.ClassSymbol;
 import io.ballerina.compiler.api.symbols.FunctionSymbol;
 import io.ballerina.compiler.api.symbols.FunctionTypeSymbol;
+import io.ballerina.compiler.api.symbols.IntersectionTypeSymbol;
 import io.ballerina.compiler.api.symbols.ModuleSymbol;
 import io.ballerina.compiler.api.symbols.ParameterSymbol;
+import io.ballerina.compiler.api.symbols.RecordTypeSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
 import io.ballerina.compiler.api.symbols.SymbolKind;
+import io.ballerina.compiler.api.symbols.TypeDescKind;
+import io.ballerina.compiler.api.symbols.TypeDescTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.api.symbols.VariableSymbol;
@@ -47,6 +51,7 @@ import io.ballerina.compiler.syntax.tree.Node;
 import io.ballerina.compiler.syntax.tree.PositionalArgumentNode;
 import io.ballerina.compiler.syntax.tree.QualifiedNameReferenceNode;
 import io.ballerina.compiler.syntax.tree.SeparatedNodeList;
+import io.ballerina.compiler.syntax.tree.SimpleNameReferenceNode;
 import io.ballerina.compiler.syntax.tree.SpecificFieldNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.compiler.syntax.tree.Token;
@@ -85,6 +90,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
 
     private static final String DURABLE_AGENT_CLASS = "DurableAgent";
     private static final String NAME_FIELD = "name";
+    private static final String ALLOWED_EVENTS_FIELD = "allowedEvents";
     private static final String APPROVAL_POLICY_FIELD = "approvalPolicy";
     private static final String RETRY_POLICY_FIELD = "retryPolicy";
     private static final String REQUIRES_APPROVAL_FIELD = "requiresApproval";
@@ -659,7 +665,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 // The typedescs travel separately (they are not json): folded into the meta
                 // mapping they would make the injected registration ill-typed.
                 case "resultType" -> resultTypeSource = fieldValue.toSourceCode().strip();
-                case "taskInputType" -> taskInputTypeSource = fieldValue.toSourceCode().strip();
+                case "taskInputType" -> {
+                    taskInputTypeSource = fieldValue.toSourceCode().strip();
+                    checkReservedTaskInputField(name, fieldValue, context);
+                }
                 default -> appendMetaField(meta, sf, fieldValue.toSourceCode().strip());
             }
         }
@@ -667,6 +676,33 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         checkReviewDefinition(config, context);
         humanTasks.add(new DurableAgentDeclInfo.HumanTaskDecl(name,
                 meta.isEmpty() ? null : "{" + meta + "}", resultTypeSource, taskInputTypeSource));
+    }
+
+    // The runtime strips its reserved fields from the model's input before the check, so a declared field
+    // of that name never reaches the person and its value is read as something else.
+    private void checkReservedTaskInputField(String taskName, ExpressionNode typeRef,
+                                             SyntaxNodeAnalysisContext context) {
+        // Through the typedesc, aliases and `readonly &` to the record that declares the fields.
+        TypeSymbol type = context.semanticModel().typeOf(typeRef).orElse(null);
+        for (int depth = 0; type != null && depth < 8; depth++) {
+            if (type instanceof TypeDescTypeSymbol typedesc) {
+                type = typedesc.typeParameter().orElse(null);
+            } else if (type instanceof TypeReferenceTypeSymbol reference) {
+                type = reference.typeDescriptor();
+            } else if (type instanceof IntersectionTypeSymbol intersection) {
+                type = intersection.effectiveTypeDescriptor();
+            } else {
+                break;
+            }
+        }
+        if (!(type instanceof RecordTypeSymbol record)) {
+            return;
+        }
+        for (String reserved : WorkflowConstants.RESERVED_TASK_INPUT_FIELDS) {
+            if (record.fieldDescriptors().containsKey(reserved)) {
+                reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_173, typeRef.location(), taskName, reserved);
+            }
+        }
     }
 
     private void extractPeers(ExpressionNode value, List<DurableAgentDeclInfo.PeerDecl> peers,
@@ -680,6 +716,8 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 continue;
             }
             String targetAgent = null;
+            boolean workflowPeer = false;
+            SpecificFieldNode allowedEventsField = null;
             StringBuilder meta = new StringBuilder();
             Location nameLocation = peerMapping.location();
             for (MappingFieldNode peerField : peerMapping.fields()) {
@@ -694,9 +732,14 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 switch (key) {
                     // The peer's identity — and its tool-name prefix — is its module-level variable
                     // name, the same name its own declaration registers under.
-                    case "agent" -> {
+                    case WorkflowConstants.DECL_AGENT -> {
                         targetAgent = simpleName(fieldValue.toSourceCode().strip());
                         nameLocation = fieldValue.location();
+                        workflowPeer = isWorkflowFunctionPeer(fieldValue, targetAgent, context);
+                    }
+                    case ALLOWED_EVENTS_FIELD -> {
+                        allowedEventsField = sf;
+                        appendMetaField(meta, sf, fieldValue.toSourceCode().strip());
                     }
                     case NAME_FIELD -> reportRemovedField(context, sf, key, "PeerDecl",
                             "the peer is named by its 'agent' variable");
@@ -711,10 +754,36 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             if (targetAgent == null) {
                 continue;
             }
+            if (workflowPeer && allowedEventsField != null) {
+                reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_172, allowedEventsField.location(),
+                        targetAgent);
+            }
             checkUnique(targetAgent, seenNames, agentName, nameLocation, context);
             peers.add(new DurableAgentDeclInfo.PeerDecl(targetAgent, targetAgent,
-                    meta.isEmpty() ? null : "{" + meta + "}"));
+                    meta.isEmpty() ? null : "{" + meta + "}", workflowPeer));
         }
+    }
+
+    // A function peer is advertised as a tool that starts a workflow, so it must be a @workflow:Workflow
+    // function; the `DurableAgent|function` type alone admits any function.
+    private boolean isWorkflowFunctionPeer(ExpressionNode agentRef, String name, SyntaxNodeAnalysisContext context) {
+        // A peer is named by a reference: a call's symbol is the called function, not a peer.
+        if (!(agentRef instanceof SimpleNameReferenceNode || agentRef instanceof QualifiedNameReferenceNode)) {
+            return false;
+        }
+        SemanticModel semanticModel = context.semanticModel();
+        Optional<Symbol> symbol = semanticModel.symbol(agentRef);
+        boolean function = symbol.map(sym -> sym.kind() == SymbolKind.FUNCTION
+                || (sym instanceof VariableSymbol variable
+                        && WorkflowPluginUtils.resolveTypeReference(variable.typeDescriptor()).typeKind()
+                                == TypeDescKind.FUNCTION)).orElse(false);
+        if (!function) {
+            return false;
+        }
+        if (!WorkflowPluginUtils.hasWorkflowAnnotation(agentRef, semanticModel, WorkflowConstants.PROCESS_ANNOTATION)) {
+            reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_171, agentRef.location(), name);
+        }
+        return true;
     }
 
     // Fields removed in 0.10 fail the build: ignoring `requiresApproval: true` would drop a gate.

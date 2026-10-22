@@ -35,6 +35,7 @@ import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.types.UnionType;
 import io.ballerina.runtime.api.utils.StringUtils;
+import io.ballerina.runtime.api.utils.TypeUtils;
 import io.ballerina.runtime.api.utils.ValueUtils;
 import io.ballerina.runtime.api.utils.XmlUtils;
 import io.ballerina.runtime.api.values.BArray;
@@ -301,6 +302,24 @@ public final class TypesUtil {
     }
 
     /**
+     * An error's message with its detail message, when it has one: a conversion error's message is only
+     * {@code {ballerina}ConversionError}; which field failed, and why, is in the detail.
+     *
+     * @param error the error
+     * @return the message, followed by the detail message when present
+     */
+    public static String errorDetail(BError error) {
+        String message = error.getMessage();
+        if (error.getDetails() instanceof BMap<?, ?> details) {
+            Object detail = details.get(StringUtils.fromString(ERROR_MESSAGE));
+            if (detail != null && !detail.toString().isBlank() && !detail.toString().equals(message)) {
+                return message + ": " + detail;
+            }
+        }
+        return message;
+    }
+
+    /**
      * Validates and converts a completion/signal payload against the expected {@code targetType}.
      * <p>
      * Unlike {@link #cloneWithType(Object, Type)}, a {@code null} (Ballerina nil) value is rejected when the target
@@ -321,6 +340,92 @@ public final class TypesUtil {
                     "expected a non-nil value of type '" + targetType + "', but found ()"));
         }
         return cloneWithType(value, targetType);
+    }
+
+    /**
+     * {@link #validateAndConvert} for a value a model or a person supplied: a fractional number is
+     * refused where an integer is declared instead of being rounded into it, so a quantity or an
+     * amount never changes without notice.
+     *
+     * @param value      the value to validate (may be {@code null})
+     * @param targetType the expected type
+     * @return the coerced value, or a {@link BError} naming what did not fit
+     */
+    public static Object validateAndConvertStrict(Object value, Type targetType) {
+        String fractional = fractionalIntegerError(value, targetType, "", 0);
+        if (fractional != null) {
+            return ErrorCreator.createError(StringUtils.fromString(fractional));
+        }
+        return validateAndConvert(value, targetType);
+    }
+
+    // The first fractional number that sits where an integer is declared, walked by the declared
+    // shape; null when there is none. A union with a non-integer numeric member takes the value.
+    private static String fractionalIntegerError(Object value, Type rawType, String path, int depth) {
+        if (value == null || rawType == null || depth > 12) {
+            return null;
+        }
+        Type type = TypeUtils.getImpliedType(rawType);
+        int tag = type.getTag();
+        if (value instanceof Double d && !Double.isFinite(d)) {
+            return null;
+        }
+        if (value instanceof Double || value instanceof BDecimal) {
+            java.math.BigDecimal exact = value instanceof BDecimal decimal ? decimal.decimalValue()
+                    : java.math.BigDecimal.valueOf((Double) value);
+            boolean fraction = exact.stripTrailingZeros().scale() > 0;
+            if (isIntegerTag(tag) && fraction) {
+                return "'" + value + "' is not an integer" + (path.isEmpty() ? "" : " at " + path);
+            }
+            if (tag == TypeTags.UNION_TAG && type instanceof UnionType union && fraction) {
+                boolean takesFraction = union.getMemberTypes().stream().map(TypeUtils::getImpliedType)
+                        .anyMatch(member -> !isIntegerTag(member.getTag()) && member.getTag() != TypeTags.NULL_TAG);
+                if (!takesFraction) {
+                    return "'" + value + "' is not an integer" + (path.isEmpty() ? "" : " at " + path);
+                }
+            }
+            return null;
+        }
+        if (value instanceof BMap<?, ?> map && tag == TypeTags.RECORD_TYPE_TAG && type instanceof RecordType record) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                String field = entry.getKey().toString();
+                Field declared = record.getFields().get(field);
+                Type fieldType = declared != null ? declared.getFieldType() : record.getRestFieldType();
+                String error = fractionalIntegerError(entry.getValue(), fieldType,
+                        path.isEmpty() ? field : path + "." + field, depth + 1);
+                if (error != null) {
+                    return error;
+                }
+            }
+            return null;
+        }
+        if (value instanceof BMap<?, ?> map && tag == TypeTags.MAP_TAG && type instanceof MapType mapType) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                String error = fractionalIntegerError(entry.getValue(), mapType.getConstrainedType(),
+                        path.isEmpty() ? entry.getKey().toString() : path + "." + entry.getKey(), depth + 1);
+                if (error != null) {
+                    return error;
+                }
+            }
+            return null;
+        }
+        if (value instanceof BArray array && tag == TypeTags.ARRAY_TAG && type instanceof ArrayType arrayType) {
+            for (int i = 0; i < array.size(); i++) {
+                String error = fractionalIntegerError(array.get(i), arrayType.getElementType(),
+                        path + "[" + i + "]", depth + 1);
+                if (error != null) {
+                    return error;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static boolean isIntegerTag(int tag) {
+        return tag == TypeTags.INT_TAG || tag == TypeTags.BYTE_TAG || tag == TypeTags.SIGNED8_INT_TAG
+                || tag == TypeTags.SIGNED16_INT_TAG || tag == TypeTags.SIGNED32_INT_TAG
+                || tag == TypeTags.UNSIGNED8_INT_TAG || tag == TypeTags.UNSIGNED16_INT_TAG
+                || tag == TypeTags.UNSIGNED32_INT_TAG;
     }
 
     /**
@@ -553,21 +658,13 @@ public final class TypesUtil {
             }
 
             // An enum is a union whose members are all finite: one value set, one schema —
-            // never an anyOf of per-member schemas.
-            boolean allFinite = true;
-            for (Type member : nonNullMembers) {
-                if (!(member.getTag() == TypeTags.FINITE_TYPE_TAG && member instanceof FiniteType)) {
-                    allFinite = false;
-                    break;
-                }
-            }
-            if (allFinite) {
-                Set<Object> valueSpace = new LinkedHashSet<>();
-                for (Type member : nonNullMembers) {
-                    valueSpace.addAll(((FiniteType) member).getValueSpace());
-                }
+            // never an anyOf of per-member schemas. A nested one (`Department?`, where the enum is
+            // itself a union) is the same value set (ballerina-library#9232).
+            Set<Object> valueSpace = new LinkedHashSet<>();
+            boolean[] nestedNull = {hasNull};
+            if (collectFiniteValues(nonNullMembers, valueSpace, depth, nestedNull)) {
                 Map<String, Object> merged = finiteSchema(valueSpace);
-                if (hasNull) {
+                if (nestedNull[0]) {
                     // The enum is what a validator checks against, so null has to be IN it —
                     // widening `type` alone still rejects the null that `"a"|"b"|()` permits.
                     Object enumValues = merged.get("enum");
@@ -630,6 +727,30 @@ public final class TypesUtil {
         return mapOf("type", "object");
     }
 
+    // A nil inside a nested union (`type A "x"|(); A|"y"`) is the enclosing union's nil: it is reported
+    // through hasNull rather than folded into the value space, so null is added to the enum once.
+    private static boolean collectFiniteValues(List<Type> members, Set<Object> valueSpace, int depth,
+                                               boolean[] hasNull) {
+        if (depth > 12) {
+            return false;
+        }
+        for (Type member : members) {
+            Type m = dereferenceType(member, depth + 1);
+            if (m.getTag() == TypeTags.FINITE_TYPE_TAG && m instanceof FiniteType finite) {
+                valueSpace.addAll(finite.getValueSpace());
+            } else if (m.getTag() == TypeTags.NULL_TAG) {
+                hasNull[0] = true;
+            } else if (m.getTag() == TypeTags.UNION_TAG && m instanceof UnionType union) {
+                if (!collectFiniteValues(union.getMemberTypes(), valueSpace, depth + 1, hasNull)) {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /**
      * Schema for a set of literal values: `enum` plus a `type` when the values agree on one
      * (a Ballerina enum's members are strings; a mixed singleton union just keeps its enum).
@@ -686,6 +807,11 @@ public final class TypesUtil {
         }
 
         return type;
+    }
+
+    // A nilable union: the parameter schemas leave such a parameter out of `required`.
+    public static boolean isNilable(Type type) {
+        return isNilableType(type, 0);
     }
 
     private static boolean isNilableType(Type rawType, int depth) {

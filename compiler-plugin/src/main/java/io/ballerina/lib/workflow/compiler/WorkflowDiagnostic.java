@@ -299,6 +299,17 @@ public enum WorkflowDiagnostic {
     WORKFLOW_170("WORKFLOW_170",
             "'%s.runWithId' cannot be called inside a workflow function: a child agent's id is the "
                     + "parent's to issue. Use 'run', which starts the agent as a child of this workflow",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_171("WORKFLOW_171",
+            "a peer function must be a '@workflow:Workflow' function referenced by its name: '%s' is not one",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_172("WORKFLOW_172",
+            "'allowedEvents' does not apply to the workflow function peer '%s': only a peer agent has events",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_173("WORKFLOW_173",
+            "the 'taskInputType' of human task '%s' declares the reserved field '%s': the runtime reads it from "
+                    + "the model's input to decide who may act on the task, so it never reaches the person. "
+                    + "Rename the field",
             DiagnosticSeverity.ERROR);
 
     private final String code;

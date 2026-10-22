@@ -422,6 +422,16 @@ public class WorkflowGraphTest {
                 "An activity-backed tool is drawn differently from an AI tool");
         Assert.assertEquals(nodeAt(graph, "tool:validateClaim").get("source"), "AI_TOOL");
 
+        // Peers are tools too, named by their `agent` reference. A workflow function peer carries the
+        // workflow's input as the tool's input; a peer agent takes a free-text query.
+        Assert.assertTrue(hasEdge(graph, "agent", "tool:auditAgent", "out"));
+        Assert.assertEquals(nodeAt(graph, "tool:auditAgent").get("source"), "PEER");
+        Assert.assertTrue(hasEdge(graph, "agent", "tool:archiveExpense", "out"));
+        Assert.assertEquals(nodeAt(graph, "tool:archiveExpense").get("source"), "PEER_WORKFLOW");
+        Map<String, Object> archiveTool = toolOf(descriptorOf(AGENT_PACKAGE), "expenseAgent", "archiveExpense");
+        Assert.assertEquals(asObject(archiveTool.get("input")).get("type"), "ExpenseClaim",
+                "A record input is the tool's schema itself, the shape the runtime advertises to the model");
+
         // @display labels ride on the display-only `label` slot; `target` stays the identity.
         Assert.assertEquals(nodeAt(graph, "agent").get("label"), "Expense agent",
                 "The agent variable's @display label names the agent node");
@@ -431,6 +441,44 @@ public class WorkflowGraphTest {
                 "A human task's constant title names its node");
         Assert.assertNull(nodeAt(graph, "tool:validateClaim").get("label"),
                 "A tool without a label has none — the console falls back to the target");
+    }
+
+    // ── Literal unions are enums ──────────────────────────────────────────────
+
+    @Test
+    public void testLiteralUnionsAreEnumsNotAnyOfObjects() {
+        // ballerina-library#9232: `"OPS"|"SALES"|"R&D"` is a value set. It used to render as three
+        // `{"type":"object"}` members under anyOf and mark the slot lossy, while the runtime form
+        // schema for the same task already said `enum`.
+        Map<String, Object> document = descriptorOf("descriptor_generation");
+        Map<String, Object> result = null;
+        for (Object workflow : (List<?>) document.get("workflows")) {
+            Map<?, ?> entry = (Map<?, ?>) workflow;
+            if ("expenseApproval".equals(entry.get("name"))) {
+                Map<?, ?> task = (Map<?, ?>) ((List<?>) entry.get("humanTasks")).get(0);
+                result = asObject(task.get("result"));
+            }
+        }
+        Assert.assertNotNull(result, "expenseApproval has a human task");
+        Assert.assertNull(result.get("lossy"), "A record of literal unions is exact: " + result);
+        Map<String, Object> properties = asObject(asObject(result.get("schema")).get("properties"));
+
+        Assert.assertEquals(String.valueOf(properties.get("costCentre")), "{enum=[OPS, SALES, R&D], type=string}");
+        // An enum declaration is the union of its members' values, in the order the compiler keeps
+        // that union (not the declaration's); the runtime reads the same union, so the two agree.
+        Assert.assertEquals(String.valueOf(properties.get("department")), "{enum=[SALES, OPS], type=string}");
+        Assert.assertEquals(String.valueOf(properties.get("altDepartment")),
+                "{enum=[SALES, OPS, null], type=[string, null]}", "Nil joins the enum and widens the type");
+        Assert.assertEquals(String.valueOf(properties.get("viaConst")), "{enum=[OPS, R&D], type=string}",
+                "A const reference contributes its value, not its name");
+        // MiniJson reads every number as a double; the golden document pins the integer spelling.
+        Assert.assertEquals(String.valueOf(properties.get("level")), "{enum=[1.0, 2.0, 3.0], type=integer}");
+        Assert.assertEquals(String.valueOf(properties.get("mixed")), "{enum=[1.0, a]}",
+                "Values of different types keep the enum and drop the type");
+        Assert.assertEquals(String.valueOf(properties.get("option")), "{enum=[x, y, null], type=[string, null]}");
+        Assert.assertEquals(String.valueOf(properties.get("single")), "{enum=[only], type=string}");
+        Assert.assertEquals(String.valueOf(properties.get("nestedNil")), "{enum=[x, z, null], type=[string, null]}",
+                "A nil inside a nested literal union is the union's nil");
     }
 
     // ── The runtime gets the same ids ─────────────────────────────────────────
@@ -628,6 +676,20 @@ public class WorkflowGraphTest {
             }
         }
         throw new AssertionError("No workflow '" + workflowName + "' in the descriptor");
+    }
+
+    private static Map<String, Object> toolOf(Map<String, Object> document, String agentName, String toolName) {
+        for (Object agent : (List<?>) document.get("agents")) {
+            Map<?, ?> entry = (Map<?, ?>) agent;
+            if (agentName.equals(entry.get("name"))) {
+                for (Object tool : (List<?>) entry.get("tools")) {
+                    if (toolName.equals(((Map<?, ?>) tool).get("name"))) {
+                        return asObject(tool);
+                    }
+                }
+            }
+        }
+        throw new AssertionError("No tool '" + toolName + "' on agent '" + agentName + "'");
     }
 
     private static Map<String, Object> agentGraphOf(Map<String, Object> document, String agentName) {

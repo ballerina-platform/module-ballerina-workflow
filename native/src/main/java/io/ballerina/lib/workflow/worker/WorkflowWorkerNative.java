@@ -3331,7 +3331,7 @@ public final class WorkflowWorkerNative {
                         }
                         orderedArgs.add(resolved);
                     } else {
-                        orderedArgs.add(convertJavaToBallerinaType(raw));
+                        orderedArgs.add(toDeclaredType(activityName, param, convertJavaToBallerinaType(raw)));
                     }
                 } else {
                     // Intermediate parameter missing from the named args map.
@@ -3394,6 +3394,19 @@ public final class WorkflowWorkerNative {
 
             // Convert result back to Java types for Temporal
             return convertBallerinaToJavaType(result);
+        }
+
+        // A wire value's inherent type is the broad one (anydata[], map<anydata>) while the activity
+        // declares the narrow one; without this the first inherent-type check inside the activity panics
+        // (ballerina-library#9320). A value that does not fit fails the call with the parameter named.
+        private static Object toDeclaredType(String activityName, Parameter param, Object value) {
+            Object converted = TypesUtil.validateAndConvertStrict(value, param.type);
+            if (converted instanceof BError error) {
+                throw io.temporal.failure.ApplicationFailure.newNonRetryableFailure(
+                        "Activity '" + activityName + "' parameter '" + param.name + "' expects a value of type '"
+                                + param.type + "': " + TypesUtil.errorDetail(error), "ActivityArgumentMismatch");
+            }
+            return converted;
         }
 
         /**

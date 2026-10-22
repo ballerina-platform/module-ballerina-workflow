@@ -29,6 +29,7 @@ import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
 import io.ballerina.runtime.api.types.FunctionType;
 import io.ballerina.runtime.api.types.Parameter;
+import io.ballerina.runtime.api.types.RecordType;
 import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.utils.JsonUtils;
 import io.ballerina.runtime.api.utils.StringUtils;
@@ -612,6 +613,27 @@ public final class AgentContextNative {
      */
     public static Object recordPeerEventTool(BHandle handle, BString name, BString description, BString kindSpec,
                                              BString schemaJson) {
+        return recordSchemaTool(handle, name, description, kindSpec, schemaJson, "peer event");
+    }
+
+    /**
+     * Records a workflow peer as a tool: its schema is the workflow's input, and the kind spec
+     * ({@code peerworkflow:<function>}) tells the loop which workflow to start.
+     *
+     * @param handle      the AgentContextInfo handle
+     * @param name        the tool name advertised to the model
+     * @param description the tool description advertised to the model
+     * @param kindSpec    the encoded peerworkflow kind
+     * @param schemaJson  the input JSON schema
+     * @return null on success, or a BError
+     */
+    public static Object recordWorkflowPeerTool(BHandle handle, BString name, BString description,
+                                                BString kindSpec, BString schemaJson) {
+        return recordSchemaTool(handle, name, description, kindSpec, schemaJson, "workflow peer");
+    }
+
+    private static Object recordSchemaTool(BHandle handle, BString name, BString description, BString kindSpec,
+                                           BString schemaJson, String what) {
         try {
             AgentContextInfo info = (AgentContextInfo) handle.getValue();
             if (RESERVED_TOOL_NAMES.contains(name.getValue())) {
@@ -626,7 +648,7 @@ public final class AgentContextNative {
             return null;
         } catch (Exception e) {
             return ErrorCreator.createError(StringUtils.fromString(
-                    "Failed to register peer event tool: " + e.getMessage()));
+                    "Failed to register " + what + " tool: " + e.getMessage()));
         }
     }
 
@@ -785,17 +807,26 @@ public final class AgentContextNative {
             String titleStr = title instanceof BString t ? t.getValue() : name;
             String descriptionStr = description instanceof BString d ? d.getValue()
                     : "Creates the human task '" + name + "' and waits for a person to complete it. "
-                            + "Pass any details relevant for the person as fields.";
-            // The model may pass arbitrary payload fields shown to the person, plus one reserved
-            // field that narrows who may act on this creation — a ladder excludes whoever already
-            // decided. It can never widen the declared audience.
-            Map<String, Object> schema = new LinkedHashMap<>();
-            schema.put(SCHEMA_TYPE, TYPE_OBJECT);
-            schema.put("additionalProperties", Boolean.TRUE);
-            Map<String, Object> properties = new LinkedHashMap<>();
+                            + (taskInputType instanceof BTypedesc ? "Pass the task input the schema describes."
+                                    : "Pass any details relevant for the person as fields.");
+            // The model's input is the declared taskInputType when there is one — advertised so the
+            // model can fill it, as an activity's parameters are — or any payload fields shown to the
+            // person. Either way one reserved field narrows who may act on this creation — a ladder
+            // excludes whoever already decided. It can never widen the declared audience.
+            Map<String, Object> schema = humanTaskInputSchema(taskInputType);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> properties = (Map<String, Object>) schema.computeIfAbsent(SCHEMA_PROPERTIES,
+                    key -> new LinkedHashMap<String, Object>());
+            // A reserved field is stripped before the input is checked, so a declared field of that name
+            // would never reach the person: refuse it here rather than ship a tool that misreads it.
+            for (String reserved : TaskKeys.RESERVED_TASK_INPUT_FIELDS) {
+                if (properties.containsKey(reserved)) {
+                    return ErrorCreator.createError(StringUtils.fromString("HumanTask '" + name
+                            + "' taskInputType must not declare the reserved field '" + reserved + "'"));
+                }
+            }
             properties.put(TaskKeys.EXCLUDED_USERS, namesProperty(
                     "User ids that may not complete this task, such as someone who already decided"));
-            schema.put(SCHEMA_PROPERTIES, properties);
             if (RESERVED_TOOL_NAMES.contains(name)) {
                 return reservedToolNameError(name);
             }
@@ -1453,10 +1484,10 @@ public final class AgentContextNative {
         BMap<BString, Object> supplied = payload instanceof BMap
                 ? (BMap<BString, Object>) payload
                 : ValueCreator.createMapValue();
-        // The reserved exclusion key narrows this creation and never reaches the person.
+        // The reserved keys steer this creation and never reach the person.
         BMap<BString, Object> payloadMap = ValueCreator.createMapValue();
         for (Map.Entry<BString, Object> entry : supplied.entrySet()) {
-            if (!TaskKeys.EXCLUDED_USERS.equals(entry.getKey().getValue())) {
+            if (!TaskKeys.RESERVED_TASK_INPUT_FIELDS.contains(entry.getKey().getValue())) {
                 payloadMap.put(entry.getKey(), entry.getValue());
             }
         }
@@ -1513,6 +1544,29 @@ public final class AgentContextNative {
             envelope.put(StringUtils.fromString(TaskKeys.COMPLETED_AT), asText(completion.get(TaskKeys.COMPLETED_AT)));
         }
         return envelope;
+    }
+
+    // The declared input type's schema (ballerina-library#9323), or the open object when none is declared.
+    private static Map<String, Object> humanTaskInputSchema(Object taskInputType) {
+        if (taskInputType instanceof BTypedesc declared) {
+            // The schema map itself, not a string round trip: that would hash the property order.
+            Object value = TypesUtil.toJsonSchemaValue(declared.getDescribingType());
+            @SuppressWarnings("unchecked")
+            Map<String, Object> schema = value instanceof Map<?, ?> map
+                    ? (Map<String, Object>) map : new LinkedHashMap<>();
+            if (TYPE_OBJECT.equals(schema.get(SCHEMA_TYPE))) {
+                // A closed record admits no other field; the runtime schema leaves that implicit.
+                if (io.ballerina.runtime.api.utils.TypeUtils.getImpliedType(declared.getDescribingType())
+                        instanceof RecordType record && record.isSealed()) {
+                    schema.put("additionalProperties", Boolean.FALSE);
+                }
+                return schema;
+            }
+        }
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put(SCHEMA_TYPE, TYPE_OBJECT);
+        schema.put("additionalProperties", Boolean.TRUE);
+        return schema;
     }
 
     private static Map<String, Object> namesProperty(String description) {

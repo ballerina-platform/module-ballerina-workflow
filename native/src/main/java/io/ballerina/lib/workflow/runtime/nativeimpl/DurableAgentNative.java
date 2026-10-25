@@ -495,9 +495,10 @@ public final class DurableAgentNative {
     }
 
     // Mirrors ballerina/ai's runtime schema support: simple types and json, and arrays or unions of them.
+    // Enums are excluded: ai describes them by basic type alone, so the model never sees the allowed values.
     private static boolean describedByAi(Type type, int depth) {
         Type implied = TypeUtils.getImpliedType(type);
-        if (depth > 12) {
+        if (depth > 12 || implied.getTag() == TypeTags.FINITE_TYPE_TAG) {
             return false;
         }
         if (implied.getBasicType().all() <= 0b100000 || implied.getTag() == TypeTags.JSON_TAG) {

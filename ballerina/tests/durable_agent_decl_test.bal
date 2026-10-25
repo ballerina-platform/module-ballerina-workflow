@@ -905,6 +905,8 @@ type ResultSchemaProbes ResultSchemaProbe[];
 
 type ResultSchemaMap map<string>;
 
+type ResultSchemaRisk "LOW"|"HIGH";
+
 @ai:JsonSchema {'type: "object", properties: {summary: {'type: "string"}}}
 type AnnotatedResultProbe record {|
     string summary;
@@ -926,4 +928,22 @@ function testResultSchemaIsBuiltOnlyWhereAiCannot() returns error? {
     test:assertEquals(parsed["required"], ["summary"]);
     test:assertTrue(resultSchemaForGeneration(ResultSchemaProbes) is string, "Arrays of records need our schema");
     test:assertTrue(resultSchemaForGeneration(ResultSchemaMap) is string, "Maps need our schema");
+    string enumSchema = check resultSchemaForGeneration(ResultSchemaRisk).ensureType();
+    test:assertTrue(enumSchema.includes("\"LOW\"") && enumSchema.includes("\"HIGH\""),
+        "An enum's schema lists its values: " + enumSchema);
+}
+
+@test:Config {groups: ["unit"]}
+function testResultAnswerConversion() returns error? {
+    anydata direct = check toResultType({summary: "a", score: 2}, ResultSchemaProbe);
+    test:assertEquals(direct, <ResultSchemaProbe>{summary: "a", score: 2});
+    anydata serialized = check toResultType("{\"summary\": \"b\"}", ResultSchemaProbe);
+    test:assertEquals(serialized, <ResultSchemaProbe>{summary: "b"}, "A string answer holding JSON is parsed");
+
+    anydata|error missing = toResultType({score: 3}, ResultSchemaProbe);
+    if missing !is error {
+        test:assertFail("An answer without a required field must not convert");
+    }
+    test:assertTrue(conversionDetail(missing).includes("summary"),
+        "The detail names the missing field: " + conversionDetail(missing));
 }

@@ -564,7 +564,7 @@ isolated function generateResult(string agentName, string declaredAgent, string 
 
 Respond with a JSON value that conforms to this JSON schema: ${schema}`;
     json answer = check model->generate(prompt);
-    anydata|error result = answer.cloneWithType(resultType);
+    anydata|error result = toResultType(answer, resultType);
     if result is anydata {
         return result;
     }
@@ -572,12 +572,37 @@ Respond with a JSON value that conforms to this JSON schema: ${schema}`;
 
 Respond with a JSON value that conforms to this JSON schema: ${schema}
 
-Your previous answer ${answer.toJsonString()} did not conform: ${result.message()}`;
+Your previous answer ${answer.toJsonString()} did not conform: ${conversionDetail(result)}`;
     json repaired = check model->generate(repair);
-    return repaired.cloneWithType(resultType);
+    anydata|error repairedResult = toResultType(repaired, resultType);
+    if repairedResult is error {
+        return error(string `The model's answer does not match the declared result type: ${
+            conversionDetail(repairedResult)}`);
+    }
+    return repairedResult;
 }
 
-// The result type's JSON schema when ballerina/ai cannot build one at runtime (records, maps); `()` otherwise.
+// Converts an answer to the declared type, reading a string answer as serialized JSON when it holds one.
+isolated function toResultType(json answer, typedesc<anydata> resultType) returns anydata|error {
+    anydata|error converted = answer.cloneWithType(resultType);
+    if converted is anydata || answer !is string {
+        return converted;
+    }
+    json|error parsed = answer.fromJsonString();
+    if parsed is error {
+        return converted;
+    }
+    anydata|error reparsed = parsed.cloneWithType(resultType);
+    return reparsed is anydata ? reparsed : converted;
+}
+
+// A conversion error's message is only its type name; the reason is in the detail.
+isolated function conversionDetail(error e) returns string {
+    var message = e.detail()["message"];
+    return message is string ? message : e.message();
+}
+
+// The result type's JSON schema when ballerina/ai cannot build a usable one (records, maps, enums); `()` otherwise.
 isolated function resultSchemaForGeneration(typedesc<anydata> resultType) returns string? = @java:Method {
     'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative"
 } external;

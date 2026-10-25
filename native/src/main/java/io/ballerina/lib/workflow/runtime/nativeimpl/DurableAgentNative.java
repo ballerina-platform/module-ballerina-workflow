@@ -27,9 +27,11 @@ import io.ballerina.runtime.api.Environment;
 import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.creators.TypeCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
+import io.ballerina.runtime.api.types.ArrayType;
 import io.ballerina.runtime.api.types.Parameter;
 import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.types.TypeTags;
+import io.ballerina.runtime.api.types.UnionType;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.utils.TypeUtils;
 import io.ballerina.runtime.api.values.BArray;
@@ -484,6 +486,30 @@ public final class DurableAgentNative {
             activities.put(toolName, activity.function());
         }
         return WorkflowWorkerNative.registerAgentWorkflow(env, runner, agentName, activities);
+    }
+
+    // The result type's JSON schema when ballerina/ai cannot describe it at runtime, or null when it can.
+    public static Object resultSchemaForGeneration(BTypedesc resultType) {
+        Type type = resultType.getDescribingType();
+        return describedByAi(type, 0) ? null : StringUtils.fromString(TypesUtil.toJsonSchema(type));
+    }
+
+    // Mirrors ballerina/ai's runtime schema support: simple types and json, and arrays or unions of them.
+    private static boolean describedByAi(Type type, int depth) {
+        Type implied = TypeUtils.getImpliedType(type);
+        if (depth > 12) {
+            return false;
+        }
+        if (implied.getBasicType().all() <= 0b100000 || implied.getTag() == TypeTags.JSON_TAG) {
+            return true;
+        }
+        if (implied instanceof ArrayType arrayType) {
+            return describedByAi(arrayType.getElementType(), depth + 1);
+        }
+        if (implied instanceof UnionType unionType) {
+            return unionType.getMemberTypes().stream().allMatch(member -> describedByAi(member, depth + 1));
+        }
+        return false;
     }
 
     /**

@@ -553,10 +553,34 @@ isolated function generateResult(string agentName, string declaredAgent, string 
     ai:ModelProvider model = check getAgentModel(agentName);
     DurableAgentRunSpec spec = check getDurableAgentRunSpec(declaredAgent);
     typedesc<anydata> resultType = spec.resultType ?: anydata;
-    ai:Prompt prompt = `${query}`;
-    anydata result = check model->generate(prompt, resultType);
-    return result;
+    string? schema = resultType.@ai:JsonSchema is () ? resultSchemaForGeneration(resultType) : ();
+    if schema is () {
+        ai:Prompt prompt = `${query}`;
+        anydata result = check model->generate(prompt, resultType);
+        return result;
+    }
+    // ballerina/ai cannot describe this type at runtime, so the answer is requested as JSON against our schema.
+    ai:Prompt prompt = `${query}
+
+Respond with a JSON value that conforms to this JSON schema: ${schema}`;
+    json answer = check model->generate(prompt);
+    anydata|error result = answer.cloneWithType(resultType);
+    if result is anydata {
+        return result;
+    }
+    ai:Prompt repair = `${query}
+
+Respond with a JSON value that conforms to this JSON schema: ${schema}
+
+Your previous answer ${answer.toJsonString()} did not conform: ${result.message()}`;
+    json repaired = check model->generate(repair);
+    return repaired.cloneWithType(resultType);
 }
+
+// The result type's JSON schema when ballerina/ai cannot build one at runtime (records, maps); `()` otherwise.
+isolated function resultSchemaForGeneration(typedesc<anydata> resultType) returns string? = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative"
+} external;
 
 // Converts a mirror message to the corresponding ballerina/ai message type.
 isolated function toAiMessage(AgentChatMessage message) returns ai:ChatMessage|error {

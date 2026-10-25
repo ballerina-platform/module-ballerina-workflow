@@ -891,3 +891,39 @@ function testWorkflowFunctionPeerMustBeRegistered() returns error? {
             "The failure names the peer: " + answer.message());
     }
 }
+
+type ResultSchemaProbe record {|
+    string summary;
+    int score?;
+|};
+
+type ResultSchemaInts int[];
+
+type ResultSchemaScalars string|int?;
+
+type ResultSchemaProbes ResultSchemaProbe[];
+
+type ResultSchemaMap map<string>;
+
+@ai:JsonSchema {'type: "object", properties: {summary: {'type: "string"}}}
+type AnnotatedResultProbe record {|
+    string summary;
+|};
+
+@test:Config {groups: ["unit"]}
+function testResultSchemaIsBuiltOnlyWhereAiCannot() returns error? {
+    // Shapes ballerina/ai describes at runtime keep its own generate path.
+    test:assertEquals(resultSchemaForGeneration(string), ());
+    test:assertEquals(resultSchemaForGeneration(ResultSchemaInts), ());
+    test:assertEquals(resultSchemaForGeneration(json), ());
+    test:assertEquals(resultSchemaForGeneration(ResultSchemaScalars), ());
+    test:assertTrue(AnnotatedResultProbe.@ai:JsonSchema !is (), "An annotated type is left to ballerina/ai");
+
+    string recordSchema = check resultSchemaForGeneration(ResultSchemaProbe).ensureType();
+    map<json> parsed = check (check recordSchema.fromJsonString()).ensureType();
+    test:assertEquals(parsed["type"], "object");
+    test:assertEquals(parsed["properties"], {summary: {'type: "string"}, score: {'type: "integer"}});
+    test:assertEquals(parsed["required"], ["summary"]);
+    test:assertTrue(resultSchemaForGeneration(ResultSchemaProbes) is string, "Arrays of records need our schema");
+    test:assertTrue(resultSchemaForGeneration(ResultSchemaMap) is string, "Maps need our schema");
+}

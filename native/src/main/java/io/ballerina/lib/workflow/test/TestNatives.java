@@ -268,6 +268,10 @@ public final class TestNatives {
             return ErrorCreator.createError(new Module("ballerina", "ai", "1"), "Error", StringUtils.fromString(
                     "Runtime schema generation is not yet supported for type: " + expected.getName()), null, null);
         }
+        if (expected.getTag() == TypeTags.STRING_TAG) {
+            // A text request gets the fixed value as JSON text, the way a model answers one.
+            return StringUtils.fromString("{\"summary\": \"generated summary\", \"score\": 7}");
+        }
         Map<String, Object> fixed = new HashMap<>();
         fixed.put("summary", "generated summary");
         fixed.put("score", 7L);

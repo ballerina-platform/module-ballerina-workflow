@@ -935,12 +935,16 @@ function testResultSchemaIsBuiltOnlyWhereAiCannot() returns error? {
 
 @test:Config {groups: ["unit"]}
 function testResultAnswerConversion() returns error? {
-    anydata direct = check toResultType({summary: "a", score: 2}, ResultSchemaProbe);
+    anydata direct = check toResultType("{\"summary\": \"a\", \"score\": 2}", ResultSchemaProbe);
     test:assertEquals(direct, <ResultSchemaProbe>{summary: "a", score: 2});
-    anydata serialized = check toResultType("{\"summary\": \"b\"}", ResultSchemaProbe);
-    test:assertEquals(serialized, <ResultSchemaProbe>{summary: "b"}, "A string answer holding JSON is parsed");
+    anydata fenced = check toResultType("```json\n{\"summary\": \"b\"}\n```", ResultSchemaProbe);
+    test:assertEquals(fenced, <ResultSchemaProbe>{summary: "b"}, "A fenced answer is unwrapped");
+    anydata quotedEnum = check toResultType("\"LOW\"", ResultSchemaRisk);
+    test:assertEquals(quotedEnum, "LOW");
+    anydata bareEnum = check toResultType(" HIGH ", ResultSchemaRisk);
+    test:assertEquals(bareEnum, "HIGH", "An unquoted enum answer still converts");
 
-    anydata|error missing = toResultType({score: 3}, ResultSchemaProbe);
+    anydata|error missing = toResultType("{\"score\": 3}", ResultSchemaProbe);
     if missing !is error {
         test:assertFail("An answer without a required field must not convert");
     }

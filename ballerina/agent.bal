@@ -559,21 +559,22 @@ isolated function generateResult(string agentName, string declaredAgent, string 
         anydata result = check model->generate(prompt, resultType);
         return result;
     }
-    // ballerina/ai cannot describe this type at runtime, so the answer is requested as JSON against our schema.
+    // ballerina/ai cannot describe this type at runtime, so the answer is requested as JSON text against our schema;
+    // asking ai for `json` instead comes back as nil.
     ai:Prompt prompt = `${query}
 
-Respond with a JSON value that conforms to this JSON schema: ${schema}`;
-    json answer = check model->generate(prompt);
+Respond with only a JSON value, no other text, that conforms to this JSON schema: ${schema}`;
+    string answer = check model->generate(prompt);
     anydata|error result = toResultType(answer, resultType);
     if result is anydata {
         return result;
     }
     ai:Prompt repair = `${query}
 
-Respond with a JSON value that conforms to this JSON schema: ${schema}
+Respond with only a JSON value, no other text, that conforms to this JSON schema: ${schema}
 
-Your previous answer ${answer.toJsonString()} did not conform: ${conversionDetail(result)}`;
-    json repaired = check model->generate(repair);
+Your previous answer ${answer} did not conform: ${conversionDetail(result)}`;
+    string repaired = check model->generate(repair);
     anydata|error repairedResult = toResultType(repaired, resultType);
     if repairedResult is error {
         return error(string `The model's answer does not match the declared result type: ${
@@ -582,18 +583,21 @@ Your previous answer ${answer.toJsonString()} did not conform: ${conversionDetai
     return repairedResult;
 }
 
-// Converts an answer to the declared type, reading a string answer as serialized JSON when it holds one.
-isolated function toResultType(json answer, typedesc<anydata> resultType) returns anydata|error {
-    anydata|error converted = answer.cloneWithType(resultType);
-    if converted is anydata || answer !is string {
-        return converted;
+// Parses a text answer as JSON, inside a Markdown code fence or not, and converts it to the declared type.
+isolated function toResultType(string answer, typedesc<anydata> resultType) returns anydata|error {
+    string text = answer.trim();
+    int? bodyStart = text.indexOf("\n");
+    int? fenceEnd = text.lastIndexOf("```");
+    if text.startsWith("```") && bodyStart is int && fenceEnd is int && fenceEnd > bodyStart {
+        text = text.substring(bodyStart + 1, fenceEnd).trim();
     }
-    json|error parsed = answer.fromJsonString();
-    if parsed is error {
-        return converted;
+    json|error parsed = text.fromJsonString();
+    if parsed is json {
+        return parsed.cloneWithType(resultType);
     }
-    anydata|error reparsed = parsed.cloneWithType(resultType);
-    return reparsed is anydata ? reparsed : converted;
+    // An unquoted word is still a valid answer for an enum or string type.
+    anydata|error unquoted = text.cloneWithType(resultType);
+    return unquoted is anydata ? unquoted : error(string `the answer is not JSON: ${parsed.message()}`);
 }
 
 // A conversion error's message is only its type name; the reason is in the detail.
@@ -942,7 +946,8 @@ isolated function runDurableAgentObject(handle agentCtx, map<anydata> runInput)
     anydata typedResult = check callAgentActivity("generateResult", {
         "agentName": getAgentWorkflowType(agentCtx),
         "declaredAgent": agentName,
-        "query": "Produce the final result of this conversation." +
+        // The request travels with the outcome, so fields the final reply does not restate are not invented.
+        "query": "Produce the final result of this conversation.\n\nRequest:\n" + effectiveQuery +
             (finalText == "" ? "" : "\n\nConversation outcome:\n" + finalText)
     });
     return typedResult;

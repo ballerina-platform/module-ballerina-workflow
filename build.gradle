@@ -119,7 +119,8 @@ if (tasks.names.contains('build')) {
         dependsOn(':workflow-examples:build')
         // Run examples with main() to verify runtime startup (bal run smoke test)
         dependsOn(':workflow-examples:test')
-
+        // Manual tests need a model token to run; the build keeps them compiling
+        dependsOn(':workflow-manual-tests:build')
     }
 } else {
     tasks.register('build') {
@@ -132,7 +133,8 @@ if (tasks.names.contains('build')) {
         dependsOn(':workflow-examples:build')
         // Run examples with main() to verify runtime startup (bal run smoke test)
         dependsOn(':workflow-examples:test')
-
+        // Manual tests need a model token to run; the build keeps them compiling
+        dependsOn(':workflow-manual-tests:build')
     }
 }
 

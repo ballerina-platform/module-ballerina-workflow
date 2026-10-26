@@ -28,6 +28,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   module now supplies the schema itself.
   ([#9377](https://github.com/ballerina-platform/ballerina-library/issues/9377))
 
+- A workflow that chats with a durable agent now receives the reply of the turn that ends the
+  conversation. Before, the agent's execution could complete before that reply was delivered, and the
+  workflow's `waitForDataResult` waited forever. The typed result is also built from the original request
+  as well as the final reply, so fields the reply does not restate are no longer invented.
+  ([#9379](https://github.com/ballerina-platform/ballerina-library/issues/9379))
+
 - A durable agent's human task with a `taskInputType` now advertises that type's JSON schema to the
   model as the tool's parameters (plus the reserved `excludedUsers`), and an input that does not
   match it is reported with the conversion detail (which field, expected and found) rather than a

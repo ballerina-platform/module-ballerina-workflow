@@ -229,3 +229,15 @@ final workflow:DurableAgent conversationalStockAgent = check new ({
         chat: {request: string, response: string, cardinality: workflow:MULTI_EVENT}
     }
 });
+
+# Chats with the conversational agent from a workflow: the second turn ends the conversation,
+# and its reply must still reach this workflow.
+@workflow:Workflow
+function conversationFromWorkflow(workflow:Context ctx) returns string[]|error {
+    string agentId = check conversationalStockAgent.run("hello");
+    string firstTurn = check conversationalStockAgent.sendData(agentId, "chat", "how are you");
+    string firstReply = check conversationalStockAgent.waitForDataResult(agentId, firstTurn);
+    string lastTurn = check conversationalStockAgent.sendData(agentId, "chat", "ok bye");
+    string lastReply = check conversationalStockAgent.waitForDataResult(agentId, lastTurn);
+    return [firstReply, lastReply];
+}

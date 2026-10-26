@@ -15,6 +15,7 @@
 // under the License.
 
 import ballerina/http;
+import ballerina/time;
 import ballerina/workflow;
 import ballerina/workflow.management;
 
@@ -33,15 +34,17 @@ final readonly & string[] scenarios = [
     "W05-agent-failure", "W06-non-blocking-read"
 ];
 
-service /tests on new http:Listener(port, timeout = 0) {
+// Loopback only: this service completes tasks and reviews with fixed roles.
+service /tests on new http:Listener(port, host = "127.0.0.1", timeout = 0) {
 
     resource function get scenarios() returns readonly & string[] {
         return scenarios;
     }
 
     resource function post run/[string scenario]() returns json|error {
+        string started = time:utcToString(time:utcNow());
         string id = check startScenario(scenario);
-        return {scenario, id};
+        return {scenario, id, started};
     }
 
     resource function get result/[string scenario]/[string id]() returns json {
@@ -55,9 +58,12 @@ service /tests on new http:Listener(port, timeout = 0) {
         return {status: "DONE", result};
     }
 
-    resource function get pending() returns json|error {
-        management:HumanTaskSummary[] tasks = check management:listAllHumanTasks("PENDING");
-        management:ReviewActivitySummary[] reviews = check management:listAllReviewActivities("PENDING");
+    // Pending items raised since the scenario started. Not filtered by parent workflow: a task raised by
+    // an agent inside a workflow belongs to the agent, not to the scenario's workflow.
+    resource function get pending(string since) returns json|error {
+        management:HumanTaskSummary[] tasks = check management:listAllHumanTasks("PENDING", startTimeFrom = since);
+        management:ReviewActivitySummary[] reviews =
+                check management:listAllReviewActivities("PENDING", startTimeFrom = since);
         return {
             tasks: from var task in tasks select {taskId: task.taskId, taskName: task.taskName},
             reviews: from var review in reviews select {taskId: review.taskId, activityName: review.activityName}

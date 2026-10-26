@@ -1184,6 +1184,50 @@ public class WorkflowCompilerPluginTest {
         assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_151);
     }
 
+    @Test(groups = "valid")
+    public void testDurableAgentShorthandFieldsRegister() {
+        // ballerina-library#9378: a shorthand field ('{model}') is the variable of the same name, so the
+        // agent registers as it would with 'model: model'. Before the fix it compiled and was never
+        // registered, failing its first run().
+        String packagePath = "valid_durable_agent_shorthand";
+        DiagnosticResult validationResult = getValidationDiagnosticResult(packagePath);
+        Assert.assertEquals(validationResult.errorCount(), 0,
+                "Expected no errors for shorthand fields. Errors: " + getDiagnosticMessages(validationResult));
+        BuildProject project = BuildProject.load(getEnvironmentBuilder(), RESOURCE_DIRECTORY.resolve(packagePath));
+        DiagnosticResult declResult = project.currentPackage().runCodeGenAndModifyPlugins();
+        Assert.assertEquals(declResult.errorCount(), 0,
+                "Expected the generated registration to compile. Errors: " + getDiagnosticMessages(declResult));
+        String generated = allSourcesOf(project);
+        Assert.assertTrue(generated.contains("registerDurableAgentDecl(\"shorthandAgent\", model, systemPrompt, "
+                + "maxIter, json, resultType, (), 50);"), "The agent registers from its shorthand fields:\n"
+                + generated);
+        Assert.assertTrue(generated.contains("registerDurableAgentActivity(\"shorthandAgent\", \"activity\", "
+                + "activity, {\"description\": description}, ());"),
+                "A shorthand activity declaration registers:\n" + generated);
+        Assert.assertTrue(generated.contains("registerDurableAgentEvent(\"shorthandAgent\", \"chat\", request, (), "
+                + "\"MULTI_EVENT\");"), "A shorthand event request type registers:\n" + generated);
+        Assert.assertTrue(generated.contains("registerDurableAgentHumanTask(\"shorthandAgent\", \"signoff\", "
+                + "{\"userRoles\": [\"MANAGER\"]}, resultType, ());"),
+                "A shorthand human task result type registers:\n" + generated);
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentCapabilityVariable() {
+        // Capabilities held in a variable cannot be registered from the declaration.
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_capability_variable");
+        long count = diagnosticResult.diagnostics().stream()
+                .filter(d -> d.diagnosticInfo().code().equals(WorkflowDiagnostic.WORKFLOW_174.getCode())).count();
+        Assert.assertEquals(count, 2, "Expected 'activities' and the 'chat' event to be reported. Diagnostics: "
+                + getDiagnosticMessages(diagnosticResult));
+    }
+
+    @Test(groups = "invalid")
+    public void testInvalidDurableAgentConfigSpread() {
+        // A spread brings in fields, the model and system prompt here, that the registration cannot read.
+        DiagnosticResult diagnosticResult = getDiagnosticResult("invalid_durable_agent_config_spread");
+        assertDiagnosticContains(diagnosticResult, WorkflowDiagnostic.WORKFLOW_175);
+    }
+
     @Test(groups = "invalid")
     public void testInvalidDurableAgentAliasNotFinal() {
         // Detection is semantic: a DurableAgent declared through a type alias is still

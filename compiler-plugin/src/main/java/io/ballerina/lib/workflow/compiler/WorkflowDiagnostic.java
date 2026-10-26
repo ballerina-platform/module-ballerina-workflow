@@ -310,6 +310,16 @@ public enum WorkflowDiagnostic {
             "the 'taskInputType' of human task '%s' declares the reserved field '%s': the runtime reads it from "
                     + "the model's input to decide who may act on the task, so it never reaches the person. "
                     + "Rename the field",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_174("WORKFLOW_174",
+            "'%s' of durable agent '%s' must be written inline in the declaration: the agent's capabilities are "
+                    + "registered from the declaration at startup, so a value held in a variable would never be "
+                    + "registered",
+            DiagnosticSeverity.ERROR),
+    WORKFLOW_175("WORKFLOW_175",
+            "The config of durable agent '%s' cannot spread another mapping: the agent is registered from the "
+                    + "fields written in its declaration, so fields brought in by a spread would be ignored. "
+                    + "Write each field in the declaration",
             DiagnosticSeverity.ERROR);
 
     private final String code;

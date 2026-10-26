@@ -52,6 +52,15 @@ function testDurableAgentPromptDriven() returns error? {
 }
 
 @test:Config {}
+function testDurableAgentDeclaredWithShorthandFields() returns error? {
+    // ballerina-library#9378: before the fix this agent compiled, was never registered, and run() failed.
+    string agentId = check shorthandStockAgent.run("Is the laptop in stock?");
+    string result = check shorthandStockAgent.waitForResult(agentId);
+    test:assertEquals(result, "Stock check result: laptop is in stock",
+            "An agent declared with shorthand fields should run like one with the fields written in full");
+}
+
+@test:Config {}
 function testDurableAgentMcpToolKit() returns error? {
     // The MCP server runs in this same package; the toolkit connects, lists its tools,
     // and registers them on the agent through the plugin's registration path. The agent

@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- A durable agent declared with shorthand config fields, such as `{systemPrompt, model}`, is now registered:
+  each shorthand field is read as the variable of the same name. Before, the agent compiled and every `run`
+  failed. Capabilities held in a variable (`activities: myActivities`, `events: {chat: chatConfig}`) and a
+  spread in the config (`{...base}`) are now compile errors instead of being left unregistered.
+  ([#9378](https://github.com/ballerina-platform/ballerina-library/issues/9378))
+
 - A durable agent's human task with a `taskInputType` now advertises that type's JSON schema to the
   model as the tool's parameters (plus the reserved `excludedUsers`), and an input that does not
   match it is reported with the conversion detail (which field, expected and found) rather than a

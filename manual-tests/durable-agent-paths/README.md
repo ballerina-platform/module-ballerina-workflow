@@ -27,7 +27,8 @@ tasks they raise, and writes a report to `results/`.
 4. Start the service with the locally built distribution: `../../target/ballerina-runtime/bin/bal run`
    (port 8095, `port` in `Config.toml` to change it).
 5. In another terminal: `./run.sh` for every scenario, or `./run.sh R06-record W03-human-task-in-agent`.
-   `TIMEOUT=<seconds>` changes how long it waits for each scenario (default 240).
+   `TIMEOUT=<seconds>` changes how long it waits for each scenario (default 240). Every request is bounded by
+   it, and a scenario still running at the deadline is reported `TIMED_OUT`.
 
 Every run is also visible in the Temporal UI, which is the place to look when a scenario fails.
 

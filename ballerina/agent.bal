@@ -559,8 +559,13 @@ isolated function generateResult(string agentName, string declaredAgent, string 
         anydata result = check model->generate(prompt, resultType);
         return result;
     }
-    // ballerina/ai cannot describe this type at runtime, so the answer is requested as JSON text against our schema;
-    // asking ai for `json` instead comes back as nil.
+    return generateAgainstSchema(model, query, schema, resultType);
+}
+
+// For a type ballerina/ai cannot describe at runtime, the answer is requested as JSON text against our schema; asking
+// ai for `json` instead comes back as nil. An answer that does not convert gets one repair round with the reason.
+isolated function generateAgainstSchema(ai:ModelProvider model, string query, string schema,
+        typedesc<anydata> resultType) returns anydata|error {
     ai:Prompt prompt = `${query}
 
 Respond with only a JSON value, no other text, that conforms to this JSON schema: ${schema}`;
@@ -586,18 +591,28 @@ Your previous answer ${answer} did not conform: ${conversionDetail(result)}`;
 // Parses a text answer as JSON, inside a Markdown code fence or not, and converts it to the declared type.
 isolated function toResultType(string answer, typedesc<anydata> resultType) returns anydata|error {
     string text = answer.trim();
-    int? bodyStart = text.indexOf("\n");
     int? fenceEnd = text.lastIndexOf("```");
-    if text.startsWith("```") && bodyStart is int && fenceEnd is int && fenceEnd > bodyStart {
-        text = text.substring(bodyStart + 1, fenceEnd).trim();
+    if text.startsWith("```") && fenceEnd is int && fenceEnd >= 3 {
+        string body = text.substring(3, fenceEnd);
+        // The opening line may name the language; a fence written on one line has none.
+        int? newline = body.indexOf("\n");
+        if newline is int && body.substring(0, newline).trim().matches(re `[A-Za-z0-9_+.-]*`) {
+            body = body.substring(newline + 1);
+        }
+        text = body.trim();
     }
     json|error parsed = text.fromJsonString();
-    if parsed is json {
-        return parsed.cloneWithType(resultType);
+    anydata|error converted = parsed is json ? parsed.cloneWithType(resultType) : parsed;
+    if converted is anydata {
+        return converted;
     }
-    // An unquoted word is still a valid answer for an enum or string type.
+    // The text itself is still a valid answer for an enum or string member: an unquoted word, or JSON such as
+    // `true` that does not convert to the type but reads as a string member of a union.
     anydata|error unquoted = text.cloneWithType(resultType);
-    return unquoted is anydata ? unquoted : error(string `the answer is not JSON: ${parsed.message()}`);
+    if unquoted is anydata {
+        return unquoted;
+    }
+    return parsed is error ? error(string `the answer is not JSON: ${parsed.message()}`) : converted;
 }
 
 // A conversion error's message is only its type name; the reason is in the detail.

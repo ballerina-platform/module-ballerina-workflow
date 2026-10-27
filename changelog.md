@@ -31,7 +31,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - A workflow that chats with a durable agent now receives the reply of the turn that ends the
   conversation. Before, the agent's execution could complete before that reply was delivered, and the
   workflow's `waitForDataResult` waited forever. The typed result is also built from the original request
-  as well as the final reply, so fields the reply does not restate are no longer invented.
+  as well as the final reply, so fields the reply does not restate are no longer invented. The request
+  is therefore part of the result step's input too, and is recorded in the agent's history a second time.
   ([#9379](https://github.com/ballerina-platform/ballerina-library/issues/9379))
 
 - A durable agent's human task with a `taskInputType` now advertises that type's JSON schema to the

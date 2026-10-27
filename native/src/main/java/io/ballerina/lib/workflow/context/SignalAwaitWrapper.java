@@ -211,6 +211,8 @@ public final class SignalAwaitWrapper {
      * @param reply the promise of the procedure that answers the caller
      */
     public void trackEventReply(Promise<Void> reply) {
+        // Delivered replies need no wait, so a long-lived chat agent keeps only the ones still in flight.
+        eventReplies.removeIf(Promise::isCompleted);
         eventReplies.add(reply);
     }
 

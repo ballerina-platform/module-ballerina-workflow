@@ -907,6 +907,10 @@ type ResultSchemaMap map<string>;
 
 type ResultSchemaRisk "LOW"|"HIGH";
 
+type ResultSchemaOptionalProbe ResultSchemaProbe?;
+
+type ResultSchemaProbeOrText ResultSchemaProbe|string;
+
 @ai:JsonSchema {'type: "object", properties: {summary: {'type: "string"}}}
 type AnnotatedResultProbe record {|
     string summary;
@@ -919,6 +923,10 @@ function testResultSchemaIsBuiltOnlyWhereAiCannot() returns error? {
     test:assertEquals(resultSchemaForGeneration(ResultSchemaInts), ());
     test:assertEquals(resultSchemaForGeneration(json), ());
     test:assertEquals(resultSchemaForGeneration(ResultSchemaScalars), ());
+    test:assertEquals(resultSchemaForGeneration(decimal), ());
+    test:assertEquals(resultSchemaForGeneration(float), ());
+    test:assertEquals(resultSchemaForGeneration(boolean), ());
+    test:assertEquals(resultSchemaForGeneration(byte), ());
     test:assertTrue(AnnotatedResultProbe.@ai:JsonSchema !is (), "An annotated type is left to ballerina/ai");
 
     string recordSchema = check resultSchemaForGeneration(ResultSchemaProbe).ensureType();
@@ -928,6 +936,7 @@ function testResultSchemaIsBuiltOnlyWhereAiCannot() returns error? {
     test:assertEquals(parsed["required"], ["summary"]);
     test:assertTrue(resultSchemaForGeneration(ResultSchemaProbes) is string, "Arrays of records need our schema");
     test:assertTrue(resultSchemaForGeneration(ResultSchemaMap) is string, "Maps need our schema");
+    test:assertTrue(resultSchemaForGeneration(ResultSchemaOptionalProbe) is string, "A nilable record needs our schema");
     string enumSchema = check resultSchemaForGeneration(ResultSchemaRisk).ensureType();
     test:assertTrue(enumSchema.includes("\"LOW\"") && enumSchema.includes("\"HIGH\""),
         "An enum's schema lists its values: " + enumSchema);
@@ -950,4 +959,56 @@ function testResultAnswerConversion() returns error? {
     }
     test:assertTrue(conversionDetail(missing).includes("summary"),
         "The detail names the missing field: " + conversionDetail(missing));
+}
+
+@test:Config {groups: ["unit"]}
+function testResultAnswerConversionEdgeCases() returns error? {
+    anydata oneLineFence = check toResultType("```{\"summary\": \"c\"}```", ResultSchemaProbe);
+    test:assertEquals(oneLineFence, <ResultSchemaProbe>{summary: "c"}, "A fence on one line is unwrapped");
+    anydata fencedWithText = check toResultType("```json\n{\"summary\": \"d\"}\n```\nHope this helps.",
+        ResultSchemaProbe);
+    test:assertEquals(fencedWithText, <ResultSchemaProbe>{summary: "d"}, "Text after the fence is dropped");
+    anydata jsonWord = check toResultType("true", ResultSchemaProbeOrText);
+    test:assertEquals(jsonWord, "true", "JSON that is not a member of the union still reads as its string member");
+    if toResultType("null", ResultSchemaRisk) !is error {
+        test:assertFail("null is not a value of the enum");
+    }
+}
+
+// Answers a schema request without the required field until the repair prompt carries the schema and the reason.
+isolated client class RepairProbeModel {
+    *ai:ModelProvider;
+    private final boolean repairs;
+
+    isolated function init(boolean repairs) {
+        self.repairs = repairs;
+    }
+
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
+            returns ai:ChatAssistantMessage|ai:Error {
+        return error ai:Error("chat is not used by the result step");
+    }
+
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>)
+            returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.workflow.test.TestNatives",
+        name: "mockGenerateNeedsRepair"
+    } external;
+}
+
+@test:Config {groups: ["unit"]}
+function testResultRepairRound() returns error? {
+    string schema = check resultSchemaForGeneration(ResultSchemaProbe).ensureType();
+    anydata repaired = check generateAgainstSchema(new RepairProbeModel(true), "Summarize.", schema,
+        ResultSchemaProbe);
+    test:assertEquals(repaired, <ResultSchemaProbe>{summary: "repaired summary", score: 3},
+        "The repair prompt carries the schema and the reason, and its answer is used");
+    anydata|error unrepaired = generateAgainstSchema(new RepairProbeModel(false), "Summarize.", schema,
+        ResultSchemaProbe);
+    if unrepaired !is error {
+        test:assertFail("An answer that never conforms must fail");
+    }
+    test:assertTrue(unrepaired.message().startsWith("The model's answer does not match the declared result type")
+        && unrepaired.message().includes("summary"), unrepaired.message());
 }

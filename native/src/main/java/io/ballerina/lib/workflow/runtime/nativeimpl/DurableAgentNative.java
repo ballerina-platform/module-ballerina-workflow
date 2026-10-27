@@ -501,7 +501,7 @@ public final class DurableAgentNative {
         if (depth > 12 || implied.getTag() == TypeTags.FINITE_TYPE_TAG) {
             return false;
         }
-        if (implied.getBasicType().all() <= 0b100000 || implied.getTag() == TypeTags.JSON_TAG) {
+        if (isSimpleType(implied.getTag()) || implied.getTag() == TypeTags.JSON_TAG) {
             return true;
         }
         if (implied instanceof ArrayType arrayType) {
@@ -511,6 +511,12 @@ public final class DurableAgentNative {
             return unionType.getMemberTypes().stream().allMatch(member -> describedByAi(member, depth + 1));
         }
         return false;
+    }
+
+    // nil, boolean, int and its subtypes, float, decimal, and string and string:Char.
+    private static boolean isSimpleType(int tag) {
+        return tag == TypeTags.NULL_TAG || tag == TypeTags.BOOLEAN_TAG || tag == TypeTags.FLOAT_TAG
+                || tag == TypeTags.DECIMAL_TAG || TypeTags.isIntegerTypeTag(tag) || TypeTags.isStringTypeTag(tag);
     }
 
     /**

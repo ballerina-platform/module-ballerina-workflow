@@ -27,6 +27,7 @@ import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.utils.TypeUtils;
+import io.ballerina.runtime.api.values.BArray;
 import io.ballerina.runtime.api.values.BObject;
 import io.ballerina.runtime.api.values.BString;
 import io.ballerina.runtime.api.values.BTypedesc;
@@ -277,6 +278,38 @@ public final class TestNatives {
         fixed.put("score", 7L);
         Object ballerinaValue = TypesUtil.convertJavaToBallerinaType(fixed);
         return TypesUtil.cloneWithType(ballerinaValue, typedesc.getDescribingType());
+    }
+
+    /**
+     * A model that answers a schema request with JSON missing the required {@code summary}, and conforms only to a
+     * repair prompt that carries both the schema and the reason the first answer failed. With {@code repairs} false
+     * on the model object, it never conforms.
+     *
+     * @param self     the model object
+     * @param prompt   the prompt
+     * @param typedesc the expected type (string for a schema request)
+     * @return the answer text
+     */
+    public static Object mockGenerateNeedsRepair(BObject self, BObject prompt, BTypedesc typedesc) {
+        String text = promptText(prompt);
+        boolean repairs = self.getBooleanValue(StringUtils.fromString("repairs"));
+        boolean repairRound = text.contains("\"properties\"") && text.contains("did not conform: ")
+                && text.contains("summary");
+        return StringUtils.fromString(repairs && repairRound
+                ? "{\"summary\": \"repaired summary\", \"score\": 3}" : "{\"score\": 3}");
+    }
+
+    private static String promptText(BObject prompt) {
+        BArray strings = (BArray) prompt.get(StringUtils.fromString("strings"));
+        BArray insertions = (BArray) prompt.get(StringUtils.fromString("insertions"));
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < strings.size(); i++) {
+            text.append(strings.getBString(i).getValue());
+            if (i < insertions.size()) {
+                text.append(StringUtils.getStringValue(insertions.get(i)));
+            }
+        }
+        return text.toString();
     }
 
     private static boolean hasAiJsonSchema(Type type) {

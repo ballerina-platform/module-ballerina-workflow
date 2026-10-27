@@ -23,14 +23,21 @@ fi
     echo "|---|---|---|---|---|"
 } > "$report"
 
+# Seconds left before the running scenario's TIMEOUT, at least 1: every request is bounded by it, so a call that
+# never returns cannot hold the run past the deadline.
+remaining() {
+    local left=$(( TIMEOUT - ($(date +%s) - began) ))
+    echo $(( left > 0 ? left : 1 ))
+}
+
 # Answers the tasks and reviews raised since the scenario started. An item is marked handled only once its
 # answer is accepted, so a failed answer is tried again on the next poll.
 answer_pending() {
     local scenario=$1 since=$2 pending task review
-    pending=$(curl -sf -G "$BASE/pending" --data-urlencode "since=$since") || return
+    pending=$(curl -sf --max-time "$(remaining)" -G "$BASE/pending" --data-urlencode "since=$since") || return
     for task in $(echo "$pending" | jq -r '.tasks[]?.taskId'); do
         case "$handled" in *" $task "*) continue ;; esac
-        curl -sf -X POST "$BASE/tasks/$task" -H 'Content-Type: application/json' \
+        curl -sf --max-time "$(remaining)" -X POST "$BASE/tasks/$task" -H 'Content-Type: application/json' \
             -d '{"approved": true, "comment": "Approved: the customer travels on Friday"}' > /dev/null || continue
         handled="$handled$task "
         actions="${actions}task approved; "
@@ -44,7 +51,7 @@ answer_pending() {
             decision='{"action": "proceed", "feedback": "Approved"}'
             done_text="review approved"
         fi
-        curl -sf -X POST "$BASE/reviews/$review" -H 'Content-Type: application/json' -d "$decision" > /dev/null \
+        curl -sf --max-time "$(remaining)" -X POST "$BASE/reviews/$review" -H 'Content-Type: application/json' -d "$decision" > /dev/null \
             || continue
         handled="$handled$review "
         actions="${actions}${done_text}; "
@@ -65,19 +72,22 @@ for scenario in $names; do
     if [ "$scenario" = "C06-chat" ]; then
         for message in "Is the laptop in stock?" "Thanks, goodbye."; do
             # Bounded by TIMEOUT: a reply that never comes would otherwise block the whole run.
-            reply=$(curl -s --max-time "$TIMEOUT" -X POST "$BASE/chat/$id" -H 'Content-Type: text/plain' \
+            reply=$(curl -s --max-time "$(remaining)" -X POST "$BASE/chat/$id" -H 'Content-Type: text/plain' \
                 -d "$message") || { actions="${actions}chat: no reply within ${TIMEOUT}s; "; break; }
             actions="${actions}chat: $(echo "$reply" | jq -r '.reply // .message'); "
         done
     fi
-    status=IN_PROGRESS
+    # Reported as TIMED_OUT unless a poll below reads the scenario's status within its TIMEOUT.
+    status=TIMED_OUT
+    result='{"error": "no status read before the timeout"}'
     while [ $(( $(date +%s) - began )) -lt "$TIMEOUT" ]; do
         answer_pending "$scenario" "$since"
-        result=$(curl -s "$BASE/result/$scenario/$id")
+        result=$(curl -s --max-time "$(remaining)" "$BASE/result/$scenario/$id") || { sleep 2; continue; }
         status=$(echo "$result" | jq -r '.status // "UNREADABLE"')
         [ "$status" = "IN_PROGRESS" ] || break
         sleep 2
     done
+    [ "$status" = "IN_PROGRESS" ] && status=TIMED_OUT
     detail=$(echo "$result" | jq -c 'if .status == "DONE" then .result else (.error // .) end' 2>/dev/null \
         | tr '\n|' '  ' | cut -c1-400)
     seconds=$(( $(date +%s) - began ))

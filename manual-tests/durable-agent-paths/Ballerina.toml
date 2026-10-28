@@ -1,0 +1,7 @@
+[package]
+org = "ballerina_manual_tests"
+name = "durable_agent_paths"
+version = "0.1.0"
+
+[build-options]
+observabilityIncluded = true

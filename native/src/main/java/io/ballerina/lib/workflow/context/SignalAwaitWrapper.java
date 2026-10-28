@@ -19,6 +19,7 @@
 package io.ballerina.lib.workflow.context;
 
 import io.temporal.workflow.CompletablePromise;
+import io.temporal.workflow.Promise;
 import io.temporal.workflow.Workflow;
 import org.slf4j.Logger;
 
@@ -73,6 +74,9 @@ public final class SignalAwaitWrapper {
     private final Map<String, Deque<SignalData>> pendingSignals = new ConcurrentHashMap<>();
     private final Map<String, Deque<CompletablePromise<SignalData>>> signalWaiters =
             new ConcurrentHashMap<>();
+    // Replies being signalled back to workflow callers of a durable agent's events. The agent waits for them before
+    // it completes, so a reply sent by the turn that ends the conversation is not dropped with the execution.
+    private final List<Promise<Void>> eventReplies = new ArrayList<>();
 
     /**
      * Default constructor for per-workflow instance.
@@ -199,6 +203,26 @@ public final class SignalAwaitWrapper {
         if (waiters != null) {
             waiters.remove(waiter);
         }
+    }
+
+    /**
+     * Tracks a reply being signalled back to a workflow caller, so the agent can wait for it before completing.
+     *
+     * @param reply the promise of the procedure that answers the caller
+     */
+    public void trackEventReply(Promise<Void> reply) {
+        // Delivered replies need no wait, so a long-lived chat agent keeps only the ones still in flight.
+        eventReplies.removeIf(Promise::isCompleted);
+        eventReplies.add(reply);
+    }
+
+    /**
+     * Whether every tracked reply has been delivered, or has failed (a caller that no longer exists).
+     *
+     * @return true when no reply is still in flight
+     */
+    public boolean eventRepliesSettled() {
+        return eventReplies.stream().allMatch(Promise::isCompleted);
     }
 
     /**

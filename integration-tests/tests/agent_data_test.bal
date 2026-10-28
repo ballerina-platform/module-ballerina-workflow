@@ -103,3 +103,14 @@ function testSendDataArrayFormChannelStillWorks() returns error? {
     test:assertTrue(unknown is error,
             "Array-form declarations feed the same send-time validation");
 }
+
+@test:Config {
+    groups: ["integration"]
+}
+function testWorkflowCallerGetsTheReplyThatEndsTheConversation() returns error? {
+    // The agent completes in the turn that answers "ok bye"; that reply must reach the calling
+    // workflow before the agent's execution closes (ballerina-library#9379).
+    string workflowId = check workflow:run(conversationFromWorkflow);
+    string[] replies = check workflow:waitForResult(workflowId, timeout = {seconds: 60});
+    test:assertEquals(replies, ["Echo: how are you", "Conversation ended"]);
+}

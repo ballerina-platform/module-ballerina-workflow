@@ -49,6 +49,9 @@ include ':workflow-integration-tests'
 // Examples
 include ':workflow-examples'
 
+// Manual tests (compiled by the build, run by hand against a real model)
+include ':workflow-manual-tests'
+
 project(':checkstyle').projectDir = file('build-config/checkstyle')
 project(':workflow-compiler-plugin').projectDir = file('compiler-plugin')
 project(':workflow-native').projectDir = file('native')
@@ -56,6 +59,7 @@ project(':workflow-compiler-plugin-tests').projectDir = file('compiler-plugin-te
 project(':workflow-ballerina').projectDir = file('ballerina')
 project(':workflow-integration-tests').projectDir = file('integration-tests')
 project(':workflow-examples').projectDir = file('examples')
+project(':workflow-manual-tests').projectDir = file('manual-tests')
 
 develocity {
     buildScan {

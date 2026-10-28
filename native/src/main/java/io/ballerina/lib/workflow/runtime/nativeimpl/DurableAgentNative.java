@@ -27,9 +27,11 @@ import io.ballerina.runtime.api.Environment;
 import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.creators.TypeCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
+import io.ballerina.runtime.api.types.ArrayType;
 import io.ballerina.runtime.api.types.Parameter;
 import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.types.TypeTags;
+import io.ballerina.runtime.api.types.UnionType;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.utils.TypeUtils;
 import io.ballerina.runtime.api.values.BArray;
@@ -484,6 +486,37 @@ public final class DurableAgentNative {
             activities.put(toolName, activity.function());
         }
         return WorkflowWorkerNative.registerAgentWorkflow(env, runner, agentName, activities);
+    }
+
+    // The result type's JSON schema when ballerina/ai cannot describe it at runtime, or null when it can.
+    public static Object resultSchemaForGeneration(BTypedesc resultType) {
+        Type type = resultType.getDescribingType();
+        return describedByAi(type, 0) ? null : StringUtils.fromString(TypesUtil.toJsonSchema(type));
+    }
+
+    // Mirrors ballerina/ai's runtime schema support: simple types and json, and arrays or unions of them.
+    // Enums are excluded: ai describes them by basic type alone, so the model never sees the allowed values.
+    private static boolean describedByAi(Type type, int depth) {
+        Type implied = TypeUtils.getImpliedType(type);
+        if (depth > 12 || implied.getTag() == TypeTags.FINITE_TYPE_TAG) {
+            return false;
+        }
+        if (isSimpleType(implied.getTag()) || implied.getTag() == TypeTags.JSON_TAG) {
+            return true;
+        }
+        if (implied instanceof ArrayType arrayType) {
+            return describedByAi(arrayType.getElementType(), depth + 1);
+        }
+        if (implied instanceof UnionType unionType) {
+            return unionType.getMemberTypes().stream().allMatch(member -> describedByAi(member, depth + 1));
+        }
+        return false;
+    }
+
+    // nil, boolean, int and its subtypes, float, decimal, and string and string:Char.
+    private static boolean isSimpleType(int tag) {
+        return tag == TypeTags.NULL_TAG || tag == TypeTags.BOOLEAN_TAG || tag == TypeTags.FLOAT_TAG
+                || tag == TypeTags.DECIMAL_TAG || TypeTags.isIntegerTypeTag(tag) || TypeTags.isStringTypeTag(tag);
     }
 
     /**

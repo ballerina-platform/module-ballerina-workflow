@@ -100,6 +100,8 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
     private static final String MAX_RETRIES_FIELD = "maxRetries";
     private static final String WAIT_FIELD = "wait";
     private static final String CALLBACK_CHANNEL_FIELD = "callbackChannel";
+    private static final Set<String> CAPABILITY_FIELDS =
+            Set.of("activities", "tools", "events", "humanTasks", "peers");
 
     private final Map<String, Object> userData;
 
@@ -256,30 +258,41 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         Set<String> seenNames = new HashSet<>();
 
         for (MappingFieldNode field : config.fields()) {
-            if (!(field instanceof SpecificFieldNode specificField)
-                    || specificField.valueExpr().isEmpty()) {
+            if (!(field instanceof SpecificFieldNode specificField)) {
+                // A spread brings in fields the registration cannot read from the declaration,
+                // so an agent built from one would compile and never be registered.
+                reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_175, field.location(), agentName);
                 continue;
             }
             String fieldName = mappingKeyName(specificField);
             if (fieldName == null) {
                 continue;
             }
-            ExpressionNode value = specificField.valueExpr().get();
+            Node value = valueNode(specificField);
+            String valueSource = valueSource(specificField);
+            if (CAPABILITY_FIELDS.contains(fieldName) && !(value instanceof ListConstructorExpressionNode
+                    || value instanceof MappingConstructorExpressionNode)) {
+                // Each entry is registered from its source here, so entries held in a variable
+                // would compile and never be registered.
+                reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_174, value.location(), fieldName,
+                        agentName);
+                continue;
+            }
             switch (fieldName) {
-                case "model" -> modelSource = value.toSourceCode().strip();
-                case "systemPrompt" -> systemPromptSource = value.toSourceCode().strip();
-                case "maxIter" -> maxIterSource = value.toSourceCode().strip();
-                case "eventTimeout" -> eventTimeoutSource = value.toSourceCode().strip();
+                case "model" -> modelSource = valueSource;
+                case "systemPrompt" -> systemPromptSource = valueSource;
+                case "maxIter" -> maxIterSource = valueSource;
+                case "eventTimeout" -> eventTimeoutSource = valueSource;
                 case "maxEventWaits" -> {
-                    maxEventWaitsSource = value.toSourceCode().strip();
+                    maxEventWaitsSource = valueSource;
                     collectQualifiedPrefixes(value, typeRefPrefixes);
                 }
                 case "inputType" -> {
-                    inputTypeSource = value.toSourceCode().strip();
+                    inputTypeSource = valueSource;
                     collectQualifiedPrefixes(value, typeRefPrefixes);
                 }
                 case "resultType" -> {
-                    resultTypeSource = value.toSourceCode().strip();
+                    resultTypeSource = valueSource;
                     collectQualifiedPrefixes(value, typeRefPrefixes);
                 }
                 case "activities" ->
@@ -309,6 +322,20 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
     private record CallbackChannelRef(String channel, Location location) { }
 
     /**
+     * The value of a mapping field. A shorthand field ({@code {model}}) has no value expression:
+     * it stands for the variable of the same name, which its name token refers to.
+     */
+    private static Node valueNode(SpecificFieldNode field) {
+        return field.valueExpr().isPresent() ? field.valueExpr().get() : field.fieldName();
+    }
+
+    // Token text for a shorthand field: its source would carry leading trivia such as a comment.
+    private static String valueSource(SpecificFieldNode field) {
+        Node value = valueNode(field);
+        return value instanceof Token token ? token.text() : value.toSourceCode().strip();
+    }
+
+    /**
      * The name a mapping field is keyed by: the identifier itself, or the unquoted string
      * literal. A computed key ({@code [expr]}) has no static name and returns null.
      */
@@ -331,7 +358,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         return null;
     }
 
-    private void extractActivities(ExpressionNode value, List<DurableAgentDeclInfo.ActivityDecl> activities,
+    private void extractActivities(Node value, List<DurableAgentDeclInfo.ActivityDecl> activities,
                                    Set<String> seenNames, String agentName, List<String> typeRefPrefixes,
                                    SyntaxNodeAnalysisContext context) {
         if (!(value instanceof ListConstructorExpressionNode list)) {
@@ -364,17 +391,17 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         Set<String> boundParameters = Set.of();
         String bindingsSource = null;
         for (MappingFieldNode declField : declMapping.fields()) {
-            if (!(declField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
+            if (!(declField instanceof SpecificFieldNode sf)) {
                 continue;
             }
             String key = mappingKeyName(sf);
             if (key == null) {
                 continue;
             }
-            ExpressionNode declValue = sf.valueExpr().get();
+            Node declValue = valueNode(sf);
             switch (key) {
                 case "activity" -> {
-                    functionRefSource = declValue.toSourceCode().strip();
+                    functionRefSource = valueSource(sf);
                     activityRefNode = declValue;
                 }
                 case NAME_FIELD -> {
@@ -387,18 +414,18 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     // Emitted verbatim into the generated registration: bound client objects
                     // reference their module-level variables, which are in scope there, so the
                     // prefixes of any qualified reference inside must travel with it.
-                    bindingsSource = declValue.toSourceCode().strip();
+                    bindingsSource = valueSource(sf);
                     boundParameters = boundParameterNames(declValue);
                     collectQualifiedPrefixes(declValue, typeRefPrefixes);
                 }
                 case APPROVAL_POLICY_FIELD, RETRY_POLICY_FIELD -> {
                     checkReviewDefinition(declValue, context);
                     collectQualifiedPrefixes(declValue, typeRefPrefixes);
-                    appendMetaField(meta, sf, declValue.toSourceCode().strip());
+                    appendMetaField(meta, sf, valueSource(sf));
                 }
                 case REQUIRES_APPROVAL_FIELD, USER_ROLES_FIELD ->
                         reportRemovedField(context, sf, key, "ActivityDecl", "declare 'approvalPolicy'");
-                default -> appendMetaField(meta, sf, declValue.toSourceCode().strip());
+                default -> appendMetaField(meta, sf, valueSource(sf));
             }
         }
         if (functionRefSource == null) {
@@ -429,7 +456,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         }
     }
 
-    private void extractTools(ExpressionNode value, List<DurableAgentDeclInfo.ToolRef> aiToolRefs,
+    private void extractTools(Node value, List<DurableAgentDeclInfo.ToolRef> aiToolRefs,
                               Set<String> seenNames, String agentName, List<String> typeRefPrefixes,
                               SyntaxNodeAnalysisContext context) {
         if (!(value instanceof ListConstructorExpressionNode list)) {
@@ -449,18 +476,17 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 String approvalSource = null;
                 Node toolRefNode = null;
                 for (MappingFieldNode field : toolDecl.fields()) {
-                    if (!(field instanceof SpecificFieldNode specificField)
-                            || specificField.valueExpr().isEmpty()) {
+                    if (!(field instanceof SpecificFieldNode specificField)) {
                         continue;
                     }
                     String fieldName = mappingKeyName(specificField);
                     if (fieldName == null) {
                         continue;
                     }
-                    ExpressionNode fieldValue = specificField.valueExpr().get();
+                    Node fieldValue = valueNode(specificField);
                     switch (fieldName) {
                         case "tool" -> {
-                            toolRef = fieldValue.toSourceCode().strip();
+                            toolRef = valueSource(specificField);
                             toolRefNode = fieldValue;
                         }
                         case APPROVAL_POLICY_FIELD -> {
@@ -468,7 +494,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                             // Emitted verbatim into the generated registration, so any module
                             // prefix inside must travel with it.
                             collectQualifiedPrefixes(fieldValue, typeRefPrefixes);
-                            approvalSource = fieldValue.toSourceCode().strip();
+                            approvalSource = valueSource(specificField);
                         }
                         case REQUIRES_APPROVAL_FIELD, USER_ROLES_FIELD -> reportRemovedField(context, specificField,
                                 fieldName, "ToolDecl", "declare 'approvalPolicy'");
@@ -488,14 +514,14 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         }
     }
 
-    private void extractEvents(ExpressionNode value, List<DurableAgentDeclInfo.EventDecl> events,
+    private void extractEvents(Node value, List<DurableAgentDeclInfo.EventDecl> events,
                                Set<String> seenNames, String agentName,
                                SyntaxNodeAnalysisContext context) {
         // Primary form: a mapping keyed by channel name — the key is a compile-time constant
         // by construction, so no name validation is needed.
         if (value instanceof MappingConstructorExpressionNode channelsMapping) {
             for (MappingFieldNode channelField : channelsMapping.fields()) {
-                if (!(channelField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
+                if (!(channelField instanceof SpecificFieldNode sf)) {
                     // A computed key ({[expr]: ...}) has no static name, which the registration
                     // needs; a spread has no keys this pass can see at all.
                     reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_156,
@@ -503,7 +529,12 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                     continue;
                 }
                 String name = mappingKeyName(sf);
-                if (name == null || !(sf.valueExpr().get() instanceof MappingConstructorExpressionNode config)) {
+                if (name == null) {
+                    continue;
+                }
+                if (!(valueNode(sf) instanceof MappingConstructorExpressionNode config)) {
+                    reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_174, valueNode(sf).location(),
+                            "events." + name, agentName);
                     continue;
                 }
                 extractEventConfig(name, sf.fieldName().location(), config, events, seenNames,
@@ -524,11 +555,11 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             MappingConstructorExpressionNode config = eventMapping;
             Location nameLocation = eventMapping.location();
             for (MappingFieldNode eventField : eventMapping.fields()) {
-                if (!(eventField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
+                if (!(eventField instanceof SpecificFieldNode sf)) {
                     continue;
                 }
                 if (NAME_FIELD.equals(mappingKeyName(sf))) {
-                    ExpressionNode fieldValue = sf.valueExpr().get();
+                    Node fieldValue = valueNode(sf);
                     name = stringLiteralValue(fieldValue);
                     nameLocation = fieldValue.location();
                     if (name == null) {
@@ -558,18 +589,17 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         String responseSource = null;
         String cardinality = "MULTI_EVENT";
         for (MappingFieldNode eventField : config.fields()) {
-            if (!(eventField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
+            if (!(eventField instanceof SpecificFieldNode sf)) {
                 continue;
             }
             String key = mappingKeyName(sf);
             if (key == null) {
                 continue;
             }
-            ExpressionNode fieldValue = sf.valueExpr().get();
             switch (key) {
-                case "request" -> requestSource = fieldValue.toSourceCode().strip();
-                case "response" -> responseSource = fieldValue.toSourceCode().strip();
-                case "cardinality" -> cardinality = simpleName(fieldValue.toSourceCode().strip());
+                case "request" -> requestSource = valueSource(sf);
+                case "response" -> responseSource = valueSource(sf);
+                case "cardinality" -> cardinality = simpleName(valueSource(sf));
                 default -> {
                     // "name" in the array form is read by the caller; no other fields
                 }
@@ -583,19 +613,24 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                 cardinality));
     }
 
-    private void extractHumanTasks(ExpressionNode value, List<DurableAgentDeclInfo.HumanTaskDecl> humanTasks,
+    private void extractHumanTasks(Node value, List<DurableAgentDeclInfo.HumanTaskDecl> humanTasks,
                                    Set<String> seenNames, String agentName,
                                    SyntaxNodeAnalysisContext context) {
         // Primary form: a mapping keyed by task name — constant by construction.
         if (value instanceof MappingConstructorExpressionNode tasksMapping) {
             for (MappingFieldNode taskField : tasksMapping.fields()) {
-                if (!(taskField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
+                if (!(taskField instanceof SpecificFieldNode sf)) {
                     reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_156,
                             taskField.location(), "human task");
                     continue;
                 }
                 String name = mappingKeyName(sf);
-                if (name == null || !(sf.valueExpr().get() instanceof MappingConstructorExpressionNode config)) {
+                if (name == null) {
+                    continue;
+                }
+                if (!(valueNode(sf) instanceof MappingConstructorExpressionNode config)) {
+                    reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_174, valueNode(sf).location(),
+                            "humanTasks." + name, agentName);
                     continue;
                 }
                 extractHumanTaskConfig(name, sf.fieldName().location(), config, humanTasks,
@@ -615,11 +650,11 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             String name = null;
             Location nameLocation = taskMapping.location();
             for (MappingFieldNode taskField : taskMapping.fields()) {
-                if (!(taskField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
+                if (!(taskField instanceof SpecificFieldNode sf)) {
                     continue;
                 }
                 if (NAME_FIELD.equals(mappingKeyName(sf))) {
-                    ExpressionNode fieldValue = sf.valueExpr().get();
+                    Node fieldValue = valueNode(sf);
                     name = stringLiteralValue(fieldValue);
                     nameLocation = fieldValue.location();
                     if (name == null) {
@@ -650,26 +685,26 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         String taskInputTypeSource = null;
         StringBuilder meta = new StringBuilder();
         for (MappingFieldNode taskField : config.fields()) {
-            if (!(taskField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
+            if (!(taskField instanceof SpecificFieldNode sf)) {
                 continue;
             }
             String key = mappingKeyName(sf);
             if (key == null) {
                 continue;
             }
-            ExpressionNode fieldValue = sf.valueExpr().get();
+            Node fieldValue = valueNode(sf);
             switch (key) {
                 case NAME_FIELD -> {
                     // Array form only: already read by the caller.
                 }
                 // The typedescs travel separately (they are not json): folded into the meta
                 // mapping they would make the injected registration ill-typed.
-                case "resultType" -> resultTypeSource = fieldValue.toSourceCode().strip();
+                case "resultType" -> resultTypeSource = valueSource(sf);
                 case "taskInputType" -> {
-                    taskInputTypeSource = fieldValue.toSourceCode().strip();
+                    taskInputTypeSource = valueSource(sf);
                     checkReservedTaskInputField(name, fieldValue, context);
                 }
-                default -> appendMetaField(meta, sf, fieldValue.toSourceCode().strip());
+                default -> appendMetaField(meta, sf, valueSource(sf));
             }
         }
         checkUnique(name, seenNames, agentName, nameLocation, context);
@@ -680,7 +715,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
 
     // The runtime strips its reserved fields from the model's input before the check, so a declared field
     // of that name never reaches the person and its value is read as something else.
-    private void checkReservedTaskInputField(String taskName, ExpressionNode typeRef,
+    private void checkReservedTaskInputField(String taskName, Node typeRef,
                                              SyntaxNodeAnalysisContext context) {
         // Through the typedesc, aliases and `readonly &` to the record that declares the fields.
         TypeSymbol type = context.semanticModel().typeOf(typeRef).orElse(null);
@@ -705,7 +740,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         }
     }
 
-    private void extractPeers(ExpressionNode value, List<DurableAgentDeclInfo.PeerDecl> peers,
+    private void extractPeers(Node value, List<DurableAgentDeclInfo.PeerDecl> peers,
                               Set<String> seenNames, String agentName,
                               SyntaxNodeAnalysisContext context) {
         if (!(value instanceof ListConstructorExpressionNode list)) {
@@ -721,25 +756,25 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             StringBuilder meta = new StringBuilder();
             Location nameLocation = peerMapping.location();
             for (MappingFieldNode peerField : peerMapping.fields()) {
-                if (!(peerField instanceof SpecificFieldNode sf) || sf.valueExpr().isEmpty()) {
+                if (!(peerField instanceof SpecificFieldNode sf)) {
                     continue;
                 }
                 String key = mappingKeyName(sf);
                 if (key == null) {
                     continue;
                 }
-                ExpressionNode fieldValue = sf.valueExpr().get();
+                Node fieldValue = valueNode(sf);
                 switch (key) {
                     // The peer's identity — and its tool-name prefix — is its module-level variable
                     // name, the same name its own declaration registers under.
                     case WorkflowConstants.DECL_AGENT -> {
-                        targetAgent = simpleName(fieldValue.toSourceCode().strip());
+                        targetAgent = simpleName(valueSource(sf));
                         nameLocation = fieldValue.location();
                         workflowPeer = isWorkflowFunctionPeer(fieldValue, targetAgent, context);
                     }
                     case ALLOWED_EVENTS_FIELD -> {
                         allowedEventsField = sf;
-                        appendMetaField(meta, sf, fieldValue.toSourceCode().strip());
+                        appendMetaField(meta, sf, valueSource(sf));
                     }
                     case NAME_FIELD -> reportRemovedField(context, sf, key, "PeerDecl",
                             "the peer is named by its 'agent' variable");
@@ -748,7 +783,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
                                     + "address travels with each delegation");
                     case REQUIRES_APPROVAL_FIELD, USER_ROLES_FIELD -> reportRemovedField(context, sf, key, "PeerDecl",
                             "gate the peer's own activities and tools inside the peer");
-                    default -> appendMetaField(meta, sf, fieldValue.toSourceCode().strip());
+                    default -> appendMetaField(meta, sf, valueSource(sf));
                 }
             }
             if (targetAgent == null) {
@@ -766,9 +801,10 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
 
     // A function peer is advertised as a tool that starts a workflow, so it must be a @workflow:Workflow
     // function; the `DurableAgent|function` type alone admits any function.
-    private boolean isWorkflowFunctionPeer(ExpressionNode agentRef, String name, SyntaxNodeAnalysisContext context) {
+    private boolean isWorkflowFunctionPeer(Node agentRef, String name, SyntaxNodeAnalysisContext context) {
         // A peer is named by a reference: a call's symbol is the called function, not a peer.
-        if (!(agentRef instanceof SimpleNameReferenceNode || agentRef instanceof QualifiedNameReferenceNode)) {
+        if (!(agentRef instanceof SimpleNameReferenceNode || agentRef instanceof QualifiedNameReferenceNode
+                || agentRef instanceof Token)) {
             return false;
         }
         SemanticModel semanticModel = context.semanticModel();
@@ -780,7 +816,8 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
         if (!function) {
             return false;
         }
-        if (!WorkflowPluginUtils.hasWorkflowAnnotation(agentRef, semanticModel, WorkflowConstants.PROCESS_ANNOTATION)) {
+        if (!(symbol.get() instanceof FunctionSymbol functionSymbol)
+                || !WorkflowPluginUtils.hasWorkflowAnnotation(functionSymbol, WorkflowConstants.PROCESS_ANNOTATION)) {
             reportDiagnostic(context, WorkflowDiagnostic.WORKFLOW_171, agentRef.location(), name);
         }
         return true;
@@ -796,7 +833,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
             Set.of(MAX_RETRIES_FIELD, "retryDelay", "retryBackoff", "maxRetryDelay");
 
     // A review definition literal must name an audience; an AutoRetry literal (maxRetries) is exempt.
-    private void checkReviewDefinition(ExpressionNode value, SyntaxNodeAnalysisContext context) {
+    private void checkReviewDefinition(Node value, SyntaxNodeAnalysisContext context) {
         if (!(value instanceof MappingConstructorExpressionNode mapping)) {
             return;
         }
@@ -955,7 +992,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
      * anything else — a variable reference, say — no parameter can be shown to be unbound, so
      * every parameter counts as bound rather than reporting a conflict that may not exist.
      */
-    private static Set<String> boundParameterNames(ExpressionNode bindings) {
+    private static Set<String> boundParameterNames(Node bindings) {
         if (!(bindings instanceof MappingConstructorExpressionNode mapping)) {
             return null;
         }
@@ -1015,7 +1052,7 @@ public class DurableAgentDeclAnalysisTask implements AnalysisTask<SyntaxNodeAnal
      * Returns the value of a string literal expression, or null when the expression is not a
      * plain string literal (template or computed names are not statically resolvable).
      */
-    private static String stringLiteralValue(ExpressionNode expression) {
+    private static String stringLiteralValue(Node expression) {
         if (expression.kind() == SyntaxKind.STRING_LITERAL) {
             String text = expression.toSourceCode().strip();
             if (text.length() >= 2 && text.startsWith("\"") && text.endsWith("\"")) {

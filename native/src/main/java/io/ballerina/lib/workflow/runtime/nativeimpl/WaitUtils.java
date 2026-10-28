@@ -192,9 +192,16 @@ public final class WaitUtils {
      * @return the bound in milliseconds
      * @throws IllegalArgumentException when the duration is not a bound
      */
-    static long durationToMillis(BMap<BString, Object> duration) {
+    public static long durationToMillis(BMap<BString, Object> duration) {
+        return durationToMillis(duration, "A wait bound");
+    }
+
+    /**
+     * As {@link #durationToMillis(BMap)}, with {@code what} naming the caller in the messages ("A sleep").
+     */
+    public static long durationToMillis(BMap<BString, Object> duration, String what) {
         if (getLongField(duration, YEARS_KEY) != 0 || getLongField(duration, MONTHS_KEY) != 0) {
-            throw new IllegalArgumentException("A wait bound does not support months or years");
+            throw new IllegalArgumentException(what + " does not support months or years");
         }
         long millis;
         try {
@@ -205,16 +212,16 @@ public final class WaitUtils {
             millis = Math.addExact(millis, secondsToMillis(duration.get(SECONDS_KEY)));
             millis = Math.addExact(millis, getLongField(duration, MILLISECONDS_KEY));
         } catch (ArithmeticException e) {
-            throw new IllegalArgumentException("A wait bound is too large to represent in milliseconds");
+            throw new IllegalArgumentException(what + " is too large to represent in milliseconds");
         }
         if (millis < 0) {
-            throw new IllegalArgumentException("A wait bound must not be negative, got " + millis + " ms");
+            throw new IllegalArgumentException(what + " must not be negative, got " + millis + " ms");
         }
         return millis;
     }
 
     // The bound as executions before the units change recorded it: hours, minutes and seconds only.
-    private static long legacyDurationToMillis(BMap<BString, Object> duration) {
+    public static long legacyDurationToMillis(BMap<BString, Object> duration) {
         return (getLongField(duration, HOURS_KEY) * 3600_000L) + (getLongField(duration, MINUTES_KEY) * 60_000L)
                 + secondsToMillis(duration.get(SECONDS_KEY));
     }

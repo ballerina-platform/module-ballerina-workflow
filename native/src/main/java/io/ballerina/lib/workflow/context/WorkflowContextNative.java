@@ -21,6 +21,7 @@ package io.ballerina.lib.workflow.context;
 import io.ballerina.lib.workflow.ModuleUtils;
 import io.ballerina.lib.workflow.TaskKeys;
 import io.ballerina.lib.workflow.runtime.nativeimpl.InstanceReads;
+import io.ballerina.lib.workflow.runtime.nativeimpl.WaitUtils;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.ActivityNaming;
 import io.ballerina.lib.workflow.worker.InstanceIdNaming;
@@ -786,17 +787,27 @@ public final class WorkflowContextNative {
         return new ContextInfo(workflowId, workflowType);
     }
 
+    // Marks executions started once sleep counts weeks and days and refuses months and years
+    private static final String SLEEP_UNITS_CHANGE_ID = "sleep-units";
+    private static final int SLEEP_ALL_UNITS = 1;
+
     /**
-     * Sleep for a specified duration in milliseconds.
+     * Durable sleep for a {@code workflow:Duration}.
      *
      * @param contextHandle Context handle
-     * @param millis        Duration in milliseconds
+     * @param duration      the duration record
      * @param stepId        the step's identity, recorded as the timer's summary, or nil
      * @return null on success, error on failure
      */
-    public static Object sleepMillis(Object contextHandle, long millis, Object stepId) {
+    public static Object sleep(Object contextHandle, BMap<BString, Object> duration, Object stepId) {
         try {
             WorkflowWorkerNative.awaitWhileSuspended();
+            // Executions whose history predates the change keep the timer they recorded: weeks and
+            // days ignored, months and years too. Newer executions get every unit.
+            boolean allUnits = Workflow.getVersion(SLEEP_UNITS_CHANGE_ID, Workflow.DEFAULT_VERSION,
+                    SLEEP_ALL_UNITS) != Workflow.DEFAULT_VERSION;
+            long millis = allUnits ? WaitUtils.durationToMillis(duration, "A sleep")
+                    : WaitUtils.legacyDurationToMillis(duration);
             String stepIdValue = stepId instanceof BString bStepId ? bStepId.getValue() : null;
             if (stepIdValue == null) {
                 Workflow.sleep(Duration.ofMillis(millis));
@@ -809,6 +820,8 @@ public final class WorkflowContextNative {
                     .setSummary(stepIdValue).build();
             Workflow.newTimer(Duration.ofMillis(millis), options).get();
             return null;
+        } catch (IllegalArgumentException e) {
+            return ErrorCreator.createError(StringUtils.fromString(e.getMessage()));
         } catch (io.temporal.worker.NonDeterministicException e) {
             throw e;
         } catch (io.temporal.failure.TemporalFailure e) {

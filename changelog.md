@@ -35,6 +35,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   is therefore part of the result step's input too, and is recorded in the agent's history a second time.
   ([#9379](https://github.com/ballerina-platform/ballerina-library/issues/9379))
 
+- `Context.sleep` counts the `weeks` and `days` fields of its `Duration`. A call such as
+  `ctx.sleep({days: 1})` returned at once; it now waits the day. `years` and `months` have no fixed
+  length and are refused with an error rather than dropped. An instance that recorded the shorter
+  timer before this change keeps it on replay.
+  ([#9398](https://github.com/ballerina-platform/ballerina-library/issues/9398))
+
 - A durable agent's human task with a `taskInputType` now advertises that type's JSON schema to the
   model as the tool's parameters (plus the reserved `excludedUsers`), and an input that does not
   match it is reported with the conversion detail (which field, expected and found) rather than a

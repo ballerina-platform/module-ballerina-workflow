@@ -31,6 +31,7 @@ import io.ballerina.runtime.api.types.UnionType;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.utils.TypeUtils;
 import io.ballerina.runtime.api.values.BArray;
+import io.ballerina.runtime.api.values.BDecimal;
 import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BObject;
@@ -39,6 +40,9 @@ import io.ballerina.runtime.api.values.BTypedesc;
 import io.ballerina.runtime.internal.values.FutureValue;
 import io.temporal.workflow.Workflow;
 import org.slf4j.Logger;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 
 /**
  * Native implementation for workflow data-wait utility functions.
@@ -192,42 +196,68 @@ public final class WaitUtils {
      * @return the bound in milliseconds
      * @throws IllegalArgumentException when the duration is not a bound
      */
-    static long durationToMillis(BMap<BString, Object> duration) {
+    public static long durationToMillis(BMap<BString, Object> duration) {
+        return durationToMillis(duration, "A wait bound");
+    }
+
+    /**
+     * As {@link #durationToMillis(BMap)}, with {@code what} naming the caller in the messages ("A sleep").
+     */
+    public static long durationToMillis(BMap<BString, Object> duration, String what) {
         if (getLongField(duration, YEARS_KEY) != 0 || getLongField(duration, MONTHS_KEY) != 0) {
-            throw new IllegalArgumentException("A wait bound does not support months or years");
+            throw new IllegalArgumentException(what + " does not support months or years");
         }
-        long millis;
+        // Exact total first: an intermediate overflow or a sub-millisecond negative must not slip through
+        BigDecimal totalMillis = unitMillis(duration, WEEKS_KEY, 604_800_000L)
+                .add(unitMillis(duration, DAYS_KEY, 86_400_000L))
+                .add(unitMillis(duration, HOURS_KEY, 3_600_000L))
+                .add(unitMillis(duration, MINUTES_KEY, 60_000L))
+                .add(secondsToExactMillis(duration.get(SECONDS_KEY)))
+                .add(unitMillis(duration, MILLISECONDS_KEY, 1L));
+        if (totalMillis.signum() < 0) {
+            throw new IllegalArgumentException(what + " must not be negative, got "
+                    + totalMillis.stripTrailingZeros().toPlainString() + " ms");
+        }
         try {
-            millis = Math.addExact(Math.multiplyExact(getLongField(duration, WEEKS_KEY), 604_800_000L),
-                    Math.multiplyExact(getLongField(duration, DAYS_KEY), 86_400_000L));
-            millis = Math.addExact(millis, Math.multiplyExact(getLongField(duration, HOURS_KEY), 3_600_000L));
-            millis = Math.addExact(millis, Math.multiplyExact(getLongField(duration, MINUTES_KEY), 60_000L));
-            millis = Math.addExact(millis, secondsToMillis(duration.get(SECONDS_KEY)));
-            millis = Math.addExact(millis, getLongField(duration, MILLISECONDS_KEY));
+            return totalMillis.setScale(0, RoundingMode.DOWN).longValueExact();
         } catch (ArithmeticException e) {
-            throw new IllegalArgumentException("A wait bound is too large to represent in milliseconds");
+            throw new IllegalArgumentException(what + " is too large to represent in milliseconds");
         }
-        if (millis < 0) {
-            throw new IllegalArgumentException("A wait bound must not be negative, got " + millis + " ms");
-        }
-        return millis;
     }
 
     // The bound as executions before the units change recorded it: hours, minutes and seconds only.
-    private static long legacyDurationToMillis(BMap<BString, Object> duration) {
+    public static long legacyDurationToMillis(BMap<BString, Object> duration) {
         return (getLongField(duration, HOURS_KEY) * 3600_000L) + (getLongField(duration, MINUTES_KEY) * 60_000L)
                 + secondsToMillis(duration.get(SECONDS_KEY));
     }
 
+    // What sleep recorded before the units change: the Ballerina `<int>(totalSeconds * 1000)`, which rounds the
+    // whole total half to even, unlike the bound's truncation of the seconds term
+    public static long legacySleepDurationToMillis(BMap<BString, Object> duration) {
+        BigDecimal totalMillis = unitMillis(duration, HOURS_KEY, 3_600_000L)
+                .add(unitMillis(duration, MINUTES_KEY, 60_000L))
+                .add(secondsToExactMillis(duration.get(SECONDS_KEY)));
+        return totalMillis.setScale(0, RoundingMode.HALF_EVEN).longValueExact();
+    }
+
+    private static BigDecimal unitMillis(BMap<BString, Object> duration, BString key, long millisPerUnit) {
+        return BigDecimal.valueOf(getLongField(duration, key)).multiply(BigDecimal.valueOf(millisPerUnit));
+    }
+
     private static long secondsToMillis(Object seconds) {
+        // Exact so an overflow is refused by the caller rather than wrapping into a short wait
+        return secondsToExactMillis(seconds).setScale(0, RoundingMode.DOWN).longValueExact();
+    }
+
+    private static BigDecimal secondsToExactMillis(Object seconds) {
         if (seconds instanceof Long secLong) {
-            return Math.multiplyExact(secLong, 1000L);
+            return BigDecimal.valueOf(secLong).multiply(BigDecimal.valueOf(1000L));
         } else if (seconds instanceof Double secDouble) {
-            return (long) (secDouble * 1000.0);
-        } else if (seconds instanceof io.ballerina.runtime.api.values.BDecimal secDec) {
-            return secDec.decimalValue().multiply(java.math.BigDecimal.valueOf(1000)).longValue();
+            return BigDecimal.valueOf(secDouble).multiply(BigDecimal.valueOf(1000L));
+        } else if (seconds instanceof BDecimal secDec) {
+            return secDec.decimalValue().multiply(BigDecimal.valueOf(1000L));
         }
-        return 0L;
+        return BigDecimal.ZERO;
     }
 
     private static long getLongField(BMap<BString, Object> map, BString key) {

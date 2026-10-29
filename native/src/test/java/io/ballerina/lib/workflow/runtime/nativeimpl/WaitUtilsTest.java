@@ -71,6 +71,17 @@ public class WaitUtilsTest {
     }
 
     @Test
+    public void theSignAndOverflowAreJudgedOnTheExactTotal() {
+        // A sub-millisecond negative must not truncate to a zero-length wait
+        IllegalArgumentException negative = Assert.expectThrows(IllegalArgumentException.class,
+                () -> WaitUtils.durationToMillis(duration(0, 0, 0, 0, 0, 0, "-0.0006"), "A sleep"));
+        Assert.assertEquals(negative.getMessage(), "A sleep must not be negative, got -0.6 ms");
+        // Terms that overflow a long on their own but cancel in the total are a valid wait
+        long weeks = 1L << 40;
+        Assert.assertEquals(WaitUtils.durationToMillis(duration(0, 0, weeks, -7 * weeks, 0, 0, "1")), 1_000L);
+    }
+
+    @Test
     public void theLegacySleepRoundsTheTotalHalfToEven() {
         // The pre-change Ballerina `<int>(totalSeconds * 1000)`: weeks and days ignored, ties to even
         Assert.assertEquals(WaitUtils.legacySleepDurationToMillis(duration(0, 0, 1, 2, 1, 0, "0")), 3_600_000L);

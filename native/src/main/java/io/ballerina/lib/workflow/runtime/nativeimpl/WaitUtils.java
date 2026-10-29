@@ -226,6 +226,22 @@ public final class WaitUtils {
                 + secondsToMillis(duration.get(SECONDS_KEY));
     }
 
+    // What sleep recorded before the units change: the Ballerina `<int>(totalSeconds * 1000)`, which rounds the
+    // whole total half to even, unlike the bound's truncation of the seconds term
+    public static long legacySleepDurationToMillis(BMap<BString, Object> duration) {
+        java.math.BigDecimal totalMillis = java.math.BigDecimal.valueOf(getLongField(duration, HOURS_KEY))
+                .multiply(java.math.BigDecimal.valueOf(3_600_000L))
+                .add(java.math.BigDecimal.valueOf(getLongField(duration, MINUTES_KEY))
+                        .multiply(java.math.BigDecimal.valueOf(60_000L)));
+        Object seconds = duration.get(SECONDS_KEY);
+        if (seconds instanceof io.ballerina.runtime.api.values.BDecimal secDec) {
+            totalMillis = totalMillis.add(secDec.decimalValue().multiply(java.math.BigDecimal.valueOf(1000)));
+        } else {
+            totalMillis = totalMillis.add(java.math.BigDecimal.valueOf(secondsToMillis(seconds)));
+        }
+        return totalMillis.setScale(0, java.math.RoundingMode.HALF_EVEN).longValueExact();
+    }
+
     private static long secondsToMillis(Object seconds) {
         if (seconds instanceof Long secLong) {
             return Math.multiplyExact(secLong, 1000L);

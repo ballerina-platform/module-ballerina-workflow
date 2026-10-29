@@ -71,6 +71,15 @@ public class WaitUtilsTest {
     }
 
     @Test
+    public void theLegacySleepRoundsTheTotalHalfToEven() {
+        // The pre-change Ballerina `<int>(totalSeconds * 1000)`: weeks and days ignored, ties to even
+        Assert.assertEquals(WaitUtils.legacySleepDurationToMillis(duration(0, 0, 1, 2, 1, 0, "0")), 3_600_000L);
+        Assert.assertEquals(WaitUtils.legacySleepDurationToMillis(duration(0, 0, 0, 0, 0, 0, "0.0006")), 1L);
+        Assert.assertEquals(WaitUtils.legacySleepDurationToMillis(duration(0, 0, 0, 0, 0, 0, "0.0005")), 0L);
+        Assert.assertEquals(WaitUtils.legacySleepDurationToMillis(duration(0, 0, 0, 0, 0, 0, "0.0015")), 2L);
+    }
+
+    @Test
     public void theLegacyBoundIgnoresWeeksAndDays() {
         // What executions started before the units change recorded, and must keep on replay
         Assert.assertEquals(WaitUtils.legacyDurationToMillis(duration(0, 0, 1, 2, 3, 0, "0")), 3 * 3_600_000L);

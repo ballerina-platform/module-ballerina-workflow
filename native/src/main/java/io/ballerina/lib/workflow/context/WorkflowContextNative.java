@@ -807,7 +807,7 @@ public final class WorkflowContextNative {
             boolean allUnits = Workflow.getVersion(SLEEP_UNITS_CHANGE_ID, Workflow.DEFAULT_VERSION,
                     SLEEP_ALL_UNITS) != Workflow.DEFAULT_VERSION;
             long millis = allUnits ? WaitUtils.durationToMillis(duration, "A sleep")
-                    : WaitUtils.legacyDurationToMillis(duration);
+                    : WaitUtils.legacySleepDurationToMillis(duration);
             String stepIdValue = stepId instanceof BString bStepId ? bStepId.getValue() : null;
             if (stepIdValue == null) {
                 Workflow.sleep(Duration.ofMillis(millis));

@@ -232,7 +232,9 @@ public final class WaitUtils {
         } else if (seconds instanceof Double secDouble) {
             return (long) (secDouble * 1000.0);
         } else if (seconds instanceof io.ballerina.runtime.api.values.BDecimal secDec) {
-            return secDec.decimalValue().multiply(java.math.BigDecimal.valueOf(1000)).longValue();
+            // Exact so an overflow is refused by the caller rather than wrapping into a short wait
+            return secDec.decimalValue().multiply(java.math.BigDecimal.valueOf(1000))
+                    .setScale(0, java.math.RoundingMode.DOWN).longValueExact();
         }
         return 0L;
     }

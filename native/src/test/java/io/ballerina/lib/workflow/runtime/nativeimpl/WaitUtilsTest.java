@@ -62,6 +62,15 @@ public class WaitUtilsTest {
     }
 
     @Test
+    public void secondsThatOverflowMillisecondsAreRefused() {
+        // 2^64 / 1000 + 5 seconds wrapped to 5000 ms with a modular conversion
+        IllegalArgumentException refused = Assert.expectThrows(IllegalArgumentException.class,
+                () -> WaitUtils.durationToMillis(duration(0, 0, 0, 0, 0, 0, "18446744073709556.616"), "A sleep"));
+        Assert.assertEquals(refused.getMessage(), "A sleep is too large to represent in milliseconds");
+        Assert.assertEquals(WaitUtils.durationToMillis(duration(0, 0, 0, 0, 0, 0, "1.2345")), 1_234L);
+    }
+
+    @Test
     public void theLegacyBoundIgnoresWeeksAndDays() {
         // What executions started before the units change recorded, and must keep on replay
         Assert.assertEquals(WaitUtils.legacyDurationToMillis(duration(0, 0, 1, 2, 3, 0, "0")), 3 * 3_600_000L);

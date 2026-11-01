@@ -162,6 +162,14 @@ final workflow:DurableAgent stockCheckAgent = check new ({
     activities: [agentCheckStock]
 });
 
+# The same agent declared with shorthand fields: `{systemPrompt, model}` is
+# `{systemPrompt: systemPrompt, model: model}`, so it registers and runs like stockCheckAgent.
+final AgentMockModelProvider model = agentMockModel;
+final readonly & ai:SystemPrompt systemPrompt =
+        {role: "", instructions: "You are an inventory assistant. Use agentCheckStock for availability."};
+
+final workflow:DurableAgent shorthandStockAgent = check new ({systemPrompt, model, activities: [agentCheckStock]});
+
 # Chat-driven durable agent: waits durably for the first chat event before reasoning.
 final workflow:DurableAgent chatDrivenStockAgent = check new ({
     systemPrompt: {role: "", instructions: "You are an inventory assistant. Use agentCheckStock for availability."},

@@ -6,20 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-### Changed
-
-- `publishMetricSamples` and `captureActivityContent` under `[ballerina.workflow.observe]` follow Ballerina
-  observability when they are not set. Metric samples are published when metrics or metrics logs are enabled,
-  and activity content is logged when observability is enabled. Setting either to `true` or `false` still
-  overrides it. A program without observability no longer writes these records to its log.
-  ([#9305](https://github.com/ballerina-platform/ballerina-library/issues/9305))
-
-- Importing `ballerina/workflow.management.rest` now serves the management REST API: `enableManagementApi`
-  defaults to `true`. Set `enableManagementApi = false` to keep the import without opening the port (`8234` by
-  default). Basic auth stays on by default; when no `[[ballerina.auth.users]]` are configured, the startup log
-  and the `401` response say how to add users or turn basic auth off.
-  ([#9306](https://github.com/ballerina-platform/ballerina-library/issues/9306))
-
 ### Fixed
 
 - A durable agent with a record, map or nested `resultType` now produces its typed result against a real
@@ -46,6 +32,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   length and are refused with an error rather than dropped. An instance that recorded the shorter
   timer before this change keeps it on replay.
   ([#9398](https://github.com/ballerina-platform/ballerina-library/issues/9398))
+
+## [1.0.2] - 2026-10-22
+
+### Fixed
 
 - A durable agent's human task with a `taskInputType` now advertises that type's JSON schema to the
   model as the tool's parameters (plus the reserved `excludedUsers`), and an input that does not
@@ -81,6 +71,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   The descriptor lists peers again (`source: PEER` for an agent, `PEER_WORKFLOW` for a workflow
   function, with its input); they had been missing since the `name` field was removed in 0.10.
   ([#9319](https://github.com/ballerina-platform/ballerina-library/issues/9319))
+
+## [1.0.1] - 2026-10-16
+
+### Changed
+
+- `publishMetricSamples` and `captureActivityContent` under `[ballerina.workflow.observe]` follow Ballerina
+  observability when they are not set. Metric samples are published when metrics or metrics logs are enabled,
+  and activity content is logged when observability is enabled. Setting either to `true` or `false` still
+  overrides it. A program without observability no longer writes these records to its log.
+  ([#9305](https://github.com/ballerina-platform/ballerina-library/issues/9305))
+
+- Importing `ballerina/workflow.management.rest` now serves the management REST API: `enableManagementApi`
+  defaults to `true`. Set `enableManagementApi = false` to keep the import without opening the port (`8234` by
+  default). Basic auth stays on by default; when no `[[ballerina.auth.users]]` are configured, the startup log
+  and the `401` response say how to add users or turn basic auth off.
+  ([#9306](https://github.com/ballerina-platform/ballerina-library/issues/9306))
+
+### Fixed
 
 - `workItems.list`, `humanTasks.list` and `reviewActivities.list` page through Temporal visibility
   instead of reading every matching task on each request. An integration with a few thousand task

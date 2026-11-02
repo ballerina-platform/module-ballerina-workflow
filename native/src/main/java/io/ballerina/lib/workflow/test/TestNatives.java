@@ -20,8 +20,14 @@ package io.ballerina.lib.workflow.test;
 
 import io.ballerina.lib.workflow.TaskKeys;
 import io.ballerina.lib.workflow.utils.TypesUtil;
+import io.ballerina.runtime.api.Module;
+import io.ballerina.runtime.api.creators.ErrorCreator;
+import io.ballerina.runtime.api.types.AnnotatableType;
 import io.ballerina.runtime.api.types.Type;
+import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.utils.StringUtils;
+import io.ballerina.runtime.api.utils.TypeUtils;
+import io.ballerina.runtime.api.values.BArray;
 import io.ballerina.runtime.api.values.BObject;
 import io.ballerina.runtime.api.values.BString;
 import io.ballerina.runtime.api.values.BTypedesc;
@@ -249,7 +255,7 @@ public final class TestNatives {
      * Backs the {@code generate} remote method of the mock {@code ai:ModelProvider} used in agent tests. Because
      * {@code ai:ModelProvider.generate} is dependently typed, implementations must have an external body — real
      * providers (Wso2, Anthropic, OpenAI) all bind it to Java. This mock returns a fixed structured value coerced
-     * to the requested type.
+     * to the requested type, and like ballerina/ai refuses a record or map type that carries no {@code @ai:JsonSchema}.
      *
      * @param self     the mock model provider object (unused)
      * @param prompt   the prompt object (unused)
@@ -257,10 +263,64 @@ public final class TestNatives {
      * @return the fixed value coerced to {@code typedesc}, or an error
      */
     public static Object mockGenerate(BObject self, BObject prompt, BTypedesc typedesc) {
+        Type expected = TypeUtils.getImpliedType(typedesc.getDescribingType());
+        boolean structured = expected.getTag() == TypeTags.RECORD_TYPE_TAG || expected.getTag() == TypeTags.MAP_TAG;
+        if (structured && !hasAiJsonSchema(expected)) {
+            return ErrorCreator.createError(new Module("ballerina", "ai", "1"), "Error", StringUtils.fromString(
+                    "Runtime schema generation is not yet supported for type: " + expected.getName()), null, null);
+        }
+        if (expected.getTag() == TypeTags.STRING_TAG) {
+            // A text request gets the fixed value as JSON text, the way a model answers one.
+            return StringUtils.fromString("{\"summary\": \"generated summary\", \"score\": 7}");
+        }
         Map<String, Object> fixed = new HashMap<>();
         fixed.put("summary", "generated summary");
         fixed.put("score", 7L);
         Object ballerinaValue = TypesUtil.convertJavaToBallerinaType(fixed);
         return TypesUtil.cloneWithType(ballerinaValue, typedesc.getDescribingType());
+    }
+
+    /**
+     * A model that answers a schema request with JSON missing the required {@code summary}, and conforms only to a
+     * repair prompt that carries both the schema and the reason the first answer failed. With {@code repairs} false
+     * on the model object, it never conforms.
+     *
+     * @param self     the model object
+     * @param prompt   the prompt
+     * @param typedesc the expected type (string for a schema request)
+     * @return the answer text
+     */
+    public static Object mockGenerateNeedsRepair(BObject self, BObject prompt, BTypedesc typedesc) {
+        String text = promptText(prompt);
+        boolean repairs = self.getBooleanValue(StringUtils.fromString("repairs"));
+        boolean repairRound = text.contains("\"properties\"") && text.contains("did not conform: ")
+                && text.contains("summary");
+        return StringUtils.fromString(repairs && repairRound
+                ? "{\"summary\": \"repaired summary\", \"score\": 3}" : "{\"score\": 3}");
+    }
+
+    private static String promptText(BObject prompt) {
+        BArray strings = (BArray) prompt.get(StringUtils.fromString("strings"));
+        BArray insertions = (BArray) prompt.get(StringUtils.fromString("insertions"));
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < strings.size(); i++) {
+            text.append(strings.getBString(i).getValue());
+            if (i < insertions.size()) {
+                text.append(StringUtils.getStringValue(insertions.get(i)));
+            }
+        }
+        return text.toString();
+    }
+
+    private static boolean hasAiJsonSchema(Type type) {
+        if (!(type instanceof AnnotatableType annotatable)) {
+            return false;
+        }
+        for (BString key : annotatable.getAnnotations().getKeys()) {
+            if (key.getValue().startsWith("ballerina/ai") && key.getValue().endsWith("JsonSchema")) {
+                return true;
+            }
+        }
+        return false;
     }
 }

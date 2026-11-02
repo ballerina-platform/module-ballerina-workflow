@@ -553,10 +553,78 @@ isolated function generateResult(string agentName, string declaredAgent, string 
     ai:ModelProvider model = check getAgentModel(agentName);
     DurableAgentRunSpec spec = check getDurableAgentRunSpec(declaredAgent);
     typedesc<anydata> resultType = spec.resultType ?: anydata;
-    ai:Prompt prompt = `${query}`;
-    anydata result = check model->generate(prompt, resultType);
-    return result;
+    string? schema = resultType.@ai:JsonSchema is () ? resultSchemaForGeneration(resultType) : ();
+    if schema is () {
+        ai:Prompt prompt = `${query}`;
+        anydata result = check model->generate(prompt, resultType);
+        return result;
+    }
+    return generateAgainstSchema(model, query, schema, resultType);
 }
+
+// For a type ballerina/ai cannot describe at runtime, the answer is requested as JSON text against our schema; asking
+// ai for `json` instead comes back as nil. An answer that does not convert gets one repair round with the reason.
+isolated function generateAgainstSchema(ai:ModelProvider model, string query, string schema,
+        typedesc<anydata> resultType) returns anydata|error {
+    ai:Prompt prompt = `${query}
+
+Respond with only a JSON value, no other text, that conforms to this JSON schema: ${schema}`;
+    string answer = check model->generate(prompt);
+    anydata|error result = toResultType(answer, resultType);
+    if result is anydata {
+        return result;
+    }
+    ai:Prompt repair = `${query}
+
+Respond with only a JSON value, no other text, that conforms to this JSON schema: ${schema}
+
+Your previous answer ${answer} did not conform: ${conversionDetail(result)}`;
+    string repaired = check model->generate(repair);
+    anydata|error repairedResult = toResultType(repaired, resultType);
+    if repairedResult is error {
+        return error(string `The model's answer does not match the declared result type: ${
+            conversionDetail(repairedResult)}`);
+    }
+    return repairedResult;
+}
+
+// Parses a text answer as JSON, inside a Markdown code fence or not, and converts it to the declared type.
+isolated function toResultType(string answer, typedesc<anydata> resultType) returns anydata|error {
+    string text = answer.trim();
+    int? fenceEnd = text.lastIndexOf("```");
+    if text.startsWith("```") && fenceEnd is int && fenceEnd >= 3 {
+        string body = text.substring(3, fenceEnd);
+        // The opening line may name the language; a fence written on one line has none.
+        int? newline = body.indexOf("\n");
+        if newline is int && body.substring(0, newline).trim().matches(re `[A-Za-z0-9_+.-]*`) {
+            body = body.substring(newline + 1);
+        }
+        text = body.trim();
+    }
+    json|error parsed = text.fromJsonString();
+    anydata|error converted = parsed is json ? parsed.cloneWithType(resultType) : parsed;
+    if converted is anydata {
+        return converted;
+    }
+    // The text itself is still a valid answer for an enum or string member: an unquoted word, or JSON such as
+    // `true` that does not convert to the type but reads as a string member of a union.
+    anydata|error unquoted = text.cloneWithType(resultType);
+    if unquoted is anydata {
+        return unquoted;
+    }
+    return parsed is error ? error(string `the answer is not JSON: ${parsed.message()}`) : converted;
+}
+
+// A conversion error's message is only its type name; the reason is in the detail.
+isolated function conversionDetail(error e) returns string {
+    var message = e.detail()["message"];
+    return message is string ? message : e.message();
+}
+
+// The result type's JSON schema when ballerina/ai cannot build a usable one (records, maps, enums); `()` otherwise.
+isolated function resultSchemaForGeneration(typedesc<anydata> resultType) returns string? = @java:Method {
+    'class: "io.ballerina.lib.workflow.runtime.nativeimpl.DurableAgentNative"
+} external;
 
 // Converts a mirror message to the corresponding ballerina/ai message type.
 isolated function toAiMessage(AgentChatMessage message) returns ai:ChatMessage|error {
@@ -893,7 +961,8 @@ isolated function runDurableAgentObject(handle agentCtx, map<anydata> runInput)
     anydata typedResult = check callAgentActivity("generateResult", {
         "agentName": getAgentWorkflowType(agentCtx),
         "declaredAgent": agentName,
-        "query": "Produce the final result of this conversation." +
+        // The request travels with the outcome, so fields the final reply does not restate are not invented.
+        "query": "Produce the final result of this conversation.\n\nRequest:\n" + effectiveQuery +
             (finalText == "" ? "" : "\n\nConversation outcome:\n" + finalText)
     });
     return typedResult;

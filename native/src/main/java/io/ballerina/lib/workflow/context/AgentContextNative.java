@@ -77,6 +77,8 @@ public final class AgentContextNative {
     // Marks executions started once an update is answered by the reply that closes its turn
     private static final String TURN_ANSWER_CHANGE_ID = "turn-answered-by-closing-reply";
     private static final int TURN_ANSWERED_BY_CLOSING_REPLY = 1;
+    private static final String EVENT_REPLY_CHANGE_ID = "event-replies-before-close";
+    private static final int EVENT_REPLIES_BEFORE_CLOSE = 1;
 
     private static final String CALL_CONFIG_MARKER = "__callConfig__";
     private static final String RETRY_ON_ERROR_KEY = "retryOnError";
@@ -1178,6 +1180,12 @@ public final class AgentContextNative {
         // before the workflow method returns (critical on the failure path, where the
         // workflow would otherwise fail without scheduling them again).
         Workflow.await(Workflow::isEveryHandlerFinished);
+        // A workflow caller's reply is a signal from a detached procedure: wait until it is delivered, or the
+        // execution completes first and the caller waits forever.
+        if (Workflow.getVersion(EVENT_REPLY_CHANGE_ID, Workflow.DEFAULT_VERSION, EVENT_REPLIES_BEFORE_CLOSE)
+                != Workflow.DEFAULT_VERSION) {
+            Workflow.await(info.signalWrapper::eventRepliesSettled);
+        }
     }
 
     /**

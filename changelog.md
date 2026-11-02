@@ -22,6 +22,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- A durable agent with a record, map or nested `resultType` now produces its typed result against a real
+  model. Before, the final step failed with `Runtime schema generation is not yet supported for type`
+  because `ballerina/ai` cannot describe such a type at runtime unless it carries `@ai:JsonSchema`; the
+  module now supplies the schema itself.
+  ([#9377](https://github.com/ballerina-platform/ballerina-library/issues/9377))
+
+- A workflow that chats with a durable agent now receives the reply of the turn that ends the
+  conversation. Before, the agent's execution could complete before that reply was delivered, and the
+  workflow's `waitForDataResult` waited forever. The typed result is also built from the original request
+  as well as the final reply, so fields the reply does not restate are no longer invented. The request
+  is therefore part of the result step's input too, and is recorded in the agent's history a second time.
+  ([#9379](https://github.com/ballerina-platform/ballerina-library/issues/9379))
+
+- A durable agent declared with shorthand config fields, such as `{systemPrompt, model}`, is now registered:
+  each shorthand field is read as the variable of the same name. Before, the agent compiled and every `run`
+  failed. Capabilities held in a variable (`activities: myActivities`, `events: {chat: chatConfig}`) and a
+  spread in the config (`{...base}`) are now compile errors instead of being left unregistered.
+  ([#9378](https://github.com/ballerina-platform/ballerina-library/issues/9378))
+
+- `Context.sleep` counts the `weeks` and `days` fields of its `Duration`. A call such as
+  `ctx.sleep({days: 1})` returned at once; it now waits the day. `years` and `months` have no fixed
+  length and are refused with an error rather than dropped. An instance that recorded the shorter
+  timer before this change keeps it on replay.
+  ([#9398](https://github.com/ballerina-platform/ballerina-library/issues/9398))
+
 - A durable agent's human task with a `taskInputType` now advertises that type's JSON schema to the
   model as the tool's parameters (plus the reserved `excludedUsers`), and an input that does not
   match it is reported with the conversion detail (which field, expected and found) rather than a

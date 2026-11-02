@@ -162,6 +162,14 @@ final workflow:DurableAgent stockCheckAgent = check new ({
     activities: [agentCheckStock]
 });
 
+# The same agent declared with shorthand fields: `{systemPrompt, model}` is
+# `{systemPrompt: systemPrompt, model: model}`, so it registers and runs like stockCheckAgent.
+final AgentMockModelProvider model = agentMockModel;
+final readonly & ai:SystemPrompt systemPrompt =
+        {role: "", instructions: "You are an inventory assistant. Use agentCheckStock for availability."};
+
+final workflow:DurableAgent shorthandStockAgent = check new ({systemPrompt, model, activities: [agentCheckStock]});
+
 # Chat-driven durable agent: waits durably for the first chat event before reasoning.
 final workflow:DurableAgent chatDrivenStockAgent = check new ({
     systemPrompt: {role: "", instructions: "You are an inventory assistant. Use agentCheckStock for availability."},
@@ -229,3 +237,15 @@ final workflow:DurableAgent conversationalStockAgent = check new ({
         chat: {request: string, response: string, cardinality: workflow:MULTI_EVENT}
     }
 });
+
+# Chats with the conversational agent from a workflow: the second turn ends the conversation,
+# and its reply must still reach this workflow.
+@workflow:Workflow
+function conversationFromWorkflow(workflow:Context ctx) returns string[]|error {
+    string agentId = check conversationalStockAgent.run("hello");
+    string firstTurn = check conversationalStockAgent.sendData(agentId, "chat", "how are you");
+    string firstReply = check conversationalStockAgent.waitForDataResult(agentId, firstTurn);
+    string lastTurn = check conversationalStockAgent.sendData(agentId, "chat", "ok bye");
+    string lastReply = check conversationalStockAgent.waitForDataResult(agentId, lastTurn);
+    return [firstReply, lastReply];
+}

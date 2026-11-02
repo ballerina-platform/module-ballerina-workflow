@@ -2156,7 +2156,7 @@ public final class WorkflowWorkerNative {
                             String eventName = String.valueOf(eventMap.get(EVENT_NAME_KEY));
                             String replyTo = String.valueOf(eventMap.get(EVENT_REPLY_TO_KEY));
                             Object payload = eventMap.get("data");
-                            io.temporal.workflow.Async.procedure(() -> {
+                            signalWrapper.trackEventReply(io.temporal.workflow.Async.procedure(() -> {
                                 Map<String, Object> reply = new HashMap<>();
                                 reply.put(EVENT_TOKEN_KEY, token);
                                 AgentContextNative.AgentContextInfo info = this.agentContextInfo;
@@ -2189,7 +2189,7 @@ public final class WorkflowWorkerNative {
                                 }
                                 Workflow.newUntypedExternalWorkflowStub(replyTo)
                                         .signal(AGENT_EVENT_REPLY_SIGNAL_NAME, reply);
-                            });
+                            }));
                             return;
                         }
 

@@ -67,3 +67,6 @@ java_pid*.hprof
 # Contains WSO2 model-provider credentials — generated locally (see the example README)
 examples/agent-order-processing/Config.toml
 examples/agent-human-approval/Config.toml
+manual-tests/*/Config.toml
+manual-tests/*/Dependencies.toml
+manual-tests/*/results/

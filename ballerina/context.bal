@@ -56,15 +56,12 @@ public client class Context {
 
     # Durable sleep that survives process crashes and restarts. Use instead of `runtime:sleep`.
     #
-    # + duration - The duration to sleep
+    # + duration - The duration to sleep: weeks down to seconds. `years` and `months` have no fixed
+    #              length and are refused
     # + stepId - Identity of this step within the workflow, as for `callActivity`
     # + return - An error if the sleep fails, otherwise nil
     public isolated function sleep(Duration duration, string? stepId = ()) returns error? {
-        decimal totalSeconds = <decimal>duration.hours * 3600 +
-                               <decimal>duration.minutes * 60 +
-                               duration.seconds;
-        int millis = <int>(totalSeconds * 1000);
-        return sleepContextNative(self.nativeContext, millis, stepId);
+        return sleepContextNative(self.nativeContext, duration, stepId);
     }
 
     # Returns the deterministic workflow time. Use instead of `time:utcNow()` inside workflows.
@@ -228,9 +225,10 @@ public client class Context {
 
 // Native function declarations
 
-isolated function sleepContextNative(handle contextHandle, int millis, string? stepId) returns error? = @java:Method {
+isolated function sleepContextNative(handle contextHandle, Duration duration, string? stepId) returns error?
+        = @java:Method {
     'class: "io.ballerina.lib.workflow.context.WorkflowContextNative",
-    name: "sleepMillis"
+    name: "sleep"
 } external;
 
 isolated function currentTimeMillisContextNative(handle contextHandle) returns int = @java:Method {

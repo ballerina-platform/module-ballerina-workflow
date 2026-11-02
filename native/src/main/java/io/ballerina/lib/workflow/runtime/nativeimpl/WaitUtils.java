@@ -225,10 +225,19 @@ public final class WaitUtils {
         }
     }
 
-    // The bound as executions before the units change recorded it: hours, minutes and seconds only.
+    // The bound as executions before the units change recorded it: hours, minutes and seconds only, a decimal
+    // seconds term beyond the long range wrapped (BigDecimal.longValue) and so replayed as that wrapped value
     public static long legacyDurationToMillis(BMap<BString, Object> duration) {
-        return (getLongField(duration, HOURS_KEY) * 3600_000L) + (getLongField(duration, MINUTES_KEY) * 60_000L)
-                + secondsToMillis(duration.get(SECONDS_KEY));
+        Object seconds = duration.get(SECONDS_KEY);
+        try {
+            long secondsMillis = seconds instanceof BDecimal ? secondsToExactMillis(seconds).longValue()
+                    : secondsToMillis(seconds);
+            return (getLongField(duration, HOURS_KEY) * 3600_000L) + (getLongField(duration, MINUTES_KEY) * 60_000L)
+                    + secondsMillis;
+        } catch (ArithmeticException e) {
+            // An int seconds term overflowed before too, as an escaped exception no history recorded
+            throw new IllegalArgumentException("A wait bound is too large to represent in milliseconds");
+        }
     }
 
     // What sleep recorded before the units change: the Ballerina `<int>(totalSeconds * 1000)`, which rounds the
@@ -237,7 +246,12 @@ public final class WaitUtils {
         BigDecimal totalMillis = unitMillis(duration, HOURS_KEY, 3_600_000L)
                 .add(unitMillis(duration, MINUTES_KEY, 60_000L))
                 .add(secondsToExactMillis(duration.get(SECONDS_KEY)));
-        return totalMillis.setScale(0, RoundingMode.HALF_EVEN).longValueExact();
+        try {
+            return totalMillis.setScale(0, RoundingMode.HALF_EVEN).longValueExact();
+        } catch (ArithmeticException e) {
+            // The Ballerina conversion panicked on overflow, so no history holds such a timer
+            throw new IllegalArgumentException("A sleep is too large to represent in milliseconds");
+        }
     }
 
     private static BigDecimal unitMillis(BMap<BString, Object> duration, BString key, long millisPerUnit) {

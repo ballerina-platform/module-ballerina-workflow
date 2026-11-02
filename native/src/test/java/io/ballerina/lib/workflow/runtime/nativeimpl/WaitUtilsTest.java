@@ -95,4 +95,23 @@ public class WaitUtilsTest {
         // What executions started before the units change recorded, and must keep on replay
         Assert.assertEquals(WaitUtils.legacyDurationToMillis(duration(0, 0, 1, 2, 3, 0, "0")), 3 * 3_600_000L);
     }
+
+    @Test
+    public void theLegacyBoundReplaysTheWrappedDecimalAndRefusesTheRest() {
+        // The pre-change `longValue()` wrapped 2^64 / 1000 + 5 seconds to 5000 ms; a replay must see the same
+        Assert.assertEquals(WaitUtils.legacyDurationToMillis(duration(0, 0, 0, 0, 0, 0, "18446744073709556.616")),
+                5_000L);
+        BMap<BString, Object> intSeconds = duration(0, 0, 0, 0, 0, 0, "0");
+        intSeconds.put(StringUtils.fromString("seconds"), Long.MAX_VALUE);
+        IllegalArgumentException refused = Assert.expectThrows(IllegalArgumentException.class,
+                () -> WaitUtils.legacyDurationToMillis(intSeconds));
+        Assert.assertEquals(refused.getMessage(), "A wait bound is too large to represent in milliseconds");
+    }
+
+    @Test
+    public void theLegacySleepRefusesAnOverflowAsAnArgumentError() {
+        IllegalArgumentException refused = Assert.expectThrows(IllegalArgumentException.class,
+                () -> WaitUtils.legacySleepDurationToMillis(duration(0, 0, 0, 0, 0, 0, "18446744073709556.616")));
+        Assert.assertEquals(refused.getMessage(), "A sleep is too large to represent in milliseconds");
+    }
 }

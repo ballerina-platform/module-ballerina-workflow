@@ -174,7 +174,7 @@ version = "0.13.0"
 [[platform.java25.dependency]]
 groupId = "com.google.guava"
 artifactId = "guava"
-version = "33.6.0-jre"
+version = "33.7.2-jre"
 
 [[platform.java25.dependency]]
 groupId = "com.google.guava"

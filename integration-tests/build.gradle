@@ -57,6 +57,14 @@ def ballerinaDist = "${project.rootDir}/target/ballerina-runtime"
 def distributionBinPath = "${ballerinaDist}/bin"
 def testCoverageParam = "--code-coverage --coverage-format=xml --includes=io.ballerina.lib.workflow.*:ballerina.workflow*"
 
+// Other build consumers (notably examples) may recreate workflow's BIR after the
+// module build's clearBirCache finalizer. Recompile it from the staged bala for
+// each integration-test invocation instead of reusing that compiled dependency.
+def clearWorkflowBirCache = {
+    delete "${ballerinaDist}/repo/cache/${packageOrg}/${packageName}/${tomlVersion}"
+    delete "${project.projectDir}/target/cache/${packageOrg}/${packageName}/${tomlVersion}"
+}
+
 def stripBallerinaExtensionVersion(String extVersion) {
     if (extVersion.matches(project.ext.timestampedVersionRegex)) {
         def splitVersion = extVersion.split('-')
@@ -156,6 +164,7 @@ task ballerinaTest {
     finalizedBy(commitTomlFiles)
 
     doLast {
+        clearWorkflowBirCache()
         // A leftover report from an earlier run must not speak for this one: the check below
         // reads whatever file exists, and a stale failed tally would fail a green run (or a
         // stale green one bless a run that never wrote a report).
@@ -263,6 +272,7 @@ def verifyTestResults(File testResultFile, String variantLabel) {
 }
 
 def runBallerinaTests = { String label, String variantKey ->
+    clearWorkflowBirCache()
     // Delete stale report artifacts so a crashed test run's leftovers cannot be misread
     def reportDir = file("${project.projectDir}/target/report")
     new File(reportDir, 'test_results.json').delete()

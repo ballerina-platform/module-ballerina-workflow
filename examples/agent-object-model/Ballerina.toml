@@ -9,5 +9,5 @@ observabilityIncluded = true
 [[platform.java25.dependency]]
 groupId = "io.ballerina.lib"
 artifactId = "workflow-native"
-version = "1.0.3"
-path = "../../native/build/libs/workflow-native-1.0.3.jar"
+version = "1.0.4"
+path = "../../native/build/libs/workflow-native-1.0.4-SNAPSHOT.jar"

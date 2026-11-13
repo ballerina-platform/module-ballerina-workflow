@@ -141,55 +141,45 @@ task buildExamples {
 
             // Update Ballerina.toml
             def tomlFile = new File(exampleDir, "Ballerina.toml")
-            // Release checks require a clean checkout; keep generated bindings temporary.
-            def originalToml = tomlFile.exists() ? tomlFile.bytes : null
-            try {
-                tomlFile.text = generateExampleToml(exampleDir.name, packageName)
+            tomlFile.text = generateExampleToml(exampleDir.name, packageName)
 
-                // Delete stale Dependencies.toml so it gets regenerated
-                def depsToml = new File(exampleDir, "Dependencies.toml")
-                if (depsToml.exists()) depsToml.delete()
+            // Delete stale Dependencies.toml so it gets regenerated
+            def depsToml = new File(exampleDir, "Dependencies.toml")
+            if (depsToml.exists()) depsToml.delete()
 
-                // Clean old build artifacts
-                def targetDir = new File(exampleDir, "target")
-                if (targetDir.exists()) targetDir.deleteDir()
+            // Clean old build artifacts
+            def targetDir = new File(exampleDir, "target")
+            if (targetDir.exists()) targetDir.deleteDir()
 
-                // Respect Gradle -x test: build examples without running bal tests.
-                // When tests run, enable coverage so reports can be uploaded to codecov.
-                // Build offline: everything the examples need is already local — the workflow
-                // module is staged into the runtime repo and ballerina/ai is pulled into the
-                // cache by :workflow-ballerina:pullExternalDependencies. Offline keeps resolution
-                // pinned to that ai version instead of drifting to a newer Central release whose
-                // BIR the pinned distribution's toolchain cannot load.
-                def balCommand = testsExcluded ? 'build --offline' : "test --offline ${testCoverageParam}"
-                execHelper.execOperations.exec {
-                    workingDir exampleDir
-                    environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
-    //                environment "BALLERINA_HOME_DIR", examplesBalHome.absolutePath
-                    if (Os.isFamily(Os.FAMILY_WINDOWS)) {
-                        commandLine 'cmd', '/c', "${distributionBinPath}/bal.bat ${balCommand}"
-                    } else {
-                        commandLine 'sh', '-c', "${distributionBinPath}/bal ${balCommand}"
-                    }
-                }
-
-                // Collect coverage report into the shared coverage directory so that
-                // mergeCoverageReports can upload it alongside other reports.
-                if (!testsExcluded) {
-                    def coverageReport = new File(exampleDir,
-                            "target/report/${packageName}/coverage-report.xml")
-                    if (coverageReport.exists()) {
-                        coverageDestDir.mkdirs()
-                        new File(coverageDestDir, "${exampleDir.name}-coverage-report.xml").text =
-                                coverageReport.text
-                        logger.lifecycle("  Coverage collected: ${exampleDir.name}-coverage-report.xml")
-                    }
-                }
-            } finally {
-                if (originalToml != null) {
-                    tomlFile.bytes = originalToml
+            // Respect Gradle -x test: build examples without running bal tests.
+            // When tests run, enable coverage so reports can be uploaded to codecov.
+            // Build offline: everything the examples need is already local — the workflow
+            // module is staged into the runtime repo and ballerina/ai is pulled into the
+            // cache by :workflow-ballerina:pullExternalDependencies. Offline keeps resolution
+            // pinned to that ai version instead of drifting to a newer Central release whose
+            // BIR the pinned distribution's toolchain cannot load.
+            def balCommand = testsExcluded ? 'build --offline' : "test --offline ${testCoverageParam}"
+            execHelper.execOperations.exec {
+                workingDir exampleDir
+                environment "JAVA_OPTS", "-DBALLERINA_DEV_COMPILE_BALLERINA_ORG=true"
+//                environment "BALLERINA_HOME_DIR", examplesBalHome.absolutePath
+                if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+                    commandLine 'cmd', '/c', "${distributionBinPath}/bal.bat ${balCommand}"
                 } else {
-                    tomlFile.delete()
+                    commandLine 'sh', '-c', "${distributionBinPath}/bal ${balCommand}"
+                }
+            }
+
+            // Collect coverage report into the shared coverage directory so that
+            // mergeCoverageReports can upload it alongside other reports.
+            if (!testsExcluded) {
+                def coverageReport = new File(exampleDir,
+                        "target/report/${packageName}/coverage-report.xml")
+                if (coverageReport.exists()) {
+                    coverageDestDir.mkdirs()
+                    new File(coverageDestDir, "${exampleDir.name}-coverage-report.xml").text =
+                            coverageReport.text
+                    logger.lifecycle("  Coverage collected: ${exampleDir.name}-coverage-report.xml")
                 }
             }
         }

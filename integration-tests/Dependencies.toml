@@ -467,7 +467,7 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "workflow"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
 	{org = "ballerina", name = "ai"},
 	{org = "ballerina", name = "auth"},
@@ -497,7 +497,7 @@ modules = [
 [[package]]
 org = "ballerina"
 name = "workflow_tests"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
 	{org = "ballerina", name = "ai"},
 	{org = "ballerina", name = "email"},

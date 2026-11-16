@@ -38,7 +38,7 @@ graalvmCompatible = false
 groupId = "io.ballerina.lib"
 artifactId = "workflow-native"
 version = "1.0.4"
-path = "../native/build/libs/workflow-native-1.0.4-SNAPSHOT.jar"
+path = "../native/build/libs/workflow-native-1.0.4.jar"
 
 # Temporal SDK dependencies
 [[platform.java25.dependency]]

@@ -252,27 +252,76 @@ public isolated distinct class TaskDecisionSpan {
         string outcome = (err is ()) ? DECISION_ACCEPTED : DECISION_DENIED;
         recordTaskDecisionMetric(self.kind, taskName ?: UNKNOWN_TASK_NAME, self.action, err is (),
                 (err is ()) ? "" : errorTypeName(err));
+        DecisionAudit entry = {
+            kind: self.kind,
+            taskId: self.taskId,
+            taskName,
+            parentWorkflowId,
+            action: self.action,
+            outcome,
+            userId,
+            userRoles,
+            identitySource,
+            assignedRoles,
+            decidedAt: nowText(),
+            taskInput: taskInputJson,
+            content: contentJson
+        };
         if metricSamplesPublished {
-            // The decision's sample for log-based metrics: what was decided and on which task —
-            // never who, and never the content. Those stay on the audit entry below.
-            log:printInfo("", logger = "workflow-metrics", sample = "task.decided", task_kind = self.kind,
-                    task_name = taskName ?: UNKNOWN_TASK_NAME, action = self.action,
-                    outcome = (err is ()) ? "success" : "failure");
+            writeOrRetry(writeDecisionSample, entry, err);
         }
-        string subject = self.kind == HUMAN_TASK ? "human task" : self.kind == TASK ? "task" : "review activity";
-        if err is () {
-            log:printInfo(string `${subject} decision ${outcome}`, taskKind = self.kind, taskId = self.taskId,
-                    taskName = taskName, parentWorkflowId = parentWorkflowId, action = self.action,
-                    outcome = outcome, userId = userId, userRoles = userRoles,
-                    identitySource = identitySource, assignedRoles = assignedRoles,
-                    decidedAt = nowText(), taskInput = taskInputJson, content = contentJson);
-        } else {
-            log:printWarn(string `${subject} decision ${outcome}`, 'error = err, taskKind = self.kind,
-                    taskId = self.taskId, taskName = taskName, parentWorkflowId = parentWorkflowId,
-                    action = self.action, outcome = outcome, userId = userId, userRoles = userRoles,
-                    identitySource = identitySource, assignedRoles = assignedRoles,
-                    decidedAt = nowText(), taskInput = taskInputJson, content = contentJson);
-        }
+        writeOrRetry(writeDecisionAudit, entry, err);
+    }
+}
+
+// The fields of one decision's audit entry, shared by the entry and its metric sample.
+type DecisionAudit readonly & record {|
+    TaskKind kind;
+    string taskId;
+    string? taskName;
+    string? parentWorkflowId;
+    TaskAction action;
+    string outcome;
+    string? userId;
+    string[] userRoles;
+    IdentitySource identitySource;
+    string[] assignedRoles;
+    string decidedAt;
+    string? taskInput;
+    string? content;
+|};
+
+// The decision already stands, so a log line that panics must not fail it. The runtime can refuse the first
+// concurrent key-value log lines of a process (ballerina-lang#44895); a second attempt then succeeds.
+isolated function writeOrRetry(isolated function (DecisionAudit, error?) write, DecisionAudit entry, error? err) {
+    error? failure = trap write(entry, err);
+    if failure is error {
+        failure = trap write(entry, err);
+    }
+}
+
+// The decision's sample for log-based metrics: what was decided and on which task — never who, and never the
+// content. Those stay on the audit entry.
+isolated function writeDecisionSample(DecisionAudit entry, error? err) {
+    log:printInfo("", logger = "workflow-metrics", sample = "task.decided", task_kind = entry.kind,
+            task_name = entry.taskName ?: UNKNOWN_TASK_NAME, action = entry.action,
+            outcome = (err is ()) ? "success" : "failure");
+}
+
+isolated function writeDecisionAudit(DecisionAudit entry, error? err) {
+    string subject = entry.kind == HUMAN_TASK ? "human task" : entry.kind == TASK ? "task" : "review activity";
+    if err is () {
+        log:printInfo(string `${subject} decision ${entry.outcome}`, taskKind = entry.kind, taskId = entry.taskId,
+                taskName = entry.taskName, parentWorkflowId = entry.parentWorkflowId, action = entry.action,
+                outcome = entry.outcome, userId = entry.userId, userRoles = entry.userRoles,
+                identitySource = entry.identitySource, assignedRoles = entry.assignedRoles,
+                decidedAt = entry.decidedAt, taskInput = entry.taskInput, content = entry.content);
+    } else {
+        log:printWarn(string `${subject} decision ${entry.outcome}`, 'error = err, taskKind = entry.kind,
+                taskId = entry.taskId, taskName = entry.taskName, parentWorkflowId = entry.parentWorkflowId,
+                action = entry.action, outcome = entry.outcome, userId = entry.userId, userRoles = entry.userRoles,
+                identitySource = entry.identitySource, assignedRoles = entry.assignedRoles,
+                decidedAt = entry.decidedAt, taskInput = entry.taskInput, content = entry.content);
     }
 }
 

@@ -27,6 +27,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   spread in the config (`{...base}`) are now compile errors instead of being left unregistered.
   ([#9378](https://github.com/ballerina-platform/ballerina-library/issues/9378))
 
+- A task decision that the engine accepted no longer returns an error when its audit log line fails.
+  Before, decisions made at the same moment as the process's first key-value log lines could fail with
+  `InvalidUpdate: modification not allowed on readonly value`, a runtime race
+  ([ballerina-lang#44895](https://github.com/ballerina-platform/ballerina-lang/issues/44895)). The audit
+  entry and the metric sample are now written again once if that happens.
+  ([#9725](https://github.com/ballerina-platform/ballerina-library/issues/9725))
+
 - `Context.sleep` counts the `weeks` and `days` fields of its `Duration`. A call such as
   `ctx.sleep({days: 1})` returned at once; it now waits the day. `years` and `months` have no fixed
   length and are refused with an error rather than dropped. An instance that recorded the shorter

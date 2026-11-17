@@ -97,6 +97,27 @@ function testTaskDecisionSpansAuditEveryInputShape() {
 @test:Config {
     groups: ["observe"]
 }
+function testConcurrentDecisionsCloseWithoutError() returns error? {
+    // Decisions closing at once must all return, even if the runtime refuses a log line (ballerina-lang#44895).
+    future<error?>[] closes = [];
+    foreach int i in 0 ..< 16 {
+        future<error?> close = start closeReviewDecision(string `review-concurrent-${i}`);
+        closes.push(close);
+    }
+    foreach future<error?> close in closes {
+        check wait close;
+    }
+}
+
+isolated function closeReviewDecision(string taskId) returns error? {
+    observe:TaskDecisionSpan span = observe:createReviewActivityDecisionSpan(taskId, "proceed");
+    span.addDecider("user-1", ["citizen"]);
+    return trap span.close();
+}
+
+@test:Config {
+    groups: ["observe"]
+}
 function testOversizedDecisionContentIsCut() {
     // One oversized submission must not flood a span or an audit line: values are cut
     // at the 8192-character bound before they reach either.

@@ -200,6 +200,56 @@ function testWorkflowSpanSurfaceEndToEnd() returns error? {
     }
 }
 
+@test:Config {
+    groups: ["observe"]
+}
+function testActivitySpanParentsWhatTheActivityObserves() returns error? {
+    if !observability:isTracingEnabled() {
+        return;
+    }
+
+    map<anydata> input = {id: "observe-parenting-001", request: "unused"};
+    string runId = check run(chatStockAgent, input);
+    check sendData(chatStockAgent, runId, "chat", "Check availability of laptop");
+    _ = check getWorkflowResult(runId, 30);
+
+    mock:Span[] story = check workerSpansOf(runId, 4);
+    mock:Span activitySpan = check spanNamed(story, "activity llmChat");
+
+    // The model provider's chat is a remote call the Ballerina tracer observes inside the llmChat activity:
+    // it must nest under the activity in the run's trace, not open a trace of its own.
+    mock:Span[] modelCalls = check childSpansOf(activitySpan);
+    test:assertTrue(modelCalls.length() > 0, "the model call made inside the activity should nest under it");
+    foreach mock:Span span in modelCalls {
+        test:assertEquals(span.traceId, activitySpan.traceId,
+                string `'${span.operationName}' should join the run's trace`);
+    }
+
+    // One durable agent instance is one conversation: its spans carry the GenAI conversation id.
+    foreach mock:Span span in story {
+        test:assertEquals(span.tags["gen_ai.conversation.id"], runId,
+                string `agent span '${span.operationName}' should carry the conversation id`);
+    }
+}
+
+// Spans of any service whose parent is `parent`, once at least one of them has finished.
+function childSpansOf(mock:Span parent) returns mock:Span[]|error {
+    mock:Span[] found = [];
+    foreach int attempt in 0 ..< 20 {
+        found = [];
+        foreach string serviceName in ["Ballerina", "workflow", "Unknown Service"] {
+            found.push(...from mock:Span span in mock:getFinishedSpans(serviceName)
+                where span.parentId == parent.spanId
+                select span);
+        }
+        if found.length() > 0 {
+            return found;
+        }
+        runtime:sleep(0.5);
+    }
+    return found;
+}
+
 function spanNamed(mock:Span[] spans, string operationName) returns mock:Span|error {
     foreach mock:Span span in spans {
         if span.operationName == operationName {

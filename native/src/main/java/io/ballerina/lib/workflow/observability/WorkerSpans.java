@@ -19,7 +19,10 @@
 package io.ballerina.lib.workflow.observability;
 
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
+import io.ballerina.runtime.observability.ObservabilityConstants;
 import io.ballerina.runtime.observability.ObserveUtils;
+import io.ballerina.runtime.observability.ObserverContext;
+import io.ballerina.runtime.observability.tracer.BSpan;
 import io.ballerina.runtime.observability.tracer.TracersStore;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanBuilder;
@@ -34,6 +37,8 @@ import io.temporal.workflow.WorkflowInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.reflect.Constructor;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -49,7 +54,11 @@ public final class WorkerSpans {
     static final String ROOT_INSTANCE_ID = "workflow.root.instance.id";
     static final String TRACE_ID = "traceId";
     static final String SPAN_ID = "spanId";
+    static final String CONVERSATION_ID = "gen_ai.conversation.id";
+    // The service name the Ballerina runtime gives a callable observed without a parent context.
+    private static final String BALLERINA_SERVICE = "Ballerina";
     private static final Logger LOGGER = LoggerFactory.getLogger(WorkerSpans.class);
+    private static final Constructor<BSpan> BSPAN_OF = bSpanConstructor();
 
     private WorkerSpans() {
     }
@@ -213,12 +222,62 @@ public final class WorkerSpans {
                 .ifPresent(root -> tags.put(ROOT_INSTANCE_ID, root));
         tags.put("workflow.run.id", info.getRunId());
         tags.put("workflow.type", info.getWorkflowType());
+        putConversationId(tags, info.getWorkflowType(), info.getWorkflowId());
         String taskKind = WorkflowMetrics.taskKindOf(info.getWorkflowType());
         if (!WorkflowMetrics.NONE.equals(taskKind)) {
             tags.put("workflow.task.kind", taskKind);
             tags.put("workflow.task.name", WorkflowMetrics.taskNameOf(info.getWorkflowType()));
         }
         return tags;
+    }
+
+    // A durable agent's instance is its conversation: every turn, model call and tool call of one chat runs in it.
+    // Tagging the agent's spans with the GenAI conversation id lets a GenAI-aware backend group them as one
+    // conversation, as it does the conversation id `ai:Agent` records on its own invoke_agent span.
+    public static void putConversationId(Map<String, String> tags, String workflowType, String instanceId) {
+        if (instanceId != null && WorkflowWorkerNative.isAgentWorkflowType(workflowType)) {
+            tags.put(CONVERSATION_ID, instanceId);
+        }
+    }
+
+    // The Ballerina strand properties that make `span` the parent of everything the strand observes — the
+    // remote calls, `ballerina/observe` spans and GenAI spans of the function it runs. The span here is the
+    // worker's own (OpenTelemetry) span, which the Ballerina tracer cannot see unless it is handed over as the
+    // strand's observer context; without that, a model call made inside an activity starts a trace of its own.
+    // Null when there is nothing to hand over.
+    public static Map<String, Object> strandProperties(Span span, String functionModule, String functionName) {
+        if (span == null || !span.getSpanContext().isValid() || BSPAN_OF == null) {
+            return null;
+        }
+        try {
+            ObserverContext context = new ObserverContext();
+            // The service name a parentless callable gets, so the spans the strand opens keep publishing
+            // under the name they published under before they had a parent.
+            context.setServiceName(BALLERINA_SERVICE);
+            context.setEntrypointFunctionModule(functionModule != null ? functionModule : SERVICE);
+            context.setEntrypointFunctionName(functionName);
+            context.setOperationName(functionName);
+            context.setSpan(BSPAN_OF.newInstance(tracer(), span));
+            // A mutable map: the strand records its own observer contexts in it as it runs.
+            Map<String, Object> properties = new HashMap<>();
+            properties.put(ObservabilityConstants.KEY_OBSERVER_CONTEXT, context);
+            return properties;
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            LOGGER.debug("Could not hand span to the Ballerina strand", e);
+            return null;
+        }
+    }
+
+    // BSpan has no public way to wrap a span opened elsewhere; its own constructor does exactly that.
+    private static Constructor<BSpan> bSpanConstructor() {
+        try {
+            Constructor<BSpan> constructor = BSpan.class.getDeclaredConstructor(Tracer.class, Span.class);
+            constructor.setAccessible(true);
+            return constructor;
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            LOGGER.debug("Worker spans cannot parent Ballerina spans: BSpan cannot wrap a span", e);
+            return null;
+        }
     }
 
     // Identity tags every span of the module carries: module, which side opened it, engine endpoint, task queue.

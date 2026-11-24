@@ -103,10 +103,7 @@ public final class WorkflowFunctionRef {
         if (strandProperties == null || strandProperties.isEmpty()) {
             return call(runtime, args);
         }
-        // The runtime creates a strand for a thread's first call and keeps it on the thread: every later call
-        // from that thread — a pooled worker thread runs many activities — reuses it and ignores the metadata
-        // it is given. So the properties are set on the thread's strand for this call and taken back after it,
-        // whether the strand was already there or this call created it; none outlives the call it was for.
+        // The thread keeps its strand across calls: set the properties for this call only, then restore them.
         Strand current = Scheduler.getStrand();
         Map<String, Object> previous = new HashMap<>();
         if (current != null) {

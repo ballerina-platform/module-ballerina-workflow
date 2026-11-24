@@ -148,6 +148,9 @@ function testAgentSpansRecordAgentIdentity() returns error? {
 
     mock:Span recorded = check findUnitSpan("start_agent", "workflow.instance.id", "wf-agent-1");
     test:assertEquals(recorded.tags["gen_ai.agent.name"], "assistantAgent");
+    test:assertEquals(recorded.tags["gen_ai.conversation.id"], "wf-agent-1");
+    mock:Span sent = check findUnitSpan("send_agent_event", "workflow.instance.id", "wf-agent-1");
+    test:assertEquals(sent.tags["gen_ai.conversation.id"], "wf-agent-1");
 }
 
 @test:Config {

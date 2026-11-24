@@ -2289,6 +2289,11 @@ public final class WorkflowWorkerNative {
                                 io.temporal.common.converter.EncodedValues encodedArgs) {
                         String eventName = encodedArgs.get(0, String.class);
                         Object payload = encodedArgs.get(1, Object.class);
+                        // The sender's trace context, when its sendData sent one: the turn this message
+                        // starts records its spans in the sender's trace (e.g. the chat request's).
+                        @SuppressWarnings("unchecked")
+                        Map<String, String> senderContext = encodedArgs.getSize() > 2
+                                ? encodedArgs.get(2, Map.class) : null;
                         LOGGER.debug("[JWorkflowAdapter] Agent update received for event '{}'", eventName);
 
                         // Closing fast-path: the agent is finishing, so nobody would consume
@@ -2330,7 +2335,7 @@ public final class WorkflowWorkerNative {
                         }
                         try {
                             io.temporal.workflow.CompletablePromise<Object> responder = Workflow.newPromise();
-                            signalWrapper.recordUpdate(eventName, payload, responder);
+                            signalWrapper.recordUpdate(eventName, payload, responder, senderContext);
                             Workflow.await(responder::isCompleted);
                             return responder.get();
                         } finally {

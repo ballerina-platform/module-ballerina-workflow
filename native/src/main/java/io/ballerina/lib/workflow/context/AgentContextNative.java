@@ -21,6 +21,8 @@ package io.ballerina.lib.workflow.context;
 import io.ballerina.lib.workflow.TaskKeys;
 import io.ballerina.lib.workflow.observability.AgentStep;
 import io.ballerina.lib.workflow.observability.AgentStepTelemetry;
+import io.ballerina.lib.workflow.observability.TraceContextPropagator;
+import io.ballerina.lib.workflow.observability.WorkerSpans;
 import io.ballerina.lib.workflow.observability.WorkflowMetrics;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.ActivityNaming;
@@ -236,6 +238,9 @@ public final class AgentContextNative {
         // consumed; completed by completeTurn / failTurn when that turn ends, or by the next
         // event wait with the text recorded since (legacy histories: by the next setResponse).
         private CompletablePromise<Object> pendingResponder = null;
+        // The run's own trace context, which the loop's waits open under; a turn started by a message that
+        // carried its sender's context records under that instead, until the loop waits again.
+        private Map<String, String> runTraceContext = null;
         // The latest text recorded since pendingResponder was taken, or null: what a mid-turn
         // event wait answers the responder with before the next event takes it over.
         private String turnText = null;
@@ -1388,6 +1393,12 @@ public final class AgentContextNative {
      * Enforces the max-event-waits cap (hard failure) and the per-wait timeout (returns {@link TimedOut}).
      */
     private static Object awaitSignal(AgentContextInfo info, String eventName) {
+        // A wait belongs to the run, not to the turn that came before it: open it under the run's context.
+        if (info.runTraceContext == null) {
+            info.runTraceContext = TraceContextPropagator.current();
+        } else {
+            TraceContextPropagator.setCurrent(info.runTraceContext);
+        }
         Span span = AgentStepTelemetry.begin("agent.event_wait " + eventName);
         long startedAt = Workflow.currentTimeMillis();
         Object data;
@@ -1453,6 +1464,12 @@ public final class AgentContextNative {
         }
 
         SignalAwaitWrapper.SignalData signalData = future.get();
+        // The turn this message starts records its spans in the sender's trace (e.g. the chat request that sent
+        // it), so each request's trace holds the agent work it caused. Telemetry only: replay never reads it.
+        Map<String, String> turnContext = WorkerSpans.turnContext(signalData.traceContext(), info.runTraceContext);
+        if (turnContext != null) {
+            TraceContextPropagator.setCurrent(turnContext);
+        }
         if (signalData.responder() != null) {
             // This message came from updateAgent: its responder is answered when the turn that
             // consumes it ends. A waiter still open from an earlier message gets the text recorded

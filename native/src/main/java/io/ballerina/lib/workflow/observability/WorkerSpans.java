@@ -84,6 +84,26 @@ public final class WorkerSpans {
         return withRoot(contextOf(span), anchorInstanceOf(runTags(info)));
     }
 
+    // The context a turn records under: the sender's trace and span, keeping the run's root instance so the
+    // turn's activities still know the tree they belong to. Null when the sender sent no valid context.
+    public static Map<String, String> turnContext(Map<String, String> sender, Map<String, String> runContext) {
+        if (sender == null || sender.get(TRACE_ID) == null || sender.get(SPAN_ID) == null) {
+            return null;
+        }
+        if (!SpanContext.createFromRemoteParent(sender.get(TRACE_ID), sender.get(SPAN_ID),
+                TraceFlags.getSampled(), TraceState.getDefault()).isValid()) {
+            return null;
+        }
+        Map<String, String> context = new LinkedHashMap<>();
+        context.put(TRACE_ID, sender.get(TRACE_ID));
+        context.put(SPAN_ID, sender.get(SPAN_ID));
+        String root = rootOf(runContext);
+        if (root != null) {
+            context.put(ROOT_INSTANCE_ID, root);
+        }
+        return context;
+    }
+
     // The instance a carried context belongs to, for a thread that knows no more than the context it was given.
     public static String rootOf(Map<String, String> context) {
         return context == null ? null : context.get(ROOT_INSTANCE_ID);

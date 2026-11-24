@@ -259,6 +259,7 @@ public final class WorkerSpans {
     }
 
     // BSpan has no public way to wrap a span opened elsewhere; its own constructor does exactly that.
+    // TODO: Use a public API once https://github.com/ballerina-platform/ballerina-lang/issues/44944 is fixed.
     private static Constructor<BSpan> bSpanConstructor() {
         try {
             Constructor<BSpan> constructor = BSpan.class.getDeclaredConstructor(Tracer.class, Span.class);

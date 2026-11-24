@@ -104,6 +104,7 @@ public final class WorkflowFunctionRef {
             return call(runtime, args);
         }
         // The thread keeps its strand across calls: set the properties for this call only, then restore them.
+        // TODO: Use a public API once https://github.com/ballerina-platform/ballerina-lang/issues/44944 is fixed.
         Strand current = Scheduler.getStrand();
         Map<String, Object> previous = new HashMap<>();
         if (current != null) {

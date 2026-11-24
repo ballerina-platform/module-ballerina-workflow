@@ -24,6 +24,8 @@ import io.ballerina.runtime.api.concurrent.StrandMetadata;
 import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.values.BFunctionPointer;
 import io.ballerina.runtime.internal.BalRuntime;
+import io.ballerina.runtime.internal.scheduling.Scheduler;
+import io.ballerina.runtime.internal.scheduling.Strand;
 import io.ballerina.runtime.internal.values.FPValue;
 
 import java.util.HashMap;
@@ -98,26 +100,50 @@ public final class WorkflowFunctionRef {
      * @return the function's return value
      */
     public Object call(Runtime runtime, Map<String, Object> strandProperties, Object... args) {
-        if (strandProperties == null) {
+        if (strandProperties == null || strandProperties.isEmpty()) {
             return call(runtime, args);
         }
-        if (pointer != null) {
-            FPValue fpValue = (FPValue) pointer;
-            if (!(runtime instanceof BalRuntime balRuntime)) {
-                return call(runtime, args);
-            }
-            // The pointer is shared by every concurrent run of the function, so these per-call properties go
-            // to this call's strand alone rather than onto the pointer — the same dispatch FPValue.call makes.
-            Map<String, Object> properties = new HashMap<>();
-            Map<String, Object> captured = fpValue.metadata == null ? null : fpValue.metadata.properties();
-            if (captured != null) {
-                properties.putAll(captured);
-            }
-            properties.putAll(strandProperties);
-            return balRuntime.scheduler.callFP(fpValue, new StrandMetadata(true, properties), args);
+        // The runtime creates a strand for a thread's first call and keeps it on the thread: every later call
+        // from that thread — a pooled worker thread runs many activities — reuses it and ignores the metadata
+        // it is given. So the properties are set on the thread's strand for this call and taken back after it,
+        // whether the strand was already there or this call created it; none outlives the call it was for.
+        Strand current = Scheduler.getStrand();
+        Map<String, Object> previous = new HashMap<>();
+        if (current != null) {
+            strandProperties.forEach((key, value) -> {
+                previous.put(key, current.getProperty(key));
+                current.setProperty(key, value);
+            });
         }
-        return runtime.callFunction(module, functionName,
-                new StrandMetadata(true, new HashMap<>(strandProperties)), args);
+        try {
+            return current != null ? call(runtime, args) : callOnNewStrand(runtime, strandProperties, args);
+        } finally {
+            Strand strand = Scheduler.getStrand();
+            if (strand != null) {
+                strandProperties.keySet().forEach(key -> strand.setProperty(key, previous.get(key)));
+            }
+        }
+    }
+
+    // The thread has no strand yet: this call creates it, so the properties go in its metadata.
+    private Object callOnNewStrand(Runtime runtime, Map<String, Object> strandProperties, Object... args) {
+        if (pointer == null) {
+            return runtime.callFunction(module, functionName,
+                    new StrandMetadata(true, new HashMap<>(strandProperties)), args);
+        }
+        FPValue fpValue = (FPValue) pointer;
+        if (!(runtime instanceof BalRuntime balRuntime)) {
+            return call(runtime, args);
+        }
+        // The pointer is shared by every concurrent run of the function, so the per-call properties go to this
+        // call's strand rather than onto the pointer — the same dispatch FPValue.call makes.
+        Map<String, Object> properties = new HashMap<>();
+        Map<String, Object> captured = fpValue.metadata == null ? null : fpValue.metadata.properties();
+        if (captured != null) {
+            properties.putAll(captured);
+        }
+        properties.putAll(strandProperties);
+        return balRuntime.scheduler.callFP(fpValue, new StrandMetadata(true, properties), args);
     }
 
     /**

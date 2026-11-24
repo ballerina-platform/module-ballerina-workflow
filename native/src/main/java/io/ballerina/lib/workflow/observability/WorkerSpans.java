@@ -33,6 +33,7 @@ import io.opentelemetry.api.trace.TraceFlags;
 import io.opentelemetry.api.trace.TraceState;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
+import io.temporal.common.converter.EncodedValues;
 import io.temporal.workflow.WorkflowInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -82,6 +83,25 @@ public final class WorkerSpans {
     // The context a run's own steps carry: the span to hang them from, and the instance whose trace that is.
     public static Map<String, String> runContext(Span span, WorkflowInfo info) {
         return withRoot(contextOf(span), anchorInstanceOf(runTags(info)));
+    }
+
+    // The sender's context from an agent update's optional argument at `index`; null when absent or malformed.
+    // Runs in a workflow-thread update handler, so it must never throw: that would fail the task on every retry.
+    public static Map<String, String> senderContextOf(EncodedValues args, int index) {
+        try {
+            if (args == null || args.getSize() <= index) {
+                return null;
+            }
+            if (!(args.get(index, Object.class) instanceof Map<?, ?> raw)
+                    || !(raw.get(TRACE_ID) instanceof String traceId)
+                    || !(raw.get(SPAN_ID) instanceof String spanId)) {
+                return null;
+            }
+            return Map.of(TRACE_ID, traceId, SPAN_ID, spanId);
+        } catch (RuntimeException e) {
+            LOGGER.debug("Ignoring an unreadable sender trace context", e);
+            return null;
+        }
     }
 
     // The context a turn records under: the sender's trace and span, keeping the run's root instance so the

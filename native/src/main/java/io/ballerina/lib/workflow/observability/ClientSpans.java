@@ -63,6 +63,7 @@ public final class ClientSpans {
     // How long an open recording may live before it is treated as leaked; a wait-for-result may be long.
     private static final Duration PENDING_TTL = Duration.ofHours(24);
     private static final String NONE = "none";
+    private static final String TRACEPARENT = "traceparent";
     // Resolved once: looking the host up can block on DNS, and every client span closes on a request thread.
     private static final String HOST = hostName();
 
@@ -140,14 +141,14 @@ public final class ClientSpans {
 
     // The span the caller is in, as the trace context a durable call carries to the work it causes (e.g. the
     // chat request whose turn an agent answers); null when tracing is off or the caller is in no span.
-    public static java.util.Map<String, String> callerTraceContext(Environment env) {
+    public static Map<String, String> callerTraceContext(Environment env) {
         if (!ObserveUtils.isTracingEnabled()) {
             return null;
         }
         try {
             SpanContext caller = callerContext(env);
-            return caller == null ? null : java.util.Map.of(
-                    WorkerSpans.TRACE_ID, caller.getTraceId(), WorkerSpans.SPAN_ID, caller.getSpanId());
+            return caller == null ? null
+                    : WorkerSpans.idsOf(caller.getTraceId(), caller.getSpanId(), caller.getTraceFlags().asHex());
         } catch (Exception e) {
             LOGGER.debug("Could not read the caller's trace context", e);
             return null;
@@ -168,8 +169,17 @@ public final class ClientSpans {
         SpanContext caller = SpanContext.createFromRemoteParent(
                 String.valueOf(ids.get(StringUtils.fromString(WorkerSpans.TRACE_ID))),
                 String.valueOf(ids.get(StringUtils.fromString(WorkerSpans.SPAN_ID))),
-                TraceFlags.getSampled(), TraceState.getDefault());
+                flagsOfTraceparent(span.extractContextAsHttpHeaders().get(TRACEPARENT)), TraceState.getDefault());
         return caller.isValid() ? caller : null;
+    }
+
+    // The flags of a W3C traceparent ("00-<trace>-<span>-<flags>"); sampled when it is absent or malformed.
+    static TraceFlags flagsOfTraceparent(String traceparent) {
+        if (traceparent == null) {
+            return TraceFlags.getSampled();
+        }
+        String[] parts = traceparent.split("-");
+        return WorkerSpans.flagsOf(parts.length == 4 ? parts[3] : null);
     }
 
     // The worker's identity tags plus the host, which places a client call.

@@ -2061,6 +2061,8 @@ public final class WorkflowWorkerNative {
         private String workflowType;
         private Span runSpan;
         private Map<String, String> runTraceContext;
+        // The span that started this run, when an agent's start header carried one: its first turn records there.
+        private Map<String, String> starterTraceContext;
 
         /**
          * No-arg constructor required by Temporal for dynamic workflows.
@@ -2246,7 +2248,9 @@ public final class WorkflowWorkerNative {
                         // Record the signal in the wrapper so futures can be completed
                         // If remote method was invoked, record its result; otherwise record the signal data
                         Object resultToRecord = remoteMethodInvoked ? signalResult : signalData;
-                        signalWrapper.recordSignal(signalName, resultToRecord);
+                        // A client sendData to an agent carries its sender's trace context as a second argument.
+                        signalWrapper.recordSignal(signalName, resultToRecord,
+                                WorkerSpans.senderContextOf(encodedArgs, 1));
                         LOGGER.debug("[JWorkflowAdapter] Signal {} recorded in wrapper", signalName);
                     }
                                      );
@@ -2318,7 +2322,7 @@ public final class WorkflowWorkerNative {
                             if (info.sideTurnEligible(eventName)) {
                                 info.setSideTurnActive(true);
                                 try {
-                                    return AgentContextNative.sideTurnAnswer(info, payload);
+                                    return AgentContextNative.sideTurnAnswer(info, payload, senderContext);
                                 } finally {
                                     info.setSideTurnActive(false);
                                 }
@@ -2420,6 +2424,7 @@ public final class WorkflowWorkerNative {
         public Object execute(EncodedValues args) {
             io.temporal.workflow.WorkflowInfo workflowInfo = Workflow.getInfo();
             String executingType = workflowInfo.getWorkflowType();
+            starterTraceContext = WorkerSpans.senderOfStart(TraceContextPropagator.current());
             if (runTraceContext == null) {
                 runTraceContext = TraceContextPropagator.current();
             }
@@ -2838,6 +2843,7 @@ public final class WorkflowWorkerNative {
                             temporalInfo.getWorkflowId(), temporalInfo.getWorkflowType(),
                             signalWrapper, new HashSet<>());
             this.agentContextInfo = agentInfo;
+            agentInfo.beginFirstTurn(starterTraceContext);
             return ValueCreator.createHandleValue(agentInfo);
         }
 

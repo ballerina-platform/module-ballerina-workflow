@@ -660,8 +660,9 @@ public final class DurableAgentNative {
             return WorkflowContextNative.startDurableAgentChild(agentName, runInput);
         }
         String workflowType = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + agentName;
+        Map<String, String> starter = ClientSpans.callerTraceContext(env);
         return env.yieldAndRun(() -> WorkflowNative.startWithOptions(workflowType, runInput,
-                StartOptions.generated(), startErrorPrefix(agentName)));
+                StartOptions.generated(), startErrorPrefix(agentName), starter));
     }
 
     // The envelope the agent runner unpacks: built here alone, whichever entry point starts the run.
@@ -714,7 +715,9 @@ public final class DurableAgentNative {
                 validatedInput == null ? null : TypesUtil.convertBallerinaToJavaType(validatedInput));
         StartOptions options = new StartOptions(instanceId.getValue(), ifRunning.getValue(), ifClosed.getValue(),
                 null, null);
-        return env.yieldAndRun(() -> WorkflowNative.startWithOptions(workflowType, runInput, options, errorPrefix));
+        Map<String, String> starter = ClientSpans.callerTraceContext(env);
+        return env.yieldAndRun(() -> WorkflowNative.startWithOptions(workflowType, runInput, options, errorPrefix,
+                starter));
     }
 
     /**

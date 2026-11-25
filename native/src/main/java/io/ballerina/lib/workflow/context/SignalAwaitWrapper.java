@@ -117,7 +117,18 @@ public final class SignalAwaitWrapper {
      * @param data       the signal data (expected to be a Map with "id" field)
      */
     public void recordSignal(String signalName, Object data) {
-        recordSignalData(new SignalData(signalName, extractId(data), data, null));
+        recordSignal(signalName, data, null);
+    }
+
+    /**
+     * Records a signal that carries its sender's trace context.
+     *
+     * @param signalName   the name of the signal
+     * @param data         the signal data
+     * @param traceContext the sender's trace context, or null
+     */
+    public void recordSignal(String signalName, Object data, Map<String, String> traceContext) {
+        recordSignalData(new SignalData(signalName, extractId(data), data, null, traceContext));
     }
 
     /**

@@ -20,6 +20,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   own. A durable agent's spans also carry its instance id as `gen_ai.conversation.id`.
   ([#9892](https://github.com/ballerina-platform/ballerina-library/issues/9892))
 
+- A durable agent turn that records in the trace of the request that sent it now keeps that request's
+  sampling decision, and links back to the agent run's span. The first turn of an agent started from inside a
+  span, a turn sent with `workflow:sendData`, and a chat message answered while the agent is parked now
+  record in the sender's trace too.
+  ([#9900](https://github.com/ballerina-platform/ballerina-library/issues/9900))
+
 ## [1.0.4] - 2026-11-16
 
 ### Changed

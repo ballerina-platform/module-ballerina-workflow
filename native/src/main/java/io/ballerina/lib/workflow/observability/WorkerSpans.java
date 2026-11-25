@@ -55,6 +55,15 @@ public final class WorkerSpans {
     static final String ROOT_INSTANCE_ID = "workflow.root.instance.id";
     static final String TRACE_ID = "traceId";
     static final String SPAN_ID = "spanId";
+    // Hex trace flags, carried only when the span is not sampled: an absent key reads as sampled, as before.
+    static final String TRACE_FLAGS = "traceFlags";
+    // The run span a turn recorded in its sender's trace links back to.
+    static final String LINK_TRACE_ID = "linkTraceId";
+    static final String LINK_SPAN_ID = "linkSpanId";
+    // The starter's span, carried in an agent's start header beside the instance's own context.
+    static final String SENDER_TRACE_ID = "senderTraceId";
+    static final String SENDER_SPAN_ID = "senderSpanId";
+    static final String SENDER_TRACE_FLAGS = "senderTraceFlags";
     static final String CONVERSATION_ID = "gen_ai.conversation.id";
     private static final Logger LOGGER = LoggerFactory.getLogger(WorkerSpans.class);
     private static final Constructor<BSpan> BSPAN_OF = bSpanConstructor();
@@ -97,31 +106,99 @@ public final class WorkerSpans {
                     || !(raw.get(SPAN_ID) instanceof String spanId)) {
                 return null;
             }
-            return Map.of(TRACE_ID, traceId, SPAN_ID, spanId);
+            return idsOf(traceId, spanId, raw.get(TRACE_FLAGS) instanceof String flags ? flags : null);
         } catch (RuntimeException e) {
             LOGGER.debug("Ignoring an unreadable sender trace context", e);
             return null;
         }
     }
 
-    // The context a turn records under: the sender's trace and span, keeping the run's root instance so the
-    // turn's activities still know the tree they belong to. Null when the sender sent no valid context.
+    // The context a turn records under: the sender's span, the run's root instance for its activities, and a link
+    // back to the run's span. Null when the sender sent no valid context.
     public static Map<String, String> turnContext(Map<String, String> sender, Map<String, String> runContext) {
         if (sender == null || sender.get(TRACE_ID) == null || sender.get(SPAN_ID) == null) {
             return null;
         }
-        if (!SpanContext.createFromRemoteParent(sender.get(TRACE_ID), sender.get(SPAN_ID),
-                TraceFlags.getSampled(), TraceState.getDefault()).isValid()) {
+        if (!parentOf(sender).isValid()) {
             return null;
         }
-        Map<String, String> context = new LinkedHashMap<>();
-        context.put(TRACE_ID, sender.get(TRACE_ID));
-        context.put(SPAN_ID, sender.get(SPAN_ID));
+        Map<String, String> context = new LinkedHashMap<>(idsOf(sender.get(TRACE_ID), sender.get(SPAN_ID),
+                sender.get(TRACE_FLAGS)));
         String root = rootOf(runContext);
         if (root != null) {
             context.put(ROOT_INSTANCE_ID, root);
         }
+        if (runContext != null && parentOf(runContext).isValid()
+                && !runContext.get(TRACE_ID).equals(sender.get(TRACE_ID))) {
+            context.put(LINK_TRACE_ID, runContext.get(TRACE_ID));
+            context.put(LINK_SPAN_ID, runContext.get(SPAN_ID));
+        }
         return context;
+    }
+
+    // The start header of an agent run: the instance's own context, plus the starter's span as `sender*` keys.
+    public static Map<String, String> withSender(Map<String, String> instanceContext, Map<String, String> sender) {
+        if (instanceContext == null || sender == null || sender.get(TRACE_ID) == null
+                || sender.get(SPAN_ID) == null) {
+            return instanceContext;
+        }
+        Map<String, String> header = new LinkedHashMap<>(instanceContext);
+        header.put(SENDER_TRACE_ID, sender.get(TRACE_ID));
+        header.put(SENDER_SPAN_ID, sender.get(SPAN_ID));
+        if (sender.get(TRACE_FLAGS) != null) {
+            header.put(SENDER_TRACE_FLAGS, sender.get(TRACE_FLAGS));
+        }
+        return header;
+    }
+
+    // The starter's span from a start header, or null when it carried none or a malformed one. It runs before the
+    // run's body, so it must never throw: a start built outside the module may put anything in the header.
+    public static Map<String, String> senderOfStart(Map<?, ?> header) {
+        try {
+            if (header == null || !(header.get(SENDER_TRACE_ID) instanceof String traceId)
+                    || !(header.get(SENDER_SPAN_ID) instanceof String spanId)) {
+                return null;
+            }
+            return idsOf(traceId, spanId, header.get(SENDER_TRACE_FLAGS) instanceof String flags ? flags : null);
+        } catch (RuntimeException e) {
+            LOGGER.debug("Ignoring an unreadable starter trace context", e);
+            return null;
+        }
+    }
+
+    // A carried context as the remote parent it names, honouring its trace flags; invalid when it names none.
+    static SpanContext parentOf(Map<String, String> context) {
+        if (context == null) {
+            return SpanContext.getInvalid();
+        }
+        return SpanContext.createFromRemoteParent(context.getOrDefault(TRACE_ID, ""),
+                context.getOrDefault(SPAN_ID, ""), flagsOf(context.get(TRACE_FLAGS)), TraceState.getDefault());
+    }
+
+    // The run span a turn's context links back to, or null when it links to none.
+    static SpanContext linkOf(Map<String, String> context) {
+        if (context == null || context.get(LINK_TRACE_ID) == null || context.get(LINK_SPAN_ID) == null) {
+            return null;
+        }
+        SpanContext link = SpanContext.createFromRemoteParent(context.get(LINK_TRACE_ID),
+                context.get(LINK_SPAN_ID), TraceFlags.getSampled(), TraceState.getDefault());
+        return link.isValid() ? link : null;
+    }
+
+    // Two hex digits, as W3C trace context writes them; anything else reads as sampled, the old default.
+    static TraceFlags flagsOf(String hex) {
+        if (hex == null || hex.length() != 2 || !hex.chars().allMatch(c -> Character.digit(c, 16) >= 0)) {
+            return TraceFlags.getSampled();
+        }
+        return TraceFlags.fromHex(hex, 0);
+    }
+
+    // A trace and span id, with the flags only when they say "not sampled".
+    static Map<String, String> idsOf(String traceId, String spanId, String flags) {
+        if (flagsOf(flags).isSampled()) {
+            return Map.of(TRACE_ID, traceId, SPAN_ID, spanId);
+        }
+        return Map.of(TRACE_ID, traceId, SPAN_ID, spanId, TRACE_FLAGS, flagsOf(flags).asHex());
     }
 
     // The instance a carried context belongs to, for a thread that knows no more than the context it was given.
@@ -152,10 +229,12 @@ public final class WorkerSpans {
         try {
             SpanBuilder builder = tracer().spanBuilder(operation)
                     .setSpanKind(SpanKind.INTERNAL);
-            SpanContext parentContext = parent == null ? null : SpanContext.createFromRemoteParent(
-                    parent.getOrDefault(TRACE_ID, ""), parent.getOrDefault(SPAN_ID, ""),
-                    TraceFlags.getSampled(), TraceState.getDefault());
-            if (parentContext == null || !parentContext.isValid()) {
+            SpanContext parentContext = parentOf(parent);
+            SpanContext link = linkOf(parent);
+            if (link != null && !link.getTraceId().equals(parentContext.getTraceId())) {
+                builder.addLink(link);
+            }
+            if (!parentContext.isValid()) {
                 // Nothing reached this thread — the instance's own trace, derived from its id.
                 parentContext = InstanceTrace.anchorOf(anchorInstanceOf(tags));
             }
@@ -195,7 +274,8 @@ public final class WorkerSpans {
         if (span == null || !span.getSpanContext().isValid()) {
             return null;
         }
-        return Map.of(TRACE_ID, span.getSpanContext().getTraceId(), SPAN_ID, span.getSpanContext().getSpanId());
+        SpanContext context = span.getSpanContext();
+        return idsOf(context.getTraceId(), context.getSpanId(), context.getTraceFlags().asHex());
     }
 
     public static void tag(Span span, Map<String, String> tags) {

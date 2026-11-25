@@ -298,6 +298,8 @@ public isolated distinct class StartAgentSpan {
     # + instanceId - The agent instance identifier
     public isolated function addInstanceId(string instanceId) {
         self.baseSpan.addTag(INSTANCE_ID, instanceId);
+        // An agent instance is one conversation.
+        self.baseSpan.addTag(CONVERSATION_ID, instanceId);
     }
 
     # Closes the span and records its final status.
@@ -318,6 +320,7 @@ public isolated distinct class SendAgentEventSpan {
         self.baseSpan.addTag(OPERATION_NAME, SEND_AGENT_EVENT);
         self.baseSpan.addTag(AGENT_NAME, agentName);
         self.baseSpan.addTag(INSTANCE_ID, instanceId);
+        self.baseSpan.addTag(CONVERSATION_ID, instanceId);
         self.baseSpan.addTag(EVENT_NAME, eventName);
     }
 

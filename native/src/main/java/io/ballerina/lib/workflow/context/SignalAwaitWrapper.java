@@ -130,7 +130,20 @@ public final class SignalAwaitWrapper {
      * @param responder  the promise the update handler is blocked on
      */
     public void recordUpdate(String signalName, Object data, CompletablePromise<Object> responder) {
-        recordSignalData(new SignalData(signalName, extractId(data), data, responder));
+        recordUpdate(signalName, data, responder, null);
+    }
+
+    /**
+     * Records a request-response update that carries the sender's trace context.
+     *
+     * @param signalName   the event name
+     * @param data         the payload
+     * @param responder    the promise the update handler is blocked on
+     * @param traceContext the sender's trace context, or null
+     */
+    public void recordUpdate(String signalName, Object data, CompletablePromise<Object> responder,
+                             Map<String, String> traceContext) {
+        recordSignalData(new SignalData(signalName, extractId(data), data, responder, traceContext));
     }
 
     private void recordSignalData(SignalData signalData) {
@@ -273,8 +286,11 @@ public final class SignalAwaitWrapper {
      * @param data       the full signal data
      * @param responder  non-null when this delivery is a request-response update: the promise the update handler is
      *                   blocked on, to be completed with the response for this request
+     * @param traceContext the sender's trace context (trace and span id) when it sent one, else null; the turn that
+     *                   consumes this delivery records its spans under it, in the sender's own trace
      */
-    public record SignalData(String signalName, String id, Object data, CompletablePromise<Object> responder) {
+    public record SignalData(String signalName, String id, Object data, CompletablePromise<Object> responder,
+                             Map<String, String> traceContext) {
         /**
          * Creates a new SignalData.
          */
@@ -290,7 +306,19 @@ public final class SignalAwaitWrapper {
          * @param data       the full signal data
          */
         public SignalData(String signalName, String id, Object data) {
-            this(signalName, id, data, null);
+            this(signalName, id, data, null, null);
+        }
+
+        /**
+         * Creates a signal data with a responder and no sender trace context.
+         *
+         * @param signalName the signal name
+         * @param id         the correlation id
+         * @param data       the full signal data
+         * @param responder  the update's responder, or null
+         */
+        public SignalData(String signalName, String id, Object data, CompletablePromise<Object> responder) {
+            this(signalName, id, data, responder, null);
         }
 
         /**

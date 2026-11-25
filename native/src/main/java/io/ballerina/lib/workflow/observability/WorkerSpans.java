@@ -33,6 +33,7 @@ import io.opentelemetry.api.trace.TraceFlags;
 import io.opentelemetry.api.trace.TraceState;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
+import io.temporal.common.converter.EncodedValues;
 import io.temporal.workflow.WorkflowInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -82,6 +83,45 @@ public final class WorkerSpans {
     // The context a run's own steps carry: the span to hang them from, and the instance whose trace that is.
     public static Map<String, String> runContext(Span span, WorkflowInfo info) {
         return withRoot(contextOf(span), anchorInstanceOf(runTags(info)));
+    }
+
+    // The sender's context from an agent update's optional argument at `index`; null when absent or malformed.
+    // Runs in a workflow-thread update handler, so it must never throw: that would fail the task on every retry.
+    public static Map<String, String> senderContextOf(EncodedValues args, int index) {
+        try {
+            if (args == null || args.getSize() <= index) {
+                return null;
+            }
+            if (!(args.get(index, Object.class) instanceof Map<?, ?> raw)
+                    || !(raw.get(TRACE_ID) instanceof String traceId)
+                    || !(raw.get(SPAN_ID) instanceof String spanId)) {
+                return null;
+            }
+            return Map.of(TRACE_ID, traceId, SPAN_ID, spanId);
+        } catch (RuntimeException e) {
+            LOGGER.debug("Ignoring an unreadable sender trace context", e);
+            return null;
+        }
+    }
+
+    // The context a turn records under: the sender's trace and span, keeping the run's root instance so the
+    // turn's activities still know the tree they belong to. Null when the sender sent no valid context.
+    public static Map<String, String> turnContext(Map<String, String> sender, Map<String, String> runContext) {
+        if (sender == null || sender.get(TRACE_ID) == null || sender.get(SPAN_ID) == null) {
+            return null;
+        }
+        if (!SpanContext.createFromRemoteParent(sender.get(TRACE_ID), sender.get(SPAN_ID),
+                TraceFlags.getSampled(), TraceState.getDefault()).isValid()) {
+            return null;
+        }
+        Map<String, String> context = new LinkedHashMap<>();
+        context.put(TRACE_ID, sender.get(TRACE_ID));
+        context.put(SPAN_ID, sender.get(SPAN_ID));
+        String root = rootOf(runContext);
+        if (root != null) {
+            context.put(ROOT_INSTANCE_ID, root);
+        }
+        return context;
     }
 
     // The instance a carried context belongs to, for a thread that knows no more than the context it was given.

@@ -1,0 +1,113 @@
+/*
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package io.ballerina.lib.workflow.observability;
+
+import io.temporal.common.converter.DataConverter;
+import io.temporal.common.converter.EncodedValues;
+import org.testng.Assert;
+import org.testng.annotations.DataProvider;
+import org.testng.annotations.Test;
+
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+public class WorkerSpansTest {
+
+    private static final String TRACE = "4bf92f3577b34da6a3ce929d0e0e4736";
+    private static final String SPAN = "00f067aa0ba902b7";
+
+    // Encodes the arguments as the engine hands them to the update handler.
+    private static EncodedValues updateArgs(Object... values) {
+        DataConverter converter = DataConverter.getDefaultInstance();
+        return new EncodedValues(converter.toPayloads(values), converter);
+    }
+
+    @Test
+    public void testSenderContextIsReadFromTheThirdArgument() {
+        Map<String, String> context = WorkerSpans.senderContextOf(
+                updateArgs("chat", "hello", Map.of(WorkerSpans.TRACE_ID, TRACE, WorkerSpans.SPAN_ID, SPAN)), 2);
+        Assert.assertEquals(context, Map.of(WorkerSpans.TRACE_ID, TRACE, WorkerSpans.SPAN_ID, SPAN));
+    }
+
+    @Test
+    public void testAnUpdateFromAnOlderSenderHasNoContext() {
+        Assert.assertNull(WorkerSpans.senderContextOf(updateArgs("chat", "hello"), 2));
+        Assert.assertNull(WorkerSpans.senderContextOf(new EncodedValues(Optional.empty(),
+                DataConverter.getDefaultInstance()), 2));
+        Assert.assertNull(WorkerSpans.senderContextOf(null, 2));
+    }
+
+    @DataProvider
+    public Object[][] malformedContexts() {
+        Map<String, Object> numericIds = new LinkedHashMap<>();
+        numericIds.put(WorkerSpans.TRACE_ID, 42);
+        numericIds.put(WorkerSpans.SPAN_ID, true);
+        return new Object[][]{
+                {"not-a-map"},
+                {42},
+                {List.of(TRACE, SPAN)},
+                {numericIds},
+                {Map.of(WorkerSpans.TRACE_ID, TRACE)},
+                {Map.of("trace", TRACE, "span", SPAN)},
+                {Map.of(WorkerSpans.TRACE_ID, Map.of("nested", TRACE), WorkerSpans.SPAN_ID, SPAN)}
+        };
+    }
+
+    // A malformed context must be ignored, not thrown: the handler runs on the workflow thread.
+    @Test(dataProvider = "malformedContexts")
+    public void testAMalformedSenderContextIsIgnored(Object malformed) {
+        Assert.assertNull(WorkerSpans.senderContextOf(updateArgs("chat", "hello", malformed), 2));
+    }
+
+    @Test
+    public void testATurnRecordsUnderTheSenderAndKeepsTheRunsRoot() {
+        Map<String, String> turn = WorkerSpans.turnContext(
+                Map.of(WorkerSpans.TRACE_ID, TRACE, WorkerSpans.SPAN_ID, SPAN),
+                Map.of(WorkerSpans.TRACE_ID, "a".repeat(32), WorkerSpans.SPAN_ID, "b".repeat(16),
+                        WorkerSpans.ROOT_INSTANCE_ID, "agent-1"));
+        Assert.assertEquals(turn, Map.of(WorkerSpans.TRACE_ID, TRACE, WorkerSpans.SPAN_ID, SPAN,
+                WorkerSpans.ROOT_INSTANCE_ID, "agent-1"));
+    }
+
+    @DataProvider
+    public Object[][] invalidSenderIds() {
+        return new Object[][]{
+                {"zz", SPAN},
+                {TRACE, "short"},
+                {"0".repeat(32), SPAN},
+                {TRACE, "0".repeat(16)},
+                {TRACE.toUpperCase(java.util.Locale.ROOT) + "XX", SPAN}
+        };
+    }
+
+    // An invalid id keeps the turn in the run's own trace rather than opening spans under a parent that cannot exist.
+    @Test(dataProvider = "invalidSenderIds")
+    public void testAnInvalidSenderKeepsTheTurnInTheRunsTrace(String traceId, String spanId) {
+        Assert.assertNull(WorkerSpans.turnContext(
+                Map.of(WorkerSpans.TRACE_ID, traceId, WorkerSpans.SPAN_ID, spanId), null));
+    }
+
+    @Test
+    public void testNoSenderKeepsTheTurnInTheRunsTrace() {
+        Assert.assertNull(WorkerSpans.turnContext(null, null));
+        Assert.assertNull(WorkerSpans.turnContext(Map.of(WorkerSpans.SPAN_ID, SPAN), null));
+    }
+}

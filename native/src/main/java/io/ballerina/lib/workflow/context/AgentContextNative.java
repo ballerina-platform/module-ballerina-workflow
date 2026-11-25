@@ -241,6 +241,8 @@ public final class AgentContextNative {
         // The run's own trace context, which the loop's waits open under; a turn started by a message that
         // carried its sender's context records under that instead, until the loop waits again.
         private Map<String, String> runTraceContext = null;
+        // Set at the first wait: the run's context may be null, and a later wait must not take a turn's instead.
+        private boolean runTraceContextTaken = false;
         // The latest text recorded since pendingResponder was taken, or null: what a mid-turn
         // event wait answers the responder with before the next event takes it over.
         private String turnText = null;
@@ -1394,8 +1396,9 @@ public final class AgentContextNative {
      */
     private static Object awaitSignal(AgentContextInfo info, String eventName) {
         // A wait belongs to the run, not to the turn that came before it: open it under the run's context.
-        if (info.runTraceContext == null) {
+        if (!info.runTraceContextTaken) {
             info.runTraceContext = TraceContextPropagator.current();
+            info.runTraceContextTaken = true;
         } else {
             TraceContextPropagator.setCurrent(info.runTraceContext);
         }

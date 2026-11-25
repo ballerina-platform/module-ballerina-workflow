@@ -138,7 +138,6 @@ public final class ClientSpans {
         }
     }
 
-    // The span the caller was in when it made the call, so the recorded span can link back to its request.
     // The span the caller is in, as the trace context a durable call carries to the work it causes (e.g. the
     // chat request whose turn an agent answers); null when tracing is off or the caller is in no span.
     public static java.util.Map<String, String> callerTraceContext(Environment env) {
@@ -155,6 +154,7 @@ public final class ClientSpans {
         }
     }
 
+    // The span the caller was in when it made the call, so the recorded span can link back to its request.
     private static SpanContext callerContext(Environment env) {
         if (env == null) {
             return null;

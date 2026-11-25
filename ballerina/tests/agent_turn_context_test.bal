@@ -19,6 +19,8 @@ import ballerina/lang.runtime;
 import ballerina/observe as observability;
 import ballerina/observe.mockextension as mock;
 import ballerina/test;
+import ballerina/workflow.internal as wfInternal;
+import ballerina/workflow.management;
 
 // A chat turn may carry its sender's trace context as an extra update argument. It is telemetry only:
 // a history carrying it must replay, and a malformed one must never stall the agent.
@@ -88,6 +90,111 @@ function testATurnSentOutsideAnySpanStaysInTheRunsTrace() returns error? {
         test:assertEquals(span.traceId, startSpan.traceId,
                 string `'${span.operationName}' of a turn with no sender span stays in the run's trace`);
     }
+}
+
+@test:Config {groups: ["observe"]}
+function testTheFirstTurnRecordsUnderTheSpanThatStartedTheAgent() returns error? {
+    if !observability:isTracingEnabled() {
+        return;
+    }
+    int requestSpanId = check observability:startSpan("agent start request");
+    string agentId = check run(stockAgent, {id: "turn-context-first-001", request: "Check availability of laptop"});
+    check observability:finishSpan(requestSpanId);
+    _ = check getWorkflowResult(agentId, 30);
+
+    mock:Span request = check spanNamedInAnyService("agent start request");
+    mock:Span[] turnSpans = spansInTrace(request.traceId, agentId, "agent.model_call llmChat");
+    test:assertTrue(hasOperation(turnSpans, "agent.model_call llmChat"), "the first turn recorded under the starter");
+
+    // The run itself still opens in the instance's own trace; only its first turn moved.
+    mock:Span[] story = check workerSpansOf(agentId, 2);
+    mock:Span[] runSpans = story.filter(span => span.operationName.startsWith("workflow "));
+    test:assertEquals(runSpans.length(), 1, "the run span was recorded");
+    test:assertNotEquals(runSpans[0].traceId, request.traceId, "the run stays in the instance's trace");
+    check replayHistoryJson(check exportHistoryJson(agentId));
+}
+
+@test:Config {groups: ["observe"]}
+function testSendDataToAnAgentRecordsTheTurnUnderTheSender() returns error? {
+    if !observability:isTracingEnabled() {
+        return;
+    }
+    string agentId = check run(chatStockAgent, {id: "turn-context-senddata-001", request: "unused"});
+    int requestSpanId = check observability:startSpan("agent sendData request");
+    check sendData(chatStockAgent, agentId, "chat", "Check availability of laptop");
+    check observability:finishSpan(requestSpanId);
+    _ = check getWorkflowResult(agentId, 30);
+
+    mock:Span request = check spanNamedInAnyService("agent sendData request");
+    mock:Span[] turnSpans = spansInTrace(request.traceId, agentId, "agent.model_call llmChat");
+    test:assertTrue(hasOperation(turnSpans, "agent.model_call llmChat"), "the signalled turn recorded under the sender");
+    check replayHistoryJson(check exportHistoryJson(agentId));
+}
+
+final DurableAgent observedSideTurnAgent = check new ({
+    systemPrompt: {role: "", instructions: "Chat while you work."},
+    model: sideTurnMockModel,
+    events: {chat: {request: string, response: string, cardinality: MULTI_EVENT}}
+});
+
+@test:Config {groups: ["observe"]}
+function testASideTurnRecordsUnderTheRequestThatAskedIt() returns error? {
+    if !observability:isTracingEnabled() {
+        return;
+    }
+    _ = check wfInternal:registerDurableAgentDecl("observedSideTurnAgent", sideTurnMockModel,
+        {role: "", instructions: "Chat while you work."}, 8);
+    _ = check wfInternal:registerDurableAgentEvent("observedSideTurnAgent", "chat", string, string,
+        "MULTI_EVENT");
+    _ = check wfInternal:registerDurableAgentRunner("observedSideTurnAgent");
+    observedSideTurnAgent.bindAgentName("observedSideTurnAgent");
+    string agentId = check observedSideTurnAgent.run("Start the long job.");
+    // Let the loop park on its durable sleep, so the next message is a side turn.
+    runtime:sleep(3);
+
+    int requestSpanId = check observability:startSpan("side turn request");
+    string token = check observedSideTurnAgent.sendData(agentId, "chat", "status please?");
+    string answer = check observedSideTurnAgent.waitForDataResult(agentId, token);
+    check observability:finishSpan(requestSpanId);
+    test:assertTrue(answer.startsWith("SIDE:"), "a side turn answered: " + answer);
+
+    mock:Span request = check spanNamedInAnyService("side turn request");
+    mock:Span[] sideCalls = [];
+    foreach int attempt in 0 ..< 20 {
+        sideCalls = from mock:Span span in mock:getFinishedSpans("workflow")
+            where span.traceId == request.traceId && span.operationName.startsWith("activity ")
+                && span.operationName.includes("llmChat")
+            select span;
+        if sideCalls.length() > 0 {
+            break;
+        }
+        runtime:sleep(0.5);
+    }
+    test:assertEquals(sideCalls.length(), 1, "the side turn's model call recorded under the request");
+
+    check management:wakeAgent(agentId);
+    runtime:sleep(3);
+    string byeToken = check observedSideTurnAgent.sendData(agentId, "chat", "bye");
+    string farewell = check observedSideTurnAgent.waitForDataResult(agentId, byeToken);
+    test:assertEquals(farewell, "Done SAW_ASIDE", "the next turn saw the side turn's answer");
+    string result = check observedSideTurnAgent.waitForResult(agentId);
+    test:assertEquals(result, "Done SAW_ASIDE", "the side turn was merged and the agent finished");
+    check replayHistoryJson(check exportHistoryJson(agentId));
+}
+
+// The instance's spans in `traceId`, once one named `operationName` has finished.
+function spansInTrace(string traceId, string instanceId, string operationName) returns mock:Span[] {
+    mock:Span[] found = [];
+    foreach int attempt in 0 ..< 20 {
+        found = from mock:Span span in mock:getFinishedSpans("workflow")
+            where span.traceId == traceId && span.tags["workflow.instance.id"] == instanceId
+            select span;
+        if hasOperation(found, operationName) {
+            break;
+        }
+        runtime:sleep(0.5);
+    }
+    return found;
 }
 
 isolated function sendAgentTurnWithRawContext(string agentId, string eventName, anydata data,

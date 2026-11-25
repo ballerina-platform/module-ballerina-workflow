@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- A durable agent turn that records in the trace of the request that sent it now keeps that request's
+  sampling decision, and links back to the agent run's span. The first turn of an agent started from inside a
+  span, a turn sent with `workflow:sendData`, and a chat message answered while the agent is parked now
+  record in the sender's trace too.
+  ([#9900](https://github.com/ballerina-platform/ballerina-library/issues/9900))
+
 - A durable agent with a record, map or nested `resultType` now produces its typed result against a real
   model. Before, the final step failed with `Runtime schema generation is not yet supported for type`
   because `ballerina/ai` cannot describe such a type at runtime unless it carries `@ai:JsonSchema`; the

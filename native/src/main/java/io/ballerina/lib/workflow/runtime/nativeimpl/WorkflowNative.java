@@ -22,6 +22,7 @@ import io.ballerina.lib.workflow.ModuleUtils;
 import io.ballerina.lib.workflow.TaskKeys;
 import io.ballerina.lib.workflow.context.InstanceKind;
 import io.ballerina.lib.workflow.context.TaskRecord;
+import io.ballerina.lib.workflow.observability.ClientSpans;
 import io.ballerina.lib.workflow.runtime.InstanceAlreadyExistsException;
 import io.ballerina.lib.workflow.runtime.StartOptions;
 import io.ballerina.lib.workflow.runtime.StartedInstance;
@@ -188,8 +189,9 @@ public final class WorkflowNative {
 
         // Outside a workflow: the one start path, under a generated id
         final Object finalInput = javaInput;
+        Map<String, String> starter = ClientSpans.callerTraceContext(env);
         return env.yieldAndRun(() -> startWithOptions(processName, finalInput, StartOptions.generated(),
-                ERR_START_PROCESS));
+                ERR_START_PROCESS, starter));
     }
 
     /**
@@ -214,18 +216,21 @@ public final class WorkflowNative {
         }
         StartOptions options = new StartOptions(instanceId.getValue(), ifRunning.getValue(), ifClosed.getValue(),
                 null, null);
-        return env.yieldAndRun(() -> startWithOptions(processName, javaInput, options, ERR_START_PROCESS));
+        Map<String, String> starter = ClientSpans.callerTraceContext(env);
+        return env.yieldAndRun(() -> startWithOptions(processName, javaInput, options, ERR_START_PROCESS, starter));
     }
 
     /**
      * Runs a start on the runtime executor and maps its outcome to Ballerina: the id on success, the typed
      * already-exists error when the policy refused, a plain error otherwise.
      */
-    static Object startWithOptions(String processName, Object javaInput, StartOptions options, String errorPrefix) {
+    static Object startWithOptions(String processName, Object javaInput, StartOptions options, String errorPrefix,
+                                   Map<String, String> starter) {
         CompletableFuture<Object> balFuture = new CompletableFuture<>();
         WorkflowRuntime.getInstance().getExecutor().execute(() -> {
             try {
-                StartedInstance started = WorkflowRuntime.getInstance().createInstance(processName, javaInput, options);
+                StartedInstance started = WorkflowRuntime.getInstance().createInstance(processName, javaInput, options,
+                        starter);
                 balFuture.complete(StringUtils.fromString(started.workflowId()));
             } catch (InstanceAlreadyExistsException e) {
                 balFuture.complete(createInstanceAlreadyExistsError(e));
@@ -312,13 +317,16 @@ public final class WorkflowNative {
             return sendDataAsImplicitActivity(workflowIdStr, dataNameStr, javaData);
         }
 
-        // Outside workflow - use the normal async path
+        // Outside workflow - use the normal async path. An agent's turn records in the sender's trace.
+        String processName = WorkflowWorkerNative.WORKFLOW_TYPE_PREFIX + workflowFunction.getType().getName();
+        Map<String, String> sender = WorkflowWorkerNative.isAgentWorkflowType(processName)
+                ? ClientSpans.callerTraceContext(env) : null;
         return env.yieldAndRun(() -> {
             CompletableFuture<Object> balFuture = new CompletableFuture<>();
 
             WorkflowRuntime.getInstance().getExecutor().execute(() -> {
                 try {
-                    WorkflowRuntime.getInstance().sendSignalToWorkflow(workflowIdStr, dataNameStr, javaData);
+                    WorkflowRuntime.getInstance().sendSignalToWorkflow(workflowIdStr, dataNameStr, javaData, sender);
                     balFuture.complete(null);
                 } catch (Exception e) {
                     balFuture.complete(

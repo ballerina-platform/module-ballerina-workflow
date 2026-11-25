@@ -279,6 +279,21 @@ public final class AgentContextNative {
             return finalResponse;
         }
 
+        /**
+         * Takes the run's trace context before the first turn and, when the start carried its starter's span,
+         * records that turn under it until the loop first waits.
+         *
+         * @param starter the starter's trace context from the start header, or null
+         */
+        public void beginFirstTurn(Map<String, String> starter) {
+            runTraceContext = TraceContextPropagator.current();
+            runTraceContextTaken = true;
+            Map<String, String> turnContext = WorkerSpans.turnContext(starter, runTraceContext);
+            if (turnContext != null) {
+                TraceContextPropagator.setCurrent(turnContext);
+            }
+        }
+
         void beginPark(String description, String eventName) {
             this.parkedOn = description;
             this.parkedEventName = eventName;
@@ -1294,6 +1309,28 @@ public final class AgentContextNative {
      * @return the side answer
      */
     public static String sideTurnAnswer(AgentContextInfo info, Object payload) {
+        return sideTurnAnswer(info, payload, null);
+    }
+
+    /**
+     * Answers a side turn as {@link #sideTurnAnswer(AgentContextInfo, Object)}, recording its model call in the
+     * trace of the request that sent the message when it carried one.
+     *
+     * @param info          the agent context state
+     * @param payload       the update's chat message
+     * @param senderContext the sender's trace context, or null
+     * @return the side answer
+     */
+    public static String sideTurnAnswer(AgentContextInfo info, Object payload, Map<String, String> senderContext) {
+        Map<String, String> turnContext = WorkerSpans.turnContext(senderContext,
+                info.runTraceContextTaken ? info.runTraceContext : null);
+        if (turnContext == null) {
+            return answerSideTurn(info, payload);
+        }
+        return TraceContextPropagator.runWith(turnContext, () -> answerSideTurn(info, payload));
+    }
+
+    private static String answerSideTurn(AgentContextInfo info, Object payload) {
         Object javaPayload = TypesUtil.convertBallerinaToJavaType(payload);
         String question = String.valueOf(javaPayload);
         String parkedDescription = info.parkedOn != null ? info.parkedOn : "its current step";

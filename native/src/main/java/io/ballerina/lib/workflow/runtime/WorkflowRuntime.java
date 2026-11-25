@@ -145,6 +145,21 @@ public final class WorkflowRuntime {
      * @throws IllegalStateException          when the runtime is not initialized or the engine refused
      */
     public StartedInstance createInstance(String processName, Object input, StartOptions options) {
+        return createInstance(processName, input, options, null);
+    }
+
+    /**
+     * Starts a workflow process as {@link #createInstance(String, Object, StartOptions)}; a durable agent's first
+     * turn records in the trace of {@code starterContext}, the span the caller started it from.
+     *
+     * @param processName    the registered Temporal type
+     * @param input          the input data for the process
+     * @param options        the caller's id and policies; validated here
+     * @param starterContext the caller's trace context, or null
+     * @return the instance and run the caller now holds
+     */
+    public StartedInstance createInstance(String processName, Object input, StartOptions options,
+                                          java.util.Map<String, String> starterContext) {
         if (!WorkflowWorkerNative.getProcessRegistry().containsKey(processName)) {
             throw new UnknownProcessException(processName);
         }
@@ -209,8 +224,11 @@ public final class WorkflowRuntime {
 
             // The started event is counted at the worker's first execution, where every start
             // path converges. The run's spans open in the instance's own trace.
-            WorkflowExecution execution = TraceContextPropagator.runWith(WorkerSpans.instanceContext(workflowId),
-                    () -> workflowStub.start(input));
+            java.util.Map<String, String> header = WorkerSpans.instanceContext(workflowId);
+            if (WorkflowWorkerNative.isAgentWorkflowType(processName)) {
+                header = WorkerSpans.withSender(header, starterContext);
+            }
+            WorkflowExecution execution = TraceContextPropagator.runWith(header, () -> workflowStub.start(input));
             // Only a USE_EXISTING start can have joined; its run's memo names the start that made it.
             boolean started = !mayJoin || startRequestId.equals(startRequestIdOf(client, execution));
             LOGGER.debug("Started workflow: type={}, id={}, started={}", processName, workflowId, started);
@@ -299,6 +317,21 @@ public final class WorkflowRuntime {
      * @throws IllegalArgumentException if the workflow ID or signal name is missing
      */
     public boolean sendSignalToWorkflow(String workflowId, String signalName, Object signalData) {
+        return sendSignalToWorkflow(workflowId, signalName, signalData, null);
+    }
+
+    /**
+     * Sends a signal as {@link #sendSignalToWorkflow(String, String, Object)}, with the sender's trace context as a
+     * second argument when there is one: a durable agent records the turn it starts in that trace.
+     *
+     * @param workflowId    the target instance
+     * @param signalName    the signal name
+     * @param signalData    the payload
+     * @param senderContext the sender's trace context, or null
+     * @return true when delivered, false when the instance is no longer running
+     */
+    public boolean sendSignalToWorkflow(String workflowId, String signalName, Object signalData,
+                                        java.util.Map<String, String> senderContext) {
         WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
         if (client == null) {
             throw new IllegalStateException("Workflow client not initialized. Ensure worker is initialized.");
@@ -317,7 +350,9 @@ public final class WorkflowRuntime {
             WorkflowStub workflowStub = client.newUntypedWorkflowStub(workflowId);
 
             // Send the signal to the workflow
-            if (signalData != null) {
+            if (senderContext != null) {
+                workflowStub.signal(signalName, signalData, senderContext);
+            } else if (signalData != null) {
                 workflowStub.signal(signalName, signalData);
             } else {
                 workflowStub.signal(signalName);

@@ -20,6 +20,7 @@ package io.ballerina.lib.workflow.runtime.nativeimpl;
 
 import io.ballerina.lib.workflow.ModuleUtils;
 import io.ballerina.lib.workflow.context.WorkflowContextNative;
+import io.ballerina.lib.workflow.observability.ClientSpans;
 import io.ballerina.lib.workflow.runtime.StartOptions;
 import io.ballerina.lib.workflow.utils.TypesUtil;
 import io.ballerina.lib.workflow.worker.WorkflowWorkerNative;
@@ -1437,6 +1438,8 @@ public final class DurableAgentNative {
             }
         }
 
+        // Read on the caller's strand, before yielding: the turn this message starts records under it.
+        Map<String, String> callerContext = ClientSpans.callerTraceContext(env);
         return env.yieldAndRun(() -> {
             try {
                 WorkflowClient client = WorkflowWorkerNative.getWorkflowClient();
@@ -1502,7 +1505,9 @@ public final class DurableAgentNative {
                         .setUpdateName(WorkflowWorkerNative.AGENT_SEND_DATA_UPDATE)
                         .setWaitForStage(WorkflowUpdateStage.ACCEPTED)
                         .build();
-                WorkflowUpdateHandle<Object> handle = stub.startUpdate(options, event, sendPayload);
+                WorkflowUpdateHandle<Object> handle = callerContext == null
+                        ? stub.startUpdate(options, event, sendPayload)
+                        : stub.startUpdate(options, event, sendPayload, callerContext);
                 return StringUtils.fromString(handle.getId());
             } catch (Exception e) {
                 Throwable cause = e.getCause();

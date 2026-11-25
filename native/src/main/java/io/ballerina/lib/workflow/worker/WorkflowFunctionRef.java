@@ -23,7 +23,13 @@ import io.ballerina.runtime.api.Runtime;
 import io.ballerina.runtime.api.concurrent.StrandMetadata;
 import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.values.BFunctionPointer;
+import io.ballerina.runtime.internal.BalRuntime;
+import io.ballerina.runtime.internal.scheduling.Scheduler;
+import io.ballerina.runtime.internal.scheduling.Strand;
 import io.ballerina.runtime.internal.values.FPValue;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * A registered workflow or activity implementation: either a captured function pointer
@@ -82,6 +88,70 @@ public final class WorkflowFunctionRef {
             return pointer.call(runtime, args);
         }
         return runtime.callFunction(module, functionName, new StrandMetadata(true, null), args);
+    }
+
+    /**
+     * Invokes the function with a concurrent-safe strand carrying {@code strandProperties} — the
+     * strand-local values the function sees, such as the observer context that parents its spans.
+     *
+     * @param runtime          the Ballerina runtime
+     * @param strandProperties strand properties for this call only; {@code null} for none
+     * @param args             positional arguments, as for {@link #call(Runtime, Object...)}
+     * @return the function's return value
+     */
+    public Object call(Runtime runtime, Map<String, Object> strandProperties, Object... args) {
+        if (strandProperties == null || strandProperties.isEmpty()) {
+            return call(runtime, args);
+        }
+        // The thread keeps its strand across calls: set the properties for this call only, then restore them.
+        // TODO: Use a public API once https://github.com/ballerina-platform/ballerina-lang/issues/44944 is fixed.
+        Strand current = Scheduler.getStrand();
+        Map<String, Object> previous = new HashMap<>();
+        if (current != null) {
+            strandProperties.forEach((key, value) -> {
+                previous.put(key, current.getProperty(key));
+                current.setProperty(key, value);
+            });
+        }
+        try {
+            return current != null ? call(runtime, args) : callOnNewStrand(runtime, strandProperties, args);
+        } finally {
+            Strand strand = Scheduler.getStrand();
+            if (strand != null) {
+                strandProperties.keySet().forEach(key -> strand.setProperty(key, previous.get(key)));
+            }
+        }
+    }
+
+    // The thread has no strand yet: this call creates it, so the properties go in its metadata.
+    private Object callOnNewStrand(Runtime runtime, Map<String, Object> strandProperties, Object... args) {
+        if (pointer == null) {
+            return runtime.callFunction(module, functionName,
+                    new StrandMetadata(true, new HashMap<>(strandProperties)), args);
+        }
+        FPValue fpValue = (FPValue) pointer;
+        if (!(runtime instanceof BalRuntime balRuntime)) {
+            return call(runtime, args);
+        }
+        // The pointer is shared by every concurrent run of the function, so the per-call properties go to this
+        // call's strand rather than onto the pointer — the same dispatch FPValue.call makes.
+        Map<String, Object> properties = new HashMap<>();
+        Map<String, Object> captured = fpValue.metadata == null ? null : fpValue.metadata.properties();
+        if (captured != null) {
+            properties.putAll(captured);
+        }
+        properties.putAll(strandProperties);
+        return balRuntime.scheduler.callFP(fpValue, new StrandMetadata(true, properties), args);
+    }
+
+    /**
+     * The declaring module as {@code org/name}, or {@code null} when the runtime recorded none.
+     *
+     * @return the module name
+     */
+    public String moduleName() {
+        Module declared = declaredModule();
+        return declared == null ? null : declared.getOrg() + "/" + declared.getName();
     }
 
     /**

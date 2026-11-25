@@ -148,6 +148,9 @@ function testAgentSpansRecordAgentIdentity() returns error? {
 
     mock:Span recorded = check findUnitSpan("start_agent", "workflow.instance.id", "wf-agent-1");
     test:assertEquals(recorded.tags["gen_ai.agent.name"], "assistantAgent");
+    test:assertEquals(recorded.tags["gen_ai.conversation.id"], "wf-agent-1");
+    mock:Span sent = check findUnitSpan("send_agent_event", "workflow.instance.id", "wf-agent-1");
+    test:assertEquals(sent.tags["gen_ai.conversation.id"], "wf-agent-1");
 }
 
 @test:Config {
@@ -198,6 +201,106 @@ function testWorkflowSpanSurfaceEndToEnd() returns error? {
                     string `'${span.operationName}' should nest under the run span`);
         }
     }
+}
+
+@test:Config {
+    groups: ["observe"]
+}
+function testActivitySpanParentsWhatTheActivityObserves() returns error? {
+    if !observability:isTracingEnabled() {
+        return;
+    }
+
+    map<anydata> input = {id: "observe-parenting-001", request: "unused"};
+    string runId = check run(chatStockAgent, input);
+    check sendData(chatStockAgent, runId, "chat", "Check availability of laptop");
+    _ = check getWorkflowResult(runId, 30);
+
+    mock:Span[] story = check workerSpansOf(runId, 4);
+    mock:Span activitySpan = check spanNamed(story, "activity llmChat");
+
+    // The model provider's chat is a remote call the Ballerina tracer observes inside the llmChat activity:
+    // it must nest under the activity in the run's trace, not open a trace of its own.
+    mock:Span[] modelCalls = check childSpansOf(activitySpan);
+    test:assertTrue(modelCalls.length() > 0, "the model call made inside the activity should nest under it");
+    foreach mock:Span span in modelCalls {
+        test:assertEquals(span.traceId, activitySpan.traceId,
+                string `'${span.operationName}' should join the run's trace`);
+    }
+
+    // One durable agent instance is one conversation: its spans carry the GenAI conversation id.
+    foreach mock:Span span in story {
+        test:assertEquals(span.tags["gen_ai.conversation.id"], runId,
+                string `agent span '${span.operationName}' should carry the conversation id`);
+    }
+}
+
+@test:Config {
+    groups: ["observe"]
+}
+function testAgentTurnRecordsUnderTheSendersSpan() returns error? {
+    if !observability:isTracingEnabled() {
+        return;
+    }
+    string runId = check run(chatStockAgent, {id: "observe-turn-001", request: "unused"});
+
+    // The caller's own span, as an HTTP chat request would be: the turn it sends records under it.
+    int requestSpanId = check observability:startSpan("chat request");
+    string token = check agentTurnDriver.sendData(runId, "chat", "Check availability of laptop");
+    string _ = check agentTurnDriver.waitForDataResult(runId, token);
+    check observability:finishSpan(requestSpanId);
+
+    mock:Span request = check spanNamedInAnyService("chat request");
+    mock:Span[] turnSpans = [];
+    foreach int attempt in 0 ..< 20 {
+        turnSpans = from mock:Span span in mock:getFinishedSpans("workflow")
+            where span.traceId == request.traceId && span.tags["workflow.instance.id"] == runId
+            select span;
+        if hasOperation(turnSpans, "agent.model_call llmChat") {
+            break;
+        }
+        runtime:sleep(0.5);
+    }
+    test:assertTrue(hasOperation(turnSpans, "agent.model_call llmChat"), "the turn's model call joins the sender's trace");
+    test:assertTrue(hasOperation(turnSpans, "activity llmChat"), "the turn's activities join the sender's trace");
+    foreach mock:Span span in turnSpans {
+        test:assertEquals(span.parentId, request.spanId,
+                string `'${span.operationName}' should nest under the sender's span`);
+        test:assertFalse(span.operationName.startsWith("agent.event_wait"),
+                "a wait between turns stays in the run's own trace");
+    }
+}
+
+function spanNamedInAnyService(string operationName) returns mock:Span|error {
+    foreach int attempt in 0 ..< 20 {
+        foreach string serviceName in ["Ballerina", "workflow", "Unknown Service"] {
+            foreach mock:Span span in mock:getFinishedSpans(serviceName) {
+                if span.operationName == operationName {
+                    return span;
+                }
+            }
+        }
+        runtime:sleep(0.5);
+    }
+    return error(string `span '${operationName}' was not recorded`);
+}
+
+// Spans of any service whose parent is `parent`, once at least one of them has finished.
+function childSpansOf(mock:Span parent) returns mock:Span[]|error {
+    mock:Span[] found = [];
+    foreach int attempt in 0 ..< 20 {
+        found = [];
+        foreach string serviceName in ["Ballerina", "workflow", "Unknown Service"] {
+            found.push(...from mock:Span span in mock:getFinishedSpans(serviceName)
+                where span.parentId == parent.spanId
+                select span);
+        }
+        if found.length() > 0 {
+            return found;
+        }
+        runtime:sleep(0.5);
+    }
+    return found;
 }
 
 function spanNamed(mock:Span[] spans, string operationName) returns mock:Span|error {

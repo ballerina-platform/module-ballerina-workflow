@@ -3175,7 +3175,7 @@ public final class WorkflowWorkerNative {
             Object result = null;
             Exception failure = null;
             try {
-                result = executeInternal(args);
+                result = executeInternal(args, span);
                 return result;
             } catch (Exception e) {
                 failure = e;
@@ -3203,13 +3203,15 @@ public final class WorkflowWorkerNative {
             }
             tags.put("workflow.run.id", info.getRunId());
             tags.put("workflow.type", info.getWorkflowType());
+            // An agent's activities (its model and tool calls) belong to the conversation the agent instance is.
+            WorkerSpans.putConversationId(tags, info.getWorkflowType(), info.getWorkflowId());
             tags.put("workflow.activity.type", info.getActivityType());
             tags.put("workflow.activity.attempt", String.valueOf(info.getAttempt()));
             return tags;
         }
 
         @SuppressWarnings("unchecked")
-        private Object executeInternal(EncodedValues args) {
+        private Object executeInternal(EncodedValues args, Span span) {
             // Get activity name from Temporal's Activity.getExecutionContext()
             io.temporal.activity.ActivityExecutionContext activityContext =
                     io.temporal.activity.Activity.getExecutionContext();
@@ -3371,8 +3373,11 @@ public final class WorkflowWorkerNative {
                 ballerinaArgs = argsWithTypedesc;
             }
 
-            // Execute the Ballerina activity function (pointer or descriptor symbol reference)
-            Object result = activityFunction.call(ballerinaRuntime, ballerinaArgs);
+            // Execute the Ballerina activity function (pointer or descriptor symbol reference). The activity
+            // span is handed to the strand, so what the function observes — a model provider's chat, an HTTP
+            // call, a tool's own spans — nests under the activity in the run's trace instead of starting its own.
+            Object result = activityFunction.call(ballerinaRuntime,
+                    WorkerSpans.strandProperties(span, activityFunction.moduleName(), activityName), ballerinaArgs);
 
             // Always throw ApplicationFailure when the activity returns a BError so that
             // Temporal marks the activity as ActivityFailure in the UI and history, rather

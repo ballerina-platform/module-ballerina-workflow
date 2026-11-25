@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- A chat turn sent with `DurableAgent.sendData` from inside a span now records in that request's trace: the
+  turn's model calls and tool activities sit under the caller's span, so each request's trace shows the agent
+  work it caused. The run itself, its waits, and turns sent outside any span stay in the instance's own trace.
+  ([#190](https://github.com/ballerina-platform/module-ballerina-workflow/pull/190))
+
+### Fixed
+
+- Calls observed inside an activity, such as a durable agent's model call through `ballerina/ai` or an HTTP
+  client call, now open under that activity's span, in the run's trace. Before, each started a trace of its
+  own. A durable agent's spans also carry its instance id as `gen_ai.conversation.id`.
+  ([#9892](https://github.com/ballerina-platform/ballerina-library/issues/9892))
+
+## [1.0.4] - 2026-11-16
+
+### Changed
+
+- Updated the `ballerina/ai` dependency to 1.17.0 and Guava to 33.7.2-jre.
+
+## [1.0.3] - 2026-11-04
+
 ### Fixed
 
 - A durable agent with a record, map or nested `resultType` now produces its typed result against a real

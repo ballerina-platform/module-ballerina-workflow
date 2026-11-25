@@ -323,4 +323,46 @@ public final class TestNatives {
         }
         return false;
     }
+
+    /**
+     * Test-only: sends an agent turn the way {@code DurableAgent.sendData} does, but with an arbitrary third
+     * update argument in place of the sender's trace context, and waits a bounded time for the turn's answer.
+     *
+     * @param agentId   the agent instance ID
+     * @param eventName the data-event channel
+     * @param data      the turn's payload
+     * @param context   the raw value sent as the sender's trace context
+     * @param seconds   how long to wait for the answer
+     * @return the turn's answer, or a BError when it did not answer in time
+     */
+    public static Object sendAgentTurnWithRawContext(BString agentId, BString eventName, Object data,
+                                                     Object context, long seconds) {
+        io.temporal.client.WorkflowClient client =
+                io.ballerina.lib.workflow.worker.WorkflowWorkerNative.getWorkflowClient();
+        if (client == null) {
+            return ErrorCreator.createError(StringUtils.fromString("Workflow client not initialized"));
+        }
+        String updateName = io.ballerina.lib.workflow.worker.WorkflowWorkerNative.AGENT_SEND_DATA_UPDATE;
+        // Started off-thread: a handler that fails its workflow task never accepts, so even the start would hang.
+        java.util.concurrent.CompletableFuture<Object> turn = java.util.concurrent.CompletableFuture.supplyAsync(
+                () -> {
+                    io.temporal.client.UpdateOptions<Object> options =
+                            io.temporal.client.UpdateOptions.newBuilder(Object.class)
+                                    .setUpdateName(updateName)
+                                    .setWaitForStage(io.temporal.client.WorkflowUpdateStage.ACCEPTED)
+                                    .build();
+                    return client.newUntypedWorkflowStub(agentId.getValue())
+                            .startUpdate(options, eventName.getValue(), TypesUtil.convertBallerinaToJavaType(data),
+                                    TypesUtil.convertBallerinaToJavaType(context))
+                            .getResult();
+                });
+        try {
+            return TypesUtil.convertJavaToBallerinaType(
+                    turn.get(seconds, java.util.concurrent.TimeUnit.SECONDS));
+        } catch (Exception e) {
+            turn.cancel(true);
+            return ErrorCreator.createError(StringUtils.fromString(
+                    "The agent turn did not answer within " + seconds + "s: " + e));
+        }
+    }
 }

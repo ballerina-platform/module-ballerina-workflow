@@ -168,6 +168,25 @@ public class WorkerSpansTest {
         Assert.assertNull(WorkerSpans.senderOfStart(null));
     }
 
+    // The header is read before the run's body: a malformed starter must be ignored, not thrown.
+    @Test
+    public void testAMalformedStarterIsIgnored() {
+        Map<String, Object> numeric = new LinkedHashMap<>();
+        numeric.put(WorkerSpans.SENDER_TRACE_ID, 42);
+        numeric.put(WorkerSpans.SENDER_SPAN_ID, SPAN);
+        Assert.assertNull(WorkerSpans.senderOfStart(numeric));
+        Map<String, Object> nested = new LinkedHashMap<>();
+        nested.put(WorkerSpans.SENDER_TRACE_ID, TRACE);
+        nested.put(WorkerSpans.SENDER_SPAN_ID, Map.of("span", SPAN));
+        Assert.assertNull(WorkerSpans.senderOfStart(nested));
+        Map<String, Object> badFlags = new LinkedHashMap<>();
+        badFlags.put(WorkerSpans.SENDER_TRACE_ID, TRACE);
+        badFlags.put(WorkerSpans.SENDER_SPAN_ID, SPAN);
+        badFlags.put(WorkerSpans.SENDER_TRACE_FLAGS, 0);
+        Assert.assertEquals(WorkerSpans.senderOfStart(badFlags),
+                Map.of(WorkerSpans.TRACE_ID, TRACE, WorkerSpans.SPAN_ID, SPAN));
+    }
+
     @Test
     public void testTheCallersFlagsAreReadFromItsTraceparent() {
         Assert.assertTrue(ClientSpans.flagsOfTraceparent("00-" + TRACE + "-" + SPAN + "-01").isSampled());

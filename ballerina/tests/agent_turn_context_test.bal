@@ -149,8 +149,8 @@ function testASideTurnRecordsUnderTheRequestThatAskedIt() returns error? {
     _ = check wfInternal:registerDurableAgentRunner("observedSideTurnAgent");
     observedSideTurnAgent.bindAgentName("observedSideTurnAgent");
     string agentId = check observedSideTurnAgent.run("Start the long job.");
-    // Let the loop park on its durable sleep, so the next message is a side turn.
-    runtime:sleep(3);
+    // The next message is a side turn only once the loop is parked on its durable sleep.
+    check waitForHistory(agentId, "EVENT_TYPE_TIMER_STARTED", "the agent parked on its sleep");
 
     int requestSpanId = check observability:startSpan("side turn request");
     string token = check observedSideTurnAgent.sendData(agentId, "chat", "status please?");
@@ -173,13 +173,42 @@ function testASideTurnRecordsUnderTheRequestThatAskedIt() returns error? {
     test:assertEquals(sideCalls.length(), 1, "the side turn's model call recorded under the request");
 
     check management:wakeAgent(agentId);
-    runtime:sleep(3);
+    // The park ends in the workflow task that takes the wake; "bye" sent before that would be a side turn too.
+    check waitForHistory(agentId, "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED", "the agent took the wake",
+            completedAfter = true);
     string byeToken = check observedSideTurnAgent.sendData(agentId, "chat", "bye");
     string farewell = check observedSideTurnAgent.waitForDataResult(agentId, byeToken);
     test:assertEquals(farewell, "Done SAW_ASIDE", "the next turn saw the side turn's answer");
     string result = check observedSideTurnAgent.waitForResult(agentId);
     test:assertEquals(result, "Done SAW_ASIDE", "the side turn was merged and the agent finished");
     check replayHistoryJson(check exportHistoryJson(agentId));
+}
+
+// Waits until the instance's history has `eventType` (and, with `completedAfter`, a completed workflow task after
+// its last one), so a test acts on a state the run reached rather than on a guess at how long it takes.
+function waitForHistory(string instanceId, string eventType, string what, boolean completedAfter = false)
+        returns error? {
+    foreach int attempt in 0 ..< 60 {
+        json history = check (check exportHistoryJson(instanceId)).fromJsonString();
+        json[] events = check (check history.events).ensureType();
+        int last = -1;
+        boolean completed = false;
+        foreach int i in 0 ..< events.length() {
+            json event = events[i];
+            json kind = check event.eventType;
+            if kind == eventType {
+                last = i;
+                completed = false;
+            } else if last >= 0 && kind == "EVENT_TYPE_WORKFLOW_TASK_COMPLETED" {
+                completed = true;
+            }
+        }
+        if last >= 0 && (!completedAfter || completed) {
+            return;
+        }
+        runtime:sleep(0.25);
+    }
+    return error(string `timed out waiting until ${what}`);
 }
 
 // The instance's spans in `traceId`, once one named `operationName` has finished.

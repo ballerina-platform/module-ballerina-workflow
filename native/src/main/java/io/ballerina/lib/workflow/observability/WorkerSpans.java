@@ -151,12 +151,19 @@ public final class WorkerSpans {
         return header;
     }
 
-    // The starter's span from a start header, or null when the start carried none.
-    public static Map<String, String> senderOfStart(Map<String, String> header) {
-        if (header == null || header.get(SENDER_TRACE_ID) == null || header.get(SENDER_SPAN_ID) == null) {
+    // The starter's span from a start header, or null when it carried none or a malformed one. It runs before the
+    // run's body, so it must never throw: a start built outside the module may put anything in the header.
+    public static Map<String, String> senderOfStart(Map<?, ?> header) {
+        try {
+            if (header == null || !(header.get(SENDER_TRACE_ID) instanceof String traceId)
+                    || !(header.get(SENDER_SPAN_ID) instanceof String spanId)) {
+                return null;
+            }
+            return idsOf(traceId, spanId, header.get(SENDER_TRACE_FLAGS) instanceof String flags ? flags : null);
+        } catch (RuntimeException e) {
+            LOGGER.debug("Ignoring an unreadable starter trace context", e);
             return null;
         }
-        return idsOf(header.get(SENDER_TRACE_ID), header.get(SENDER_SPAN_ID), header.get(SENDER_TRACE_FLAGS));
     }
 
     // A carried context as the remote parent it names, honouring its trace flags; invalid when it names none.

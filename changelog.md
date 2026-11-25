@@ -20,6 +20,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   own. A durable agent's spans also carry its instance id as `gen_ai.conversation.id`.
   ([#9892](https://github.com/ballerina-platform/ballerina-library/issues/9892))
 
+- A task decision that the engine accepted no longer returns an error when its audit log line fails.
+  Before, decisions made at the same moment as the process's first key-value log lines could fail with
+  `InvalidUpdate: modification not allowed on readonly value`, a runtime race
+  ([ballerina-lang#44895](https://github.com/ballerina-platform/ballerina-lang/issues/44895)). The audit
+  entry and the metric sample are now written again once if that happens.
+  ([#9725](https://github.com/ballerina-platform/ballerina-library/issues/9725))
+
 ## [1.0.4] - 2026-11-16
 
 ### Changed

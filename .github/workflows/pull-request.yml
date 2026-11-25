@@ -20,3 +20,5 @@ jobs:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     with:
       additional-ubuntu-test-flags: "authVariantTests mergeCoverageReports"
+      # Ballerina 2201.14.2 cannot build packages that import ballerina/workflow (ballerina-distribution#6555).
+      scan-examples: false
